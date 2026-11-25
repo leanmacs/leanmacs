@@ -12,3 +12,6 @@ publish = false
 # `editor-fuzzy-nucleo`; the one that searches with errors allowed is
 # behind the searcher port, in `editor-fuzzy-triple-accel`.
 [dependencies]
+
+[lints]
+workspace = true

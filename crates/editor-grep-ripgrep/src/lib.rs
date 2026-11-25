@@ -69,6 +69,10 @@ impl RipgrepFiles {
 }
 
 impl Default for RipgrepFiles {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "`Default` is the constructor by its other name, in the adapter that owns it"
+    )]
     fn default() -> Self {
         Self::new()
     }
@@ -86,6 +90,10 @@ fn refusal(path: &Path, error: &io::Error) -> Refusal {
 }
 
 impl Files for RipgrepFiles {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "`RipgrepFiles` is the real files port: it walks the real directory it is given"
+    )]
     fn walk(&self, root: &Path, visit: &mut dyn FnMut(&Path) -> Flow) -> Result<(), Refusal> {
         let metadata = std::fs::metadata(root).map_err(|error| refusal(root, &error))?;
         if !metadata.is_dir() {

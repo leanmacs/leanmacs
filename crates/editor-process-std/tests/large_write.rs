@@ -60,6 +60,10 @@ fn replied(
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's own test on a real child process"
+)]
 fn a_write_four_times_a_pipe_reaches_cat_whole_and_comes_back_in_order() {
     let directory = tempfile::tempdir().expect("a temporary directory can be made");
     let (sender, completed) = mpsc::channel();

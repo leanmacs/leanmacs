@@ -18,7 +18,7 @@
 //!
 //! Every child runs in a temporary directory the test makes, which is
 //! removed when it ends, and writes nothing. The test names no method the
-//! crate's `clippy.toml` refuses: it reaches real processes through the C
+//! root `clippy.toml` refuses: it reaches real processes through the C
 //! functions alone.
 
 #[path = "common/processes.rs"]

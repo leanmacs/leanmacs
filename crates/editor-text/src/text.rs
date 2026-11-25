@@ -720,8 +720,10 @@ mod tests {
         assert_eq!(read(&text), TEXT);
     }
 
-    // The range is the point of the test: it is one a caller can pass.
-    #[expect(clippy::reversed_empty_ranges)]
+    #[expect(
+        clippy::reversed_empty_ranges,
+        reason = "a backwards range is the point of the test: a caller can pass one"
+    )]
     #[test]
     fn replace_refuses_a_backwards_range_and_changes_nothing() {
         let mut text = Text::from(TEXT);

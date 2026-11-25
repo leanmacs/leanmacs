@@ -10,6 +10,11 @@
 //! the adapter: so the adapter's `write` and its `stat` are each compared
 //! with what the system says, and not only with each other.
 
+#![expect(
+    clippy::disallowed_types,
+    reason = "the adapter's contract check and its ground are on real files: `std::fs`'s types are what the crate adapts"
+)]
+
 use std::fs::{self, File};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -33,6 +38,10 @@ struct Disk {
 
 impl Disk {
     /// A new, empty directory of this test's own.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the contract's ground reads and sets the truth on real files, in a temporary directory the test owns"
+    )]
     fn new() -> Self {
         let directory = tempfile::tempdir().expect("a temporary directory can be made");
         let root = fs::canonicalize(directory.path())
@@ -58,10 +67,18 @@ impl Ground for Disk {
         std::os::unix::fs::symlink(to, link).map_err(said)
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the contract's ground reads and sets the truth on real files, in a temporary directory the test owns"
+    )]
     fn directory(&self, path: &Path) -> Result<(), String> {
         fs::create_dir(path).map_err(said)
     }
 
+    #[expect(
+        clippy::disallowed_types,
+        reason = "the contract's ground reads and sets the truth on real files, in a temporary directory the test owns"
+    )]
     fn set_modified(&self, path: &Path, to: Modified) -> Result<(), String> {
         let seconds = u64::try_from(to.seconds).map_err(|_| String::from("before the epoch"))?;
         let instant = SystemTime::UNIX_EPOCH + Duration::new(seconds, to.nanoseconds);
@@ -72,10 +89,18 @@ impl Ground for Disk {
             .map_err(said)
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the contract's ground reads and sets the truth on real files, in a temporary directory the test owns"
+    )]
     fn set_permissions(&self, path: &Path, to: Permissions) -> Result<(), String> {
         fs::set_permissions(path, fs::Permissions::from_mode(to.bits())).map_err(said)
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the contract's ground reads and sets the truth on real files, in a temporary directory the test owns"
+    )]
     fn permissions(&self, path: &Path) -> Result<Permissions, String> {
         fs::metadata(path)
             .map(|metadata| Permissions::new(metadata.permissions().mode()))
@@ -84,6 +109,10 @@ impl Ground for Disk {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's contract check: the real file system is what it holds to the port"
+)]
 fn the_adapter_keeps_the_file_ports_contract_in_a_temporary_directory() {
     let disk = Disk::new();
 

@@ -49,6 +49,10 @@ fn workspace() -> PathBuf {
 }
 
 /// Runs a program to success and returns its standard output.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's test on a real disk image, built and mounted in a temporary directory it owns"
+)]
 fn output(program: &str, args: &[&str]) -> String {
     let out = Command::new(program)
         .args(args)
@@ -66,6 +70,10 @@ struct Mounted {
 impl Drop for Mounted {
     /// Detaches the image, by force if a plain detach fails (a file still
     /// open on the volume).
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the adapter's test on a real disk image, built and mounted in a temporary directory it owns"
+    )]
     fn drop(&mut self) {
         let detach = |force: bool| {
             let mut command = Command::new("hdiutil");
@@ -81,6 +89,10 @@ impl Drop for Mounted {
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's test on a real disk image, built and mounted in a temporary directory it owns"
+)]
 fn kind(path: &Path) -> Kind {
     let meta = fs::symlink_metadata(path).expect("metadata");
     let kind = meta.file_type();
@@ -97,6 +109,10 @@ fn kind(path: &Path) -> Kind {
 
 #[test]
 #[ignore = "mounts a built .dmg: mise run dmg-check"]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's test on a real disk image, built and mounted in a temporary directory it owns"
+)]
 fn the_packed_image_holds_the_app_the_link_the_licence_and_the_readme() {
     let image = PathBuf::from(
         std::env::var_os("LEANMACS_DMG").expect("LEANMACS_DMG must name the .dmg to check"),

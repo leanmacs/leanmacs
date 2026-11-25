@@ -31,6 +31,10 @@ fn strings(args: &[OsString]) -> Vec<String> {
         .collect()
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the tests' probe reports this real process's own pid and environment, which is what the contract checks"
+)]
 fn probe(args: &[OsString]) -> ExitCode {
     println!("probe pid {}", std::process::id());
     for a in strings(args) {
@@ -54,6 +58,10 @@ fn probe(args: &[OsString]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the tests' probe reports this real process's own pid and environment, which is what the contract checks"
+)]
 fn this_report(args: &[OsString]) -> Report {
     Report {
         pid: std::process::id(),
@@ -163,6 +171,10 @@ fn contract_var() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the probe binary's entry reads its own command line"
+)]
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     match args.first().and_then(|a| a.to_str()) {

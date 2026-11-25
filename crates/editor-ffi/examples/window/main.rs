@@ -494,6 +494,10 @@ fn report(session: &Session<Watched>, shared: &Shared, options: &Options) -> Vec
     failures
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "an example's entry reads its own command line"
+)]
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();

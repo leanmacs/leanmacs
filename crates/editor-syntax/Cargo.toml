@@ -20,3 +20,6 @@ editor-wait = { path = "../editor-wait" }
 # No parsing library: the port names none, and everything here is tested on
 # the published fake, `fake::Parens`. The library that parses is behind the
 # port, in `editor-syntax-treesitter`.
+
+[lints]
+workspace = true

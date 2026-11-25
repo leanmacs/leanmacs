@@ -17,6 +17,10 @@ use std::process::{Command, Output};
 use tempfile::TempDir;
 
 /// `tests/site/` in the workspace this test was built in.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary's test: it runs the real `leanmacs-release site` on checked-in fixtures and reads the pages it wrote"
+)]
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/site")
@@ -26,6 +30,10 @@ fn fixtures() -> PathBuf {
 
 /// The binary run as `site <build_json> <out>`, with `minimum` as
 /// `MACOSX_DEPLOYMENT_TARGET`, or with it unset when `None`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary's test: it runs the real `leanmacs-release site` on checked-in fixtures and reads the pages it wrote"
+)]
 fn site(build_json: &Path, out: &Path, minimum: Option<&str>) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_leanmacs-release"));
     command
@@ -42,6 +50,10 @@ fn site(build_json: &Path, out: &Path, minimum: Option<&str>) -> Output {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary's test: it runs the real `leanmacs-release site` on checked-in fixtures and reads the pages it wrote"
+)]
 fn site_writes_each_fixture_s_golden_page() {
     for case in ["nightly-26.0", "nightly-27.1"] {
         let dir = fixtures().join(case);
@@ -68,6 +80,10 @@ fn site_writes_each_fixture_s_golden_page() {
 /// missing, and its path is printed. The root is a temporary directory
 /// given with `--root`, so the workspace's `target/` is not touched.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary's test: it runs the real `leanmacs-release site` on checked-in fixtures and reads the pages it wrote"
+)]
 fn site_without_an_out_dir_writes_into_the_root_s_target_site() {
     let dir = fixtures().join("nightly-26.0");
     let minimum = std::fs::read_to_string(dir.join("minimum")).expect("minimum");
@@ -96,6 +112,10 @@ fn site_without_an_out_dir_writes_into_the_root_s_target_site() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary's test: it runs the real `leanmacs-release site` on checked-in fixtures and reads the pages it wrote"
+)]
 fn site_refuses_an_unset_minimum_and_writes_nothing() {
     let tmp = TempDir::new().expect("a temporary directory");
     let out = tmp.path().join("site");
@@ -110,6 +130,10 @@ fn site_refuses_an_unset_minimum_and_writes_nothing() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary's test: it runs the real `leanmacs-release site` on checked-in fixtures and reads the pages it wrote"
+)]
 fn site_refuses_a_malformed_build_json_naming_it_and_writes_nothing() {
     let tmp = TempDir::new().expect("a temporary directory");
     let json = tmp.path().join("build.json");
@@ -127,6 +151,10 @@ fn site_refuses_a_malformed_build_json_naming_it_and_writes_nothing() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary's test: it runs the real `leanmacs-release site` on checked-in fixtures and reads the pages it wrote"
+)]
 fn site_refuses_a_malformed_minimum_naming_the_variable_and_writes_nothing() {
     let tmp = TempDir::new().expect("a temporary directory");
     let out = tmp.path().join("site");

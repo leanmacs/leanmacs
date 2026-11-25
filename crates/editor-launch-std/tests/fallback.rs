@@ -19,11 +19,19 @@ use std::process::{Command, Stdio};
 
 use editor_launch::handover::{Handover, encode};
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs the real launcher on real processes, with its scripts and records in a temporary directory the test owns"
+)]
 fn script(path: &Path, body: &str) {
     fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs the real launcher on real processes, with its scripts and records in a temporary directory the test owns"
+)]
 fn hand_over_with_a_bad_first(bad_body: &str) {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
@@ -95,6 +103,10 @@ fn a_candidate_killed_before_the_hand_shake_falls_back_to_the_next() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs the real launcher on real processes, with its scripts and records in a temporary directory the test owns"
+)]
 fn a_hand_over_with_no_candidate_left_keeps_the_record_as_failed_and_exits_1() {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();
@@ -133,6 +145,10 @@ fn a_hand_over_with_no_candidate_left_keeps_the_record_as_failed_and_exits_1() {
 
 /// An editor script that finds `--handed-over <record>` among its
 /// arguments, then runs `body`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs the real launcher on real processes, with its scripts and records in a temporary directory the test owns"
+)]
 fn editor(path: &Path, body: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     script(
@@ -164,6 +180,10 @@ struct Cold {
 /// <tmp>/data headless` with a shipped default whose core is `c`, an
 /// oldest version 1 that must never run, and the previous (2), newest
 /// (10) and shipped editors running `previous`, `newest` and `shipped`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs the real launcher on real processes, with its scripts and records in a temporary directory the test owns"
+)]
 fn cold_start(newest: &str, previous: &str, shipped: &str) -> Cold {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();

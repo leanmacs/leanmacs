@@ -14,3 +14,6 @@ publish = false
 # rasterising library, and its tests run on the fake published here.
 # `deny.toml` lists this crate among editor-layout's wrappers.
 editor-layout = { path = "../editor-layout" }
+
+[lints]
+workspace = true

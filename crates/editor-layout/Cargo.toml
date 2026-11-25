@@ -19,3 +19,6 @@ editor-text = { path = "../editor-text" }
 # timeout and no temporary file, and each property is run from a fixed
 # seed (`tests/layers.rs`).
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

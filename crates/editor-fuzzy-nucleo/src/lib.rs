@@ -98,6 +98,10 @@ impl NucleoScorer {
 }
 
 impl Default for NucleoScorer {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "`Default` is the constructor by its other name, in the adapter that owns it"
+    )]
     fn default() -> Self {
         Self::new()
     }
@@ -151,6 +155,10 @@ mod tests {
     use editor_fuzzy::Scorer;
 
     /// Which of `candidates` a new scorer matches `pattern` to.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the adapter's own tests: the library is what they hold to the port"
+    )]
     fn matched(pattern: &str, candidates: &[&str]) -> Vec<bool> {
         NucleoScorer::new()
             .scores(pattern, candidates)
@@ -170,6 +178,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the adapter's own tests: the library is what they hold to the port"
+    )]
     fn a_scorer_asked_again_answers_for_the_new_pattern() {
         let mut scorer = NucleoScorer::new();
         let candidates = ["abcde", "xyz", "a-x-e"];
@@ -226,6 +238,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the adapter's own tests: the library is what they hold to the port"
+    )]
     fn the_matches_of_a_pattern_longer_than_the_library_is_asked_score_the_same() {
         let pattern = long("a", MAX_SCORED_PATTERN + 1);
         let followed = format!("{pattern}x");
@@ -240,6 +256,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the adapter's own tests: the library is what they hold to the port"
+    )]
     fn the_longest_pattern_the_library_is_asked_is_scored_by_it() {
         // Adjacent from the candidate's start scores above one character
         // in two, which is the library's doing: a wrapped score, or one
@@ -257,6 +277,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the adapter's own tests: the library is what they hold to the port"
+    )]
     fn a_short_pattern_is_scored_in_a_candidate_of_any_length() {
         let far = format!("a{}b", "x".repeat(200_000));
         let near = format!("ab{}", "x".repeat(200_000));

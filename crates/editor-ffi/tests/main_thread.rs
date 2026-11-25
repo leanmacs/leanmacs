@@ -26,6 +26,10 @@ const LIMIT: HangGuard = HangGuard::on(
     Duration::from_secs(30),
 );
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test with no harness ends its own process: with its result, or with a hang its watchdog saw"
+)]
 fn main() {
     // The watchdog waits on a channel nothing sends on: `main` holds its
     // sender while it serves, which never returns, and the process ends by

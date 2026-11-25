@@ -37,3 +37,6 @@ objc2-core-foundation = { version = "=0.3.2", default-features = false, features
 # why this library and no other; `deny.toml` lists the crates that may
 # depend on it.
 tempfile = { version = "=3.27.0", default-features = false }
+
+[lints]
+workspace = true

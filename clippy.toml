@@ -1,81 +1,107 @@
-# What no line of the workspace may name outside its named sites: a raw
-# timed wait, or a readout a test waits on (AGENTS.md, "Deterministic
-# concurrency in tests"). Every time bound of a Rust test is a typed value
-# that says which kind it is, `editor_wait::HangGuard` (a guard against a
-# hang, or one run out on purpose) or `editor_wait::RealTime` (real time
-# under test), and the waits that take one are `editor-wait`'s:
-# `editor_wait::recv` for a channel, `editor_wait::wait_while` for a
-# Condvar, `HangGuard::start` and `deadline` for a deadline,
-# `RealTime::sleep` for a sleep and `editor_wait::Stopwatch` for real time
-# measured. So std's timed primitives, and the polls (`is_finished`,
-# `try_wait`, `yield_now`), are banned here, and each readout a test waits
-# on is banned outside the places that are its to call.
+# What no line of the workspace may name outside a site that says why:
 #
-# Clippy reads the first `clippy.toml` it finds from a package's manifest
-# directory upwards. This file governs every crate that has none of its own
-# (`editor-service`, `editor-platform`, `editor-platform-winit`,
-# `editor-syntax`, `editor-wait`, the adapters, `echo-service`, ...); a
-# crate with its own does not read it, so each of `crates/*/clippy.toml`
-# holds a copy of this file's block, the lines from `# BEGIN wait-bans` to
-# `# END wait-bans`, byte for byte. This file owns it: edit the block here
-# and write the copies with `sh tools/wait-bans.sh write clippy.toml
-# crates/*/clippy.toml`; `mise run lint` fails while a copy differs
-# (`tools/wait-bans.sh check`). A crate's copy is the first thing of its
-# list. Where a crate bans a path of the block for its own reason
-# (`Instant::now` or `thread::sleep`), its entry comes after the copy, and
-# clippy takes the last entry for a path, so the reason it prints is the
-# crate's (seen on clippy 1.98). `disallowed_methods` is on by default at
-# `warn`, and `mise run lint` denies warnings.
+# - a raw timed wait, or a readout a test waits on (AGENTS.md,
+#   "Deterministic concurrency in tests"). Every time bound of a Rust test
+#   is a typed value that says which kind it is, `editor_wait::HangGuard`
+#   (a guard against a hang, or one run out on purpose) or
+#   `editor_wait::RealTime` (real time under test), and the waits that take
+#   one are `editor-wait`'s: `editor_wait::recv` for a channel,
+#   `editor_wait::wait_while` for a Condvar, `HangGuard::start` and
+#   `deadline` for a deadline, `RealTime::sleep` for a sleep and
+#   `editor_wait::Stopwatch` for real time measured. So std's timed
+#   primitives, and the polls (`is_finished`, `try_wait`, `yield_now`), are
+#   banned here, and each readout a test waits on is banned outside the
+#   places that are its to call;
+# - the outside world, which a core crate reaches only through the ports it
+#   defines, its tests on the ports' published fakes (AGENTS.md, "Ports and
+#   adapters" and "Hermetic tests"): the free functions of `std::fs` and its
+#   types, the methods of `Path` that ask the disk, the machine's
+#   directories, environment and command line, starting or ending a
+#   process, the wall clock, each adapter's real constructor, and the
+#   third-party entry points that reach the machine's fonts or clipboard.
 #
-# Where the `#[expect(clippy::disallowed_methods, reason = "...")]` marks
-# are (`expect`, not `allow`, so a mark that no longer covers a banned call
-# fails the gate, and so does a readout's path that resolves to nothing):
-# - `editor-wait`'s wrappers, the one place a test's bound meets the clock;
-# - production code on the real clock: the timer threads of `editor-ffi`,
-#   the watch service and the syntax worker, the render loop's park, the
-#   job clock and the window's input clock, `editor-launch-std`'s clock,
-#   its exit poll where no exit event can be had, and its probe's
-#   `--sleep`; and the echo service's reap of its ended workers, which
-#   never waits;
-# - the test hooks that tell a join will wait (`Worker`, the watch
-#   service), which ask `is_finished` only to say so;
-# - each readout's own tests, the subject (`queue`, `service`, `scripted`,
-#   the process service's `streaming`, `handled` and the winit adapter's,
-#   `render_loop`, `session`, grep's `service/tests.rs`, and
-#   `editor-ffi`'s `events`, `live` and `syntax`), and a readout that
-#   forwards to another (`probe::await_requests_handled`,
-#   `Syntaxes::settle` and `settle_exact`);
-# - the adapters' contract checks: the window contract's measurements, the
-#   process contract's streaming properties, the winit contract example's
-#   and settings check's reads after `await_requests_handled`, and the
-#   process adapter's ground, which reads a file until a line is whole;
-# - the C functions Lean calls, which make the guard from `bound_ms`
-#   (`editor_ffi_events_await_waiting`, `_events_script_join`,
-#   `_live_await`, `_processes_await_held`, `_render_await_rest` through
-#   `await_rest`, `_window_await_parked`, `_syntax_settle`). Each is
-#   banned in its turn, since in Rust its number would stand for a guard:
-#   it is called only by its own module's tests (`events`, `live`) and by
-#   the Rust checks of the C API, each at an `#[expect]` whose reason
-#   names its row of `docs/dev-practices/inferred-waits.md` (W71 and W80
-#   to W84: `c_api.rs`, `snapshot.rs`, `window.rs`, `common/open.rs`,
-#   `syntax.rs`), with its `bound_ms` made by `HangGuard::as_millis`;
-# - the tests outside a readout's module that wait on it for their
-#   subject: the syntax session's own integration tests, `editor-ffi`'s
-#   highlight, syntax and headless render tests, its window example, the
-#   window session's test of a run left going, and the echo package's
-#   tests on the fake completer.
+# This is the workspace's one `clippy.toml`, and no crate has one of its
+# own (.agents/rules/structure.md, "Clippy's bans"). Clippy reads the first
+# `clippy.toml` it finds from a package's manifest directory upwards, so
+# every crate reads this file, and so does the fixture `tests/wait-lints`.
+# Clippy has no list per crate: every ban holds in every crate, adapters
+# and examples included, and a site that is right to make the call opts
+# out where it makes it. The lint levels are the root `Cargo.toml`'s
+# `[workspace.lints.clippy]`, which every member's manifest takes
+# (`[lints] workspace = true`): `disallowed_methods` and `disallowed_types`
+# are denied, and so are `allow_attributes` and
+# `allow_attributes_without_reason`, so an opt-out is an `#[expect]` with a
+# reason, and a bare `#[allow]` or a mark without a reason fails the lint.
+# Clippy takes the path the compiler resolved, not the text: `use std::fs
+# as f; f::read(..)` is caught too.
 #
-# `tests/wait-lints/` shows the bans bite under this file and under each
-# crate's: it calls every path of the block once, and `mise run lint`
-# requires clippy to refuse there, under every config, each path the block
-# bans, read from this file (`tools/wait-bans.sh paths`; mise.toml,
-# `[tasks.lint]`). So a path added to the block that the fixture does not
-# call fails the gate. The readouts no crate but their owner can call are
-# not in the block, since the fixture cannot call them and only the
-# owner's config needs them: `Handled::wait_all` (`pub(crate)`) below the
-# block here, for `editor-platform-winit`, and `Live::await_at_most` and
-# `Feeds::join` in `crates/editor-ffi/clippy.toml`. An `#[expect]` at each
-# of their sites fails the lint if their entry goes.
+# How a site opts out: `#[expect(clippy::disallowed_methods, reason =
+# "...")]` (or `disallowed_types`), whose reason says why the real thing is
+# right there. `expect`, not `allow`, so a mark that no longer covers a
+# banned call fails the lint, and so does a path below that resolves to
+# nothing. Its scope:
+#
+# - An opt-out from `disallowed_methods` sits on a statement, a `let`, an
+#   `fn` or an `impl` block, never on a module or a crate: the wait bans are
+#   the same lint, and a module's or crate's mark would silence them there.
+#   The one exception is a readout's own tests, whose subject it is: its
+#   module's `mod tests`, or an integration test file whose every test waits
+#   on it (the syntax session's and `editor-ffi`'s syntax tests), may carry
+#   the mark at its head, naming the readout.
+# - An item's mark never covers a wait. A banned wait inside an `fn` or an
+#   `impl` that carries a `disallowed_methods` mark for the outside world has
+#   a statement-level `#[expect]` of its own, whose reason is the wait's.
+# - An opt-out from `disallowed_types`, which bans no wait, may sit on a
+#   crate only in a crate whose job is the real file system (the `-std`
+#   adapters, `editor-watch-notify`, `editor-grep-ripgrep`).
+#
+# Where the marks are:
+#
+# - the waits: `editor-wait`'s wrappers, the one place a test's bound meets
+#   the clock; production code on the real clock (the timer threads of
+#   `editor-ffi`, the watch service and the syntax worker, the render loop's
+#   park, the job clock and the window's input clock, `editor-launch-std`'s
+#   clock, its exit poll where no exit event can be had, and its probe's
+#   `--sleep`; and the echo service's reap of its ended workers, which never
+#   waits); the test hooks that tell a join will wait (`Worker`, the watch
+#   service), which ask `is_finished` only to say so; each readout's own
+#   tests, the subject (`queue`, `service`, `scripted`, the process
+#   service's `streaming`, `handled` and the winit adapter's, `render_loop`,
+#   `session`, grep's `service/tests.rs`, and `editor-ffi`'s `events`,
+#   `live` and `syntax`), and a readout that forwards to another
+#   (`probe::await_requests_handled`, `Syntaxes::settle` and
+#   `settle_exact`); the adapters' contract checks (the window contract's
+#   measurements, the process contract's streaming properties, the winit
+#   contract example's and settings check's reads after
+#   `await_requests_handled`, and the process adapter's ground, which reads
+#   a file until a line is whole); the Rust checks of the C functions Lean
+#   calls to wait, each at a mark whose reason names its row of
+#   `docs/dev-practices/inferred-waits.md` (W71 and W80 to W84: `c_api.rs`,
+#   `snapshot.rs`, `window.rs`, `common/open.rs`, `syntax.rs`), with its
+#   `bound_ms` made by `HangGuard::as_millis`; and the tests outside a
+#   readout's module that wait on it for their subject (the syntax
+#   session's own integration tests, `editor-ffi`'s highlight, syntax and
+#   headless render tests, its window example, the window session's test
+#   of a run left going, and the echo package's tests on the fake
+#   completer);
+# - the outside world: the real adapters, whose job it is (`editor-fs-std`,
+#   `editor-process-std`, `editor-watch-notify`, `editor-grep-ripgrep`,
+#   `editor-launch-std`, `editor-release-std`, the fuzzy adapters, the
+#   system font set, the clipboard, the GPU and the machine's defaults),
+#   and their contract checks on real files and processes in a temporary
+#   directory each test owns; the one place `editor-ffi` makes each real
+#   adapter for the process (its file, process, watch, grep, fuzzy,
+#   clipboard, font and window services) and its wiring test on real files;
+#   and each binary's and example's entry, which reads its own command line
+#   and exits with its outcome.
+#
+# `tests/wait-lints/` shows each wait ban bites: it calls each banned wait
+# that a crate other than its owner can call, each call under an
+# `#[expect]` of its own, so clippy over it passes only while every one of
+# them is refused (its `Cargo.toml` says how `mise run lint` runs it). The
+# readouts no crate but their owner can call (`Handled::wait_all`,
+# `Live::await_at_most`, `Feeds::join`) are not in it; an `#[expect]` at
+# each of their sites fails the lint if their entry goes.
 #
 # Seen to bite once by hand, on 2026-11-23: with the `#[expect]` on the job
 # clock's read in `crates/editor-ffi/src/timers.rs` (`Monotonic::now_ms`)
@@ -85,15 +111,19 @@
 # entries in the block and no `#[expect]` yet at the C API checks, clippy
 # failed at each of the twelve calls there, with "use of a disallowed
 # method `editor_ffi::live::editor_ffi_live_await`" and the like.
+#
+# What this does not hold: it is a list of names, so a function `std` gains
+# later is not in it, and neither are `std::net`, the free functions of
+# `std::os::unix::fs`, `include_bytes!`, or a call through `libc`. Those
+# are a reviewer's to look for. `deny.toml` closes the other route: which
+# crate may depend on which adapter or library.
 
 disallowed-methods = [
-  # BEGIN wait-bans: the root `clippy.toml` owns this block and says why;
-  # each `crates/*/clippy.toml` holds a copy that `tools/wait-bans.sh`
-  # writes from it. Edit it in the root only.
+  # The waits.
   #
   # The timed waits: a test's bound is an `editor_wait::HangGuard` or
   # `editor_wait::RealTime`, and its wait goes through `editor-wait`.
-  { path = "std::thread::sleep", reason = "a test's sleep is `editor_wait::RealTime::sleep`, which names the timing under test; real-clock code says why at an `#[expect]`" },
+  { path = "std::thread::sleep", reason = "a test's sleep is `editor_wait::RealTime::sleep`, which names the timing under test; a core waits through its `Clock` port; real-clock code says why at an `#[expect]`" },
   { path = "std::thread::sleep_ms", reason = "a test's sleep is `editor_wait::RealTime::sleep`, which names the timing under test" },
   { path = "std::thread::park_timeout", reason = "wait on the event itself, bounded by an `editor_wait::HangGuard`, not on a timed park" },
   { path = "std::thread::park_timeout_ms", reason = "wait on the event itself, bounded by an `editor_wait::HangGuard`, not on a timed park" },
@@ -104,7 +134,7 @@ disallowed-methods = [
   { path = "std::sync::Condvar::wait_timeout_while", reason = "a bounded Condvar wait is `editor_wait::wait_while`, whose bound is an `editor_wait::HangGuard` naming the event" },
   { path = "std::thread::JoinHandle::is_finished", reason = "asking whether a thread has ended is a poll: join it, or wait on a channel it drops with `editor_wait::recv`" },
   { path = "std::process::Child::try_wait", reason = "asking whether a child has exited is a poll: wait on its exit, bounded by an `editor_wait::HangGuard`" },
-  { path = "std::time::Instant::now", reason = "a deadline is `editor_wait::HangGuard::start` or `deadline`, and a timing measured is an `editor_wait::Stopwatch`; real-clock code says why at an `#[expect]`" },
+  { path = "std::time::Instant::now", reason = "a deadline is `editor_wait::HangGuard::start` or `deadline`, and a timing measured is an `editor_wait::Stopwatch`; a core reads the time through its `Clock` port, or keeps none; real-clock code says why at an `#[expect]`" },
   # The readouts a test waits on, each a `HangGuard` wait of its owner's
   # that a crate other than its owner can call. `allow-invalid`: a crate
   # that does not reach the owner cannot resolve the path; a wrong one
@@ -121,6 +151,11 @@ disallowed-methods = [
   { path = "editor_grep::service::Service::until_held_back", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_ffi::syntax::Syntaxes::settle", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_ffi::syntax::Syntaxes::settle_exact", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  # The readouts only their own crate can call, banned outside their own
+  # tests and the C function Lean calls. `tests/wait-lints` cannot call them.
+  { path = "editor_platform_winit::handled::Handled::wait_all", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_ffi::live::Live::await_at_most", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_ffi::events::Feeds::join", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   # The C functions Lean calls to wait, each a readout's or a join's with
   # its guard made from a `bound_ms`: in Rust a number would stand for the
   # guard, so only a check that names its inventory row calls one.
@@ -131,8 +166,91 @@ disallowed-methods = [
   { path = "editor_ffi::window::editor_ffi_window_await_parked", allow-invalid = true, reason = "a C function Lean calls to wait, bounded by `bound_ms`: a Rust check calls it only at an `#[expect]` that names its row of `docs/dev-practices/inferred-waits.md`, with the number made by `editor_wait::HangGuard::as_millis`" },
   { path = "editor_ffi::syntax::editor_ffi_syntax_settle", allow-invalid = true, reason = "a C function Lean calls to wait, bounded by `bound_ms`: a Rust check calls it only at an `#[expect]` that names its row of `docs/dev-practices/inferred-waits.md`, with the number made by `editor_wait::HangGuard::as_millis`" },
   { path = "editor_ffi::render::editor_ffi_render_await_rest", allow-invalid = true, reason = "a C function Lean calls to wait, bounded by `bound_ms`: a Rust check calls it only at an `#[expect]` that names its row of `docs/dev-practices/inferred-waits.md`, with the number made by `editor_wait::HangGuard::as_millis`" },
-  # END wait-bans
-  # The readout only its own crate can call: `editor-platform-winit`, which
-  # has no `clippy.toml` of its own, reads this one.
-  { path = "editor_platform_winit::handled::Handled::wait_all", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  #
+  # The outside world. A core crate reaches files through its port (`Fs`,
+  # `Files`, `Watch`), and its tests build the port's fake; the adapter whose
+  # job is the real thing, and a check on real files in a temporary
+  # directory it owns, say so at an `#[expect]`.
+  #
+  # Every free function of `std::fs`.
+  { path = "std::fs::canonicalize", reason = "a path is resolved through the files port (`Fs::resolve`); the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::copy", reason = "files are reached through the files port; the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::create_dir", reason = "files are reached through the files port, and a test builds its fake; the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::create_dir_all", reason = "files are reached through the files port, and a test builds its fake; the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::exists", reason = "the disk is asked through the files port (`Fs::stat`); the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::hard_link", reason = "files are reached through the files port; the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::metadata", reason = "the disk is asked through the files port (`Fs::stat`); the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::read", reason = "files are read through the files port (`Fs::read`); the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::read_dir", reason = "a directory is listed through the files port; the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::read_link", reason = "a link is read through the files port (`Fs::read_link`); the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::read_to_string", reason = "files are read through the files port (`Fs::read`); the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::remove_dir", reason = "files are reached through the files port; the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::remove_dir_all", reason = "files are reached through the files port; the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::remove_file", reason = "files are removed through the files port (`Fs::remove`); the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::rename", reason = "files are renamed through the files port (`Fs::rename`); the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::set_permissions", reason = "files are reached through the files port (`Fs::write` takes the permissions); the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::symlink_metadata", reason = "the disk is asked through the files port (`Fs::stat`); the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::write", reason = "files are written through the files port (`Fs::write`); the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::File::create", reason = "files are written through the files port; the real file system is an adapter's, which says so at an `#[expect]`" },
+  # The methods of `Path` that ask the disk.
+  { path = "std::path::Path::canonicalize", reason = "a path is resolved through the files port (`Fs::resolve`); the real disk is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::path::Path::exists", reason = "the disk is asked through the files port (`Fs::stat`); the real disk is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::path::Path::is_dir", reason = "the disk is asked through the files port (`Fs::stat`); the real disk is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::path::Path::is_file", reason = "the disk is asked through the files port (`Fs::stat`); the real disk is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::path::Path::is_symlink", reason = "the disk is asked through the files port; the real disk is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::path::Path::metadata", reason = "the disk is asked through the files port (`Fs::stat`); the real disk is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::path::Path::read_dir", reason = "a directory is listed through the files port; the real disk is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::path::Path::read_link", reason = "a link is read through the files port (`Fs::read_link`); the real disk is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::path::Path::symlink_metadata", reason = "the disk is asked through the files port (`Fs::stat`); the real disk is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::path::Path::try_exists", reason = "the disk is asked through the files port (`Fs::stat`); the real disk is an adapter's, which says so at an `#[expect]`" },
+  # The directories of the machine, its environment and the command line.
+  { path = "std::env::current_dir", reason = "a core has no working directory: a path that is not absolute is refused; a binary's entry says why at an `#[expect]`" },
+  { path = "std::env::set_current_dir", reason = "a core has no working directory, and a test leaves the process's as it found it" },
+  { path = "std::env::temp_dir", reason = "a test that needs real files makes a directory of its own with `tempfile`; a core's tests build a fake" },
+  { path = "std::env::var", reason = "the environment is read through a port (`Env`, `Platform`), and a test hands it a fake; a binary's entry or an adapter says why at an `#[expect]`" },
+  { path = "std::env::var_os", reason = "the environment is read through a port (`Env`, `Platform`), and a test hands it a fake; a binary's entry or an adapter says why at an `#[expect]`" },
+  { path = "std::env::vars", reason = "the environment is read through a port (`Env`, `Platform`), and a test hands it a fake; a binary's entry or an adapter says why at an `#[expect]`" },
+  { path = "std::env::vars_os", reason = "the environment is read through a port (`Env`, `Platform`), and a test hands it a fake; a binary's entry or an adapter says why at an `#[expect]`" },
+  { path = "std::env::args", reason = "a core is handed its arguments; a binary's or an example's entry reads them, at an `#[expect]`" },
+  { path = "std::env::args_os", reason = "a core is handed its arguments; a binary's or an example's entry reads them, at an `#[expect]`" },
+  { path = "std::env::current_exe", reason = "a core learns its own path through a port (`Platform`), and a test hands it a fake; the adapter says why at an `#[expect]`" },
+  # Processes.
+  { path = "std::process::Command::new", reason = "programs are started through a port (`Processes`, `Spawn`, `Exec`, `Process`), and a test hands it a fake; the adapter, or a check on real processes, says why at an `#[expect]`" },
+  { path = "std::process::id", reason = "a core learns its pid through a port (`Pids`), and a test hands it a fake; the adapter says why at an `#[expect]`" },
+  { path = "std::process::exit", reason = "a core answers an outcome; a binary's or an example's entry exits with it, at an `#[expect]`" },
+  # The wall clock.
+  { path = "std::time::SystemTime::now", reason = "time reaches a core through a port (`Fs::stat`, a `Clock`), and a test sets the fake's; the adapter says why at an `#[expect]`" },
+  #
+  # Each adapter's real constructor, made in one place: the process's
+  # service in `editor-ffi`, an example run on demand, or the adapter's own
+  # contract check. A core's tests run on the port's fake.
+  # `allow-invalid`: a crate that does not reach the adapter cannot resolve
+  # the path; a wrong one leaves an `#[expect]` at its sites unfulfilled.
+  { path = "editor_fs_std::StdFs::system", allow-invalid = true, reason = "the real file system is made in one place, the process's file service; everything else takes an `Fs`, and a test hands it `FakeFs`" },
+  { path = "editor_process_std::StdProcesses::system", allow-invalid = true, reason = "real processes are started in one place, the process's process service; a test runs on `FakeProcesses`" },
+  { path = "editor_watch_notify::NotifyWatch::system", allow-invalid = true, reason = "real files are watched in one place, the process's watch service; a test runs on `FakeWatch`" },
+  { path = "editor_grep_ripgrep::RipgrepFiles::new", allow-invalid = true, reason = "real files are searched in one place, the process's grep service; a test runs on `FakeFiles`" },
+  { path = "editor_fuzzy_nucleo::NucleoScorer::new", allow-invalid = true, reason = "the scorer library is made in one place, the process's fuzzy service; a test runs on the scorer's fake, `InOrder`" },
+  { path = "editor_fuzzy_triple_accel::TripleAccel::new", allow-invalid = true, reason = "the searcher library is made in one place, the process's fuzzy service; a test runs on the searcher's fake, `locate::Scan`" },
+  { path = "editor_platform_arboard::SystemClipboard::open", allow-invalid = true, reason = "no test reads or writes the desktop's clipboard: it is opened in one place, for Lean's window mode, and by the adapter's on-demand contract; every test is on `MemoryClipboard`" },
+  { path = "editor_render_wgpu::WgpuRenderer::on_window", allow-invalid = true, reason = "no test makes a renderer on a window: the gate opens none; the process's window and the on-demand examples do, each at an `#[expect]`" },
+  { path = "editor_render_wgpu::WgpuRenderer::on_this_machine", allow-invalid = true, reason = "no test asks for this machine's GPU: the gate runs wgpu on its no-op back end, and an on-demand example asks for a real one" },
+  { path = "editor_raster_coretext::SystemDefaults::new", allow-invalid = true, reason = "no test reads this machine's defaults: a window's Core Text rasteriser reads them in one place, and a test runs on `defaults::fake::Canned`" },
+  { path = "editor_shape_parley::FontSet::system", allow-invalid = true, reason = "no test reads the machine's fonts, which differ from machine to machine: a test is handed the fixture fonts by `FontSet::only`; the process's display and the on-demand examples read the system's" },
+  # The third-party entry points behind them.
+  { path = "arboard::Clipboard::new", allow-invalid = true, reason = "the system clipboard is opened in one place, `SystemClipboard::open`, which no test calls" },
+  { path = "parley::FontContext::new", allow-invalid = true, reason = "a font context of Parley's own making holds the system's fonts; a `FontSet` says where fonts come from" },
+  { path = "fontique::Collection::load_system_fonts", allow-invalid = true, reason = "the system's fonts come only through a `FontSet`, and no test uses them" },
+  { path = "fontique::Collection::load_fonts_from_paths", allow-invalid = true, reason = "fonts reach the shaper as bytes, never read from the disk by it" },
+]
+
+# The types of `std::fs`, which `disallowed-methods` cannot reach through
+# their methods (`File::open`, `OpenOptions::new`). A crate whose job is the
+# real file system marks itself once, at its root.
+disallowed-types = [
+  { path = "std::fs::File", reason = "files are reached through the files port; the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::OpenOptions", reason = "files are reached through the files port; the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::DirBuilder", reason = "files are reached through the files port; the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::ReadDir", reason = "files are reached through the files port; the real file system is an adapter's, which says so at an `#[expect]`" },
+  { path = "std::fs::DirEntry", reason = "files are reached through the files port; the real file system is an adapter's, which says so at an `#[expect]`" },
 ]

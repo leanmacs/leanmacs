@@ -1232,7 +1232,7 @@ never a poll. Each takes the guard as a `HangGuard` (`Editor.Bound` in Lean,
 `editor_wait` in Rust), and none takes a number of milliseconds; the C
 functions Lean calls take a guard's milliseconds and build the guard at
 the edge. In Rust they are banned by clippy outside their own tests, their
-adapters' contracts and the C functions (`clippy.toml`), and so are the
+adapters' contracts and the C functions (the root `clippy.toml`), and so are the
 syntax session's `wait_for` and `wait_exact` with the bindings'
 `Syntaxes::settle` and `settle_exact`, the grep service's
 `until_held_back`, the live-handle wait and the script feeds' join. In

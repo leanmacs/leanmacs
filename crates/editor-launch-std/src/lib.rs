@@ -45,6 +45,10 @@ fn file_error(e: &io::Error) -> FileError {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StdFiles;
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "`StdFiles` is the launcher's real files: `std::fs` is what it adapts"
+)]
 impl Files for StdFiles {
     fn read(&self, path: &Path) -> Result<Vec<u8>, FileError> {
         std::fs::read(path).map_err(|e| file_error(&e))
@@ -208,6 +212,10 @@ fn wait_exit_os(pid: rustix::process::Pid, timeout_ms: u64) -> Waited {
 }
 
 impl Pids for StdPids {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the real `Pids`: this process's own id is what it answers"
+    )]
     fn own(&self) -> Pid {
         Pid(std::process::id())
     }
@@ -223,6 +231,10 @@ impl Pids for StdPids {
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the real `Spawn` and `Exec` build the command they start here"
+)]
 fn command(invocation: &Invocation) -> Command {
     let mut command = Command::new(&invocation.program);
     command.args(&invocation.args);
@@ -292,6 +304,10 @@ impl Spawn for StdSpawn {
 /// arguments, its standard output this process's standard input and its
 /// standard input closed, prints its pid and exits without waiting.
 #[must_use]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the detached start's intermediate is a real process that starts the program"
+)]
 pub fn detach(args: &[OsString]) -> ExitCode {
     let Some((program, rest)) = args.split_first() else {
         eprintln!("leanmacs: --detach needs a program");
@@ -358,6 +374,10 @@ impl StdPlatform {
     /// # Errors
     ///
     /// When the system cannot say where this executable is.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the real `Platform` reads this executable's own path once, here"
+    )]
     pub fn new() -> io::Result<Self> {
         Ok(Self {
             own: std::env::current_exe()?,
@@ -374,6 +394,10 @@ impl Platform for StdPlatform {
         cfg!(target_os = "macos")
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the real `Platform` reads the process's environment"
+    )]
     fn var(&self, name: &str) -> Option<OsString> {
         std::env::var_os(name)
     }

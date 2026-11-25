@@ -17,13 +17,9 @@
 //!
 //! Every file is in a temporary directory the test makes, which is removed
 //! when it ends, and every path is passed in explicitly. The fixtures are
-//! written and read back with `std::fs`, which the crate's `clippy.toml`
-//! refuses everywhere else in this crate: hence the `expect` below.
-
-#![expect(
-    clippy::disallowed_methods,
-    reason = "the wiring test writes its fixtures into, and reads the saved files back from, a temporary directory it owns; it is the one test of this crate on real files"
-)]
+//! written and read back with `std::fs`, which the root `clippy.toml`
+//! refuses everywhere else in this crate: hence the `expect` on each
+//! function here that does.
 
 use std::mem::MaybeUninit;
 use std::os::unix::ffi::OsStrExt;
@@ -298,6 +294,10 @@ unsafe fn text_of_a_document_from(snapshot: *const Snapshot) -> String {
 
 /// The whole life of the process's file service, in order.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the wiring test writes its fixtures into, and reads the saved files back from, a temporary directory it owns; it is the one test of this crate on real files"
+)]
 fn files_are_loaded_and_saved_through_c_and_completed_on_the_completion_queue() {
     let directory = tempfile::tempdir().expect("a temporary directory can be made");
     let snapshots = editor_ffi_snapshot_live();

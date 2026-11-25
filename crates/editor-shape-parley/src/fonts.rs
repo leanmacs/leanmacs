@@ -121,8 +121,8 @@ impl FontSet {
     /// family, as fontique finds them.
     ///
     /// What it holds depends on the machine, so no test calls it
-    /// (`clippy.toml`); `mise run shaper-system` holds a shaper over it to
-    /// the port's contract, on demand.
+    /// (the root `clippy.toml`); `mise run shaper-system` holds a shaper
+    /// over it to the port's contract, on demand.
     pub fn system() -> Self {
         // The one place the system's fonts are turned on.
         let mut collection = Collection::new(CollectionOptions {

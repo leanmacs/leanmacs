@@ -62,3 +62,6 @@ regex-cursor = { version = "=0.1.5", default-features = false, features = ["perf
 # for fewer here would change nothing in the build. The adapter uses none
 # of them: it builds classes from ranges and parses nothing.
 regex-syntax = "=0.8.11"
+
+[lints]
+workspace = true

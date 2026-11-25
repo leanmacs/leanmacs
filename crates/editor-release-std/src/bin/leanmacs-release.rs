@@ -83,6 +83,10 @@ fn absolute(path: &str) -> Result<PathBuf, String> {
     std::path::absolute(path).map_err(|e| format!("cannot make {path} absolute: {e}"))
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the release tool's binary is the edge where the core's plan meets the disk: it reads the build's outputs and writes the files the core prepared"
+)]
 fn run(args: &[String]) -> Result<Option<String>, String> {
     let (root, rest) = match args {
         [flag, root, rest @ ..] if flag == "--root" => (absolute(root)?, rest),
@@ -213,6 +217,10 @@ fn run(args: &[String]) -> Result<Option<String>, String> {
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary's entry reads its own command line"
+)]
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run(&args) {

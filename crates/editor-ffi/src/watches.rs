@@ -22,7 +22,7 @@
 //! The process has one service, over the machine's watch
 //! (`editor_watch_notify::NotifyWatch`) and the job clock
 //! ([`Monotonic`]), in a static made on its first use. That static is the
-//! one place in this crate's sources that makes the adapter: the crate's
+//! one place in this crate's sources that makes the adapter: the root
 //! `clippy.toml` refuses its constructor everywhere else, so the unit tests
 //! below run on the fake and watch no file.
 //!

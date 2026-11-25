@@ -3,8 +3,10 @@
 //! from the completion queue bounded by a deadline, and the one write of a
 //! file of the test's own temporary directory.
 
-// Each test binary uses its own part of this module.
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each test binary uses its own part of this module, and `expect` would be unfulfilled in one that uses all of it"
+)]
 
 use std::mem::MaybeUninit;
 use std::path::Path;

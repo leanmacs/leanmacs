@@ -5,7 +5,7 @@
 //! implementation keeps ([`contract::check`]); the real adapter, over
 //! `std::fs`, is another crate (`editor-fs-std`). Paths are
 //! [`std::path::Path`]s and bytes are bytes; nothing here names `std::fs`
-//! or `std::io`, and the crate's `clippy.toml` keeps it so.
+//! or `std::io`, and the root `clippy.toml` keeps it so.
 //!
 //! # The rules of the port
 //!

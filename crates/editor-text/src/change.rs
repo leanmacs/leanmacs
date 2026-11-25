@@ -805,8 +805,10 @@ mod tests {
         assert!(changes.is_identity());
     }
 
-    // The range is the point of the test: it is one a caller can pass.
-    #[expect(clippy::reversed_empty_ranges)]
+    #[expect(
+        clippy::reversed_empty_ranges,
+        reason = "a backwards range is the point of the test: a caller can pass one"
+    )]
     #[test]
     fn replacing_is_none_for_a_range_that_is_backwards_or_past_the_length() {
         assert_eq!(ChangeSet::replacing(5, 3..1, "x"), None);

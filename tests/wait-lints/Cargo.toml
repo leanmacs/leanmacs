@@ -1,9 +1,11 @@
-# The negative fixture of the timed-wait bans (the root `clippy.toml`): a
-# crate whose only purpose is to be refused by clippy. `src/lib.rs` calls
-# each path of the root `clippy.toml`'s `wait-bans` block once, and
-# `mise run lint` requires `cargo clippy` over it to fail with the message
-# of each path of that block (`tools/wait-bans.sh paths`), under the root
-# config and under each crate's (`CLIPPY_CONF_DIR`).
+# The fixture of the wait bans (the root `clippy.toml`): a crate whose only
+# purpose is to be refused by clippy. `src/lib.rs` calls each banned wait
+# that a crate other than its owner can call, once, each call under an
+# `#[expect(clippy::disallowed_methods)]` of its own, so `mise run lint`'s
+# `cargo clippy -- -D warnings` over it exits 0 only while clippy refuses
+# every one of them: a ban that stops biting leaves its expectation
+# unfulfilled, which is an error. It reads the root `clippy.toml`, the
+# nearest above it, as every crate does.
 # It type-checks, is never built for use and never runs.
 #
 # Not a member of the workspace: the empty `[workspace]` below makes it a

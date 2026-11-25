@@ -34,3 +34,6 @@ editor-platform = { path = "../editor-platform" }
 # 0.7.3 alone, for Wayland; `window_clipboard` 0.5.1, which also wants a
 # display handle.
 arboard = { version = "=3.7.0", default-features = false }
+
+[lints]
+workspace = true

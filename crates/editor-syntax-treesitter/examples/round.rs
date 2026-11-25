@@ -67,6 +67,10 @@ fn summary(name: &str, mut times: Vec<Duration>) {
     );
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "an example's entry reads its own command line and the file it names, on demand"
+)]
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let (Some(path), Some(grammar)) = (args.next(), args.next()) else {

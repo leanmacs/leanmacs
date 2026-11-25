@@ -10,11 +10,19 @@ use editor_fuzzy::locate::{self, Searcher, Span};
 use editor_fuzzy_triple_accel::TripleAccel;
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's contract check: the library is what it holds to the port"
+)]
 fn the_triple_accel_searcher_keeps_the_searcher_ports_contract() {
     assert_eq!(contract::check_searcher(&mut TripleAccel::new()), [""; 0]);
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's contract check: the library is what it holds to the port"
+)]
 fn a_pattern_with_one_substitution_is_found_with_one_error() {
     let text = "fn main() { println!(\"helo, world\"); }";
     let spans = TripleAccel::new().spans("hello, world", text, 3);
@@ -27,6 +35,10 @@ fn a_pattern_with_one_substitution_is_found_with_one_error() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's contract check: the library is what it holds to the port"
+)]
 fn a_pattern_with_no_span_near_enough_reports_none() {
     let spans = TripleAccel::new().spans("needle", "haystack haystack", 1);
 
@@ -34,6 +46,10 @@ fn a_pattern_with_no_span_near_enough_reports_none() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's contract check: the library is what it holds to the port"
+)]
 fn an_empty_text_is_answered_with_the_empty_span_when_the_pattern_is_within_the_errors_allowed() {
     // Round 20 of the contract's sweep: on x86_64 the library's SIMD search
     // reports no span of an empty text.
@@ -50,6 +66,10 @@ fn an_empty_text_is_answered_with_the_empty_span_when_the_pattern_is_within_the_
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's contract check: the library is what it holds to the port"
+)]
 fn an_empty_text_reports_the_empty_span_only_when_the_whole_pattern_is_within_the_errors_allowed() {
     assert_eq!(
         TripleAccel::new().spans("ab", "", 2),

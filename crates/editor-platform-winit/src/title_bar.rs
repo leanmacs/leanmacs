@@ -49,7 +49,6 @@ use crate::corner::Shape;
 /// every resize the run printed said `fullscreen false corner 16 top 32`.
 /// `docs/dev-practices/on-demand-checks.md`, "The title bar's top inset,
 /// measured", says how to measure it again.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) const FALLBACK_POINTS: u32 = 32;
 
 /// The attributes a window is opened with for `options`: the platform's

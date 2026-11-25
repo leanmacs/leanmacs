@@ -5,7 +5,7 @@
 //! pure: it does no I/O of its own, reads no clock, starts no thread and
 //! knows nothing about Lean. It reaches a file system only through the
 //! [`fs::Fs`] port, which it defines and whose real adapter is another
-//! crate (`editor-fs-std`); the crate's `clippy.toml` refuses a line of it,
+//! crate (`editor-fs-std`); the root `clippy.toml` refuses a line of it,
 //! a test included, that names a real file, a process or a clock.
 //! `editor-ffi` puts a text behind a handle for the Lean editor.
 //!

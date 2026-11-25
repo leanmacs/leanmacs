@@ -23,3 +23,6 @@ ropey = { version = "=2.0.0-beta.1", default-features = false, features = ["metr
 # fork, no timeout and no temporary file; the tests' module docs say how
 # they are kept deterministic.
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

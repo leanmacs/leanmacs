@@ -18,7 +18,7 @@
 //!
 //! The crate touches nothing itself. It reaches files, the time, other
 //! processes, starts, execs and its environment through the ports in
-//! [`ports`], and its `clippy.toml` refuses the calls that would reach
+//! [`ports`], and the root `clippy.toml` refuses the calls that would reach
 //! them directly. Its tests run on the published fakes ([`fake`]);
 //! [`contract`] holds the real adapters to what the fakes do. The adapters
 //! and the `leanmacs` binary are `editor-launch-std`.

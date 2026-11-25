@@ -34,3 +34,6 @@ editor-diff = { path = "../editor-diff" }
 #   tracks gitoxide's needs and not a diff port's.
 # - Our own Myers: an engine is what the library is for.
 imara-diff = { version = "=0.2.0", default-features = false }
+
+[lints]
+workspace = true

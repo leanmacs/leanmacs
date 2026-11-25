@@ -34,3 +34,6 @@ editor-text = { path = "../editor-text" }
 # - `cap-std` 4.0.3 and `rustix` 1.1.6 offer nothing the port's methods need
 #   beyond `std`.
 tempfile = { version = "=3.27.0", default-features = false }
+
+[lints]
+workspace = true

@@ -38,8 +38,8 @@
 //! (no GPU adapter among it), and 2 off macOS.
 
 #[cfg_attr(
-    not(target_os = "macos"),
-    allow(
+    all(not(target_os = "macos"), not(test)),
+    expect(
         dead_code,
         reason = "off macOS the check only says it cannot run; its tests run everywhere"
     )

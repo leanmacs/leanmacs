@@ -371,7 +371,10 @@ mod tests {
 
         // The whole text, a part of it, no byte, a range that is backwards
         // and one that runs past the end.
-        #[expect(clippy::reversed_empty_ranges)]
+        #[expect(
+            clippy::reversed_empty_ranges,
+            reason = "a backwards range is one of the cases: a caller can pass one"
+        )]
         let ranges = [0..len, 1..3, 2..2, 3..1, 0..past];
         for range in ranges {
             assert_eq!(

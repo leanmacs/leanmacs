@@ -15,3 +15,6 @@ publish = false
 # neither crate an entry: any crate may depend on them. No dev-dependency.
 [dependencies]
 editor-wait = { path = "../editor-wait" }
+
+[lints]
+workspace = true

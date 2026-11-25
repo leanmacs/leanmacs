@@ -283,7 +283,7 @@
 //! `files_are_loaded_and_saved_through_c_and_completed_on_the_completion_queue`
 //! in `tests/files.rs` is the wiring test: the C functions, the process's
 //! service, the logic and the real adapter, in a temporary directory it
-//! owns, asserting bytes in and bytes out. The crate's `clippy.toml`
+//! owns, asserting bytes in and bytes out. The root `clippy.toml`
 //! refuses a real file, and the adapter's constructor, everywhere in the
 //! crate but the process's instance and that test. On the Lean side: the
 //! file checks of `ffi-test` (`fileChecks`), which pin that the requests,

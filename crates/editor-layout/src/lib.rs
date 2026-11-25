@@ -4,8 +4,8 @@
 //! The crate is pure: it does no I/O, reads no clock and starts no thread.
 //! It measures text only through the [`shaper::Shaper`] port it defines,
 //! whose published fake is [`shaper::fake::CellShaper`] and whose contract
-//! check is [`shaper::contract`]. Its `clippy.toml` refuses a line of it, a
-//! test included, that names a real file, a process or a clock.
+//! check is [`shaper::contract`]. The root `clippy.toml` refuses a line of
+//! it, a test included, that names a real file, a process or a clock.
 //!
 //! # The rules this crate pins
 //!
@@ -369,7 +369,10 @@ impl<S: Shaper> Layout<S> {
     /// position below a block is lower by the block's lines, each at the
     /// height the frame draws it at ([`query`], "Blocks"). With no block
     /// it is [`Layout::spot`].
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a view's geometry, its blocks and the position, each an input of where the position is drawn"
+    )]
     pub fn spot_with_blocks(
         &mut self,
         text: &TextRef,

@@ -1,7 +1,8 @@
 # Module structure
 
-What a module may import, where the core's modules sit and which targets
-load the build's linters. Review holds a change to these rules; no gate
+What a module may import, where the core's modules sit, which targets
+load the build's linters, and where a Rust crate's bans live and where a
+site may opt out of them. Review holds a change to these rules; no gate
 step checks them (`gates.md`). The Lean linters (the wait and real-host
 linters) and Lake's own resolution of `require`s stay automated, and
 rdm task `lean-structure-rules-tool` is where automated checking of the
@@ -124,3 +125,36 @@ See `docs/design/packages.md`, "The generated root", and
   to this.
 
 See `docs/dev-practices/the-gate.md`, "The wait lints".
+
+## Clippy's bans
+
+What clippy holds (the bans, the lint levels, a stale or reasonless mark)
+it holds by itself under `mise run lint`; these are the parts of the rule
+it cannot see.
+
+- Every ban lives in the root `clippy.toml`. No crate, and no fixture,
+  gets a `clippy.toml` of its own: clippy reads only the nearest one, so a
+  crate with its own would read none of the root's bans.
+- Every workspace member's `Cargo.toml` has `[lints] workspace = true`,
+  so the root `Cargo.toml`'s `[workspace.lints.clippy]` levels hold in it.
+  A package's crate (`tests/packages/*/rust`, `packages/*/rust`) too.
+- An opt-out from `disallowed_methods` is an `#[expect(…, reason = "…")]`
+  on a statement, a `let`, an `fn` or an `impl`, never on a module or a
+  crate: the wait bans are the same lint, and a module's or crate's mark
+  would silence them there. The exception is a readout's own tests, whose
+  subject it is: its module's `mod tests`, or an integration test file
+  whose every test waits on it, may carry the mark at its head, naming the
+  readout.
+- An item's mark never covers a wait. A banned wait inside an `fn` or an
+  `impl` that carries a `disallowed_methods` mark has a statement-level
+  `#[expect(clippy::disallowed_methods, reason = "…")]` of its own, whose
+  reason is the wait's. Prefer a statement's mark to an item's in a
+  function that holds any wait.
+- An opt-out from `disallowed_types`, which bans no wait, may sit on a
+  crate only in a crate whose job is the real file system.
+- Each new wait-ban path that a crate other than its owner can call gets
+  one call in `tests/wait-lints/src/lib.rs`, under an `#[expect]` of its
+  own that covers that call alone.
+
+See the root `clippy.toml`'s header and
+`docs/dev-practices/the-gate.md`, "The wait lints".

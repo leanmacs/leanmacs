@@ -11,3 +11,6 @@ publish = false
 # binary are `editor-launch-std`; `editor-ffi` reaches the exec and the main
 # bundle through that crate (deny.toml).
 [dependencies]
+
+[lints]
+workspace = true

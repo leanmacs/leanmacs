@@ -255,8 +255,10 @@ mod tests {
         assert_eq!(whole.collect::<String>(), string);
     }
 
-    // The backwards range is the point of the test: a caller can pass one.
-    #[expect(clippy::reversed_empty_ranges)]
+    #[expect(
+        clippy::reversed_empty_ranges,
+        reason = "a backwards range is the point of the test: a caller can pass one"
+    )]
     #[test]
     fn a_range_that_is_not_two_positions_in_order_has_no_chunks_and_no_slice() {
         let snapshot = Text::from("héllo").snapshot();

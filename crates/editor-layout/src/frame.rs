@@ -1386,7 +1386,10 @@ pub(crate) struct PaintedLine {
 /// which is more than its bytes when it starts inside a tab's spaces, and
 /// each is cut to the columns of the line it covers: a tab's span to the
 /// spaces of it the line holds.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the line, where it sits in the buffer, and what paints it: each an input the painting reads"
+)]
 pub(crate) fn paint_line<L, S: Shaper>(
     entry: &LineEntry<L>,
     index: usize,

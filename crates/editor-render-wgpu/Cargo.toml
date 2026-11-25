@@ -77,3 +77,6 @@ wgpu = { version = "=30.0.2", features = ["noop"] }
 # which the examples draw. No other test of this crate runs a shaper.
 # `deny.toml` lists this crate as its one wrapper.
 editor-shape-parley = { path = "../editor-shape-parley" }
+
+[lints]
+workspace = true

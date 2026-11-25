@@ -107,6 +107,10 @@ define_class!(
         fn send_quit(&self, _: Option<&AnyObject>) {
             let class = AnyClass::get(c"NSAppleEventDescriptor")
                 .expect("Foundation defines NSAppleEventDescriptor");
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the quit Apple Event is sent to this process itself, which it names by its own pid"
+            )]
             let pid = i32::try_from(std::process::id()).expect("a pid is a pid_t");
             // SAFETY: `descriptorWithProcessIdentifier:` takes a `pid_t`
             // (an `i32`) and returns a descriptor, autoreleased. The typed

@@ -231,7 +231,10 @@ trait Lays: Send {
         goal: Option<f32>,
     ) -> Result<Moved, QueryError>;
     /// [`Layout::spot_with_blocks`].
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "it stands for `Layout::spot_with_blocks`, whose arguments it takes one for one"
+    )]
     fn spot(
         &mut self,
         text: &TextRef,
@@ -544,7 +547,10 @@ impl Display {
     /// wide and `height` tall, padded `padding` points, with `blocks`
     /// between its rows, that shows from `anchor`
     /// ([`Layout::spot_with_blocks`]): none when it does not show it.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the view's geometry and the position, each as the C function is handed it"
+    )]
     pub fn spot(
         &self,
         snapshot: &Snapshot,

@@ -56,8 +56,8 @@
 //! ([`HangGuard::deadline`], [`HangGuard::start`], [`Deadline::rest`]),
 //! real time's sleep ([`RealTime::sleep`]) and real time measured from a
 //! start ([`Stopwatch`]). `mise run lint` bans std's raw
-//! timed primitives everywhere else (the root `clippy.toml` and each
-//! crate's), so these wrappers are where a time bound meets the clock.
+//! timed primitives everywhere else (the root `clippy.toml`), so these
+//! wrappers are where a time bound meets the clock.
 //!
 //! # Why our own code
 //!

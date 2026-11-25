@@ -83,8 +83,8 @@ pub struct StdProcesses {
 }
 
 impl StdProcesses {
-    /// The machine's processes. The one constructor, which the crates that
-    /// must not start a process refuse in their `clippy.toml`.
+    /// The machine's processes. The one constructor, which the root
+    /// `clippy.toml` refuses everywhere but the sites marked to start one.
     pub const fn system() -> Self {
         Self { _private: () }
     }
@@ -110,6 +110,10 @@ fn refusal(error: &std::io::Error, command: &Command) -> Refusal {
 impl Processes for StdProcesses {
     type Child = StdChild;
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "`StdProcesses` is the real process port: it starts the command it is given"
+    )]
     fn spawn(&self, command: &Command, input: Input) -> Result<StdChild, Refusal> {
         let mut std_command = std::process::Command::new(&command.program);
         std_command
