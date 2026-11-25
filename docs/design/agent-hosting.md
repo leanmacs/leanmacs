@@ -55,6 +55,8 @@ package `agents-api`; decided by the owner, 2026-11-23):**
   buffer text and routing file writes through the edit log. Claude Code's
   adapter never uses `fs/*` ("The ACP spike"), so both are later work, and
   per-edit provenance is to come from the tool calls' diffs, also later.
+  Until buffer-backed serving is built, the client advertises no `fs`
+  capability, so no agent can write through it by accident.
 - Batching updates per frame before they reach the editor thread.
 
 **Policy, overridable from config:**
@@ -350,11 +352,12 @@ tasks from the editor is the roadmap after rdm:roadmap/acp-agents.
 
 ## An agent's write under an open buffer
 
-An agent that writes through ACP's `fs/write_text_file` writes to the
-buffer through the edit log ("ACP", above), so it never races the editor.
-An agent that writes the file directly does, and so does any other
-program; Claude Code's adapter is one, since it edits files itself even
-when the client offers the fs methods ("The ACP spike", above). What happens then (decided by
+Routing ACP's `fs/write_text_file` through the edit log, so that such a
+write never races the editor, is later work ("ACP", above). Until then
+the client offers no fs methods, and every agent write, from any
+adapter, is an external change like any other program's; Claude Code's
+adapter edits files itself even when the client offers the fs methods
+("The ACP spike", above). What happens then (decided by
 the daily-driver floor's phase 5):
 
 - **Keep mine, and offer two explicit resolutions.** A buffer with unsaved
