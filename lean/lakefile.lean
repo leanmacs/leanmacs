@@ -910,8 +910,8 @@ def setRoot (pkg : Package) : FetchM Module := do
   let ws ← getWorkspace
   let some core := ws.findPackageByKey? __name__
     | error "the core's package is not in the workspace"
-  -- The pin is the core's: every copy of it in the repository is held to
-  -- that one file (`tools/toolchain-check.sh`).
+  -- The pin is the core's: every other `lean-toolchain` in the repository
+  -- is a link to that one file.
   let pin ← IO.FS.readFile (core.dir / "lean-toolchain")
   writeIfChanged root.leanFile
       (rootSource (entries.map (·.module)) ((entries.filter (·.scheme)).map (·.module))
@@ -1350,7 +1350,10 @@ The core goes to `lean`, the set to `set` and each package under the set's
 directory to the same place under `set` (`shippedPlace`), so the set's and
 the packages' lakefiles name the bundle's core unchanged; a package
 elsewhere is refused. For each package of the set (`setPackages`): its
-lakefile, `lake-manifest.json` and `lean-toolchain`; and for every module
+lakefile, `lake-manifest.json` and `lean-toolchain`, the last listed by
+the file it resolves to, since a package's in this repository is a link to
+the pin (`lean/lean-toolchain`) that would dangle in the bundle, which so
+holds its text; and for every module
 of each library that ships (`shipsLibrary`, `libraryModules`: of the core,
 `Editor` and `Lint`; of the others, each library but its tests), its
 source and every file Lake wrote for it (`builtFiles`), and of `Lint` its
@@ -1409,7 +1412,12 @@ package_facet editorShipped pkg : Array String := do
           if ← file.pathExists then
             let some relative := relativeUnder dep.dir file
               | error s!"{file} is not under its package's directory {dep.dir}"
-            lines := lines.push (line file s!"{place}/{relative}")
+            let source ←
+              if file.fileName == some "lean-toolchain" then
+                IO.FS.realPath file
+              else
+                pure file
+            lines := lines.push (line source s!"{place}/{relative}")
       let gluePlace := placeOf core
       for file in
         [core.dir / "ffi" / "glue.c", core.buildDir / "ffi" / "glue.o",

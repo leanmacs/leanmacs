@@ -1944,18 +1944,28 @@ user-side link's set and its package, and the formatter's host.
   <package>` runs it over any package ([the-gate.md](../dev-practices/the-gate.md),
   "Formatting").
 
-### The toolchain copies
+### The toolchain links
 
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
-`lean/` holds a copy of it** (the default set and its forty-three packages,
-the twenty-five default packages and the eighteen interface packages, the fixture set and its three packages, the
-writing guide's example package `word-count`, the empty set, the user-side link's set and its package, the Rust bans check's
-set and its two packages, and the formatter's host): `lean-fmt` refuses a root with no
-`lean-toolchain`, and elan reads the file when Lake is run in that
-directory. `tools/toolchain-check.sh`, first in `lean-test`, fails when a
-tracked copy differs from the pin, naming it. A bump of the pin
-(`AGENTS.md`, "Toolchains") changes every copy in the same commit.
+`lean/` links its `lean-toolchain` to it**, a relative symbolic link (the
+default set and its forty-three packages, the twenty-five default
+packages and the eighteen interface packages, the fixture set and its
+four packages, the writing guide's example package `word-count`, the
+empty set, the user-side link's set and its package, the user sets'
+fixtures, and the formatter's host): `lean-fmt` refuses a root with no
+`lean-toolchain`, and elan reads the file, through the link, when Lake is
+run in that directory. So there is no copy to fall behind, and a bump of
+the pin (`AGENTS.md`, "Toolchains") changes one file. A new Lake root
+links its `lean-toolchain` the same way and never copies it
+(`.agents/rules/structure.md`, "The Lean pin").
+
+Where such a directory leaves the tree, the link would dangle, so what
+leaves carries the pin's text: the bundle's shipped files list each
+package's `lean-toolchain` by the file it resolves to (`editorShipped`),
+and the scripts that copy a fixture package elsewhere (`git_core_copy` in
+`tools/core-repo.sh`, `tools/bundle-sets.sh`, `tools/bundle-bench.sh`)
+copy with `cp -RL`, which follows it.
 
 ## User package sets
 

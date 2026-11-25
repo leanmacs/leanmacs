@@ -40,7 +40,7 @@ core_repo() {
 # against the stand-in (a `file://` clone, no network), and the copy's
 # `.lake/` is removed again.
 git_core_copy() {
-  cp -R "$1" "$2"
+  cp -RL "$1" "$2"
   rm -rf "$2/.lake" "$2/lake-manifest.json"
   awk -v url="file://$3" -v rev="$core_repo_tag" '
     /^\[\[require\]\]/ { table = 1; core = 0 }

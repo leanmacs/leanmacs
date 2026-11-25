@@ -2398,29 +2398,6 @@ lint`, never a script over source text:
   there (a reviewer rule). The pre-commit hook's Rust step does not run
   it.
 
-## The toolchain check
-
-```sh
-sh tools/toolchain-check.sh
-```
-
-First in `mise run lean-test`. `lean/lean-toolchain` is the pin every task
-reads, and each Lake root outside `lean/` holds a copy of it: the default
-set, the fixture set, each fixture package, the writing guide's example
-package, the empty set, the user-side link's set and its package, and the
-formatter's host
-([packages.md](../design/packages.md), "The toolchain copies"). The check
-compares every tracked file named `lean-toolchain` with the pin, byte for
-byte, prints each that differs and exits 1.
-
-- **The copies are the tracked ones** (`git ls-files`), so Lake's fetched
-  packages are never looked at. `git add` a new copy before running it.
-- **The gate sees it bite.** `lean-test` runs it again with another
-  reference file, the core's Lake manifest, and requires exit 1 with the
-  formatter host's copy named.
-- **It refuses to pass for no reason.** A reference it cannot read, a
-  failing `git`, and a tree with no copy other than the pin are exit 2.
-
 ## Formatting
 
 ```sh
@@ -2453,7 +2430,7 @@ over the core and then over each package of the fixture set
   `lake -d ../tools/lean-fmt update --keep-toolchain` in `lean/`.
 - **It writes a cache in the root it is given**, `.lean-fmt-cache`, which
   git ignores in any directory, and it refuses a root with no
-  `lean-toolchain`, which is one reason every package holds a copy of the
+  `lean-toolchain`, which is one reason every package holds a link to the
   pin.
 - **A package's headless fixtures are excluded** by a `lean-fmt.toml` in
   the package (`exclude = ["tests/**"]`): a config file is a module of a

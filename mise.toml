@@ -130,21 +130,10 @@ run = [
 # Lean's task pool, and the checks that hold the pool and count the threads
 # jobs wait from read it as Lean's runtime does (`Pool.expected`): they pass
 # under a bare `lake test` whatever the variable says.
-#
-# First, the toolchain check (tools/toolchain-check.sh;
-# docs/dev-practices/the-gate.md, "The toolchain check"): every Lake package
-# outside lean/ holds a copy of the pin, `lean-toolchain`, and each tracked
-# copy must equal lean/lean-toolchain. It is here because this is the first
-# task of the Lake chain, so a copy that fell behind fails before anything
-# is built. Its second line shows it bite: told the pin is another file
-# (the core's Lake manifest), it must name the formatter host's copy and
-# exit 1. Its output is shown only when it does not.
 [tasks.lean-test]
-description = "Check that every copy of the Lean pin equals lean/lean-toolchain (tools/toolchain-check.sh), then run the Lean model tests with `lake test` and the build's linters' checks with `lake exe lint-test`, and those of each package of the fixture set, the default packages (the shipped themes, the compile mode) among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
+description = "Run the Lean model tests with `lake test` and the build's linters' checks with `lake exe lint-test`, and those of each package of the fixture set, the default packages (the shipped themes, the compile mode) among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
 dir = "lean"
 run = [
-  "sh ../tools/toolchain-check.sh",
-  "status=0; out=$(sh ../tools/toolchain-check.sh lake-manifest.json 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF tools/lean-fmt/lean-toolchain; } || { printf '%s\\n' \"$out\"; exit 1; }",
   # The stand-in for CI's elan that `user-sets-test` and `user-sets-check`
   # run under (tools/home-bound-toolchain.sh; docs/dev-practices/the-gate.md,
   # "The user sets test") cannot pass silently: its `lake` run with another
@@ -300,7 +289,7 @@ run = [
 # formatter from the host, which keeps the clone under lean/.lake/packages,
 # and `--root .` names the package it is run over, the core; the last line
 # of each task runs it over each package of the fixture set, each of which
-# holds the copy of the pin the formatter requires of a root. Both tasks wait
+# holds the link to the pin the formatter requires of a root. Both tasks wait
 # for `lean`, so two Lake builds never run in lean/ at once.
 [tasks.lean-fmt]
 description = "Check Lean formatting and lean-fmt's lints, over the core and each package of the fixture set; changes nothing"

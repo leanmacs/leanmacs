@@ -296,6 +296,9 @@ Then:
 
 1. Make the package's directory with its `lakefile.toml`, `lean-toolchain`
    (a copy of the core's), `WordCount.lean` and `WordCount/EditorPackage.lean`.
+   Write the `lean-toolchain` yourself, or copy the one the editor
+   generates in your config directory: `word-count/`'s is a link to this
+   repository's pin, which dangles once the directory is copied elsewhere.
 2. Install it: `:package-install word-count <its directory>`, or add a
    `[[require]]` for it to your config's `lakefile.toml` and `:reload`
    ([installing-packages.md](installing-packages.md)).

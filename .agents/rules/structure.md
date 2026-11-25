@@ -1,8 +1,8 @@
 # Module structure
 
 What a module may import, where the core's modules sit, which targets
-load the build's linters, and where a Rust crate's bans live and where a
-site may opt out of them. Review holds a change to these rules; no gate
+load the build's linters, where a Rust crate's bans live and where a site
+may opt out of them, and how a Lake root reads the Lean pin. Review holds a change to these rules; no gate
 step checks them (`gates.md`). The Lean linters (the wait and real-host
 linters) and Lake's own resolution of `require`s stay automated, and
 rdm task `lean-structure-rules-tool` is where automated checking of the
@@ -158,3 +158,16 @@ it cannot see.
 
 See the root `clippy.toml`'s header and
 `docs/dev-practices/the-gate.md`, "The wait lints".
+
+## The Lean pin
+
+- `lean/lean-toolchain` is the one pin. A new Lake root outside `lean/`
+  links its `lean-toolchain` to it with a relative symbolic link (`ln -s
+  <relative path>/lean/lean-toolchain lean-toolchain`) and never copies
+  it, so a bump of the pin changes one file.
+- A script or build step that carries such a directory out of the tree
+  dereferences the link (`cp -RL`, or the file's resolved path, as
+  `editorShipped` lists it), so what leaves holds the pin's text rather
+  than a link that dangles.
+
+See `docs/design/packages.md`, "The toolchain links".

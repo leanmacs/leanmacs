@@ -46,7 +46,7 @@
 #   run from the formatter's host
 #   (`lake -d ../tools/lean-fmt exe lean-fmt`); it changes nothing. The
 #   formatter requires a `lean-toolchain` in the root it is given, so each
-#   package holds a copy of the pin. `format` rewrites instead: `lean-fmt
+#   package holds a link to the pin. `format` rewrites instead: `lean-fmt
 #   format` and `lean-fmt check --fix`.
 # - `run`: for each package, its linked test, when it has one, run in the
 #   package's directory with the toolchain's directory and the core's
