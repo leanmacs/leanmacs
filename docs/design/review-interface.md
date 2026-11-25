@@ -229,7 +229,10 @@ is the "compare a plan with what was built" row of
 
 **Where the links come from**, strongest first:
 
-1. **Per-edit provenance**, once rdm:roadmap/acp-agents phase 5 lands:
+1. **Per-edit provenance**, in later work: from the tool-call diffs of
+   an agent session (Claude Code's adapter edits files itself,
+   agent-hosting.md, "The ACP spike"), not from rdm:roadmap/acp-agents,
+   which does not build it:
    the agent session, tool call and transcript step that wrote a range,
    and the plan step that session was on.
 2. **Commits matched to plan steps.** rdm implementation plans already
@@ -439,8 +442,8 @@ none. So the editor does not classify tests. It orders by history:
 The proposal groups the hunks and says why:
 
 - **Groups ("cohorts")** in this order of preference:
-  1. By plan step, from the edit log's origin once
-     rdm:roadmap/acp-agents lands.
+  1. By plan step, from per-edit provenance (tool-call diffs, later
+     work) or commits matched to plan steps.
   2. Otherwise by def-use clusters from the syntax tree and the code
      index (ClusterChanges' links: a definition with its call sites,
      shared uses, the same method).

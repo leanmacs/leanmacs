@@ -23,7 +23,9 @@ the research agrees neither is enough alone.
 | Weaknesses | Lags the agent's own UI; adapter-dependent; the agent's shell hooks do not run under the Claude adapter | State must be inferred from hooks and terminal escape sequences; no structured diffs |
 
 Both write to the same agent table, so the agents list, attention order and
-notifications do not care which front end a session uses.
+notifications do not care which front end a session uses. Notifications
+and a global jump belong to rdm:task/global-attention-system, which agents
+and compile both feed; the agent table keeps attention as data for it.
 
 ## ACP
 
@@ -49,8 +51,10 @@ package `agents-api`; decided by the owner, 2026-11-23):**
 - Tracking outstanding requests, and answering every pending permission
   request "cancelled" when a turn is cancelled. This is a protocol rule, so
   it lives in the client, where config cannot get it wrong.
-- Serving file reads from unsaved buffer text, and routing file writes
-  through the edit log with the agent session and tool call as origin.
+- Not built by rdm:roadmap/acp-agents: serving file reads from unsaved
+  buffer text and routing file writes through the edit log. Claude Code's
+  adapter never uses `fs/*` ("The ACP spike"), so both are later work, and
+  per-edit provenance is to come from the tool calls' diffs, also later.
 - Batching updates per frame before they reach the editor thread.
 
 **Policy, overridable from config:**
@@ -70,7 +74,7 @@ package `agents-api`; decided by the owner, 2026-11-23):**
 | The agent's shell hooks do not run; MCP config is not auto-discovered | Status from session updates for ACP sessions; a local typed listener for hook callbacks from terminal sessions; pass MCP servers explicitly |
 | Work that outlives a turn is invisible | The activity axis below has an explicit "unknown"; a stall timeout |
 | Sessions are tied to the client process; no standard remote transport | Persist agent records and reattach with session resume; a detached supervisor process is a later option. For remote agents see below |
-| No worktrees, checkpoints or provenance | Version control in Lean; per-edit origin in the edit log |
+| No worktrees, checkpoints or provenance | Version control in Lean; per-edit origin from the tool call's diff, in later work (not rdm:roadmap/acp-agents) |
 
 Diffs arrive as old and new text, not as hunks, so the editor computes
 hunks itself and reconciles them with the buffer, since the agent may
@@ -171,7 +175,7 @@ script; the rest read in the installed package's source):
 - **Files**: the client offered `fs/readTextFile` and `fs/writeTextFile`,
   and **the agent used neither**: the CLI read and edited the file itself
   in both runs, after permission in the second. Serving reads from buffers
-  and routing writes through the edit log (phase 5 of the roadmap) cannot
+  and routing writes through the edit log (planned for acp-agents before the spike, now later work) cannot
   rest on the fs methods with this agent; edits are external changes,
   attributed from the tool call's diff.
 - **Sizes and rate**: 36 messages, 70,624 bytes in 7.3 s for the first
@@ -184,13 +188,19 @@ script; the rest read in the installed package's source):
 - **The user's environment leaks in**: mode, model, skills, commands and
   subagents all come from the user's Claude settings, unless the client
   passes its own (`CLAUDE_CONFIG_DIR`, `session/set_mode`,
-  `session/set_config_option`).
+  `session/set_config_option`). The owner decided on 2026-11-23 that the
+  editor uses the host's Claude settings as they are: it sets no session
+  mode (no `session/set_mode`) and passes no Claude config of its own (no
+  `CLAUDE_CONFIG_DIR`, no `session/set_config_option`). A session whose
+  settings resolve permissions itself may never ask; the queue tolerates
+  that ("Permissions").
 
 ### Remote agents and sandboxes
 
 Checked on 2026-11-11 from the ACP documentation and web search. The
 status of the transport proposal and of the hosted products rests on weak
-or missing sources, as marked.
+or missing sources, as marked. Remote transports are outside
+rdm:roadmap/acp-agents: later work.
 
 ACP's only stable transport is stdio. An agent running somewhere else
 reaches the editor in one of three ways:
@@ -257,7 +267,8 @@ dropped updates when two sessions shared a directory.
 
 **Other fields:** the source (which front end), the workspace root (one
 canonical path, set once), where the workspace is (a local worktree, or a
-remote and branch), and the plan item being worked on if there is one.
+remote and branch), and the plan item being worked on if there is one (set once dispatch is
+built, in the roadmap after rdm:roadmap/acp-agents).
 
 ## Permissions
 
@@ -318,10 +329,14 @@ multi-agent dashboard raised awareness and throughput but not confidence in
 the output (read through a secondary summary only). So the agents list and
 notifications are necessary and cheap, and they are not where the value is.
 
-- The agents list orders by attention.
+- The agents list orders by attention (rdm:roadmap/acp-agents builds it,
+  phase 7).
 - A notification fires when an agent starts waiting or finishes, by rules
-  in Lean.
-- A jump command goes to the agent that has waited longest.
+  in Lean. This is rdm:task/global-attention-system's, not
+  rdm:roadmap/acp-agents'; the agent table keeps attention as data for it
+  to read.
+- A jump command goes to the agent that has waited longest; also
+  rdm:task/global-attention-system's.
 
 ## Dispatch through rdm
 
@@ -329,6 +344,9 @@ rdm does not run agents; its dispatch is a set of skills an agent session
 executes. "Run this phase" is therefore: start an agent session in the right
 worktree with a prompt that invokes the skill, and record the plan item in
 the agent table. See review-and-navigation.md for the rdm client.
+
+Status: not built by rdm:roadmap/acp-agents. Dispatching rdm phases and
+tasks from the editor is the roadmap after rdm:roadmap/acp-agents.
 
 ## An agent's write under an open buffer
 
@@ -391,9 +409,10 @@ pins that with the mode off no watch is open; the phase is
   the largest file an edit touches, and a line past the bound ends the
   agent ([rust-library.md](rust-library.md), "Handing a streaming child to
   a package's crate").
-- **The user's Claude settings** decide the session's permission mode and
-  bring the user's skills and subagents in. Whether the editor passes its
-  own config directory or sets the mode per session is open.
+- **The user's Claude settings**: decided 2026-11-23, no longer open. The
+  editor uses the host's Claude settings as they are, with no session mode
+  and no config of its own ("The ACP spike", "The user's environment leaks
+  in").
 - **Non-standard notifications** (`auth/status_update`,
   `_auth/status_update`) carry account details; the client should ignore
   them and never log them unscrubbed.

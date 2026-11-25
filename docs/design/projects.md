@@ -493,7 +493,8 @@ open when the table has it: found or registered this session.
   buffer's number and the files last shown) is the workspace's
   (`VersionControl.statusStore`), and its read job is keyed by the
   workspace ([version-control.md](version-control.md)).
-- `acp-agents`: a session's workspace, registered when it is not local.
+- `acp-agents`: a session's workspace, a local workspace; registering a
+  remote session's workspace waits for remote transports, later work.
 - `shell-and-compile` phase 2 (built): `:!` runs in the workspace's root,
   or the file's directory, or the editor's working directory, and refuses
   to run for a location that cannot run commands; its history is the

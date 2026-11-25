@@ -64,7 +64,8 @@ often and for how long is tracked per excerpt, a hunk never shown drawn in
 buffer"). The decisions and what was viewed of each round are kept, so the
 design can later be checked against use. Accept and reject are commands
 on the cursor's hunk, not controls in blocks; plan-step order waits for
-rdm:roadmap/acp-agents.
+per-edit provenance from tool-call diffs (later work), or commits matched
+to plan steps (review-interface.md).
 
 "See what changed since last review" is built too (2026-11-18, the
 version-control roadmap's phase 5; [version-control.md](version-control.md),
@@ -235,7 +236,8 @@ origin; hotspots and churn are not built.
   built, the order is tests first, then by file dependency, among files
   that are ready the one that changes more lines first
   (`orderFiles`, `packages/version-control/VersionControl/ReviewHunks.lean`), until
-  rdm:roadmap/acp-agents can order by plan step. The path guess for tests
+  per-edit provenance (tool-call diffs, later work) or commits matched to
+  plan steps can order by plan step. The path guess for tests
   is to be replaced by commit order and an optional `review.isTest` in
   the config, not a classifier per language
   ([review-interface.md](review-interface.md#4-the-change-stack-vc-review-grouped)).
