@@ -81,7 +81,7 @@ scheme over its default states and bindings (`Vim.Default.scheme`), named
 package supplies"). The entry module of the Lake package that holds evil
 declares it as its `scheme`. It is here, beside `package`, and not in the
 entry module: an entry module imports package modules and nothing else
-(`tools/host-imports-check.sh`), and this is the package module that
+(`.agents/rules/structure.md`, "Host imports"), and this is the package module that
 imports the default tables.
 
 Pinned by `EvilTest.evilMotionChecks`, `EvilTest.evilStateChecks` and

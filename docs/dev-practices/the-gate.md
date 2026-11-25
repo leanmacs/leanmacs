@@ -11,12 +11,7 @@ tests (`mise run lean-test`); the Lean build, which links the editor from
 the default package set, lean-fmt's format and lint
 checks; the same tests, lint, format check and headless fixtures over
 every package of the fixture set, the default packages among them ("The
-package steps", below); the check
-that the host's modules import no feature module, the
-check that the core imports no module of a feature that moves out of it,
-the check that a package imports only the core's API, the check of the
-three-layer import rule (the core imports no package, and no package
-imports an implementation package), the checks of the Lean/Rust boundary, the contract checks against
+package steps", below); the checks of the Lean/Rust boundary, the contract checks against
 the real bindings and the checks of the config session against the real
 elaborator (`mise run ffi-test`); the headless mode run from a staged app
 bundle (`mise run bundle-test`); a user's package set built, installed and
@@ -871,8 +866,7 @@ build that reaches the Rust archive, so the task passes only if the test
 driver does not need it. The tests of the pool pin no size, so they pass
 whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
-`mise run ffi-test` first runs the host imports check ("The host imports
-check", below) and the core imports check ("The core imports check"), then `lean/.lake/build/bin/ffi-test`, the test executable
+`mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, handed three
 directories: `tests/process-environment` (the fixtures that stand in for
 mise in the checks of a child's environment), `tests/syntax` (the syntax
@@ -1609,547 +1603,20 @@ directory the script makes and removes.
 ([`on-demand-checks.md`](on-demand-checks.md)); the gate runs its script on
 the copy alone.
 
-## The host imports check
+## Structure rules are reviewer rules
 
-```sh
-cd lean && sh ../tools/host-imports-check.sh
-```
-
-Part of `mise run ffi-test`. A host registers features only from the
-packages it is handed, and the modules that list them, the entry modules
-of the Lake packages of a package set (`<P>.EditorPackage`; the core's
-Lake package has none), are outside the host
-([lean-runtime.md](../design/lean-runtime.md), "Packages";
-[packages.md](../design/packages.md), "The package set and its build").
-This check shows the import half of that on Lake's module graph, with both
-terms defined from the graph. With no argument it checks the root the
-package-set build generates for the default set (`packages/`); `--set <set
-dir>` names another set:
-
-- **The list modules** are the root's imports named `….EditorPackage`.
-- **The host's modules** are the modules the root imports, other than the
-  list modules, with everything they import inside the workspace.
-- **A feature module** is a list module, or a module one imports
-  directly: the modules that define the packages.
-
-It passes when no host module is a feature module, and otherwise prints
-each one the host reaches and exits 1.
-
-- **The generated root is asked of the set.** No library declares it, so
-  `lake query +<module>:imports` does not find it; the check asks
-  `lake -d <set dir> query :editorRootImports`, a facet the core's
-  lakefile defines, and makes its other queries in the set's workspace,
-  which holds the modules of every package of the set.
-- **And the fixture harness's root.** A set's other generated root, the
-  headless fixture harness's (`fixture-test`; [headless-mode.md](headless-mode.md),
-  "How the gate runs a fixture"), is held the same way: with
-  `--fixtures` the check asks `:editorFixturesRootImports`, and the gate
-  runs it over the default set and the fixture set.
-
-- **It asks Lake and reads no source text** (`lake query
-  +<module>:imports` and `+<module>:transImports`, one module a line), so
-  it follows a module that is renamed or moved, and an import written in
-  any form. The queries build nothing and write nothing under `lean/`.
-- **The gate runs it on the fixture set too**
-  (`host-imports-check.sh --set ../tests/packages`), whose root imports
-  an entry module for each fixture package, each default package and the
-  writing guide's example package: the form a set with packages outside
-  the core takes.
-- **The user-side link's set is asked for its root.** `ffi-test` also
-  requires `lake -d ../tests/user-link query :editorRoot` to give a file,
-  and that root's imports to be the config base, the executable's entry,
-  the default packages' entry modules and the fixture package's, in that
-  order. The
-  opt-in check that links an editor as a user's Mac would stages that
-  generated root ([on-demand-checks.md](on-demand-checks.md), "The
-  user-side link, on demand"), so the gate keeps its generation working
-  on every platform.
-- **The gate sees it bite.** `ffi-test` runs it another time in its
-  module form (`host-imports-check.sh <root module> [<list module>]`),
-  pointed at the core's module `ConfigTest`, a root that imports modules
-  that define packages, with the test kit's stand-ins for default
-  packages as the list (`host-imports-check.sh ConfigTest
-  Editor.Test.Shipped`), and requires exit 1. The core's entry module was
-  the list until its own list emptied (features-as-packages phase 8): it
-  imports nothing now, so it names nothing to forbid.
-  A query Lake fails is exit 2, never 1, so a broken query cannot stand in
-  for a finding; so is a root with no list module among its imports.
-- **An entry module imports package modules and nothing else**,
-  since its direct imports are what the check forbids a host.
-- **What it does not claim.** It is of the modules that define packages.
-  That the core imports no module of a package is Lake's own rule, since
-  the core requires none, and the next check's for a module still in the
-  core that is moving out; the module map of
-  [packages.md](../design/packages.md) lists which package each feature
-  that was the core's is.
-
-What a host registers from the list is checked by behaviour, not imports:
-a host handed no packages starts with an empty registry and no menu bar
-(`ConfigTest.hostChecks`, `ModelTest.packageChecks`), which is what an
-editor of the core alone is handed.
-
-## The core imports check
-
-```sh
-cd lean && sh ../tools/core-imports-check.sh
-```
-
-Part of `mise run ffi-test`, after the host imports check. A package may
-depend on the core, and the core depends on no package
-([packages.md](../design/packages.md)). The check shows on Lake's module
-graph that the core's root holds the whole core, that the core imports no
-module of a feature that is moving out of it, and that an executable that
-elaborates config links the config base, and that the config base and the
-model tests' root are plain Lean, reaching no module of Lean's frontend,
-and that the model tests' root reaches no raw binding. It is given a root and
-the moving names: the root defaults to `Editor.Core`, the core's
-root module (`lean/Editor/Core.lean`), and there is no moving name by
-default. A moving name is a module still under `lean/Editor/` that is not
-the core's, with every module under it: a feature between having its
-edges from the core cut and moving out. The shipped palettes and the
-compile mode (`Editor.Compile`) were the two; both have moved, into Lake
-packages of their own (`packages/shipped-themes/`, `packages/compile/`),
-which the core does not require, so Lake itself refuses a core module
-that imports one. So the first rule below holds of nothing today, and
-stays for the next such feature. Two options, `--base <module>` and `--elaborator <module>`, name the
-config base and the elaborator adapter in place of the editor's; the gate
-uses them to see the third rule fail. A third, `--plain <module>`, given
-once or more, names the modules that must be plain Lean in place of the
-config base and the model tests' root; the gate uses it to see the fourth
-rule fail. A fourth, `--unlinked <module>`, given once or more, names the
-modules that must reach no raw binding in place of the model tests' root;
-the gate uses it to see the fifth rule fail. It checks five rules, in
-order, and stops at the first that fails:
-
-| Rule | Exit when it fails |
-|---|---|
-| The root and the modules it imports, directly or through another, hold no moving module | 1, after printing each one found |
-| Every module named `Editor.…` that a root of the build reaches (`ModelTest`, `ConfigTest`, `FfiTest`, `ContractTest`, and the root generated for the default set) is the root or one of the modules it imports, unless it is a moving module | 3, after printing each one outside |
-| A root of the build that reaches the elaborator adapter (`Editor.Config.Elaborate`) reaches the config base (`Editor`) | 4, after printing each root that does not |
-| The config base (`Editor`) and the model tests' root (`ModelTest`), and every module either imports, directly or through another, import no module of Lean's frontend (`Lean`, `Lake`, or a module under either) | 5, after printing each such import, `<importer><TAB><imported>` |
-| The model tests' root (`ModelTest`), and every module it imports, directly or through another, is no raw binding (`Editor.Ffi` or a module under it) | 6, after printing each one reached |
-
-- **The second rule is what makes the first a statement about every core
-  module.** A core module that `Editor.Core` did not import would be
-  checked by nothing. With the rule, a new core module that no module of
-  the core imports fails the gate until `lean/Editor/Core.lean` imports
-  it.
-- **The third rule keeps what an import used to give.** The elaborator
-  adapter imported `Editor`, so every module config may import was linked
-  into any executable that elaborates config
-  ([lean-runtime.md](../design/lean-runtime.md), "One shared state").
-  Through that import the adapter and both hosts reached the compile
-  mode, which `Editor` imported while that mode was in the core. Now each
-  root that links the adapter imports `Editor` itself, and this rule
-  fails when one does not. The modules of a set's base beyond `Editor`,
-  the entry modules of its packages, are linked because the generated
-  root imports them to list the packages.
-- **The fourth rule keeps the config base and the model tests plain
-  Lean.** Two adapters link Lean's frontend, and neither is in the base
-  ([overview.md](../design/overview.md), "Config is elaborated behind a
-  port, and two adapters link Lean's frontend"): config is elaborated on
-  the base, and a base that holds `Lean` costs every config its memory and
-  its start ([lean-runtime.md](../design/lean-runtime.md)), and
-  `model-test` tests the config session on a model of the elaborator with
-  none linked. Lake's `transImports` names the workspace's modules alone,
-  never the toolchain's, so the rule asks the core's module facet
-  `editorFrontendImports` (`lean/lakefile.lean`), which reads the header of
-  the module and of each module it reaches. It is what keeps the build's
-  own linters out of the base: they import `Lean`, so they are a library of
-  their own that no module imports, loaded into the build as a plugin
-  (`lean/Lint/Wait.lean`), and a module of the base that imported them,
-  as `Editor.Bound` once did, fails here.
-- **The fifth rule keeps what `model-test` runs written over ports.**
-  `model-test` links no Rust library, so a port, a fake or a contract it
-  runs reaches no binding: the session journal's port, its recording fake
-  and its contract (`lean/Editor/Headless/Journal.lean`,
-  `Journal/Fake.lean`, `Journal/Contract.lean`) are among them, and the
-  real adapter, which is the one that imports `Editor.Ffi.Files`, is a
-  module of its own (`Journal/Real.lean`) that only the hosts and
-  `contract-test` import. A module the model tests reach that imported a
-  binding would otherwise pass for as long as nothing it runs called one.
-- **The moving names are named, never derived.** "Every module the root
-  does not reach" would pass whatever the core imported.
-- **No module is exempt by name.** The core's Lake package lists no
-  package and has no entry module, so there is no list for the second
-  rule to step around.
-- **The editor's own root is one of the roots.** It is generated by the
-  package-set build and no library declares it, so its transitive imports
-  are asked of the default set
-  (`lake -d ../packages query :editorRootTransImports`). It is the one
-  root that links the elaborator into the editor that is run, so the
-  third rule is about it first.
-- **So is the fixture harness's root**, the set's other generated root
-  (`fixtures:../packages`, `lake -d ../packages query
-  :editorFixturesRootTransImports`), which elaborates config too: every
-  `Editor.…` module it reaches, the harness's `Editor.Test.Fixture.…`
-  among them, must be in `Editor.Core`'s closure, and it must link the
-  config base. The gate shows the third rule biting on it: told the base
-  is `Editor.Main`, which the editor's root imports and the harness's does
-  not, the check exits 4 naming `fixtures:../packages`.
-- **It asks Lake and reads no source text** (`lake query
-  +<module>:transImports`, one module a line), as the host imports check
-  does, so it follows a module that is renamed or moved, and an import
-  written in any form. It makes nine queries, one for the root, one for
-  each root of the build, one for each module that must be plain Lean and
-  one for each that must reach no raw binding,
-  builds nothing and writes nothing under `lean/` or `packages/`: the build
-  has written the generated root already.
-- **The gate sees each rule bite.** `ffi-test` runs it told that a module
-  of the core, the ex line's data, is moving (`core-imports-check.sh
-  Editor.Core Editor.Ex.Line`), and requires exit 1, with `Editor.Ex.Line`
-  found in the root's closure. No feature is left in the core to name: the
-  shell, named here until it moved out of the core in features-as-packages
-  phase 6, evil, named until it moved out in phase 7, and the ex line,
-  named until it moved out in phase 8, are packages now. It is pointed at the root
-  `Editor.Setup`, which imports no moving
-  module and is not the whole core, and requires exit 3; and told with
-  `--base Editor.Core` that the config base is a module no executable's
-  root imports, and requires exit 4, with the roots that link the
-  elaborator named; and told with `--plain Editor.Core` that the core's
-  root must be plain Lean, and requires exit 5, with the elaborator
-  adapter's import of `Lean` named; and told with `--unlinked Editor.Core`
-  that the core's root must reach no raw binding, and requires exit 6,
-  with `Editor.Ffi` named.
-- **It refuses to pass for no reason.** A command line it does not take, a
-  query Lake fails, an empty answer and a third rule that would be about
-  no root are exit 2, before any rule is reported, so none can stand in
-  for a finding or for a pass. The last is the case where no root of the
-  build reaches the elaborator adapter, which is what a renamed adapter, or
-  a list of roots that has fallen behind the build, would look
-  like. `ffi-test` sees that too: told with `--elaborator Editor.Core` that
-  the adapter is a module no root reaches, it must exit 2 and say why.
-- **What it does not claim.** It names a module that is moving, while one
-  is. No feature is the core's any more, so none is imported by a core
-  module; the module map records which package each is. And it says nothing of what a package
-  imports: that is the package imports check, below.
-
-## The package imports check
-
-```sh
-cd lean && sh ../tools/package-imports-check.sh ../tests/packages
-```
-
-Part of `mise run ffi-test`, after the core imports check. A package
-outside the core may name, in an `import` line, only what the rule of
-[packages.md](../design/packages.md), "What a package may import", allows
-it. The check applies that rule to the packages of a set, on Lake's module
-graph.
-
-| Importing module | May import, of the core's Lake package |
-|---|---|
-| A module of the package's library | The core's API: the core's interface libraries (`FilesApi`, `BuffersApi`, `ShellApi`, `ProjectApi`, `VcApi`) and any module named `Editor.…` that is neither internal nor a test double |
-| A test module (under `<P>Test`) | The API and the test doubles |
-| The root of the linked test (`<P>Test.Linked`) | The API, the test doubles, the real bindings of the ports (`….Real`), the headless host, the config base and the core's entry module |
-
-- **It asks Lake and reads no source text.** `lake -d <set dir> query
-  :editorPackageImports`, a facet the core's lakefile defines, prints one
-  line for each direct import of a module of the core's Lake package by a
-  module of a package the gate's steps run over: the package, the
-  importing module, its kind (`library`; `test`; `linked`, the root of the
-  package's linked test; `linked-test`, a module under that root) and the module
-  imported. Lake reads the modules' headers and builds nothing. It lists
-  the modules of each of the package's libraries, so a library whose root
-  does not import every module of it declares `globs` that hold them all,
-  as `compile`'s does.
-- **The lists are in the script**, as names and patterns: the core's
-  interface libraries, which the core's Lake package holds outside
-  `Editor` (`FilesApi`, for good; `BuffersApi` and `ShellApi`, staged
-  until ex moves out; `ProjectApi` and `VcApi`, staged until they move
-  into interface packages), importable by every kind; the test
-  doubles (a feature's test kit still in the core, `Editor.*.Kit` such as
-  `Editor.Files.Kit`, among them, so a package's tests may import it and
-  its library may not, and the core interfaces' test libraries,
-  `FilesApiTest.…`, `VcApiTest.…` and the rest), the linked test kit
-  (`Editor.Test.Linked.…`, and a core interface's `<I>Test.Linked.…` such
-  as `VcApiTest.Linked.Repositories`, which only the
-  linked test's root and the modules under it may import), the internal
-  modules, each with the reason printed for it, and what the linked
-  test's root may import beyond the doubles. They are named,
-  never derived, as the core imports check's moving names are.
-- **It is about direct imports.** A module an importable module imports is
-  visible to a package's code; the rule limits what a package depends on
-  by name.
-- **Exit 0** when every import is allowed, printing nothing. **Exit 1**
-  after printing each refused import, one a line: `package-imports-check:
-  <package>: <module> (<kind>) imports <import>: <reason>`.
-- **The gate holds the rule itself to a fixture.** With `--lines <file>`
-  the script reads the lines from a file instead of asking Lake. `ffi-test`
-  hands it `tests/package-imports/lines`, written by hand with a line for
-  each branch of the rule, and requires exit 1 and exactly
-  `tests/package-imports/expected`: every refused import with its reason,
-  and none of the allowed ones (a library importing an API module and a
-  core interface, `FilesApi`; a test importing a core interface's fake,
-  `VcApiTest.Fake`; the linked test's root importing a core interface's
-  linked support, `VcApiTest.Linked.Repositories`; a test
-  importing a model, a contract, the loop's driver beside the loop, the
-  queue's contract (`Editor.Headless.Queue.Contract`) beside the queue's
-  port, and
-  `Editor.Config.Packages` beside another module of the config session; a
-  library importing the job port (`Editor.Job`) beside a host's activity
-  count; a
-  linked test importing a real binding, the headless host, the base and
-  the entry module; a test importing a module of the model test kit and a
-  feature's kit, `Editor.Files.Kit`; the
-  linked test's root and a module under it importing a module of the
-  linked test kit). Among the refused: a plain test module and a library
-  importing the linked test kit, a plain test module importing a core
-  interface's linked support, a library importing a feature's kit and a
-  core interface's fake (`FilesApiTest.Fake`), a library importing a
-  module outside `Editor` that is no interface (`ModelTest.Check`), and a module under the linked test's
-  root importing the headless host, a real binding or a raw binding,
-  which only the root may, or none may; and a library, a plain test module
-  and the linked test's root each importing what a host is made of and
-  driven by (the stepped host, `Editor.Headless.Stepped`, which a module
-  under the root is refused too; the queue's port, a driver's wait and the
-  activity count), which none may, the root that may import the headless
-  host included. So a change
-  to a list that lets an internal module through, or refuses an allowed
-  one, fails the gate.
-- **The sets it is run over**: the fixture set, `tests/packages/`, which
-  requires the default set and so reaches every default package, and the
-  user-side link's set, `tests/user-link/`.
-- **It refuses to pass over nothing.** A command line it does not take, a
-  query Lake fails, a line that is not four fields with a kind it knows,
-  and no line at all are exit 2. `ffi-test` shows the last: the set
-  `tests/empty-set` holds no package, and the check must exit 2 and say
-  there is nothing to check.
-- **What it does not claim.** It checks imports of the core's modules. A
-  package's imports of another package's modules are the layer imports
-  check's (below).
-
-## The layer imports check
-
-```sh
-cd lean && sh ../tools/layer-imports-check.sh ../tests/packages
-```
-
-Part of `mise run ffi-test`, after the package imports check. It holds the
-three-layer rule of [extension-points.md](../design/extension-points.md),
-"Three layers", on Lake's module graph: anything moved out of the core can
-be left out of a set or replaced, so nothing imports an implementation
-package's modules.
-
-| Importing module | Imported module | |
-|---|---|---|
-| any | a module of its own package | allowed |
-| a module of the core | a module of any package | refused: `the core imports no package` |
-| a module of any package | a module of an implementation package | refused: `a module of an implementation package, which no package imports` |
-| a module of any package | a module of the core or of an interface package | allowed (what of the core is the package imports check's business) |
-
-- **A package declares its layer in its lakefile**, with Lake's package
-  key `keywords`: `keywords = ["editor-interface"]` makes it an interface
-  package. Every other package is an implementation package, so a missing
-  or misspelt keyword makes a package more refused, never less. The core
-  is the core's Lake package. No list is kept by hand.
-- **It asks Lake and reads no source text.** `lake -d <set dir> query
-  :editorLayerImports`, a facet the core's lakefile defines, prints one
-  line for each direct import, by a module of a library of the core or of
-  a package the gate's steps run over, of a module of a package of the
-  workspace, its own package's included: `<package> <layer> <module>
-  <imported package> <imported layer> <imported module>`, tab-separated.
-  Modules of the toolchain are no workspace modules and are not listed.
-  Lake reads the headers and builds nothing.
-- **It holds for every module of a package**, its tests and its linked
-  test included: a test uses the interface package's fake, never another
-  feature's implementation.
-- **Exit 0** when every import is allowed, printing nothing. **Exit 1**
-  after printing each refused import, one a line:
-  `layer-imports-check: <package> (<layer>): <module> imports <imported
-  module> of <imported package> (<imported layer>): <reason>`.
-- **It refuses to pass over nothing.** A command line it does not take, a
-  query Lake fails, a line that is not six fields, a layer it does not
-  know and no line at all are exit 2, and so is input in which no module
-  of the core is an importer: every set requires the core, so the facet
-  did not walk the core's modules, and the core's half of the rule would
-  hold of nothing. The within-package lines are listed for that reason:
-  every core module that imports another gives a line whose importer is
-  the core.
-- **The gate holds the rule itself to fixtures** (`tests/layer-imports/`).
-  `--lines lines`, written by hand with a line for each branch of the
-  rule, must exit 1 and print exactly `expected`. Among its refused lines
-  are a core module importing a module of `shipped-themes`, one of
-  `compile` and one of an interface package: the core's lakefile requires
-  no package, so no real graph can show that refusal. `--lines bad-layer`
-  must exit 2 naming the layer it does not know, and `--lines no-core`,
-  all allowed lines with no core importer, must exit 2 saying the core is
-  not checked. And on a real graph: the set `tests/layer-imports/` holds
-  the fixture set and the package `greeting-reach`, never built, whose
-  library module imports `GreetingApi` of the interface package
-  `greeting-api` and `Greeting` of the implementation package `greeting`,
-  and whose test library, a second library, has a module that imports
-  `Greeting` too. The check on it must exit 1 and print exactly
-  `graph-expected`, the two refused imports: the second shows the rule
-  holds for test modules and the facet reads every library of a package,
-  not only its first.
-- **The facet is seen to walk the core.** `ffi-test` counts the lines of
-  `lake -d ../packages query :editorLayerImports` whose importer's layer
-  is `core`, and requires more than none.
-- **The sets it is run over**, each required to pass: the default set,
-  `packages/`, so its twenty-five default packages and eighteen interface
-  packages import only the core, and the implementations besides only
-  interface packages, their own or another's
-  ([packages.md](../design/packages.md), "The module map", lists each
-  one's);
-  the fixture set, `tests/packages/`, where `greeting-loud` reaches
-  `greeting`'s command through `greeting-api`; the user-side link's set,
-  `tests/user-link/`; and `tests/empty-set/`, the core alone.
-- **Time.** About two and a half seconds a set on a developer's Mac, most
-  of it Lake reading the core's headers (some 5,700 lines are the core's
-  own imports); the script skips the imports within one package in one
-  `awk` pass, and its own time is a tenth of a second.
-- **What it does not claim.** It checks `import` lines. A `require` of an
-  implementation package, as `greeting-loud`'s of `greeting`, which orders
-  registration, is not refused yet (the task `layer-requires-check`).
-
-## The leave-out check
-
-```sh
-mise run leave-out        # cd lean && sh ../tools/leave-out-check.sh ../packages
-```
-
-**Opt-in, not part of `mise run ci` or of the pre-commit hook.** Anything
-moved out of the core can be left out of a set
-([extension-points.md](../design/extension-points.md), "Three layers"),
-and this check builds it: for each implementation package of the default
-set, an editor built from the set without that package builds, and holds
-every other package of the set and not that one.
-
-- **What it does, for each implementation package**, in the set's order
-  (`lake -d <set dir> query :editorPackageGraph`):
-  1. it writes, in a fresh temporary directory, the set's lakefile without
-     that package's `[[require]]` and with every relative `path` made
-     absolute, beside a copy of the set's `lean-toolchain`;
-  2. it runs `lake update --keep-toolchain` and `lake build --wfail
-     :editor` there: the set's root is generated, built and linked, and
-     the packages themselves are built where they are;
-  3. it requires the generated root's imports (`:editorRootImports`) to be
-     the set's own without that package's entry module, and no other;
-  4. it runs the editor it built with `--probe` and prints
-     `leave-out: <package>: built, <the probe's first line>`.
-- **A refusing probe is no failure.** The criterion is that the editor
-  builds. Every probe says `probe: ok` but `evil`'s: an editor without
-  `evil` has no input scheme and refuses to start, with the line of
-  `tests/headless/no-input-scheme/expected`
-  ([packages.md](../design/packages.md), "Input schemes").
-- **Exit 0** when every such editor built and held what it should, one
-  line a package. **Exit 1**, after `leave-out: <package>: …` on stderr
-  with why, at the first package whose set does not resolve or build, or
-  whose root is not the set's without it: a package that another package
-  of the set requires is still in the set once its own `[[require]]` is
-  gone, and fails there.
-- **It refuses to pass over nothing.** A command line it does not take, a
-  query Lake fails, a set with no implementation package, and a package
-  of the set that the set's lakefile does not require itself (it reaches
-  the set through another set, so no edit of this lakefile leaves it out)
-  are exit 2.
-- **Why it is not in the gate.** It links one editor a package,
-  twenty-five of them. The gate keeps what makes it true: the layer
-  imports check, above (no module of any package imports a module of an
-  implementation package, so no package fails to build for want of one),
-  and `user-sets-test`, which drops a default package from a user's set
-  end to end. And no implementation package of the default set requires
-  another, so leaving one out of the lakefile leaves it out of the set.
-- **The gate holds its edit of the lakefile**, which is of the text alone,
-  by dry runs (`mise run lean-test`): `leave-out-check.sh --dry-run
-  <package> [--root <dir>] <set dir>` builds nothing and asks Lake
-  nothing, and prints the lakefile it would write. Over a lakefile written
-  by hand (`tests/leave-out/lakefile.toml`) it must print exactly
-  `without-beta` for a package in the middle and `without-gamma` for the
-  last; a package the lakefile does not require is exit 2, and so is a
-  command line it does not take.
-  - A `[[require]]` is the line `[[require]]` and the `key = value` lines
-    after it. The comment lines directly above it, with no blank line
-    between, go with it, and so does one blank line after it, or, at the
-    end of the file, one before it.
-  - A relative `path` anywhere in what is left is resolved against the
-    root, `.` and `..` folded; an absolute one is kept.
-- **It builds the packages where they are**, so it is never run while
-  `mise run ci` or another build of the checkout runs. Everything else it
-  writes is in a temporary directory it removes.
-
-## The module map check
-
-```sh
-cd lean && sh ../tools/module-map-check.sh
-```
-
-Part of `mise run ffi-test`. [packages.md](../design/packages.md), "The
-module map", lists every module of the core and every package of the
-default set with the extension points it registers at and reads, and this
-check holds that map to the tree and to Lake, so it cannot drift from what
-it describes. It prints nothing and exits 0 when they agree; otherwise it
-prints what differs, each part under a line that names it, and exits 1.
-
-- **What it checks**, in three parts:
-  1. the core's modules: every module under `lean/Editor/` is named in the
-     subsection "The core's modules", and that subsection names no module
-     that is not there;
-  2. the packages: every package of the default set (`lake -d ../packages
-     query :editorPackageGraph`) has a row that starts with its name and
-     its layer as its lakefile declares it;
-  3. the extension points: every registration and read the library
-     modules of the packages under `packages/` hold is in that package's
-     row, in its fourth column for a registration and its fifth for a
-     read, and no row names one the sources lack.
-- **The third part is a reading of the sources**, by the rules the map's
-  section states: what counts as a registration, what counts as a read,
-  and what is skipped (text in backticks, a declaration's first line, a
-  package's test libraries and fixtures, and in an interface package the
-  points of its own namespace). It reads source text, which no test of
-  the code does (AGENTS.md, "Test behaviour, never text"): it is no test
-  of the code, and holds a document to the sources it describes.
-- **The gate holds that reading** by a fixture (`mise run lean-test`):
-  `module-map-check.sh --points <packages dir> <map>` checks the third
-  part alone, over the packages under a directory and a map it is given,
-  and asks Lake nothing. `tests/module-map/packages` holds seven packages
-  written by hand:
-  - `sample`, an implementation package, holds one line for each of the
-    four ways the reader counts a registration (an `Extension.add` whose
-    type is on the same line, one whose type is on a later line,
-    `compileContribution` and `projectCommands`), one for each of the
-    four operations it counts as a read (`Extension.values`, `.named`,
-    `.configValues` and `.workJob`), and one for each of the five texts
-    it skips (prose in backticks, a `def`'s first line, a test library's
-    root, a test library's module and a fixture's config).
-  - `buffers-api`, an interface package, reads its own two points, which
-    are not counted in it, and one of another namespace, which is.
-  - `readers` holds one call of each of the seven readers an interface
-    declares over one point (`FilesApi.runOpened`, `.runSaved` and
-    `.files?`, `BuffersApi.runClosing` and `.buffers?`,
-    `ProjectApi.workspaces?` and `VcApi.connect?`), each on a line of its
-    own and over a point nothing else in the package reads.
-  - `compile-hook`, `compile-listings`, `compile-markers` and
-    `compile-work` hold one each of the four readers of both of the
-    compile mode's points (`Compile.hook`, `refreshListings`,
-    `markerSettings` and `Compile.listWork`) and nothing else. The four
-    count the same two reads of a package, so in one package any three
-    would hide the fourth; a package each shows that each is counted.
-
-  Over `tests/module-map/map.md`, whose rows name exactly what those
-  sources hold, it must print nothing and exit 0, so each of the rules
-  above, dropped by itself, fails there: a registration or a read its
-  line holds is then one the map names and the sources lack, and a text
-  no longer skipped is a read the sources hold and the map lacks. Over
-  `stale-map.md`, the same map with one registration dropped and one read
-  added, it must exit 1 and print exactly `stale-expected`, the two lines
-  that differ. A command line it does not take is exit 2.
-- **What it costs.** One `lake query` and an `awk` pass over each library
-  module of each package: under two seconds on a developer's Mac.
-- **What it does not claim.** A row's third column, what the package
-  requires, and its last, the names it declares or reaches, are not
-  checked. A way to register or read that the rules do not name is not
-  seen, so a new one is added to the rules in the map's section, to the
-  script and to the fixture. The fixture holds the rules listed above and
-  no others. It has no `.lake/` directory; no declaration that starts
-  `abbrev`, `theorem` or `structure`; no interface package but
-  `buffers-api`; and no longer or qualified name that ends in one of the
-  four names the reader looks for bare (`compileContribution`,
-  `projectCommands`, `markerSettings`, `refreshListings`). So the script
-  can stop skipping or telling apart any of those and still pass the
-  fixture's lines. And the pre-commit hook does not run it for a
-  commit that stages only the document or the script, which no Lean step
-  reads ("The pre-commit hook", below); `mise run ci` always does.
+What a module may import, where the core's modules sit, which layer may
+import which, that every implementation package can be left out of a set,
+that the module map of `docs/design/packages.md` agrees with the tree, and
+that every library and executable loads the build's linters are rules of
+the code's structure. They are written in `.agents/rules/structure.md`,
+and review holds a change to them: no gate step checks them. Shell scripts
+that read Lake's module graph and the tree checked them until
+gates-by-exit-status phase 1, which removed them, since no structural tool
+stood behind them (`.agents/rules/gates.md`). The Lean linters (the wait
+and real-host linters, "The wait lints", below) and Lake's own resolution
+of `require`s stay automated. rdm task `lean-structure-rules-tool` is
+where automated checking of the structure rules comes back.
 
 ## The package steps
 
@@ -2644,7 +2111,7 @@ does.**
 | A commit that stages | Runs in the `lean` step |
 |---|---|
 | Files inside one implementation package's directory (`packages/compile/`, `tests/packages/greeting/`, `docs/packages/word-count/`) | That package's checks alone (`lean-packages`, below) |
-| Files inside an interface package's directory (`tests/packages/greeting-api/`) | That package's checks and those of every package that requires it, directly or through any other package, an implementation package included: Lake puts every package a package requires, directly or not, in its workspace, so the package can import the interface, which the layer imports check allows. No other package's |
+| Files inside an interface package's directory (`tests/packages/greeting-api/`) | That package's checks and those of every package that requires it, directly or through any other package, an implementation package included: Lake puts every package a package requires, directly or not, in its workspace, so the package can import the interface, which the three-layer rule allows (`.agents/rules/structure.md`). No other package's |
 | Rust or C inside a package's directory (`tests/packages/echo/rust/`) | That package's Lean checks, as above; the `rust` or `c` step runs as for any Rust or C |
 | Any other file a Lean step reads: the core (`lean/`), a set's own lakefile or manifest, the core's fixtures under `tests/`, `config/`, `mise.toml`, Rust or C outside a package, the hook's own tools (`tools/hook-targets.sh`, `tools/graph-targets.sh`, `tools/lean-hook.sh`, `tools/package-set.sh`) | The core's whole chain, `mise run lean-fmt` and `mise run ffi-test`, which run every package's checks too, as before the hook was targeted |
 | Only files no Lean step reads: `docs/` but a package's directory under `docs/packages/` (the guide's example package, which the fixture set requires), plans and notes, other tools | No Lean step: no file matches the step's glob |
@@ -2666,10 +2133,7 @@ check; over the named packages of the fixture set (`tools/package-set.sh
 that fails first on the `PATH`; the `build` step, which first builds the
 set's editor, compiling whatever of the core and of the other packages is
 stale and linking, then the package's default targets under its linters
-and its linked test; the `fmt` step; the layer and package imports checks
-over the set, two Lake queries of about a second, kept because the
-targeting is sound only while no package imports an implementation
-package; the `run` step, with `--allow-empty-run` so an interface package,
+and its linked test; the `fmt` step; the `run` step, with `--allow-empty-run` so an interface package,
 which has no linked test and no fixture, passes; and, for a named package
 that is also a default package, the default set's editor and the same
 `run` over it.
@@ -2677,8 +2141,7 @@ that is also a default package, the default set's editor and the same
 **What a package's checks leave out**: the core's model tests (`lake
 test` in `lean/`), the build of the core's own targets (`ffi-test`,
 `config-test`, `contract-test`), lean-fmt over the core, every check in
-`ffi-test` that is the core's (the host, core and package imports checks
-on the default set, the Rust bans check, the FFI, contract and config
+`ffi-test` that is the core's (the Rust bans check, the FFI, contract and config
 tests, the core's headless fixtures and the restart entries), the editors
 of `tests/empty-set` and `tests/user-link`, the launcher, and every other
 package's test, build, format check and run.
@@ -2835,7 +2298,7 @@ lint`, never a script over source text:
   library `Lint` loaded as a Lean plugin (`lintPlugin` in
   `lean/lakefile.lean`, `plugins` in each package's lakefile). No module
   imports it: it imports `Lean`, which the config base and the model tests
-  may not reach (the core imports check's fourth rule, below). A bench, or
+  may not reach (`.agents/rules/structure.md`, "Core imports"). A bench, or
   `config-test --timings`'s wall clock, says it measures real time with
   `set_option linter.rawClock false` and its reason.
 - **`linter.inferredWait`** (the same module): a reference to a constant
@@ -2882,29 +2345,15 @@ lint`, never a script over source text:
   own, whose library loads no plugin. `ModelTest/Editor/Bound.lean`'s
   `fail_if_success` examples show that a number, an anonymous constructor
   and a structure instance are not a bound.
-- **It is loaded** (`tools/lint-plugins-check.sh`, in `mise run lean`): a
-  library that loads no plugin is never linted, and no fixture there would
-  say so, so the gate asks Lake (`lake -d <set dir> query
-  :editorLintPlugins`, a facet of `lean/lakefile.lean`) for every
-  `lean_lib` and `lean_exe` of the core and of each package a set holds in
-  its own directory, and the plugins Lake resolves for it, its package's
-  among them, and for the libraries of the set's generated roots, which no
-  lakefile declares (`EditorSet`, the editor's, and `EditorSetFixtures`,
-  the fixture harness's; `generatedLibs`), the plugins the build gives
-  them. Each must load the core's `Lint` as a plugin, or have it by
-  import (a module of it is, or imports, one of `Lint`'s: `Lint`,
-  `LintTests` and `lint-test`, where loading it too would register the
-  linters twice); the check prints each that does neither and exits 1. It
-  runs over the default set (`packages/`) and the fixture set
-  (`tests/packages/`), so a package added to either without the `plugins`
-  line fails the gate. A package a set reaches from outside its directory
-  is not read: `docs/packages/word-count`, which the fixture set reaches,
-  is written as a user's, as `tests/user-link/package` is, and names no
-  plugin. It bites on `tests/lint-plugins/`, a set whose package
-  `unlinted` has a library and an executable that load no plugin and a
-  library that imports `Lint`, and whose package `linted` names the plugin
-  for the whole package: the check must exit 1 and print exactly
-  `tests/lint-plugins/expected`, the first two.
+- **It is loaded**: a library that loads no plugin is never linted, and
+  no fixture would say so. Every `lean_lib` and `lean_exe` of the core and
+  of each package in this repository loads the core's `Lint` as a plugin,
+  or has it by import (`Lint`, `LintTests` and `lint-test`, where loading
+  it too would register the linters twice); the libraries of a set's
+  generated roots get the plugin from the build (`generatedLib`). That is
+  a reviewer rule (`.agents/rules/structure.md`, "Lint plugins"), not a
+  gate step. A package written as a user's, as `docs/packages/word-count`
+  and `tests/user-link/package` are, names no plugin.
 - **Rust, by clippy** (`mise run lint`): the root `clippy.toml`, which
   governs every crate with none of its own, holds the block, from a line
   `# BEGIN wait-bans` to a line `# END wait-bans`, that bans through

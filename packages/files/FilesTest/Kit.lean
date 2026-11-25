@@ -37,7 +37,8 @@ kit's own opener (`Editor/Test/Opener.lean`). Its namespace is the kit's,
 `Editor.Test`, so a caller changes one import.
 
 A package's test module may import it, as a test double, and its library
-may not (`tools/package-imports-check.sh`, `is_double`). It moves into the
+may not (`.agents/rules/structure.md`, "What a package may import"). It
+moves into the
 files package's test library when files moves out of the core.
 -/
 

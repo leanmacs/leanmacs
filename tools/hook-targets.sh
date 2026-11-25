@@ -44,10 +44,10 @@
 #   directly or through any other package: Lake puts every package a
 #   package requires, directly or not, in its workspace, so a package can
 #   import an interface package it reaches only through an implementation
-#   package's `require`, and the layer imports check allows that import. A
+#   package's `require`, and the three-layer rule allows that import. A
 #   change to an implementation package reaches that package alone: no
-#   package imports one (the layer imports check), so a change to one
-#   cannot break another's build.
+#   package imports one (the three-layer rule, .agents/rules/structure.md),
+#   so a change to one cannot break another's build.
 # - Any other path reaches the core, and so everything: the core's sources,
 #   a set's own lakefile and manifest, the core's fixtures under `tests/`,
 #   `config/`, Rust and C outside a package, and this hook's own tools.

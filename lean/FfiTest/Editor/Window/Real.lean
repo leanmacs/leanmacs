@@ -42,8 +42,8 @@ It imports the config base, `Editor`, for the link alone: the window host
 elaborates config on that base (`Editor/Config/Elaborate.lean`, "The
 base"), whose import of the base at runtime needs every module of it linked
 into this executable. The adapter does not import the base itself, so this
-module, which runs the host, does, and `tools/core-imports-check.sh` checks
-it. It imports `ConfigFixture` for the link too: `window-host-base` hands
+module, which runs the host, does (`.agents/rules/structure.md`, "Core
+imports"). It imports `ConfigFixture` for the link too: `window-host-base` hands
 the window mode a base that holds that module, which `Editor` does not
 import, as an editor's generated root hands it the entry modules of its
 set's packages.

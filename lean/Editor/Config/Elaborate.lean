@@ -82,8 +82,8 @@ list of modules imported, and the environment made from them.
   module imports `Editor` beside it (the root the package-set build
   generates for the editor, which also imports each entry module its base
   names; `ConfigTest/Check.lean`; `FfiTest/Editor/Window/Real.lean`), and
-  the gate checks on Lake's module graph that every root that reaches this
-  module reaches `Editor` (`tools/core-imports-check.sh`).
+  every root that reaches this module reaches `Editor`
+  (`.agents/rules/structure.md`, "Core imports").
   `Settings.imports` still defaults to the name `Editor`, which is data.
 - **The importing flag.** Lean's import runs with its "importing" flag up
   (`Lean.withImporting`), and turns the execution of initialisers off when

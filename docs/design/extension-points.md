@@ -3,9 +3,8 @@
 Status: decided 2026-11-19; **built** in the `features-as-packages`
 roadmap's phase 1, which moves no feature yet. Built: the mechanism
 (`lean/Editor/Extension.lean`, `SetupRequest.extend`,
-`RegistryRequest.extensions`, kept by owner in the registry); the layer
-imports check (`tools/layer-imports-check.sh`, over the facet
-`editorLayerImports`), with interface packages declared by
+`RegistryRequest.extensions`, kept by owner in the registry); the
+three-layer rule, with interface packages declared by
 `keywords = ["editor-interface"]` in their lakefile; the check that config
 elaborated at runtime registers at a compiled package's extension point
 (`config-test`); and the decision on reaches by name ("Reaches by name",
@@ -135,12 +134,13 @@ the set has to change or be rebuilt against it.
   its linked test included. A test that imported another feature's
   implementation would stop building when that feature is left out; it
   uses the interface package's fake instead.
-- **The gate checks the rule on Lake's module graph**
-  (`tools/layer-imports-check.sh`; [the-gate.md](../dev-practices/the-gate.md),
-  "The layer imports check"), as it checks what a package imports of the
-  core (`tools/package-imports-check.sh`). It checks `import` lines; a
-  `require` of an implementation package, which only orders registration,
-  is not refused yet (the task `layer-requires-check`).
+- **Review holds the rule** ([structure.md](../../.agents/rules/structure.md),
+  "Three layers"), as it holds what a package imports of the core ("What
+  a package may import"): no gate step checks either, and rdm task
+  `lean-structure-rules-tool` is where automated checking comes back. The
+  rule is about `import` lines; a `require` of an implementation package,
+  which only orders registration, is not refused (the task
+  `layer-requires-check`).
 
 ## How an interface is written in Lean
 
@@ -424,7 +424,7 @@ and it is not routed through an extension point.**
     the menu and the ex names did until they moved out (phase 8) and the
     Vim scheme's default tables until evil did (phase 7). It cannot import
     the interface package, because the core imports no package. **The core
-    → interface refusal of the layer imports check stays**: no exception
+    → interface refusal of the three-layer rule stays**: no exception
     is made for name constants. No feature's reacher is left in the core;
     the core's test kit, whose stand-ins register under a package's names,
     names them as text (`lean/Editor/Test/Ex.lean`,

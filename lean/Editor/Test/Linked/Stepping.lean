@@ -27,8 +27,8 @@ imports neither the stage nor the kit's stand-ins for those packages.
 
 It is apart from `Editor.Test.Linked.Services`, which `contract-test`
 links: `sharing` names the real elaborator, and a test executable that
-reaches it must link the config base (`tools/core-imports-check.sh`,
-rule 3).
+reaches it must link the config base (`.agents/rules/structure.md`,
+"Core imports").
 
 Published for a package's linked tests, as the rest of the linked test kit
 is (`docs/design/packages.md`, "What a package may import").

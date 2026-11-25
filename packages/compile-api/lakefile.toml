@@ -7,8 +7,8 @@
 # registers no behaviour.
 #
 # It is an interface package: it declares the keyword `editor-interface`
-# below, so another package may import its modules, and the layer imports
-# check reads that keyword from Lake (tools/layer-imports-check.sh). Its
+# below, so another package may import its modules, and the three-layer
+# rule reads that keyword (.agents/rules/structure.md). Its
 # modules were the core's (`lean/Editor/ProjectMode.lean` and the two under
 # it) until features-as-packages phase 8, when the compile mode's
 # registrations became extension points and the core stopped naming them,
@@ -49,8 +49,8 @@
 #   lake -d ../packages/compile-api update --keep-toolchain
 # then the same for every package and set that reaches this package
 # (packages/compile, packages/workspace, packages/project-api and what
-# requires it, packages/, tests/packages, tests/user-link,
-# tests/layer-imports), and commit each lake-manifest.json.
+# requires it, packages/, tests/packages, tests/user-link), and
+# commit each lake-manifest.json.
 name = "compile-api"
 keywords = ["editor-interface"]
 testDriver = "«compile-api-test»"

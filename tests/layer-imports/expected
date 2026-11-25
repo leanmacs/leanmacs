@@ -1,5 +1,0 @@
-layer-imports-check: greeting-loud (implementation): GreetingLoud imports Greeting of greeting (implementation): a module of an implementation package, which no package imports
-layer-imports-check: project-api (interface): ProjectApi.Finder imports Greeting of greeting (implementation): a module of an implementation package, which no package imports
-layer-imports-check: editor-core (core): Editor.Setup imports GreetingApi of greeting-api (interface): the core imports no package
-layer-imports-check: editor-core (core): Editor.Setup imports ShippedThemes.Solarized of shipped-themes (implementation): the core imports no package
-layer-imports-check: editor-core (core): Editor.Core imports Compile of compile (implementation): the core imports no package

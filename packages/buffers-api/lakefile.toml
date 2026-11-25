@@ -7,8 +7,8 @@
 # registers no behaviour.
 #
 # It is an interface package: it declares the keyword `editor-interface`
-# below, so another package may import its modules, and the layer imports
-# check reads that keyword from Lake (tools/layer-imports-check.sh). It was
+# below, so another package may import its modules, and the three-layer
+# rule reads that keyword (.agents/rules/structure.md). It was
 # staged in the core's Lake package as its own `lean_lib` with this layout
 # and these names until features-as-packages phase 8, when its last user in
 # the core, the ex line, moved out, and moved here with `git mv`, no import
@@ -33,7 +33,7 @@
 # then the same for every package and set that reaches this package
 # (packages/buffers, packages/version-control, packages/working-set,
 # packages/ex, packages/evil, packages/files, packages/, tests/packages,
-# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+# tests/user-link), and commit each lake-manifest.json.
 name = "buffers-api"
 keywords = ["editor-interface"]
 testDriver = "«buffers-api-test»"

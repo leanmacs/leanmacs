@@ -55,7 +55,8 @@ This module is the library `Lint`'s, outside the editor's library
 `Editor`, and imports `Lean`, which no module of the config base or of the
 model tests may reach (`docs/design/overview.md`, "Config is elaborated
 behind a port, and two adapters link Lean's frontend";
-`tools/core-imports-check.sh`, rule 4). So no module imports it: the build
+`.agents/rules/structure.md`, "Core imports"). So no module imports it:
+the build
 loads the library as a Lean plugin (`lean --plugin`) as it elaborates each
 module of the core's libraries and of every package under `packages/` and
 `tests/packages/` (`lintPlugin` in `lean/lakefile.lean`, `plugins` in each
@@ -74,9 +75,8 @@ by `lint-test`, and the `#guard_msgs` fixtures of
 `ConfigTest/Lint/Wait.lean`, `FfiTest/Lint/Wait.lean` and the fixture
 package `greeting`'s `GreetingTest/Lint/Wait.lean`, which a build of those
 modules runs. That every library and executable of the core and of the
-packages under `packages/` and `tests/packages/` loads the plugin is the
-lint plugins check's (`tools/lint-plugins-check.sh`, over Lake's
-configuration).
+packages under `packages/` and `tests/packages/` loads the plugin is a
+reviewer rule (`.agents/rules/structure.md`, "Lint plugins").
 -/
 
 open Lean Elab Command

@@ -4,17 +4,17 @@
 # requires (../lakefile.toml; docs/design/packages.md, "The package set and
 # its build"). It was modules of the core, `Editor.BindingSearch` and
 # `Editor.BindingSearch.Compiled`, until the features-as-packages roadmap's
-# phase 3. The gate's package steps build, test, lint, format-check and run
-# it headless through the fixture set, which requires the default set
-# (tools/package-set.sh), and the package imports check holds what it
-# imports of the core (tools/package-imports-check.sh).
+# phase 3. The gate's package steps build, test, lint, format-check and run it
+# headless through the fixture set, which requires the default set
+# (tools/package-set.sh), and review holds what it imports of the core to the
+# rule in `.agents/rules/structure.md`.
 #
 # - `BindingSearch` is the package's library: `BindingSearch.lean`, the
-#   command, its source and its resolution; `BindingSearch/Compiled.lean`,
-#   the `Package` value; and its entry module
-#   `BindingSearch/EditorPackage.lean`, which the package-set build reads.
-#   Its `globs` hold every module under `BindingSearch`, not only what the
-#   root imports, so the package imports check sees each one's imports.
+#   command, its source and its resolution; `BindingSearch/Compiled.lean`, the
+#   `Package` value; and its entry module `BindingSearch/EditorPackage.lean`,
+#   which the package-set build reads. Its `globs` hold every module under
+#   `BindingSearch`, not only what the root imports, so the library's build
+#   reaches each one.
 # - `binding-search-test` is its test driver (`lake test`): the tests that
 #   need no Rust library, rooted at `BindingSearchTest/Model.lean`. It is
 #   no default target, as the core's `model-test` is not: `mise run lean`
@@ -28,12 +28,12 @@
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
-# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+# and the three-layer rule (.agents/rules/structure.md) holds it to that.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/binding-search update --keep-toolchain
 # then the same for every set that reaches this package (../, tests/packages,
-# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+# tests/user-link), and commit each lake-manifest.json.
 name = "binding-search"
 testDriver = "«binding-search-test»"
 defaultTargets = ["BindingSearch", "BindingSearchTest"]

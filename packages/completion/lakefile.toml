@@ -5,17 +5,16 @@
 # its build"). It was modules of the core, `Editor.Completion.Styles`,
 # `Editor.Completion.Displays` and `Editor.Completion.Compiled`, until the
 # features-as-packages roadmap's phase 4. The gate's package steps build,
-# test, lint, format-check and run it headless through the fixture set,
-# which requires the default set (tools/package-set.sh), and the package
-# imports check holds what it imports of the core
-# (tools/package-imports-check.sh).
+# test, lint, format-check and run it headless through the fixture set, which
+# requires the default set (tools/package-set.sh), and review holds what it
+# imports of the core to the rule in `.agents/rules/structure.md`.
 #
 # - `Completion` is the package's library: `Completion/Styles.lean`, the
-#   styles; `Completion/Displays.lean`, the display; `Completion/Compiled.lean`,
-#   the `Package` value; and its entry module `Completion/EditorPackage.lean`,
-#   which the package-set build reads. It has no root module, so its
-#   `globs` hold every module under `Completion`, and the package imports
-#   check sees each one's imports.
+#   styles; `Completion/Displays.lean`, the display;
+#   `Completion/Compiled.lean`, the `Package` value; and its entry module
+#   `Completion/EditorPackage.lean`, which the package-set build reads. It has
+#   no root module, so its `globs` hold every module under `Completion`, and
+#   the library's build reaches each one.
 # - `completion-test` is its test driver (`lake test`): the tests that need
 #   no Rust library, rooted at `CompletionTest/Model.lean`. It is no
 #   default target, as the core's `model-test` is not: `mise run lean`
@@ -33,12 +32,12 @@
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
-# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+# and the three-layer rule (.agents/rules/structure.md) holds it to that.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/completion update --keep-toolchain
 # then the same for every set that reaches this package (../, tests/packages,
-# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+# tests/user-link), and commit each lake-manifest.json.
 name = "completion"
 testDriver = "«completion-test»"
 defaultTargets = ["Completion", "CompletionTest"]

@@ -213,8 +213,7 @@ bindings and the `….Compiled` modules are internal. It may never import
 `Editor`, the config base, which only the root of a package's linked test
 may import. A config file starts with `import Editor`; a package's module
 imports the modules it uses instead, as `WordCount.lean` imports
-`Editor.Api` and `Editor.Package`. The gate's package imports check refuses
-anything else, each with its reason. The full rule is in
+`Editor.Api` and `Editor.Package`. The full rule is in
 [packages.md](../design/packages.md), ["What a package may
 import"](../design/packages.md#what-a-package-may-import), and which
 modules are core, internal or features is in ["The module

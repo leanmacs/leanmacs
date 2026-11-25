@@ -5,8 +5,9 @@ A wait linters' fixture in the library of the `ffi-test` executable
 (`FfiTests`): a raw sleep wrapped in `#guard_msgs`, which expects
 `linter.rawClock`'s error, so a build of this module shows that the build
 loads the linters into this library too (`lintPlugin`, `lean/lakefile.lean`).
-It holds no check. That every library and executable loads them is the lint
-plugins check's (`tools/lint-plugins-check.sh`); what the linters refuse is
+It holds no check. That every library and executable loads them is a
+reviewer rule (`.agents/rules/structure.md`, "Lint plugins"); what the
+linters refuse is
 shown by the model tests' fixtures (`ModelTest/Lint/Wait.lean`).
 -/
 

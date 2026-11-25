@@ -6,8 +6,8 @@ in `#guard_msgs`, which expects `linter.rawClock`'s error, so a build of
 this module shows that the `plugins` line of a package's lakefile loads the
 core's linters into its libraries, as `lintPlugin` loads them into the
 core's (`lean/Lint/Wait.lean`). It holds no check. That every package's
-libraries and executables load them is the lint plugins check's
-(`tools/lint-plugins-check.sh`).
+libraries and executables load them is a reviewer rule
+(`.agents/rules/structure.md`, "Lint plugins").
 -/
 
 /--

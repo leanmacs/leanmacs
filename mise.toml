@@ -258,58 +258,10 @@ run = [
   "for case in impl-only interface core docs-only; do out=$(cd .. && sh tools/lean-hook.sh --dry-run --lines tests/hook-targets/graph --root /repo $(cat \"tests/hook-targets/cases/$case/paths\")) && printf '%s\\n' \"$out\" | diff \"../tests/hook-targets/cases/$case/hook-expected\" - || { echo \"lean-test: lean-hook would run otherwise on the case $case\"; exit 1; }; done",
   "for names in 'compile greeting' greeting; do out=$(sh ../tools/lean-packages.sh --dry-run $names) && printf '%s\\n' \"$out\" | diff \"../tests/hook-targets/lean-packages/${names%% *}-expected\" - || { echo \"lean-test: lean-packages would run otherwise for $names\"; exit 1; }; done",
   "status=0; out=$(sh ../tools/lean-packages.sh --dry-run 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'names no package'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  # The leave-out check's edit of a set's lakefile (tools/leave-out-check.sh;
-  # docs/dev-practices/the-gate.md, "The leave-out check"), held on a
-  # lakefile written by hand (tests/leave-out/lakefile.toml): its dry run,
-  # which builds nothing and asks Lake nothing, prints the lakefile without
-  # the named package's `[[require]]`, the comment directly above it and one
-  # blank line, every relative `path` made absolute against the root it is
-  # given, exactly `without-beta` for a package in the middle and
-  # `without-gamma` for the last. A package the lakefile does not require
-  # is exit 2, and so is a command line it does not take. The builds
-  # themselves, one editor a package, are opt-in (`mise run leave-out`).
-  "for package in beta gamma; do out=$(sh ../tools/leave-out-check.sh --dry-run $package --root /repo/set ../tests/leave-out) && printf '%s\\n' \"$out\" | diff ../tests/leave-out/without-$package - || { echo \"lean-test: leave-out-check's dry run printed another lakefile without $package\"; exit 1; }; done",
-  "status=0; out=$(sh ../tools/leave-out-check.sh --dry-run delta --root /repo/set ../tests/leave-out 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'has no [[require]] of delta'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  "status=0; out=$(sh ../tools/leave-out-check.sh 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage:'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  # The module map check's reading of the packages' sources
-  # (tools/module-map-check.sh; docs/dev-practices/the-gate.md, "The module
-  # map check"), held on packages and maps written by hand
-  # (tests/module-map/). With `--points` it asks Lake nothing: it compares
-  # the registrations and reads the library modules under
-  # tests/module-map/packages hold with the rows of a map. Those sources
-  # are seven packages. `sample` holds one line for each of the four ways
-  # the reader counts a registration (an `Extension.add` with its type on
-  # the same line, one with it on a later line, `compileContribution`,
-  # `projectCommands`), one for each of the four operations it counts as
-  # a read (`Extension.values`, `.named`, `.configValues`, `.workJob`),
-  # and one for each of the five texts it skips (prose in backticks, a
-  # `def`'s first line, a test library's root, a test library's module, a
-  # fixture's config). `buffers-api` is an interface package: its own two
-  # points are not counted in it, and one of another namespace is.
-  # `readers` holds one call of each of the seven readers an interface
-  # declares over one point (`FilesApi.runOpened`, `.runSaved`, `.files?`,
-  # `BuffersApi.runClosing`, `.buffers?`, `ProjectApi.workspaces?`,
-  # `VcApi.connect?`), each on a line of its own. And `compile-hook`,
-  # `compile-listings`, `compile-markers` and `compile-work` hold one each
-  # of the four readers of both of the compile mode's points
-  # (`Compile.hook`, `refreshListings`, `markerSettings`,
-  # `Compile.listWork`) and nothing else: the four count the same two
-  # reads of a package, so in one package three would hide the fourth.
-  # `map.md` names exactly what the seven hold, so over it the check must
-  # print nothing and exit 0, and each of those rules, dropped by itself,
-  # fails here. What the fixture does not hold is listed in the-gate.md,
-  # under "What it does not claim". Over `stale-map.md`, the same map
-  # with one registration dropped and one read added, it must exit 1 and
-  # print exactly `stale-expected`, the two lines that differ. A command
-  # line it does not take is exit 2. The real map is held to the tree and
-  # to Lake in ffi-test.
-  "sh ../tools/module-map-check.sh --points ../tests/module-map/packages ../tests/module-map/map.md",
-  "status=0; out=$(sh ../tools/module-map-check.sh --points ../tests/module-map/packages ../tests/module-map/stale-map.md 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/module-map/stale-expected -; } || { echo \"lean-test: module-map-check passed a stale map (exit $status), or printed another difference\"; printf '%s\\n' \"$out\"; exit 1; }",
-  "status=0; out=$(sh ../tools/module-map-check.sh --points ../tests/module-map/packages 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage:'; } || { echo \"lean-test: module-map-check took a command line with no map (exit $status)\"; printf '%s\\n' \"$out\"; exit 1; }",
   'PATH="$PWD/no-cargo:$PATH" lake test --wfail',
   # The checks of the build's linters (lean/LintTest.lean), which import the
   # linters and so are a test executable of their own: model-test links no
-  # module of Lean's frontend (tools/core-imports-check.sh, rule 4).
+  # module of Lean's frontend (.agents/rules/structure.md, "Core imports").
   'PATH="$PWD/no-cargo:$PATH" lake exe lint-test',
   # The same for each package of the fixture set (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps"): its Lake test
@@ -355,7 +307,7 @@ run = [
 # once: the Lake tasks run in one chain, `lean-test`, `lean`, then `lean-fmt`
 # and `ffi-test`.
 [tasks.lean]
-description = "Build the Lean core and the test executables with Lake, which runs Cargo for the Rust static library, check that every library and executable of the core and of each package loads the wait linters as a plugin (tools/lint-plugins-check.sh), then the editor and the headless fixture harness from the default package set (packages/), the fixture set with its packages and its harness (tests/packages/) and the editor from the core alone (tests/empty-set/); every linter is on and a warning fails the build (lean/lakefile.lean)"
+description = "Build the Lean core and the test executables with Lake, which runs Cargo for the Rust static library, then the editor and the headless fixture harness from the default package set (packages/), the fixture set with its packages and its harness (tests/packages/) and the editor from the core alone (tests/empty-set/); every linter is on and a warning fails the build (lean/lakefile.lean)"
 depends = ["lean-test"]
 dir = "lean"
 # On macOS the executables must be compiled and linked by the system compiler:
@@ -370,17 +322,6 @@ env = { LEAN_CC = "/usr/bin/cc" }
 # the lakefile does not reach.
 run = [
   "lake build --wfail",
-  # The lint plugins check (tools/lint-plugins-check.sh;
-  # docs/dev-practices/the-gate.md, "The wait lints"): every library and
-  # executable of the core, and of each package the default set and the
-  # fixture set hold in their directories, loads the build's linters as a
-  # Lean plugin, or imports them, as Lake resolves its configuration. First
-  # the check itself, on the set tests/lint-plugins/, whose package
-  # `unlinted` has a library and an executable that load none: it must exit
-  # 1 and print exactly tests/lint-plugins/expected. Then the real sets.
-  "status=0; out=$(sh ../tools/lint-plugins-check.sh ../tests/lint-plugins 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/lint-plugins/expected -; } || { echo \"lean: the lint plugins check exited $status on tests/lint-plugins\"; exit 1; }",
-  "sh ../tools/lint-plugins-check.sh ../packages",
-  "sh ../tools/lint-plugins-check.sh ../tests/packages",
   # The editor, from the default package set (packages/lakefile.toml): the
   # package-set build, a facet the core's lakefile defines, writes the
   # set's root module, builds it and links
@@ -497,7 +438,7 @@ description = "Build the app's launcher and its test helper, release (crates/edi
 run = "cargo build --quiet --locked --release -p editor-launch-std --bins"
 
 [tasks.ffi-test]
-description = "Check on Lake's module graph that the host's modules import no feature module (tools/host-imports-check.sh), that the core imports no module of a feature that moves out of it (tools/core-imports-check.sh), that a package imports only the core's API (tools/package-imports-check.sh) that the core imports no package and no package imports an implementation package (tools/layer-imports-check.sh) and that the module map of docs/design/packages.md agrees with the tree and with Lake (tools/module-map-check.sh), then run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, the headless fixtures under tests/headless on the set's fixture harness, stepped on the fakes, with the real-thread set's CLI runs and the window scenarios, one case each (tools/wiring-runs.sh: the runner's four compared both ways through the CLI, tools/fixture-compare.sh, the others through the CLI, the restart through the launcher), and the linked test and headless fixtures of each package of the fixture set and of the default set, each linked test once (tools/package-set.sh --ledger); and last, that every item of the wiring set the code lists ran exactly once (tools/wiring-ledger.sh)"
+description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, the headless fixtures under tests/headless on the set's fixture harness, stepped on the fakes, with the real-thread set's CLI runs and the window scenarios, one case each (tools/wiring-runs.sh: the runner's four compared both ways through the CLI, tools/fixture-compare.sh, the others through the CLI, the restart through the launcher), and the linked test and headless fixtures of each package of the fixture set and of the default set, each linked test once (tools/package-set.sh --ledger); and last, that every item of the wiring set the code lists ran exactly once (tools/wiring-ledger.sh)"
 depends = ["lean", "launcher"]
 dir = "lean"
 # Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max), with
@@ -512,38 +453,6 @@ run = [
   # such list: docs/dev-practices/real-thread-checks.md, "How stress runs
   # the set"). Reset first, so the ledger is this run's.
   "rm -rf ../target/gate && mkdir -p ../target/gate",
-  # The host's modules import no feature module, on Lake's module graph
-  # (tools/host-imports-check.sh; docs/dev-practices/the-gate.md, "The host
-  # imports check"), checked on the root the package-set build generates for
-  # the default set (packages/): the modules that root imports, other than
-  # the entry modules that list the packages (the default packages',
-  # `Ex.EditorPackage` to `Languages.EditorPackage`; the core's Lake
-  # package has none), reach neither an entry module nor a module one
-  # imports. Three `lake query` calls, about half a second each.
-  "sh ../tools/host-imports-check.sh",
-  # And the check bites: pointed at the core's module `ConfigTest`, a root
-  # that imports modules that define packages, with the test kit's
-  # stand-ins for default packages (`Editor.Test.Shipped`) as the list
-  # module, it must find them and exit 1. The core has no entry module to
-  # name: its Lake package registers no package. Its output is shown only
-  # when it does not.
-  "status=0; out=$(sh ../tools/host-imports-check.sh ConfigTest Editor.Test.Shipped 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
-  # The same check on the root generated for the fixture set
-  # (tests/packages/), with `--set`: that root imports twenty-nine entry
-  # modules, the three fixture packages', the twenty-five default
-  # packages' and the writing guide's example package's (the core's Lake
-  # package has none), and the host's
-  # modules must reach none of them, nor what they import (`Greeting`,
-  # `GreetingLoud`, `Echo.Packages`, `ShippedThemes`, `Compile.Compiled`,
-  # `ExecuteCommand.Compiled` and the rest).
-  "sh ../tools/host-imports-check.sh --set ../tests/packages",
-  # And the same of each set's other generated root, the headless fixture
-  # harness's (`--fixtures`, `:editorFixturesRootImports`;
-  # docs/dev-practices/headless-mode.md, "How the gate runs a fixture"): the
-  # modules it imports, other than the entry modules, reach no feature
-  # module.
-  "sh ../tools/host-imports-check.sh --fixtures",
-  "sh ../tools/host-imports-check.sh --fixtures --set ../tests/packages",
   # The root of the user-side link's fixture set (tests/user-link/): the
   # check that links an editor as a user's Mac would (`mise run
   # user-link-check`, opt-in) stages the root the package-set build
@@ -669,134 +578,6 @@ run = [
   "sh ../tools/rust-bans-check.sh ../tests/packages",
   "sh ../tools/rust-bans-check.sh ../packages",
   "status=0; out=$(sh ../tools/rust-bans-check.sh ../tests/rust-bans 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qF \"crate 'editor-ffi = 0.1.0' is explicitly banned\" && printf '%s\\n' \"$out\" | grep -qF \"crate 'bans-ffi = 0.1.0' is explicitly banned\"; } || { printf '%s\\n' \"$out\"; echo \"ffi-test: the Rust bans check exited $status on tests/rust-bans\"; exit 1; }",
-  # The core's root holds the whole core, on Lake's module graph
-  # (tools/core-imports-check.sh; docs/dev-practices/the-gate.md, "The core
-  # imports check"): every `Editor.…` module the build reaches is the
-  # core's root, `Editor.Core`, or one of the modules it imports; every
-  # root that links the elaborator links the config base; and the config
-  # base and the model tests' root import no module of Lean's frontend,
-  # through any module. No feature is
-  # between having its edges from the core cut and moving out, so the check
-  # is given no moving name, and its first rule, that the root reaches no
-  # moving module, holds of nothing: the two features it was about, the
-  # shipped palettes and the compile mode, are Lake packages now, which the
-  # core cannot import. The roots of the build are the core's executables'
-  # and the root generated for the default set. Eight `lake query` calls,
-  # about half a second each.
-  "sh ../tools/core-imports-check.sh",
-  # And each rule of the check bites. Told that a module of the core, the
-  # ex line's data (`Editor.Ex.Line`), is moving, it must find it in the
-  # core's root's closure and exit 1: no feature is left in the core to
-  # name since the ex line moved out, and the first rule is ready for
-  # whatever module's edges are cut before it moves.
-  # Pointed at the root `Editor.Setup`, which imports no moving module and
-  # not the whole core, it must find the core modules outside it and exit 3.
-  # Told the config base is `Editor.Core`, which no executable's root
-  # imports, it must name the roots that link the elaborator without it and
-  # exit 4. Told `Editor.Core`, which imports the two adapters that link
-  # Lean's frontend, must be plain Lean, it must name their imports of
-  # `Lean` and of Lake and exit 5. Told `Editor.Core`, which imports the
-  # raw bindings, must link no Rust library, it must name `Editor.Ffi` and
-  # exit 6. And told the elaborator adapter is
-  # `Editor.Core`, which no root reaches, so that the third rule would hold
-  # of nothing, it must say so and exit 2. The output of each is shown only
-  # when it is not that.
-  "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Core Editor.Ex.Line 2>&1) || status=$?; test \"$status\" -eq 1 || { printf '%s\\n' \"$out\"; exit 1; }",
-  "status=0; out=$(sh ../tools/core-imports-check.sh Editor.Setup 2>&1) || status=$?; test \"$status\" -eq 3 || { printf '%s\\n' \"$out\"; exit 1; }",
-  "status=0; out=$(sh ../tools/core-imports-check.sh --base Editor.Core 2>&1) || status=$?; test \"$status\" -eq 4 || { printf '%s\\n' \"$out\"; exit 1; }",
-  # And it holds of the fixture harness's generated root too
-  # (`fixtures:../packages`, `:editorFixturesRootTransImports`), which
-  # elaborates config: told the base is `Editor.Main`, which the editor's
-  # root imports and the harness's does not, it must exit 4 and name that
-  # root among those that reach the elaborator without the base.
-  "status=0; out=$(sh ../tools/core-imports-check.sh --base Editor.Main 2>&1) || status=$?; { test \"$status\" -eq 4 && printf '%s\\n' \"$out\" | grep -qxF 'fixtures:../packages'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  "status=0; out=$(sh ../tools/core-imports-check.sh --plain Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 5 && printf '%s\\n' \"$out\" | grep -qxF \"$(printf 'Editor.Config.Elaborate\\tLean')\"; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  "status=0; out=$(sh ../tools/core-imports-check.sh --unlinked Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 6 && printf '%s\\n' \"$out\" | grep -qxF Editor.Ffi; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  "status=0; out=$(sh ../tools/core-imports-check.sh --elaborator Editor.Core 2>&1) || status=$?; { test \"$status\" -eq 2 && test \"${out#core-imports-check: no root of the build}\" != \"$out\"; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  # A package imports only what a package may import of the core, on Lake's
-  # module graph (tools/package-imports-check.sh;
-  # docs/dev-practices/the-gate.md, "The package imports check"): a
-  # package's library names modules of the core's API alone, its tests may
-  # also name the core's test doubles, its linked test (the root and the
-  # modules under it) also the linked test kit, which runs over the Rust
-  # library, and the root of its linked test what an executable linked as
-  # the editor is needs. First the rule itself, on
-  # lines written by hand (tests/package-imports/lines), one for each
-  # branch of it: it must exit 1 and print exactly
-  # tests/package-imports/expected, each refused import with its reason
-  # and no allowed one.
-  "status=0; out=$(sh ../tools/package-imports-check.sh --lines ../tests/package-imports/lines 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/package-imports/expected -; } || { echo \"ffi-test: the package imports check exited $status on tests/package-imports/lines\"; exit 1; }",
-  # Then the packages: those of the fixture set (tests/packages/), which
-  # requires the default set and so reaches the default packages, and the
-  # package of the user-side link's set (tests/user-link/). One `lake
-  # query` each, which builds nothing.
-  "sh ../tools/package-imports-check.sh ../tests/packages",
-  "sh ../tools/package-imports-check.sh ../tests/user-link",
-  # And it refuses to pass over nothing: the set tests/empty-set holds no
-  # package, so there is no line to check and it must exit 2, saying so.
-  # Its output is shown only when it does not.
-  "status=0; out=$(sh ../tools/package-imports-check.sh ../tests/empty-set 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -q 'so there is nothing to check'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  # The three-layer import rule, on Lake's module graph
-  # (tools/layer-imports-check.sh; docs/dev-practices/the-gate.md, "The
-  # layer imports check"; docs/design/extension-points.md, "Three layers"):
-  # the core imports no package, and no package imports a module of an
-  # implementation package, a package whose lakefile does not declare
-  # `keywords = ["editor-interface"]`. First the rule itself, on lines
-  # written by hand (tests/layer-imports/lines), one for each branch of it:
-  # it must exit 1 and print exactly tests/layer-imports/expected, each
-  # refused import with its reason and no allowed one. Among the refused
-  # are a core module importing a module of `shipped-themes` and one of
-  # `compile`: the core's lakefile requires no package, so no real graph
-  # can show that refusal.
-  "status=0; out=$(sh ../tools/layer-imports-check.sh --lines ../tests/layer-imports/lines 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/layer-imports/expected -; } || { echo \"ffi-test: the layer imports check exited $status on tests/layer-imports/lines\"; exit 1; }",
-  # A layer it does not know is exit 2, and so is input in which no module
-  # of the core is an importer: the core's half of the rule would then hold
-  # of nothing. Their output is shown only when it is not that.
-  "status=0; out=$(sh ../tools/layer-imports-check.sh --lines ../tests/layer-imports/bad-layer 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'in the layer `plugin`'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  "status=0; out=$(sh ../tools/layer-imports-check.sh --lines ../tests/layer-imports/no-core 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'no module of the core is an importer'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  # The facet the check reads walks the core's modules: on the default
-  # set's real graph, some of its lines have a module of the core as the
-  # importer. A facet that skipped the core would give none, and every run
-  # below would then exit 2.
-  "n=$(lake -d ../packages query :editorLayerImports | awk -F '\t' '$2 == \"core\" { n++ } END { print n + 0 }') && test \"$n\" -gt 0 || { echo 'ffi-test: editorLayerImports lists no import by a module of the core'; exit 1; }",
-  # Then real sets. The default set (packages/): `shipped-themes` and
-  # `compile`, implementation packages, import only the core. The user-side
-  # link's set (tests/user-link/), whose package imports only the core. And
-  # the set with no package (tests/empty-set/): the core alone, so only the
-  # core's own imports are checked. One `lake query` each, about two and a
-  # half seconds on a developer's Mac, most of it reading the core's
-  # headers; the script's own pass is a tenth of a second.
-  "sh ../tools/layer-imports-check.sh ../packages",
-  "sh ../tools/layer-imports-check.sh ../tests/user-link",
-  "sh ../tools/layer-imports-check.sh ../tests/empty-set",
-  # The fixture set (tests/packages/), which reaches the default set too:
-  # `greeting-loud` reaches `greeting`'s command by the name the interface
-  # package `greeting-api` declares, and imports nothing of `greeting`.
-  "sh ../tools/layer-imports-check.sh ../tests/packages",
-  # And the rule on a real graph: the set tests/layer-imports/ holds the
-  # fixture set and the package `greeting-reach`, whose library module
-  # imports `GreetingApi`, of an interface package, and `Greeting`, of an
-  # implementation package, and whose test library, a second library, has
-  # a module that imports `Greeting` too. The check must exit 1 and print
-  # exactly tests/layer-imports/graph-expected, the two refused imports: it
-  # reads the layer `greeting-api`'s lakefile declares, reads every library
-  # of a package, so a facet that walked only a package's first library
-  # would miss the test module's import and fail here, and refuses on
-  # Lake's graph.
-  "status=0; out=$(sh ../tools/layer-imports-check.sh ../tests/layer-imports 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | diff ../tests/layer-imports/graph-expected -; } || { echo \"ffi-test: the layer imports check exited $status on tests/layer-imports\"; exit 1; }",
-  # The module map of docs/design/packages.md, held to the tree and to
-  # Lake (tools/module-map-check.sh; docs/dev-practices/the-gate.md, "The
-  # module map check"): every module under lean/Editor/ is named in the
-  # map's first table, and no other; every package of the default set has
-  # a row with the layer Lake gives it (`lake -d ../packages query
-  # :editorPackageGraph`); and the extension points the library modules of
-  # each package under packages/ register at and read are the ones its row
-  # names. It prints nothing when they agree, and otherwise what differs,
-  # and exits 1. One `lake query`, which builds nothing, and a pass over
-  # the packages' sources: under two seconds on a developer's Mac. Its
-  # reading of the sources is held by the fixture tests/module-map/ in
-  # lean-test.
-  "sh ../tools/module-map-check.sh",
   # The package graph the pre-commit hook decides over
   # (tools/hook-targets.sh; the facet `editorPackageGraph`;
   # docs/dev-practices/the-gate.md, "The pre-commit hook"). On the fixture
@@ -1046,25 +827,6 @@ depends = ["lean", "launcher"]
 dir = "lean"
 timeout = "600s"
 run = "sh ../tools/home-bound-toolchain.sh sh ../tools/user-sets-test.sh"
-
-# Opt-in, never part of `ci` or hk.pkl: the leave-out check
-# (tools/leave-out-check.sh; docs/dev-practices/the-gate.md, "The leave-out
-# check"). For each implementation package of the default set, it builds
-# an editor from the set without that package, in a temporary directory,
-# requires that editor's generated root to import every other entry module
-# and not that one, and prints `leave-out: <package>: built, …` with the
-# first line of the editor's `--probe`. It links one editor a package,
-# twenty-five of them, which is why it is not in the gate; the gate keeps
-# what makes it true, the layer imports check (no package imports an
-# implementation package's module), and the check's own edit of a
-# lakefile, by dry runs (`lean-test`). It builds the packages where they
-# are, so never run it while `ci` or another build of this checkout runs.
-[tasks.leave-out]
-description = "Opt-in, never part of ci: build an editor from the default package set without each implementation package, one at a time, and say what each one's --probe answers (tools/leave-out-check.sh)"
-depends = ["lean"]
-dir = "lean"
-env = { LEAN_CC = "/usr/bin/cc" }
-run = "sh ../tools/leave-out-check.sh ../packages"
 
 # Opt-in, never part of `ci`: the user package sets checks that need git,
 # Cargo or more builds than the gate's (tools/user-sets-check.sh;

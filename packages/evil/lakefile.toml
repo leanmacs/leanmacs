@@ -1,15 +1,15 @@
 # Evil and the Vim scheme: Vim's states, motions, operators, text objects,
-# registers, marks, undo, dot repeat, scroll and clipboard commands written
-# on the editor API, the scheme that turns keys into their invocations, and
-# its default states and bindings: a default package, a Lake package
-# outside the core that the default package set requires (../lakefile.toml;
+# registers, marks, undo, dot repeat, scroll and clipboard commands written on
+# the editor API, the scheme that turns keys into their invocations, and its
+# default states and bindings: a default package, a Lake package outside the
+# core that the default package set requires (../lakefile.toml;
 # docs/design/packages.md, "The package set and its build"). It was sixteen
 # modules of the core, `Editor.Evil`, the thirteen under `Editor.Evil.` and
-# `Editor.InputScheme.Vim` with `.Vim.Default`, until the
-# features-as-packages roadmap's phase 7. The gate's package steps build,
-# test, lint and format-check it through the fixture set, which requires
-# the default set (tools/package-set.sh), and the package imports check
-# holds what it imports of the core (tools/package-imports-check.sh).
+# `Editor.InputScheme.Vim` with `.Vim.Default`, until the features-as-packages
+# roadmap's phase 7. The gate's package steps build, test, lint and
+# format-check it through the fixture set, which requires the default set
+# (tools/package-set.sh), and review holds what it imports of the core to the
+# rule in `.agents/rules/structure.md`.
 #
 # It supplies the editor's input scheme: it declares the keyword
 # `editor-input-scheme`, so the package-set build reads `scheme` beside
@@ -17,19 +17,18 @@
 # (docs/design/packages.md, "Input schemes"). An editor built from a set
 # with no such package refuses to start.
 #
-# - `Evil` is the package's library: `Evil.lean`, the states and commands,
-#   the modules under `Evil/`, the scheme in `Evil/Vim.lean` with its
-#   defaults in `Evil/Vim/Default.lean`, `Evil/Compiled.lean`, the
-#   `Package` value and the scheme it supplies, and its entry module
-#   `Evil/EditorPackage.lean`, which the package-set build reads. Its
-#   `globs` hold every module under `Evil`, so the package imports check
-#   sees each one's imports. It implements the interface package
-#   `evil-api`, and names the commands its tables run of the minibuffer and
-#   of completion at point by the constants of their interface packages,
-#   `minibuffer-api` and `at-point-api`, of the window and the tab
-#   commands by `window-commands-api`'s and `tab-commands-api`'s, and of
-#   the ex line and the shell by `ex-api`'s and `shell-api`'s; it requires
-#   each, beside the core, and `buffers-api` for its tests' fake.
+# - `Evil` is the package's library: `Evil.lean`, the states and commands, the
+#   modules under `Evil/`, the scheme in `Evil/Vim.lean` with its defaults in
+#   `Evil/Vim/Default.lean`, `Evil/Compiled.lean`, the `Package` value and the
+#   scheme it supplies, and its entry module `Evil/EditorPackage.lean`, which
+#   the package-set build reads. Its `globs` hold every module under `Evil`,
+#   so the library's build reaches each one. It implements the interface
+#   package `evil-api`, and names the commands its tables run of the
+#   minibuffer and of completion at point by the constants of their interface
+#   packages, `minibuffer-api` and `at-point-api`, of the window and the tab
+#   commands by `window-commands-api`'s and `tab-commands-api`'s, and of the
+#   ex line and the shell by `ex-api`'s and `shell-api`'s; it requires each,
+#   beside the core, and `buffers-api` for its tests' fake.
 # - `evil-test` is its test driver (`lake test`): the tests that need no
 #   Rust library, rooted at `EvilTest/Model.lean`. It is no default target,
 #   as the core's `model-test` is not: `mise run lean` links with the
@@ -50,13 +49,13 @@
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): `editor-input-scheme` is no layer keyword, so no package may
-# import its modules, and the layer imports check holds it to that
-# (tools/layer-imports-check.sh).
+# import its modules, and the three-layer rule holds it to that
+# (.agents/rules/structure.md).
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/evil update --keep-toolchain
 # then the same for every set that reaches this package (../, tests/packages,
-# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+# tests/user-link), and commit each lake-manifest.json.
 name = "evil"
 keywords = ["editor-input-scheme"]
 testDriver = "«evil-test»"

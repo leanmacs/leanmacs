@@ -1541,17 +1541,13 @@ def package : Package :=
 - **The lists are outside the host.** No module of a host imports an
   entry module or a module that defines a package: the host's modules are
   every module the generated root imports other than the entry modules,
-  with what they import, and the gate checks on Lake's module graph, for
-  the default set's root, that none of them is an entry module or a module
-  one imports directly (`tools/host-imports-check.sh`,
-  in `mise run ffi-test`; [the-gate.md](../dev-practices/the-gate.md),
-  "The host imports check"). The check is of the modules that define
-  packages. No core module can import one: every feature is a Lake
-  package the core does not require, so Lake itself refuses the import,
-  and a second check
-  holds that the core's root reaches every core module
-  (`tools/core-imports-check.sh`; [packages.md](packages.md), "The core
-  imports check").
+  with what they import, and none of them is an entry module or a module
+  one imports directly, a reviewer rule
+  ([structure.md](../../.agents/rules/structure.md), "Host imports"). The
+  rule is of the modules that define packages. No core module can import
+  one: every feature is a Lake package the core does not require, so Lake
+  itself refuses the import, and the core's root reaches every core module
+  ([packages.md](packages.md), "The core's root").
 - **The owner `compiled` registers nothing in a host.** It remains as the
   owner of what the core falls back to when no package registered it: the
   fuzzy style and the minibuffer display of a registry that holds none.
@@ -1597,10 +1593,10 @@ As built (`lean/Editor/Config/Elaborate.lean`):
   so every module of the base is linked into any executable that can
   elaborate config, and its initialiser ran once, when the process
   started. The adapter itself does not import `Editor`: it is a core
-  module, and the base imports features that are not the core's. The gate
-  checks on Lake's module graph that every root that reaches the adapter
-  reaches `Editor` (`tools/core-imports-check.sh`;
-  [packages.md](packages.md), "The core imports check"). This matters twice: Lean documents initialiser execution as
+  module, and the base imports features that are not the core's. Every
+  root that reaches the adapter reaches `Editor`
+  ([structure.md](../../.agents/rules/structure.md), "Core imports";
+  [packages.md](packages.md), "The core's root"). This matters twice: Lean documents initialiser execution as
   unsafe beside other threads, and the editor thread is running during the
   import. A third-party package loaded as interpreted modules would run its
   `initialize` code at import, on a job thread; that is part of the open

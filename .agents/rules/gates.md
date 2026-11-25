@@ -20,3 +20,9 @@ by reading what a command printed.
 - Prefer a gap in coverage to a fragile gate. Remove a text-matching gate
   step rather than keep it, and cover what it checked with a real test
   later.
+- A structure rule (what a module may import, which layer may import
+  which, where a module sits, which targets load the linters) that only a
+  custom shell script could check is a reviewer rule, written in
+  `.agents/rules/` (`structure.md`), not a gate step. Automated
+  enforcement comes only from a structural tool: `cargo-deny`, clippy, the
+  compiler, Lake, or the Lean linter plugin.

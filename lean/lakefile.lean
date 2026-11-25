@@ -37,10 +37,10 @@ refuses a real host or service outside the wiring set
 (`docs/dev-practices/real-thread-checks.md`). They
 import `Lean`, which the config base and the model tests must not reach
 (`docs/design/overview.md`, "Config is elaborated behind a port, and two
-adapters link Lean's frontend"; `tools/core-imports-check.sh`, rule 4), so
-this library is outside `Editor` and no module imports it: every other
-library of this package, and every package under `packages/`, loads it as
-a Lean plugin (`lintPlugin`). Its own modules load no plugin, which would
+adapters link Lean's frontend"; `.agents/rules/structure.md`, "Core
+imports"), so this library is outside `Editor` and no module imports
+it: every other library of this package, and every package under
+`packages/`, loads it as a Lean plugin (`lintPlugin`). Its own modules load no plugin, which would
 be themselves. Its tests are `LintTests`, run by `lint-test`, and the
 linters' fixtures in the test roots. Its root is the library's name, as a
 plugin's must be: Lake initializes a plugin through
@@ -55,8 +55,8 @@ which register the linters and their options, and the modules it is
 loaded for import nothing of it, so the linters reach no import closure.
 It is the shared library of `Lint`, named with this package's name, so a
 package set that requires this package by path loads the same one. That
-every library and executable loads it, or imports `Lint`, is the lint
-plugins check's (`editorLintPlugins`, `tools/lint-plugins-check.sh`). -/
+every library and executable loads it, or imports `Lint`, is a reviewer
+rule (`.agents/rules/structure.md`, "Lint plugins"). -/
 def lintPlugin : TargetArray Dynlib :=
   #[`@«editor-core»/Lint:shared]
 
@@ -73,8 +73,8 @@ Lake package with no entry module contributes nothing to a set's root
 (`entryModule?`). It is named `editor-core`, not `editor`, because a Lake
 package named `p` lists its packages in the module `<P>.EditorPackage`,
 and `editor` would put a list at `Editor.EditorPackage`, under the
-namespace the core imports check rules (`docs/design/packages.md`, "The
-package set and its build"). -/
+namespace the core's (`docs/design/packages.md`, "The package set and
+its build"; `.agents/rules/structure.md`, "Core imports"). -/
 @[default_target] lean_lib Editor where
   roots := #[`Editor, `Editor.Core]
   plugins := lintPlugin
@@ -886,17 +886,11 @@ in the set's package `pkg` (`setRoot`'s `EditorSet`, `fixturesRoot`'s
 made here, whose source directory is `<set>/.lake/build/root`. It takes
 this package's Lean options, so a warning in the root fails the build, and
 loads the build's linters as a plugin (`lintPlugin`), as every library
-does; the lint plugins check reads it (`generatedLibs`,
-`editorLintPlugins`). -/
+does (`.agents/rules/structure.md`, "Lint plugins"). -/
 def generatedLib (pkg : Package) (name : Name) : LeanLib :=
   ⟨pkg, name,
     { srcDir := pkg.config.buildDir / "root", roots := #[], leanOptions := coreLeanOptions
       plugins := lintPlugin }⟩
-
-/-- The generated roots' libraries of the set `pkg` (`generatedLib`): the
-editor's and the fixture harness's. -/
-def generatedLibs (pkg : Package) : Array LeanLib :=
-  #[generatedLib pkg `EditorSet, generatedLib pkg `EditorSetFixtures]
 
 /-- The root module of the set `pkg`, written from the entry modules of the
 set's packages (`setEntries`, `setBase`, `rootSource`), the set's Lake name
@@ -1089,7 +1083,7 @@ the set's editor (`editor`), then fills `<dir>`, which must not exist yet:
   records beside it;
 - `lib/lean/`, the `.olean`, `.olean.server` and `.olean.private` files of
   every module of the workspace the set's root imports
-  (`editorRootTransImports`), from the directory each was built in;
+  (its `transImports`), from the directory each was built in;
 - `editor.oleans`, the one relative line `lib/lean`
   (`Editor/ModuleLookup.lean`, "The record"), so `<dir>` can be renamed
   into place afterwards.
@@ -1155,21 +1149,11 @@ package_facet editorRoot pkg : FilePath := do
 (`lake -d <set dir> query :editorRootImports`): the config base, the
 executable's entry and the set's entry modules, as the workspace resolves
 them. No library declares the root, so `lake query +<module>:imports` does
-not find it; the host imports check asks this instead
-(`tools/host-imports-check.sh`). It writes the root when its text would
-change and builds nothing. -/
+not find it; the gate pins it with this instead (`mise run ffi-test`). It
+writes the root when its text would change and builds nothing. -/
 package_facet editorRootImports pkg : Array String := do
   let root ← setRoot pkg
   (← root.imports.fetch).mapM fun modules => return modules.map (·.name.toString)
-
-/-- The transitive imports of a set's root module, one module a line
-(`lake -d <set dir> query :editorRootTransImports`): every module of the
-workspace linked into the set's editor, but the root. The core imports
-check asks this for the default set (`tools/core-imports-check.sh`). It
-writes the root when its text would change and builds nothing. -/
-package_facet editorRootTransImports pkg : Array String := do
-  let root ← setRoot pkg
-  (← root.transImports.fetch).mapM fun modules => return modules.map (·.name.toString)
 
 /-- The config base of a package set, one module a line
 (`lake -d <set dir> query :editorBase`; `setBase`): `Editor`, then the
@@ -1247,24 +1231,6 @@ package_facet editorFixtures pkg : FilePath := do
   let executable := pkg.binDir / "fixture-test"
   writeModuleRecord pkg executable
   linkAsEditor pkg (← fixturesRoot pkg) executable
-
-/-- The direct imports of a set's fixture harness's root, one module a line
-(`lake -d <set dir> query :editorFixturesRootImports`), as
-`editorRootImports` answers the editor's: the host imports check reads it
-(`tools/host-imports-check.sh`). It writes the root when its text would
-change and builds nothing. -/
-package_facet editorFixturesRootImports pkg : Array String := do
-  let root ← fixturesRoot pkg
-  (← root.imports.fetch).mapM fun modules => return modules.map (·.name.toString)
-
-/-- The transitive imports of a set's fixture harness's root, one module a
-line (`lake -d <set dir> query :editorFixturesRootTransImports`), as
-`editorRootTransImports` answers the editor's: the core imports check
-reads it (`tools/core-imports-check.sh`). It writes the root when its text
-would change and builds nothing. -/
-package_facet editorFixturesRootTransImports pkg : Array String := do
-  let root ← fixturesRoot pkg
-  (← root.transImports.fetch).mapM fun modules => return modules.map (·.name.toString)
 
 /-- The place under the bundle's `Contents/Resources/lean` of the Lake
 package whose directory, with its links resolved, is `dir`, for a set whose
@@ -1495,34 +1461,6 @@ package can name (`linkedTestModule?`, `tools/package-set.sh`). -/
 module_facet editorLinked mod : FilePath := do
   linkAsEditor mod.pkg mod (linkedFile mod)
 
-/-- Whether the module `name` is Lean's frontend: `Lean` or `Lake`, or a
-module under either, which hold Lean's parser and elaborator and what is
-built on them. `Init` and `Std` are not: every module imports `Init`, and
-neither holds a parser or an elaborator. -/
-def isFrontendModule (name : Name) : Bool :=
-  match name.components.head? with
-  | some `Lean | some `Lake => true
-  | _ => false
-
-/-- Where the module `mod` reaches Lean's frontend (`isFrontendModule`),
-one line `<importer><TAB><imported>` for each import of the frontend that
-the header of `mod`, or of a module it imports directly or through
-another, names (`lake query +<module>:editorFrontendImports`). Lake's
-`transImports` names the workspace's modules alone, never the
-toolchain's, so this reads each of those modules' headers. The core
-imports check asks it of the config base and of the model tests' root,
-which must reach none (`tools/core-imports-check.sh`, rule 4). It builds
-nothing. -/
-module_facet editorFrontendImports mod : Array String := do
-  let imports ← (← mod.transImports.fetch).await
-  let mut found : Array String := #[]
-  for importer in imports.push mod do
-    let input ← (← importer.input.fetch).await
-    for imported in input.imports do
-      if isFrontendModule imported.module then
-        found := found.push s!"{importer.name}\t{imported.module}"
-  return Job.pure found
-
 /-- The module of the linked test of the Lake package `pkg`, when it has
 one: `<P>Test.Linked`, `<P>` being the package's name in upper camel case,
 held by a library of `pkg`, with its source file. It is the root of one
@@ -1561,51 +1499,6 @@ package_facet editorPackages pkg : Array String := do
     lines := lines.push s!"{dep.baseName.toString (escape := false)}\t{dep.dir}\t{linked}"
   return Job.pure lines
 
-/-- The direct imports of the core's modules by the packages of a set, for
-the package imports check (`tools/package-imports-check.sh`;
-`lake -d <set dir> query :editorPackageImports`;
-`docs/design/packages.md`, "What a package may import"). For each package
-a gate step runs over (`editorPackages`), each module of its libraries and
-each module it imports directly that is a module of this Lake package, the
-core's, one line, its fields separated by tabs: the package's name, the
-importing module, that module's kind and the module imported. The kind is
-`linked` for the root of the package's linked test (`linkedTestModule?`),
-`linked-test` for a module under that root (`<P>Test.Linked.…`), which the
-linked test imports and so is linked with the Rust library, `test` for any
-other module under `<P>Test`, and `library` for the rest.
-It reads each module's header, as Lake does to resolve imports, and builds
-nothing. -/
-package_facet editorPackageImports pkg : Array String := do
-  let ws ← getWorkspace
-  let mut jobs : Array (Job (Array String)) := #[]
-  for dep in setPackages ws pkg do
-    if dep.keyName == __name__ || !dep.remoteUrl.isEmpty || dep.leanLibs.isEmpty then
-      continue
-    let name := dep.baseName.toString (escape := false)
-    let testRoot : Name :=
-      match toUpperCamelCase dep.baseName with
-      | .str namespace_ base => .str namespace_ (base ++ "Test")
-      | other => other
-    let linkedRoot : Name := .str testRoot "Linked"
-    let kindOf (mod : Module) : String :=
-      if mod.name == linkedRoot then "linked"
-      else if linkedRoot.isPrefixOf mod.name then "linked-test"
-      else if testRoot.isPrefixOf mod.name then "test"
-      else "library"
-    for lib in dep.leanLibs do
-      let job ←
-        (← lib.modules.fetch).bindM fun mods => do
-          let lines ←
-            mods.mapM fun mod => do
-              (← mod.imports.fetch).mapM fun imports =>
-                return imports.filterMap fun imported =>
-                    if imported.pkg.keyName == __name__ then
-                      some s!"{name}\t{mod.name}\t{kindOf mod}\t{imported.name}"
-                    else none
-          return (Job.collectArray lines).map (·.flatten)
-      jobs := jobs.push job
-  return (Job.collectArray jobs).map (·.flatten)
-
 /-- The layer of the Lake package `dep` in the three-layer import rule
 (`docs/design/extension-points.md`, "Three layers"): `core` for this
 package, `interface` for a package whose lakefile declares the keyword
@@ -1615,48 +1508,6 @@ makes a package more refused, never less. -/
 def layerOf (dep : Package) : String :=
   if dep.keyName == __name__ then "core"
   else if dep.keywords.contains "editor-interface" then "interface" else "implementation"
-
-/-- The direct imports of the modules of the core and of every package of a
-set, for the layer imports check (`tools/layer-imports-check.sh`;
-`lake -d <set dir> query :editorLayerImports`;
-`docs/dev-practices/the-gate.md`, "The layer imports check"). For the core
-and each package a gate step runs over (`editorPackages`), each module of
-its libraries and each module of a package of the workspace it imports
-directly, its own package's included, one line, its fields separated by
-tabs: the package's name and layer (`layerOf`), the importing module, the
-imported module's package and layer, and the imported module. A module of
-the toolchain is no module of the workspace, and is not listed. The imports
-within one package are listed so that the check can see the core's modules
-were walked: every core module that imports another core module gives a
-line whose importer's layer is `core`. A module two of a package's
-libraries hold is listed once. It reads each module's header, as Lake does
-to resolve imports, and builds nothing. -/
-package_facet editorLayerImports pkg : Array String := do
-  let ws ← getWorkspace
-  let mut jobs : Array (Job (Array String)) := #[]
-  for dep in setPackages ws pkg do
-    if !dep.remoteUrl.isEmpty || dep.leanLibs.isEmpty then
-      continue
-    let name := dep.baseName.toString (escape := false)
-    let layer := layerOf dep
-    for lib in dep.leanLibs do
-      let job ←
-        (← lib.modules.fetch).bindM fun mods => do
-          let lines ←
-            mods.mapM fun mod => do
-              (← mod.imports.fetch).mapM fun imports =>
-                return imports.map fun imported =>
-                    s!"{name}\t{layer}\t{mod.name}\t{imported.pkg.baseName.toString (escape := false)}\t{layerOf imported.pkg}\t{imported.name}"
-          return (Job.collectArray lines).map (·.flatten)
-      jobs := jobs.push job
-  return (Job.collectArray jobs).map fun lines => Id.run do
-    let mut seen : Std.HashSet String := {}
-    let mut kept : Array String := #[]
-    for line in lines.flatten do
-      unless seen.contains line do
-        seen := seen.insert line
-        kept := kept.push line
-    return kept
 
 /-- The packages of a set as a graph, for the pre-commit hook
 (`tools/hook-targets.sh`; `lake -d <set dir> query :editorPackageGraph`;
@@ -1684,75 +1535,6 @@ package_facet editorPackageGraph pkg : Array String := do
     lines :=
       lines.push s!"{dep.baseName.toString (escape := false)}\t{layerOf dep}\t{dep.dir}\t{requires}"
   return Job.pure lines
-
-/-- Whether two plugins' keys name one target. -/
-def samePlugin (plugin lint : Target Dynlib) : Bool :=
-  @BEq.beq BuildKey _ plugin.key lint.key
-
-/-- Whether the modules of `lib`, a library or an executable's
-(`LeanExe.toLeanLib`), load the build's linters: one of its plugins, its
-package's among them (`LeanLib.plugins`), is `lintPlugin`'s, the core's
-`Lint` as a shared library, however the lakefile writes the key. -/
-def loadsLint (lib : LeanLib) : Bool :=
-  lib.plugins.any fun plugin => lintPlugin.any (samePlugin plugin)
-
-/-- Whether `mod` is a module of the core's library `Lint`, the build's
-linters. -/
-def isLintModule (mod : Module) : Bool :=
-  mod.pkg.keyName == __name__ && mod.lib.name == `Lint
-
-/-- What the lint plugins check reads (`tools/lint-plugins-check.sh`;
-`lake -d <set dir> query :editorLintPlugins`; `docs/dev-practices/the-gate.md`,
-"The wait lints"): for this package, the core, and each package of
-the set (`setPackages`) that is a path dependency in the set's own
-directory, each `lean_lib` and `lean_exe`, and for the set itself the
-libraries of its generated roots (`generatedLibs`: the editor's and the
-fixture harness's), one line, its fields separated by tabs: the package's name, the target's kind and name, and `loads` when
-its modules load the build's linters as a plugin (`loadsLint`), `imports`
-when one of them is or imports a module of `Lint` (`isLintModule`), so it
-has the linters by import and loading them too would register them twice
-(`Lint`, `LintTests`, `lint-test`), and `none` otherwise. A package the set
-reaches from outside its directory is not listed: one written as a user's
-is (`docs/packages/word-count`), which names no plugin. It reads each module's
-header, as Lake does to resolve imports, only for a target that does not
-load the plugin, and builds nothing. -/
-package_facet editorLintPlugins pkg : Array String := do
-  let ws ← getWorkspace
-  let setDir ← IO.FS.realPath pkg.dir
-  let mut jobs : Array (Job (Array String)) := #[]
-  for dep in setPackages ws pkg do
-    let inSet := (relativeUnder setDir (← IO.FS.realPath dep.dir)).isSome
-    unless dep.remoteUrl.isEmpty && (dep.keyName == __name__ || inSet) do
-      continue
-    let name := dep.baseName.toString (escape := false)
-    let mut targets : Array (String × LeanLib × Job (Array Module)) := #[]
-    for lib in dep.leanLibs do
-      targets := targets.push ("lean_lib", lib, ← lib.modules.fetch)
-    for exe in dep.leanExes do
-      targets := targets.push ("lean_exe", exe.toLeanLib, Job.pure #[exe.root])
-    for (kind, lib, modules) in targets do
-      let line (verdict : String) :=
-        s!"{name}\t{kind}\t{lib.name.toString (escape := false)}\t{verdict}"
-      if loadsLint lib then
-        jobs := jobs.push (Job.pure #[line "loads"])
-        continue
-      let job ←
-        modules.bindM fun mods => do
-            let reached ←
-              mods.mapM fun mod => do
-                  (← mod.transImports.fetch).mapM fun imports =>
-                      return isLintModule mod || imports.any isLintModule
-            return (Job.collectArray reached).map fun reached =>
-                #[line (if reached.any id then "imports" else "none")]
-      jobs := jobs.push job
-  -- The set's generated roots' libraries, which no lakefile declares
-  -- (`generatedLibs`): each loads the plugin, or its line says it does not.
-  let name := pkg.baseName.toString (escape := false)
-  for lib in generatedLibs pkg do
-    let verdict := if loadsLint lib then "loads" else "none"
-    jobs :=
-      jobs.push (Job.pure #[s!"{name}\tlean_lib\t{lib.name.toString (escape := false)}\t{verdict}"])
-  return (Job.collectArray jobs).map (·.flatten)
 
 /-- The checks of the boundary with the Rust library (`FfiTest.lean`), linked
 exactly like the editor (`linkAsEditor`): `supportInterpreter` exports the

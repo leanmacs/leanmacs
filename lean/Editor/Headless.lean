@@ -183,7 +183,7 @@ as before, so reload and job completion work as they did.
   language, compile contribution, completion source, style and display,
   at-point source and menu the host has before config is a package's: the
   host registers nothing else, and imports no module that defines a
-  package (`tools/host-imports-check.sh`). A host handed none starts with
+  package (`.agents/rules/structure.md`, "Host imports"). A host handed none starts with
   an empty registry and publishes no menu bar.
   - **A reload replaces config's registrations and never a package's**, so
     a package's commands run when config fails to load, and config's

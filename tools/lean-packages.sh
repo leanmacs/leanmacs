@@ -10,11 +10,11 @@
 # packages of the fixture set (tools/package-set.sh --only): the `test`
 # step, with the `cargo` that fails first on the PATH; the `build` step,
 # under the system's C compiler, which builds the set's editor and its
-# fixture harness first; the
-# `fmt` step; the layer and package imports checks over the set, kept
-# because the targeting is sound only while no package imports an
-# implementation package; and the `run` step, with `--allow-empty-run` so
-# an interface package, which holds no linked test and no fixture, passes.
+# fixture harness first; the `fmt` step; and the `run` step, with
+# `--allow-empty-run` so an interface package, which holds no linked test
+# and no fixture, passes. The targeting is sound only while no package
+# imports an implementation package (the three-layer rule,
+# .agents/rules/structure.md).
 # Last, for the named packages that are also packages of the default set
 # (packages/), as Lake names them, that set's editor and fixture harness
 # and the same `run` over it.
@@ -80,8 +80,6 @@ done
   run no-cargo sh ../tools/package-set.sh $only test ../tests/packages
   run system-cc sh ../tools/package-set.sh $only build ../tests/packages
   run sh ../tools/package-set.sh $only fmt ../tests/packages
-  run sh ../tools/layer-imports-check.sh ../tests/packages
-  run sh ../tools/package-imports-check.sh ../tests/packages
   run sh ../tools/package-set.sh $only --allow-empty-run run ../tests/packages "$sysroot" .lake/build/lib/lean
 }
 

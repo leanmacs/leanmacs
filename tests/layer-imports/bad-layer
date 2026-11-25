@@ -1,2 +1,0 @@
-editor-core	core	Editor.Setup	editor-core	core	Editor.Command
-greeting	plugin	Greeting	editor-core	core	Editor.Api

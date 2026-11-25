@@ -3,9 +3,9 @@
 # and of the command the ex name `q` runs, which is the core's quit name
 # (docs/design/extension-points.md, "Three layers"; docs/design/packages.md).
 # It declares the keyword `editor-interface`, so a package may import its
-# modules, and the layer imports check holds an implementation package to
-# importing interface packages and the core alone
-# (tools/layer-imports-check.sh). It registers nothing and has no entry
+# modules, and the three-layer rule (.agents/rules/structure.md) holds an
+# implementation package to importing interface packages and the core
+# alone. It registers nothing and has no entry
 # module, so a set that holds it gains no package from it.
 #
 # - `ExApi` is its library: `ExApi.lean`, the names.

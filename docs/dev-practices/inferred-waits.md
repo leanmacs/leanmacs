@@ -62,12 +62,13 @@ the marked waits it names.
 The mark is plain data and the linter a Lean plugin: the build loads the
 library `Lint` into every module it elaborates of the core's libraries and
 of every package (`lintPlugin`, `lean/lakefile.lean`; `plugins` in each
-package's lakefile), which the lint plugins check holds every library and
-executable to (`tools/lint-plugins-check.sh`), and no module imports it. The linter imports `Lean`,
+package's lakefile), which review holds every library and executable to
+(`.agents/rules/structure.md`, "Lint plugins"), and no module imports it.
+The linter imports `Lean`,
 which the config base and the model tests may not reach
 (`docs/design/overview.md`, "Config is elaborated behind a port, and two
-adapters link Lean's frontend"), and the core imports check holds them to
-that (`tools/core-imports-check.sh`, rule 4). So the list of restricted
+adapters link Lean's frontend"; `.agents/rules/structure.md`, "Core
+imports"). So the list of restricted
 waits is the marks, each beside its constant, and nothing else keeps it.
 The marked constants:
 

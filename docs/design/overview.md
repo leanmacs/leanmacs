@@ -139,12 +139,12 @@ what not to add.
 
   Both are core modules that the hosts import (`Editor/Headless.lean`), so
   the core's root reaches them (`Editor/Core.lean`,
-  `tools/core-imports-check.sh`, rule 2), and every executable that links
+  `.agents/rules/structure.md`, "Core imports"), and every executable that links
   one links the other: the editor, `config-test` and `ffi-test`. Neither is
   part of the config base: `Editor` (`Editor.lean`) imports neither, so
   config cannot name them, and `model-test` links neither. No module the
   base or `model-test`'s root reaches imports `Lean` or Lake by another
-  path either (`tools/core-imports-check.sh`, rule 4): the build's own
+  path either (`.agents/rules/structure.md`, "Core imports"): the build's own
   linters, which import `Lean`, are a library outside `Editor` that the
   build loads as a plugin and no module imports (`lean/Lint/Wait.lean`).
 - **Only modules of the package go under `lean/`.** lean-fmt compiles every

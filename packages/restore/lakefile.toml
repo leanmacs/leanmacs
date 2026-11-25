@@ -1,24 +1,22 @@
-# Session restore's registrations: the jobs that restore a session and
-# journal this one, the commands `restore-modes`, `restart` and
-# `restart-abandon`, the ex name `restart` and the mode `restore-report`: a
-# default package, a Lake package outside the core that the default
-# package set requires (../lakefile.toml; docs/design/packages.md, "The
-# package set and its build"). It was a module of the core,
-# `Editor.Restore.Compiled`, until the features-as-packages roadmap's
-# phase 8. The gate's package steps build, test, lint and format-check it
-# through the fixture set, which requires the default set
-# (tools/package-set.sh), and the package imports check holds what it
-# imports of the core (tools/package-imports-check.sh).
+# Session restore's registrations: the jobs that restore a session and journal
+# this one, the commands `restore-modes`, `restart` and `restart-abandon`, the
+# ex name `restart` and the mode `restore-report`: a default package, a Lake
+# package outside the core that the default package set requires
+# (../lakefile.toml; docs/design/packages.md, "The package set and its
+# build"). It was a module of the core, `Editor.Restore.Compiled`, until the
+# features-as-packages roadmap's phase 8. The gate's package steps build,
+# test, lint and format-check it through the fixture set, which requires the
+# default set (tools/package-set.sh), and review holds what it imports of the
+# core to the rule in `.agents/rules/structure.md`.
 #
-# - `Restore` is the package's library: `Restore/Compiled.lean`, the
-#   `Package` value, and its entry module `Restore/EditorPackage.lean`,
-#   which the package-set build reads. Its `globs` hold every module under
-#   `Restore`, so the package imports check sees each one's imports. The
-#   work it registers is the core's (`lean/Editor/Restore/Run.lean`,
-#   `lean/Editor/Restore/Restart.lean`, over `lean/Editor/Restore.lean` and
-#   its data modules): the hosts start the restore by the job's name, which
-#   the core declares, and the loop journals only where that job is
-#   registered.
+# - `Restore` is the package's library: `Restore/Compiled.lean`, the `Package`
+#   value, and its entry module `Restore/EditorPackage.lean`, which the
+#   package-set build reads. Its `globs` hold every module under `Restore`, so
+#   the library's build reaches each one. The work it registers is the core's
+#   (`lean/Editor/Restore/Run.lean`, `lean/Editor/Restore/Restart.lean`, over
+#   `lean/Editor/Restore.lean` and its data modules): the hosts start the
+#   restore by the job's name, which the core declares, and the loop journals
+#   only where that job is registered.
 # - `restore-test` is its test driver (`lake test`): the tests that need no
 #   Rust library, rooted at `RestoreTest/Model.lean`. It is no default
 #   target, as the core's `model-test` is not: `mise run lean` links with
@@ -36,12 +34,12 @@
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
-# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+# and the three-layer rule (.agents/rules/structure.md) holds it to that.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/restore update --keep-toolchain
 # then the same for every set that reaches this package (../, tests/packages,
-# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+# tests/user-link), and commit each lake-manifest.json.
 name = "restore"
 testDriver = "«restore-test»"
 defaultTargets = ["Restore", "RestoreTest"]

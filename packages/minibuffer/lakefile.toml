@@ -1,14 +1,13 @@
-# The minibuffer's commands, which accept, cancel and edit the open prompt
-# and move a choice through its candidates, and the mode the minibuffer's
-# buffer is made with: a default package, a Lake package outside the core
-# that the default package set requires (../lakefile.toml;
-# docs/design/packages.md, "The package set and its build"). It was
-# modules of the core, `Editor.Minibuffer` and `Editor.Minibuffer.Compiled`,
-# until the features-as-packages roadmap's phase 4. The gate's package
-# steps build, test, lint, format-check and run it headless through the
-# fixture set, which requires the default set (tools/package-set.sh), and
-# the package imports check holds what it imports of the core
-# (tools/package-imports-check.sh).
+# The minibuffer's commands, which accept, cancel and edit the open prompt and
+# move a choice through its candidates, and the mode the minibuffer's buffer
+# is made with: a default package, a Lake package outside the core that the
+# default package set requires (../lakefile.toml; docs/design/packages.md,
+# "The package set and its build"). It was modules of the core,
+# `Editor.Minibuffer` and `Editor.Minibuffer.Compiled`, until the
+# features-as-packages roadmap's phase 4. The gate's package steps build,
+# test, lint, format-check and run it headless through the fixture set, which
+# requires the default set (tools/package-set.sh), and review holds what it
+# imports of the core to the rule in `.agents/rules/structure.md`.
 #
 # - `Minibuffer` is the package's library: `Minibuffer.lean`, the commands
 #   and the mode; `Minibuffer/Compiled.lean`, the `Package` value; and its
@@ -27,12 +26,12 @@
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
-# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+# and the three-layer rule (.agents/rules/structure.md) holds it to that.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/minibuffer update --keep-toolchain
 # then the same for every set that reaches this package (../, tests/packages,
-# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+# tests/user-link), and commit each lake-manifest.json.
 name = "minibuffer"
 testDriver = "«minibuffer-test»"
 defaultTargets = ["Minibuffer", "MinibufferTest"]

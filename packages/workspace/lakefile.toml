@@ -1,29 +1,27 @@
 # The workspaces: finding the workspace a file is in (`find-workspace`) and
 # attaching it to the buffer at `files-api`'s `Opened` hook, turning on the
-# modes its markers name (`find-mode-markers`, with the compile mode's
-# listing `compile-list`), `workspace-current`, `find-file-in-workspace`,
-# `find-file-in-project` and `find-file-in-another-workspace`, and the
-# value of the interface library `project-api` that reaches a workspace at a
-# path: a default package, a Lake package outside the core that the default
-# package set requires (../lakefile.toml; docs/design/packages.md, "The
-# package set and its build"). It was nine modules of the core,
-# `Editor.Workspace.Attach`, `.Compiled`, `.Finder`, `.FindFile`,
-# `.FindInProject`, `.Lister`, `.Modes`, `.Projects` and `.Reach`, until the
-# features-as-packages roadmap's phase 6. The workspace data
-# (`Editor.Workspace`) and what a search covers (`Editor.SearchRoot`) stay
-# the core's. The gate's package steps build, test, lint and format-check it
-# through the fixture set, which requires the default set
-# (tools/package-set.sh), and the package imports check holds what it
-# imports of the core (tools/package-imports-check.sh).
+# modes its markers name (`find-mode-markers`, with the compile mode's listing
+# `compile-list`), `workspace-current`, `find-file-in-workspace`,
+# `find-file-in-project` and `find-file-in-another-workspace`, and the value
+# of the interface library `project-api` that reaches a workspace at a path: a
+# default package, a Lake package outside the core that the default package
+# set requires (../lakefile.toml; docs/design/packages.md, "The package set
+# and its build"). It was nine modules of the core, `Editor.Workspace.Attach`,
+# `.Compiled`, `.Finder`, `.FindFile`, `.FindInProject`, `.Lister`, `.Modes`,
+# `.Projects` and `.Reach`, until the features-as-packages roadmap's phase 6.
+# The workspace data (`Editor.Workspace`) and what a search covers
+# (`Editor.SearchRoot`) stay the core's. The gate's package steps build, test,
+# lint and format-check it through the fixture set, which requires the default
+# set (tools/package-set.sh), and review holds what it imports of the core to
+# the rule in `.agents/rules/structure.md`.
 #
-# - `Workspace` is the package's library: the modules under `Workspace/`,
-#   and its entry module `Workspace/EditorPackage.lean`, which the
-#   package-set build reads. It has no root module (`Workspace.lean`), so its
-#   `globs` hold every module under `Workspace` and none at the root, and
-#   the package imports check sees each one's imports. It implements the
-#   interface package `project-api` (`ProjectApi`) and reads version
-#   control through the interface package `vc-api` (`VcApi`), both of
-#   which it requires, beside the core.
+# - `Workspace` is the package's library: the modules under `Workspace/`, and
+#   its entry module `Workspace/EditorPackage.lean`, which the package-set
+#   build reads. It has no root module (`Workspace.lean`), so its `globs` hold
+#   every module under `Workspace` and none at the root, and the library's
+#   build reaches each one. It implements the interface package `project-api`
+#   (`ProjectApi`) and reads version control through the interface package
+#   `vc-api` (`VcApi`), both of which it requires, beside the core.
 # - `workspace-test` is its test driver (`lake test`): the tests that need
 #   no Rust library, rooted at `WorkspaceTest/Model.lean`. It is no default
 #   target, as the core's `model-test` is not: `mise run lean` links with the
@@ -47,12 +45,12 @@
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
-# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+# and the three-layer rule (.agents/rules/structure.md) holds it to that.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/workspace update --keep-toolchain
 # then the same for every set that reaches this package (../, tests/packages,
-# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+# tests/user-link), and commit each lake-manifest.json.
 name = "workspace"
 testDriver = "«workspace-test»"
 defaultTargets = ["Workspace", "WorkspaceTest"]

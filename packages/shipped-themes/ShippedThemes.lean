@@ -26,8 +26,8 @@ no package between them defines a theme, so the theme names read
 and `default`.
 
 It imports modules of the core's API alone (`Editor.Face`,
-`Editor.Package`), which the package imports check holds it to
-(`tools/package-imports-check.sh`). A path that starts `Editor/` is a
+`Editor.Package`), as a package's library must
+(`.agents/rules/structure.md`, "What a package may import"). A path that starts `Editor/` is a
 module of the core, under `lean/`.
 
 A new shipped theme is a palette's theme (`Palette.theme`,

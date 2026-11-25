@@ -71,8 +71,9 @@ the build makes it and with it every core module. It is not the config
 base: user config is elaborated on `Editor` (`Editor.lean`) and, in an
 editor built from a package set, on the entry modules of the set's
 packages after it (`Editor/Main.lean`, "The base"). It is not a host either: no
-host module, no package and no executable's root imports it, so the host
-imports check (`tools/host-imports-check.sh`) does not meet it.
+host module, no package and no executable's root imports it, so the rule
+on host imports (`.agents/rules/structure.md`, "Host imports") does not
+meet it.
 
 ## What it imports
 
@@ -118,15 +119,12 @@ base. The job runner protocol's theorems (`Editor.Job.Protocol.Theorems`)
 are not: config has no use for them, and this module is what has the build
 check them.
 
-## The check
+## The rule
 
-`tools/core-imports-check.sh` checks, on Lake's module graph, in `mise run
-ffi-test`, that every module named `Editor.…` an executable or a test
-executable reaches is this module or one it imports. So a new core module
-that nothing here reaches fails the gate until it is imported here. It
-also checks that an executable that links the elaborator links the config
-base (`Editor/Config/Elaborate.lean`, "The base"). And, given the name of
-a feature that is to move out while its modules are still under
-`lean/Editor/`, that this module and what it imports hold none of its
-modules: no feature is named today.
+Every module named `Editor.…` an executable or a test executable reaches
+is this module or one it imports, so a new core module is imported here
+in the change that adds it. An executable that links the elaborator links
+the config base (`Editor/Config/Elaborate.lean`, "The base"). Both are
+reviewer rules (`.agents/rules/structure.md`, "Core imports"): no gate
+step checks them.
 -/

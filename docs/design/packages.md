@@ -129,8 +129,8 @@ could move later.
   whose `packages` named every package still in that Lake package. The
   Lake package is still named `editor-core`, not `editor`: a package named
   `editor` that did list packages would list them at
-  `Editor.EditorPackage`, under the namespace the core imports check
-  rules, and `editor-core` is the name the staged core of the user-side
+  `Editor.EditorPackage`, under the core's namespace
+  ([structure.md](../../.agents/rules/structure.md), "Core imports"), and `editor-core` is the name the staged core of the user-side
   link has.
 
 - **The default set is `packages/lakefile.toml`** (the Lake package
@@ -167,14 +167,11 @@ could move later.
 | `editorApp` | a package, the set | `<set>/.lake/build/Leanmacs.app`, from the set's `editor` ([building.md](../dev-practices/building.md), "The app bundle") |
 | `editorLinked` | a module | An executable rooted at that module, linked as the editor is, in its package's `bin/`, named as the module with a dash for each dot |
 | `editorRoot` | a package, the set | For `lake query`: writes the set's root module and prints its path; links and builds nothing |
-| `editorRootImports`, `editorRootTransImports` | a package, the set | For `lake query`: the generated root's direct and transitive imports, one module a line |
+| `editorRootImports` | a package, the set | For `lake query`: the generated root's direct imports, one module a line |
 | `editorFixtures` | a package, the set | `<set>/.lake/build/bin/fixture-test`, the set's headless fixture harness, linked as the editor is from a root of its own (`EditorSetFixtures`), and beside it `fixture-test.oleans` ([headless-mode.md](../dev-practices/headless-mode.md), "How the gate runs a fixture") |
-| `editorFixturesRootImports`, `editorFixturesRootTransImports` | a package, the set | For `lake query`: the fixture harness's root's direct and transitive imports, one module a line, for the host and core imports checks |
 | `editorBase` | a package, the set | For `lake query`: the set's config base, one module a line: `Editor`, then the entry module of each package of the set outside the core |
 | `editorShipped` | a package, the set | For `lake query`: what an app bundle ships of the set, built: one line `file<TAB><source><TAB><place>` a file (the core's `Editor` library, its interface library `FilesApi` and each other package's libraries but its tests, with their sources and every file Lake wrote; the lakefiles; the core's glue; the Rust archive), and one `oleans<TAB><place>` a `.olean` directory, for `tools/stage-bundle.sh` ([lean-runtime.md](lean-runtime.md), "The app ships the toolchain") |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
-| `editorPackageImports` | a package, the set | For `lake query`: each direct import of a core module by a module of those packages, one a line, with the module's kind (`library`, `test`, `linked`, `linked-test`); what the package imports check reads |
-| `editorLayerImports` | a package, the set | For `lake query`: each direct import of a workspace module by a module of the core or of those packages, one a line, with the layer of the importing and the imported package (`core`, `interface`, `implementation`); what the layer imports check reads |
 | `editorPackageGraph` | a package, the set | For `lake query`: the same packages as `editorPackages`, one a line, with each one's layer, directory and the packages of the set it requires; what the pre-commit hook decides over (`tools/hook-targets.sh`) |
 | `editorRustCrates` | a package, the set | For `lake query`: the set's package crates, one a line ("Rust in a package", below) |
 | `editorRustCrate` | a package, the set | For `lake query`: writes the crate generated from the set's package crates and prints its directory; builds nothing |
@@ -259,7 +256,8 @@ end Greeting.EditorPackage
     six linked roots and the core's own tests imported and appended would
     read as if the core had packages, and it could not even name the type
     `Package` without importing a module every host reaches, which the
-    host imports check forbids an entry module.
+    rule on host imports forbids an entry module
+    ([structure.md](../../.agents/rules/structure.md), "Host imports").
   - **What says so**: `lean/EditorCore/` is gone; the gate requires the
     empty set's root to import `Editor` and `Editor.Main` alone
     (`:editorRootImports`, in `ffi-test`); and
@@ -713,10 +711,10 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   name alone holds only what its root module imports, so a module beside
   it that the root does not import, the entry module or the module that
   defines the `Package` value, is no module of the library: it still
-  builds, since the generated root imports it, but the facet that lists a
-  package's imports asks the library for its modules and would not see it.
-  `compile` declares `globs = ["Compile.*"]` for that, and with it the
-  facet lists every module's imports; `execute-command`,
+  builds, since the generated root imports it, but the library's own
+  build and anything that asks the library for its modules would not see
+  it. `compile` declares `globs = ["Compile.*"]` for that, and with it the
+  library holds every module; `execute-command`,
   `binding-search`, `at-point` and `minibuffer` do the same
   (`["AtPoint.*"]`, `["Minibuffer.*"]`), and `mode-line`, `languages` and
   `completion`, whose library has no root module, declare
@@ -724,10 +722,8 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   would ask for a root module that is not there). `shipped-themes` declares its
   library by name alone: its root imports the palettes, and the one module
   the root does not import, the entry module, imports no core module, so
-  no line is missed there. The facet could list the entry module whatever
-  the globs say; that is filed as the task
-  `package-imports-facet-entry-module`.
-- **The fixture packages' tests pass the package imports check** ("What
+  no import of the core is missed there.
+- **The fixture packages' tests keep to what a package may import** ("What
   a package may import", below). Their model tests read what a package
   registers through `Config.State.ofPackages` (`Editor.Config.Packages`,
   a test double), and the linked test runs a command on the real text
@@ -760,8 +756,8 @@ set, holds its three themes.
   Its model tests also import `Editor.Appearance`, `Editor.Scene`,
   `Editor.TabBar` and `Editor.Theme.Check`, which are API, and the test
   double `Editor.Config.Packages`; its linked test module imports the test
-  double `Editor.Theme.Picture`. The package imports check holds that
-  ("What a package may import", below).
+  double `Editor.Theme.Picture`, as "What a package may import", below,
+  allows.
 - **Its declarations are in the namespace `ShippedThemes`**
   (`ShippedThemes.themes`, `ShippedThemes.Solarized.dark`), where they
   were `Editor.Themes.Shipped.…` in the core. No config could name a
@@ -845,8 +841,8 @@ over the process service, a major mode, ex names and contributions.
   `Editor.Json`, `Editor.Mode`, `Editor.Package`, `CompileApi`,
   `CompileApi.Format`, `CompileApi.Listing`,
   `Editor.Shell` and `Editor.Workspace.Modes`, the same eleven recorded
-  before the move. The package imports check holds that, over a library
-  whose globs hold every module ("What a package may import", below).
+  before the move, as "What a package may import", below, allows, over a
+  library whose globs hold every module.
 - **Two of those are features' modules still in the core**: the shell
   (`Editor.Shell`) and the workspace's modes (`Editor.Workspace.Modes`).
   Both edges stay. When either feature moves into a package, this package
@@ -981,7 +977,7 @@ over the process service, a major mode, ex names and contributions.
 Four features moved out of the core in that phase, each into a default
 package of its own, because their libraries imported no other feature and
 only the core's root, the config base and the core's entry module imported
-them (checked on `:editorLayerImports` before the move). Each keeps its
+them (checked on Lake's module graph before the move). Each keeps its
 declarations' names: modules drop the `Editor.` prefix, and every
 declaration stays in its namespace (`Editor.ModeLine.package` in module
 `ModeLine.Compiled`), as the compile mode's did, so config and tests under
@@ -998,13 +994,12 @@ default packages of the features-as-packages roadmap's phase 4", below).
 | `binding-search` (`packages/binding-search/`) | `BindingSearch`, `BindingSearch.Compiled` (`lean/Editor/BindingSearch.lean` and `…/Compiled.lean`) | `BindingSearch.EditorPackage` | `binding-search-test`: `BindingSearchTest.bindingSearchChecks` and `.bindingSearchPackageChecks`, 13 checks | `binding-search`, written before the move |
 | `languages` (`packages/languages/`) | `Languages.Compiled` (`lean/Editor/Language/Compiled.lean`) | `Languages.EditorPackage` | `languages-test`: `LanguagesTest.languagePackageChecks`, 1 check | none: the core's `open-file`, on the default set's editor, opens files in `code` |
 
-- **What each library imports of the core** (`lake -d ../packages query
-  :editorPackageImports`), API alone, with no addition to the API:
+- **What each library imports of the core** (direct imports alone), API alone, with no addition to the API:
   `mode-line`'s `Editor.ModeLine` and `Editor.Package`; `languages`'
   `Editor.Language` and `Editor.Package`; `execute-command`'s and
   `binding-search`'s `Editor.Api`, `Editor.Command.Call` and
   `Editor.Package`, and each its own interface package's library
-  (`ExecuteCommandApi`, `BindingSearchApi`), which the layer imports check
+  (`ExecuteCommandApi`, `BindingSearchApi`), which the three-layer rule
   allows: an implementation may import an interface.
 - **Their data stays in the core.** The mode line's segments and its
   default listing (`ModeLine.shipped`, `ModeLine.Order.standard`,
@@ -1128,9 +1123,8 @@ styles and displays that ship, completion at point, and the minibuffer's
 commands and mode (the minibuffer was planned for phase 3 and moved here,
 the task `minibuffer-as-package`, which is done when the phase lands).
 Before the moves the core's edges into the three were cut, so that each
-move cut none (checked on `:editorLayerImports`; criterion 1 of the phase:
-`lake -d ../packages query :editorLayerImports | awk -F'\t' '$1 ==
-"editor-core" && $4 != "editor-core"'` prints nothing):
+move cut none (checked on Lake's module graph, criterion 1 of the phase:
+no module of the core imported a module of another package):
 
 - the core reads the styles and displays a set registers, and has its own
   for a set that registers none ("What moving the completion, at-point
@@ -1167,16 +1161,15 @@ and each implementation requires its interface package.
   `-delete-backward`, `-delete-to-start`, `-ask` and `-candidates`, and
   the mode `minibuffer`, which the core makes the minibuffer's buffer with
   (`Prompt.mode`).
-- **What each library imports of the core** (`lake -d ../packages query
-  :editorPackageImports`), API alone: `completion`'s
+- **What each library imports of the core** (direct imports alone), API alone: `completion`'s
   `Editor.Completion.Display`, `Editor.Completion.Style`, `Editor.Package`
   and `Editor.TypedPath`; `at-point`'s `Editor.Api`,
   `Editor.Completion.AtPoint`, `Editor.Completion.Later` and
   `Editor.Package`; `minibuffer`'s `Editor.Api`, `Editor.Command.Call`,
   `Editor.Completion.Later`, `Editor.Mode`, `Editor.Package` and
   `Editor.Role`. Each also imports its interface package's library
-  (`CompletionApi`, `AtPointApi`, `MinibufferApi`), which the layer imports
-  check allows. None imports another of the three.
+  (`CompletionApi`, `AtPointApi`, `MinibufferApi`), which the three-layer
+  rule allows. None imports another of the three.
 - **Their interfaces stay in the core.** The completion interface, its
   styles', displays' and at-point sources' types and contracts, the
   sources that answer later and the prompt operations of the API
@@ -1390,8 +1383,7 @@ the modules drop `Editor.` from their names.
   held them, so their registrations keep their order among themselves and
   against the default packages ("The order packages register in", above);
   the interface packages come in through their implementations' requires.
-- **What each library imports of the core** (`lake -d ../packages query
-  :editorPackageImports`), API alone: `files`'s `Editor.Completion.Later`,
+- **What each library imports of the core** (direct imports alone), API alone: `files`'s `Editor.Completion.Later`,
   `Editor.Extension`, `Editor.FileJobs`, `Editor.Jumps`, `Editor.Language`,
   `Editor.Package`, `Editor.TypedPath`, `FilesApi`; `buffers`'s
   `BuffersApi`, `Editor.Api`, `Editor.Command.Call`, `Editor.Extension`,
@@ -1416,7 +1408,7 @@ the modules drop `Editor.` from their names.
   `CompileApi.Listing`; `vc-api`'s `Editor.Diff.Script`,
   `Editor.Gutter.Track`, `Editor.Job`, `Editor.Program`. The interface
   packages' libraries import their own interface beside these, which the
-  layer imports check allows; `project-search-api` and `working-set-api`
+  three-layer rule allows; `project-search-api` and `working-set-api`
   import nothing. None of the seven imports another implementation (the
   phase's acceptance criterion 2), and no module of `project-search`,
   library or tests, reaches a module of evil, directly or transitively
@@ -1514,9 +1506,7 @@ from their names, and `InputScheme.Vim` becomes `Evil.Vim`.
 | `themes-api` (`packages/themes-api/`) | `ThemesApi` (new) | none (interface) | `themes-api-test` | the core |
 | `themes` (`packages/themes/`) | `Themes`, `Themes.Compiled` | `packages := #[Editor.Themes.package]` | `themes-test` / `ThemesTest.Linked` | `themes-api` |
 
-- **What the libraries import of the core** (`lake -d ../packages query
-  :editorPackageImports`, the package imports check's input, direct
-  imports alone). The themes': `Editor.Api`, `Editor.Command.Call` and
+- **What the libraries import of the core** (direct imports alone). The themes': `Editor.Api`, `Editor.Command.Call` and
   `Editor.Package`. Evil's: `Editor.Api`, `Editor.Command.Call`,
   `Editor.Package`, the scheme's port and key strings
   (`Editor.InputScheme`, `Editor.Key.Notation`), the vocabularies
@@ -1541,8 +1531,9 @@ from their names, and `InputScheme.Vim` becomes `Evil.Vim`.
   `Editor.Text.Word`, `Editor.UndoTree.Theorems`, `Editor.Vocabulary`), so
   an editor without evil elaborates config on a base that lost evil's
   modules and nothing else.
-- **The host imports check** (`tools/host-imports-check.sh`) passes for
-  both entry modules only because `lean/Editor.lean` dropped its nine evil
+- **The rule on host imports**
+  ([structure.md](../../.agents/rules/structure.md), "Host imports") holds
+  for both entry modules only because `lean/Editor.lean` dropped its nine evil
   imports and `import Editor.Themes` in the commits that made them: no
   host module reaches an entry module or a module one imports directly.
 - **The tests moved with them**, under their names, sentences and
@@ -1712,8 +1703,7 @@ only.
 | `restore` (`packages/restore/`) | `Restore.Compiled` | `#[Editor.Restore.package]` | `restore-test` | none |
 | `package-set` (`packages/package-set/`) | `PackageSet.Compiled` | `#[Editor.PackageSet.package]` | `package-set-test` | none |
 
-- **What each library imports of the core** (`lake -d ../packages query
-  :editorPackageImports`), every one a module of the API:
+- **What each library imports of the core** (direct imports alone), every one a module of the API:
   - `ex`: `Editor.Api`, `Editor.Command.Call`, `Editor.Ex.Line`,
     `Editor.Quit`, `Editor.Package` and the core's interface library
     `FilesApi`;
@@ -1838,10 +1828,10 @@ only.
 
 #### Dropping one of the seven leaves…
 
-`mise run leave-out` builds the default set without each implementation
-package in turn, all twenty-five, and each editor builds
-([the-gate.md](../dev-practices/the-gate.md), "The leave-out check"). What
-an editor without one of this phase's seven has:
+The default set builds without each implementation package in turn, all
+twenty-five, as checked when the phase landed
+([structure.md](../../.agents/rules/structure.md), "Leave-out"). What an
+editor without one of this phase's seven has:
 
 - **without `ex`**: no ex line. `:` runs nothing, and the ex names other
   packages bind have no line to run them. `quit` is no command, so the
@@ -2335,8 +2325,8 @@ for `ex-api`, whose contract names `shell-api`'s `shell-command`, and
   `VcApi` were on the list until no core module imported them, and left
   it when they moved
   into interface packages of their own (features-as-packages phase 6,
-  `packages/project-api/`, `packages/vc-api/`), whose modules the layer
-  imports check allows as any interface package's. The list is named,
+  `packages/project-api/`, `packages/vc-api/`), whose modules the
+  three-layer rule allows as any interface package's. The list is named,
   never derived: a library staged in the core is added to it by hand.
   Their test libraries are test doubles and the linked support under them
   is of the linked test kit (below).
@@ -2437,31 +2427,19 @@ for `ex-api`, whose contract names `shell-api`'s `shell-command`, and
   among them), but for the core's interface libraries and their test
   libraries, above. The root of a linked test alone names the base,
   above.
-- **The package imports check enforces the rule**
-  (`tools/package-imports-check.sh`, in `mise run ffi-test`;
-  [the-gate.md](../dev-practices/the-gate.md), "The package imports
-  check"). It asks Lake for each direct import of a core module by a
-  module of a set's packages, with whether the importing module is the
-  package's library's, a test's, the linked test's root or a module under
-  that root (the kinds `library`, `test`, `linked` and `linked-test`;
-  `lake -d <set dir> query :editorPackageImports`), and refuses the ones
-  the rule does not allow, each with its reason. It lists the modules of
-  each of a package's libraries, so a library's globs must hold every
-  module of it ("A package's tests and the gate's steps over them",
-  above). **The lists are in the script**: the core's interface
-  libraries, the test doubles, the linked test kit, the internal modules,
-  and what the linked test's root may import beyond them, as names and
-  patterns. No module lists the rest of the API: a core module named
-  `Editor.…` that is neither internal nor a test double is part of it. A change to the rule changes the script, this section and the
-  lines the gate holds the script to (`tests/package-imports/`).
-- **The layer imports check enforces the three-layer rule**
-  (`tools/layer-imports-check.sh`, in `mise run ffi-test`;
-  [the-gate.md](../dev-practices/the-gate.md), "The layer imports check").
-  It asks Lake for each direct import between workspace modules by a
-  module of the core or of a set's packages, with the layer of each side
-  (`lake -d <set dir> query :editorLayerImports`), and refuses a core
-  module importing any package and a package importing an implementation
-  package.
+- **Review holds the rule, and the three-layer rule beside it**
+  ([structure.md](../../.agents/rules/structure.md), "What a package may
+  import" and "Three layers"). No gate step checks either: a check that
+  read Lake's module graph with a shell script stood behind them, and was
+  removed (rdm task `lean-structure-rules-tool` is where automated
+  checking comes back). The rule is about direct `import` lines, by the
+  kinds of importer above: a package's library, a test, the linked test's
+  root and a module under that root. A package's library's globs must
+  still hold every module of it ("A package's tests and the gate's steps
+  over them", above). No module lists the rest of the API: a core module
+  named `Editor.…` that is neither internal nor a test double is part of
+  it. A change to the rule changes this section and
+  [structure.md](../../.agents/rules/structure.md).
 
 Checked against the graph at `6ba99de5`, before either feature moved:
 every core module the two features' modules imported directly was
@@ -2472,8 +2450,7 @@ importable. The compile mode's modules imported
 and `Editor.Workspace.Modes`; the shipped palettes' import `Editor.Face` and
 `Editor.Package`. `Editor.Themes.Check`, the completeness check the
 palettes' tests run, is importable. After each move the package's library
-imports exactly those: `lake -d ../packages query :editorPackageImports`
-lists the same eleven for `compile` and the same two for
+imports exactly those: its `import` lines name the same eleven for `compile` and the same two for
 `shipped-themes`.
 
 **The compile mode's tests imported internal modules** while they were
@@ -2534,10 +2511,8 @@ minibuffer, or the seven features of phase 6.
 
 The packages roadmap's phase 5 moved the palettes into a package that
 imports only what the rule above allows. The rule and the core changed in
-three places for it, and each is in the lists of
-`tools/package-imports-check.sh`. Read against the import lines Lake
-prints for the package (`lake -d ../packages query :editorPackageImports`,
-in `lean/`):
+three places for it, each in the lists of "What a package may import",
+above. Read against the package's `import` lines:
 
 | Addition | What it is | Who may import it | Why the move needed it |
 |---|---|---|---|
@@ -2570,10 +2545,8 @@ package's library may import**: the compile mode's five modules import the
 eleven API modules they imported in the core ("The default package
 `compile`", above). What changed is what a package's tests may import, in
 two groups of test doubles, and one requirement on a package's lakefile.
-Each is in the lists of `tools/package-imports-check.sh`, and the gate
-holds the script to lines for them (`tests/package-imports/`). Read
-against the import lines Lake prints for the package (`lake -d ../packages
-query :editorPackageImports`, in `lean/`):
+Each is in the lists of "What a package may import", above. Read against
+the package's `import` lines:
 
 | Addition | What it is | Who may import it | Why the move needed it |
 |---|---|---|---|
@@ -2661,8 +2634,9 @@ The linked kit:
   names no raw binding.
 - **The core's own tests are written on the same modules**: `model-test`
   and `contract-test` import the kit from its new place, with no copy.
-  `Editor.Core` imports the kit, so it is in the core's closure and the
-  core imports check's second rule holds of it.
+  `Editor.Core` imports the kit, so it is in the core's closure, as the
+  core's root must hold every core module
+  ([structure.md](../../.agents/rules/structure.md), "Core imports").
 - **Rejected**: allowing `ModelTest.Support.…` by name, which would widen
   the rule past the modules of the editor; copies of the support in the
   package, which would be two definitions of the shell's and the files'
@@ -2681,7 +2655,8 @@ The features-as-packages roadmap's phase 3 added nothing to the API: each
 moved library imports API modules only ("The default packages of the
 features-as-packages roadmap's phase 3", above). It added two modules to
 the model test kit (16 modules where there were 14), each imported by
-`Editor.Core`, as the core imports check's second rule requires:
+`Editor.Core`, as the core's root must hold every core module ("The core's
+root", below):
 
 | Addition | What it is | Who imports it | Why the move needed it |
 |---|---|---|---|
@@ -2696,8 +2671,8 @@ package's library may import: each moved library imports API modules only
 above). It added values to three API modules, so that the core's loop,
 dispatch, registry and hosts no longer import a module of the three
 features, and two modules to the model test kit (18 modules where there
-were 16), each in `Editor.Core`'s closure, as the core imports check's
-second rule requires (`Editor.Test.AtPoint` imported by it,
+were 16), each in `Editor.Core`'s closure, as the core's root must hold
+every core module (`Editor.Test.AtPoint` imported by it,
 `Editor.Test.Minibuffer` through `Editor.Test.Prompts`):
 
 | Addition | Where | What it is | Why the move needed it |
@@ -2931,8 +2906,8 @@ interface package of its own, a root module that declares and a test
 library that publishes a fake and a contract check, and the core's bundle
 ships it beside `Editor` (`stagedInterfaceLibraries`). Its module is
 outside `lean/Editor/`, so no row of the module map counts it, and a
-package of a set may not import it yet: the package imports check refuses
-a module of the core's Lake package outside `Editor`. The interface
+package of a set may not import it yet: "What a package may import",
+above, refuses a module of the core's Lake package outside `Editor`. The interface
 packages of phases 3 and 4 are the model; these become packages when their
 features move.
 
@@ -3232,8 +3207,8 @@ and the core's Lake package registers no `Package`.
   loop and the config session start by a name the core declares, which a
   default package registers under: session restore's and the package
   set's build.
-- **"A package may import it"** is what the package imports check allows
-  ("What a package may import", above): `yes` for a module of the API,
+- **"A package may import it"** is what "What a package may import",
+  above, allows: `yes` for a module of the API,
   `in tests` for a test double, `in a linked test` for the linked test
   kit, and `no` for an internal module.
 
@@ -3371,28 +3346,15 @@ points it registers at and reads, and the names it declares or reaches.
 | `at-point` | implementation | `at-point-api`, `evil-api` | none | none | registers `at-point-api`'s names; reaches `insert-newline` and `insert-tab` by `evil-api`'s constants |
 | `languages` | implementation | none | none | none | registers the `code` mode and the languages that ship |
 
-`tools/module-map-check.sh`, run in `lean/`, holds this table and the one
-above to the tree and to Lake, and prints nothing when they agree: every
-package of the set has its row, with its layer as Lake says it, and every
-(package, point) pair the sources hold, by the rules above, is in that
-package's row, and no row names a pair the sources lack. It reads the
-library modules of each package (no test library, no fixture config) for
-the registrations and reads, and the table's fourth and fifth columns for
-the rows, and compares the two.
-
-```sh
-cd lean && sh ../tools/module-map-check.sh
-```
-
-The gate runs it, in `mise run ffi-test`, so the map cannot drift from the
-tree. It is no test of the code: it holds a document to the sources it
-describes. Its reading of the sources, the third part, is itself held by
-a fixture in `mise run lean-test`, packages and maps written by hand
-(`tests/module-map/`), where a map that agrees must pass and a stale one
-must fail with exactly the two lines that differ
-([the-gate.md](../dev-practices/the-gate.md), "The module map check"). A
-new way to register or read is added to the rules above, to the script
-and to that fixture.
+Review holds this table and the one above to the tree
+([structure.md](../../.agents/rules/structure.md), "Module map"): a change
+that adds, moves or removes a module under `lean/Editor/`, a package, a
+package's layer, or a package's registration at or read of an extension
+point updates the map in the same change, so every package of the default
+set has its row, with its layer as its lakefile declares it, and every
+(package, point) pair the library modules hold, by the rules above, is in
+that package's row. No gate step checks it; rdm task
+`lean-structure-rules-tool` is where automated checking comes back.
 
 ### Where each feature went
 
@@ -3493,57 +3455,28 @@ that opens and takes no input.
   entries marked `cursor`), and a scheme's tests hold that each face it
   draws a cursor in is one of them (evil's `EvilTest.vimDefaultChecks`).
 
-## The core imports check
+## The core's root
 
-`tools/core-imports-check.sh`, in `mise run ffi-test`, after the host
-imports check ([the-gate.md](../dev-practices/the-gate.md), "The core
-imports check"). It asks Lake for transitive imports (`lake query
-+<module>:transImports`), reads no source text and builds nothing. Given
-the root `Editor.Core` and the moving names, it holds three rules. The
-roots of the build it holds the second and third of are the test
-executables' (`ModelTest`, `ConfigTest`, `FfiTest`, `ContractTest`) and
-the roots generated for the default set, the editor's and the headless
-fixture harness's, whose transitive imports it asks of the set (`lake -d
-../packages query :editorRootTransImports` and
-`:editorFixturesRootTransImports`):
+`Editor.Core`'s closure is the whole core, and review holds it so
+([structure.md](../../.agents/rules/structure.md), "Core imports"); no
+gate step checks it since its shell check was removed (rdm task
+`lean-structure-rules-tool`). Three rules hold of it:
 
-1. **The root and what it imports hold no moving module.** A core module
-   that comes to import a moving one fails the gate, naming the module
-   reached.
-2. **Every `Editor.…` module the build reaches is in the root's closure**,
-   unless it is a moving module. A new core module nothing in the core
-   imports fails the gate until `Editor.Core` imports it, so the root's
-   closure is the whole core, and the first rule is a statement about
-   every core module.
+1. **The root and what it imports hold no module of a feature that is
+   moving out.** A moving feature is one whose edges from the core are
+   cut and whose modules are still under `lean/Editor/`. There is none
+   now: the compile mode was the last, and phase 6 moved it. A feature
+   that has moved needs no such rule, because the direction is then
+   Lake's to hold: its modules are in another Lake package, which the core
+   does not require, so a core module that imported one would not build.
+2. **Every `Editor.…` module the build reaches is in the root's closure.**
+   A new core module is imported from `Editor.Core` in the change that
+   adds it, so the root's closure is the whole core.
 3. **A root that reaches the elaborator adapter reaches the config base**,
    which keeps the invariant the adapter's own import of `Editor` used to
-   give.
-
-**There is no moving name now, so the first rule holds of nothing.** A
-moving name is for the time between cutting a feature's edges and moving
-it: modules still under `lean/Editor/` that are not the core's. The
-compile mode's (`Editor.Compile` and what was under it) was the last;
-phase 6 moved it. A feature that has moved needs no name, because the
-direction is then Lake's to hold: its modules are in another Lake package,
-which the core does not require, so a core module that imported one would
-not build. The rule and the argument stay for the next feature whose edges
-are cut before it moves, and for one whose modules keep the name
-`Editor.…` after they move.
-
-The moving names are arguments, not derived from the graph: "everything the
-root does not reach" would pass whatever the core imported. The gate runs
-the check again to see each rule bite: told that a module of the core,
-the ex line's data, is moving (`Editor.Core Editor.Ex.Line`, exit 1; a
-feature still in the core was named here until the last, the ex line,
-moved out in the features-as-packages roadmap's phase 8), pointed
-at `Editor.Setup` (exit 3), and told a config base no executable's root
-imports (`--base Editor.Core`, exit 4). Until phase 6 the first of these
-pointed the check at the root `Editor`, the config base, which imported
-the compile mode. A run in which no root of the build reaches the
-elaborator adapter is refused (exit 2), since the third rule would then
-hold of nothing; the gate sees that too. The generated root is the only
-root that links the elaborator into the editor itself, so it is among the
-roots the script checks for the base.
+   give. The roots generated for a set, the editor's and the headless
+   fixture harness's, are among them: the generated root is the only root
+   that links the elaborator into the editor itself.
 
 ## Registration order is visible
 

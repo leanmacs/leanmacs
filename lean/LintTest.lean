@@ -9,7 +9,7 @@ The checks of the build's linters (`Lint.lean`), `lake exe lint-test`
 (`mise run lean-test`). They call the linters' functions, so they import
 the library `Lint`, which imports `Lean`, and so they are an executable of
 their own: `model-test` links no module of Lean's frontend
-(`tools/core-imports-check.sh`, rule 4). What the linters refuse in a
+(`.agents/rules/structure.md`, "Core imports"). What the linters refuse in a
 module is shown by their fixtures in the other test roots, which the build
 loads the linters into as a plugin.
 

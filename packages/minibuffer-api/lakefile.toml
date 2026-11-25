@@ -12,8 +12,8 @@
 # ("Reaches by name"), and registers no behaviour.
 #
 # It is an interface package: it declares the keyword `editor-interface`
-# below, so another package may import its modules, and the layer imports
-# check reads that keyword from Lake (tools/layer-imports-check.sh).
+# below, so another package may import its modules, and the three-layer
+# rule reads that keyword (.agents/rules/structure.md).
 #
 # - `MinibufferApi` is the package's library: `MinibufferApi.lean`, the
 #   names.
@@ -38,8 +38,8 @@
 #   lake -d ../packages/minibuffer-api update --keep-toolchain
 # then the same for every package and set that reaches this package
 # (packages/minibuffer, packages/compile, packages/execute-command,
-# packages/binding-search, packages/, tests/packages, tests/user-link,
-# tests/layer-imports), and commit each lake-manifest.json.
+# packages/binding-search, packages/, tests/packages, tests/user-link), and
+# commit each lake-manifest.json.
 name = "minibuffer-api"
 keywords = ["editor-interface"]
 testDriver = "«minibuffer-api-test»"

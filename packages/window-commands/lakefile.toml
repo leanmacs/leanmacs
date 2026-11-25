@@ -1,21 +1,20 @@
-# The window commands: the commands that split, close, focus and arrange
-# the frame's windows: a default package, a Lake package outside the core
-# that the default package set requires (../lakefile.toml;
-# docs/design/packages.md, "The package set and its build"). It was two
-# modules of the core, `Editor.WindowCommands` and
-# `Editor.WindowCommands.Compiled`, until the features-as-packages
-# roadmap's phase 8. The gate's package steps build, test, lint and
-# format-check it through the fixture set, which requires the default set
-# (tools/package-set.sh), and the package imports check holds what it
-# imports of the core (tools/package-imports-check.sh).
+# The window commands: the commands that split, close, focus and arrange the
+# frame's windows: a default package, a Lake package outside the core that the
+# default package set requires (../lakefile.toml; docs/design/packages.md,
+# "The package set and its build"). It was two modules of the core,
+# `Editor.WindowCommands` and `Editor.WindowCommands.Compiled`, until the
+# features-as-packages roadmap's phase 8. The gate's package steps build,
+# test, lint and format-check it through the fixture set, which requires the
+# default set (tools/package-set.sh), and review holds what it imports of the
+# core to the rule in `.agents/rules/structure.md`.
 #
 # - `WindowCommands` is the package's library: `WindowCommands.lean`, the
 #   commands, `WindowCommands/Compiled.lean`, the `Package` value, and its
 #   entry module `WindowCommands/EditorPackage.lean`, which the package-set
-#   build reads. Its `globs` hold every module under `WindowCommands`, so
-#   the package imports check sees each one's imports. It implements the
-#   interface package `window-commands-api` (`WindowCommandsApi`), which
-#   declares the commands' names and which it requires, beside the core.
+#   build reads. Its `globs` hold every module under `WindowCommands`, so the
+#   library's build reaches each one. It implements the interface package
+#   `window-commands-api` (`WindowCommandsApi`), which declares the commands'
+#   names and which it requires, beside the core.
 # - `window-commands-test` is its test driver (`lake test`): the tests that
 #   need no Rust library, rooted at `WindowCommandsTest/Model.lean`. It is
 #   no default target, as the core's `model-test` is not: `mise run lean`
@@ -33,12 +32,12 @@
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
-# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+# and the three-layer rule (.agents/rules/structure.md) holds it to that.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/window-commands update --keep-toolchain
 # then the same for every set that reaches this package (../, tests/packages,
-# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+# tests/user-link), and commit each lake-manifest.json.
 name = "window-commands"
 testDriver = "«window-commands-test»"
 defaultTargets = ["WindowCommands", "WindowCommandsTest"]

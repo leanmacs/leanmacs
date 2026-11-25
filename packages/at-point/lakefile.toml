@@ -2,13 +2,13 @@
 # binds, and the source that ships, `words`, the words of the open buffers,
 # with its job and its at-point source: a default package, a Lake package
 # outside the core that the default package set requires (../lakefile.toml;
-# docs/design/packages.md, "The package set and its build"). It was modules
-# of the core, `Editor.AtPoint`, `Editor.AtPoint.Compiled` and
-# `Editor.Completion.Words`, until the features-as-packages roadmap's phase
-# 4. The gate's package steps build, test, lint, format-check and run it
-# headless through the fixture set, which requires the default set
-# (tools/package-set.sh), and the package imports check holds what it
-# imports of the core (tools/package-imports-check.sh).
+# docs/design/packages.md, "The package set and its build"). It was modules of
+# the core, `Editor.AtPoint`, `Editor.AtPoint.Compiled` and
+# `Editor.Completion.Words`, until the features-as-packages roadmap's phase 4.
+# The gate's package steps build, test, lint, format-check and run it headless
+# through the fixture set, which requires the default set
+# (tools/package-set.sh), and review holds what it imports of the core to the
+# rule in `.agents/rules/structure.md`.
 #
 # - `AtPoint` is the package's library: `AtPoint.lean`, the commands;
 #   `AtPoint/Words.lean`, the source `words`, its job and its at-point
@@ -27,12 +27,12 @@
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
 # layers"): it declares no `keywords`, so no package may import its modules,
-# and the layer imports check holds it to that (tools/layer-imports-check.sh).
+# and the three-layer rule (.agents/rules/structure.md) holds it to that.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/at-point update --keep-toolchain
 # then the same for every set that reaches this package (../, tests/packages,
-# tests/user-link, tests/layer-imports), and commit each lake-manifest.json.
+# tests/user-link), and commit each lake-manifest.json.
 name = "at-point"
 testDriver = "«at-point-test»"
 defaultTargets = ["AtPoint", "AtPointTest"]

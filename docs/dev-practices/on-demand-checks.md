@@ -293,22 +293,6 @@ already built: E 10 s, F 17 s, G 5 s, H 6 s; 38 s in all. The gate's
 `user-sets-test` takes about 17 s on the same machine, its A's two
 successful builds and one failed link about 13 s together.
 
-## The leave-out check, on demand
-
-```sh
-mise run leave-out
-```
-
-Builds an editor from the default package set without each
-implementation package, one at a time, twenty-five editors, and prints
-what each one's `--probe` answers: every one but `evil`'s starts, and an
-editor without `evil` has no input scheme. What it does, what it requires
-of each editor and why it is not in the gate are in
-[the-gate.md](the-gate.md), "The leave-out check". About five minutes on a
-developer's Mac once the default set is built. It builds the packages
-where they are, so do not run it while `mise run ci` or another build of
-the checkout runs.
-
 ## The app bundle, on demand
 
 ```sh
