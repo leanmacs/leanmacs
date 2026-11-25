@@ -61,8 +61,15 @@ The rule is about direct `import` lines, by four kinds of importer.
   import the linked test kit (`Editor.Test.Linked…`, `<I>Test.Linked…`).
 - The linked test's root alone may also import the real bindings of the
   ports (`….Real`), the headless host (`Editor.Headless`) and the config
-  base: it is an executable's root, linked as the editor is.
-- No package module imports an internal module: the hosts and their parts
+  base (`Editor`): it is an executable's root, linked as the editor is.
+  Nothing else opens to it: the window hosts' real modules
+  (`Editor.Window.Real`, `Editor.WindowCheck.Real`), the raw bindings
+  (`Editor.Ffi…`), the loop, the rest of the config session and the
+  host's parts (`Editor.Headless.Queue`, `.Stepped`, `.Wait`,
+  `Editor.Job.Activity`) stay refused to the root as to every other
+  module.
+- No package module imports an internal module, the linked test's root
+  included beyond the three exceptions above: the hosts and their parts
   (`Editor.Headless.Queue`, `.Stepped`, `.Wait`, `Editor.Job.Activity`),
   the loop and its dispatch, the config session, the raw bindings,
   `Editor.Core`, `Editor.Internal…`, or any module of the core's Lake
