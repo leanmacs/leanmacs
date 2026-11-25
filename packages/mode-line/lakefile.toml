@@ -37,7 +37,7 @@ name = "mode-line"
 testDriver = "«mode-line-test»"
 defaultTargets = ["ModeLine", "ModeLineTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 [[require]]
 name = "editor-core"

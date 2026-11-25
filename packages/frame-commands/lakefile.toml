@@ -40,7 +40,7 @@ name = "frame-commands"
 testDriver = "«frame-commands-test»"
 defaultTargets = ["FrameCommands", "FrameCommandsTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package of the frame commands: their names, its fake and
 # the contract check this package's tests run.

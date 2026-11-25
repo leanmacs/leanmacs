@@ -43,7 +43,7 @@ name = "menu"
 testDriver = "«menu-test»"
 defaultTargets = ["Menu", "MenuTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package of evil: the names `undo` and `redo`, which the
 # Edit menu's Undo and Redo, and `s-z` and `s-Z`, run.

@@ -44,7 +44,7 @@ name = "package-set"
 testDriver = "«package-set-test»"
 defaultTargets = ["PackageSet", "PackageSetTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 [[require]]
 name = "editor-core"

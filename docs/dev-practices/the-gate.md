@@ -2296,8 +2296,12 @@ lint`, never a script over source text:
   every module of the core's libraries and of every package under
   `packages/` and `tests/packages/`, which the build elaborates with the
   library `Lint` loaded as a Lean plugin (`lintPlugin` in
-  `lean/lakefile.lean`, `plugins` in each package's lakefile). No module
-  imports it: it imports `Lean`, which the config base and the model tests
+  `lean/lakefile.lean`, `plugins` in each package's lakefile). The plugin
+  is named by the core's target `lintShared` (`@editor-core/lintShared`),
+  never by the facet `Lint:shared`: Lake does not memoise a plugin named by
+  a facet key, so each module's setup would build its own, and the `Lint`
+  modules would be built several times at once into the same files. No
+  module imports it: it imports `Lean`, which the config base and the model tests
   may not reach (`.agents/rules/structure.md`, "Core imports"). A bench, or
   `config-test --timings`'s wall clock, says it measures real time with
   `set_option linter.rawClock false` and its reason.

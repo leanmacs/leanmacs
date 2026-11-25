@@ -42,7 +42,7 @@ name = "window-commands"
 testDriver = "«window-commands-test»"
 defaultTargets = ["WindowCommands", "WindowCommandsTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package of the window commands: their names, its fake and
 # the contract check this package's tests run.

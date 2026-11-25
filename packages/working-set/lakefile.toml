@@ -51,7 +51,7 @@ name = "working-set"
 testDriver = "«working-set-test»"
 defaultTargets = ["WorkingSet", "WorkingSetTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package this one implements: it declares the names of
 # `working-set-add` and `working-set-open`, which the default config binds,

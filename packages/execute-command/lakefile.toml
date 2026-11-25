@@ -37,7 +37,7 @@ name = "execute-command"
 testDriver = "«execute-command-test»"
 defaultTargets = ["ExecuteCommand", "ExecuteCommandTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package this one implements: it declares the name the
 # command prompt is registered under, which the default config binds, and

@@ -42,7 +42,7 @@ name = "completion"
 testDriver = "«completion-test»"
 defaultTargets = ["Completion", "CompletionTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package this one implements: it declares the name of the
 # path style, which the core's files package reaches, and publishes the

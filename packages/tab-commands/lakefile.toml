@@ -42,7 +42,7 @@ name = "tab-commands"
 testDriver = "«tab-commands-test»"
 defaultTargets = ["TabCommands", "TabCommandsTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package of the tab commands: their names, its fake and the
 # contract check this package's tests run.

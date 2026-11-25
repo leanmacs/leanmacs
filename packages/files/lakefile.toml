@@ -49,7 +49,7 @@ name = "files"
 testDriver = "«files-test»"
 defaultTargets = ["Files", "FilesTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package of the buffer commands: its fake, which this
 # package's test kit closes a buffer with.

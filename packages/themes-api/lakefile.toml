@@ -37,7 +37,7 @@ keywords = ["editor-interface"]
 testDriver = "«themes-api-test»"
 defaultTargets = ["ThemesApi", "ThemesApiTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 [[require]]
 name = "editor-core"

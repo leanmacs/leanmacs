@@ -51,7 +51,7 @@ name = "project-search"
 testDriver = "«project-search-test»"
 defaultTargets = ["ProjectSearch", "ProjectSearchTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package this one implements: it declares the names of
 # `project-search` and `project-search-symbol`, which the default config

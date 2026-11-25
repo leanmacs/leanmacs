@@ -31,7 +31,7 @@ name = "greeting"
 testDriver = "«greeting-test»"
 defaultTargets = ["Greeting", "GreetingTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package this one implements: it declares the name of
 # `greeting-reply`, which `greeting-loud` reaches, and publishes the
