@@ -15,7 +15,7 @@ crate-type = ["rlib"]
 # The conventions every service keeps, and nothing else of the editor's: a
 # package's crate depends on `editor-service` alone (docs/design/packages.md,
 # "Rust in a package"), which the generated crate's cargo-deny bans hold
-# (tools/rust-bans-check.sh).
+# (`ffi-test`; docs/dev-practices/the-gate.md, "The Rust bans check").
 [dependencies]
 editor-service = { path = "../../../../crates/editor-service" }
 

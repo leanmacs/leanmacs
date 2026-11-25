@@ -1898,10 +1898,8 @@ guide quotes.
 - **Every fixture lakefile is TOML but `echo`'s**, turns every Lean linter
   on with `warningAsError`, as the core does, and names default targets.
   `echo`'s is Lean, because a TOML lakefile cannot declare a target that
-  compiles C, `moreLinkObjs`, or the crate's target; so are those of the
-  two packages of `tests/rust-bans/`, which declare a crate and hold no
-  Lean. A
-  package's test driver is not a default target, as the core's
+  compiles C, `moreLinkObjs`, or the crate's target. A package's test
+  driver is not a default target, as the core's
   `model-test` is not: `mise run lean` links with the system compiler,
   which a TOML lakefile has no flags for.
 - **The fixtures are hermetic.** They are checked in and build into their
@@ -1922,8 +1920,7 @@ interface packages of the default set (`project-api`, `vc-api`,
 `at-point-api`), the fixture
 set, each fixture package (`echo` among them), the writing guide's
 example package (`docs/packages/word-count/`), the empty set, the
-user-side link's set and its package, the Rust bans check's set
-(`tests/rust-bans/`) and its two packages, and the formatter's host.
+user-side link's set and its package, and the formatter's host.
 
 - **A set's manifest holds path entries only.** With it present, a
   dependency the manifest does not hold fails the build (`dependency … not
@@ -3076,11 +3073,9 @@ parents under `wrappers = []` and fails a wrapper it never meets under
 `-D unused-wrapper`, so the root cannot say "only the generated crate". The
 generator writes a `deny.toml` beside the generated crate in which the
 generated crate is the one wrapper of `editor-ffi` and of each package
-crate, and `tools/rust-bans-check.sh <set dir>` runs cargo-deny's bans over
-it. `ffi-test` runs it on the fixture set and the default set, and on
-`tests/rust-bans/`, a set of two packages whose crates depend on
-`editor-ffi` and on each other, where it must fail with both "explicitly
-banned".
+crate, and `ffi-test` runs cargo-deny's bans over it, for the fixture set
+and the default set, passing by cargo-deny's exit status
+(`docs/dev-practices/the-gate.md`, "The Rust bans check").
 
 ### Behind a port, so it stays replaceable
 

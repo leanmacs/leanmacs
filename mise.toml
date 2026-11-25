@@ -508,19 +508,16 @@ run = [
   "f=../target/editor-rust/echo/native-static-libs && before=$(cat \"$f\") && rm \"$f\" && lake -d ../tests/packages build --wfail :editorRust && test \"$(cat \"$f\")\" = \"$before\" && grep -qw -- -lz \"$f\" || { echo \"ffi-test: building :editorRust did not write back $f\"; exit 1; }",
   # A package's crate depends on `editor-service` and on nothing else of
   # the editor's, held by cargo-deny's bans over the crate generated from
-  # the set, with the `deny.toml` written beside it, in which the generated
+  # the set (`lake -d <set> query :editorRustCrate`, which writes it under
+  # target/editor-rust/ and prints its directory, building nothing), with
+  # the `deny.toml` the build writes beside it, in which the generated
   # crate is the one crate allowed to depend on `editor-ffi` or on a
-  # package's crate (tools/rust-bans-check.sh;
-  # docs/dev-practices/the-gate.md, "The Rust bans check"). It holds of the
-  # fixture set and of the default set. And it bites: on tests/rust-bans,
-  # whose package `bans-ffi`'s crate depends on `editor-ffi` and
-  # `bans-peer`'s on `bans-ffi`'s, it must exit 1 with both crates
-  # explicitly banned. Its output is shown only when it does not. The check
-  # writes the generated crates under target/editor-rust/ and Lake's
-  # configuration in tests/rust-bans/**/.lake, which no other task reads.
-  "sh ../tools/rust-bans-check.sh ../tests/packages",
-  "sh ../tools/rust-bans-check.sh ../packages",
-  "status=0; out=$(sh ../tools/rust-bans-check.sh ../tests/rust-bans 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qF \"crate 'editor-ffi = 0.1.0' is explicitly banned\" && printf '%s\\n' \"$out\" | grep -qF \"crate 'bans-ffi = 0.1.0' is explicitly banned\"; } || { printf '%s\\n' \"$out\"; echo \"ffi-test: the Rust bans check exited $status on tests/rust-bans\"; exit 1; }",
+  # package's crate (docs/dev-practices/the-gate.md, "The Rust bans
+  # check"). It holds of the fixture set and of the default set, and passes
+  # by cargo-deny's exit status, offline: the crate's lock is seeded from
+  # the root's.
+  "dir=$(lake -d ../tests/packages query :editorRustCrate) && cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" -D unused-wrapper bans",
+  "dir=$(lake -d ../packages query :editorRustCrate) && cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" -D unused-wrapper bans",
   # The package graph the pre-commit hook decides over
   # (tools/hook-targets.sh; the facet `editorPackageGraph`;
   # docs/dev-practices/the-gate.md, "The pre-commit hook"). On the fixture

@@ -2254,29 +2254,32 @@ about 20 s, under both thresholds. The numbers are in the rdm task
 ## The Rust bans check
 
 ```sh
-cd lean && sh ../tools/rust-bans-check.sh ../tests/packages
+cd lean && dir=$(lake -d ../tests/packages query :editorRustCrate) &&
+  cargo deny --offline --manifest-path "$dir/Cargo.toml" check \
+    --config "$dir/deny.toml" -D unused-wrapper bans
 ```
 
 Part of `mise run ffi-test`. A package's crate depends on `editor-service`
 and on nothing else of the editor's, so neither on `editor-ffi` nor on
 another package's crate. The root `deny.toml` cannot hold that, since
-nothing in the root graph depends on either (its header says why), so the
-check runs cargo-deny's bans over the crate the package-set build generates
-from the set (`lake -d <set dir> query :editorRustCrate`), with the
-`deny.toml` the build writes beside it: the generated crate is the one
+nothing in the root graph depends on either (its header says why), so
+cargo-deny's bans run over the crate the package-set build generates from
+the set (`lake -d <set dir> query :editorRustCrate`, which writes it and
+prints its directory), with the `deny.toml` the build writes beside it
+(`rustDenyConfig` in `lean/lakefile.lean`): the generated crate is the one
 wrapper of `editor-ffi` and of each package crate, and
 `editor-release-std` is banned. Offline, bans alone, stale wrappers errors.
 
-- **It holds of the fixture set and of the default set**: exit 0 on each.
-- **It bites**: on `tests/rust-bans/`, a set that requires the core and two
-  packages whose crates are no members of the root workspace, `bans-ffi`,
-  which depends on `editor-ffi`, and `bans-peer`, which depends on
-  `bans-ffi`'s crate, it must exit 1 with `crate 'editor-ffi = 0.1.0' is
-  explicitly banned` and `crate 'bans-ffi = 0.1.0' is explicitly banned`.
-  Nothing compiles those crates: cargo-deny reads metadata.
-- It exits 2 for a command line it does not take and when Lake fails the
-  query. It writes the generated crates under `target/editor-rust/` and
-  Lake's configuration in the sets' `.lake`, which no other task reads.
+- **It holds of the fixture set and of the default set**: `ffi-test` runs
+  it on each, and passes by cargo-deny's exit status.
+- Seen to bite once by hand, on 2026-11-25: over a set of two packages
+  whose crates were no members of the root workspace, `bans-ffi`, which
+  depended on `editor-ffi`, and `bans-peer`, which depended on
+  `bans-ffi`'s crate, cargo-deny exited 2 with `crate 'editor-ffi =
+  0.1.0' is explicitly banned` and `crate 'bans-ffi = 0.1.0' is
+  explicitly banned`.
+- It writes the generated crates under `target/editor-rust/` and Lake's
+  configuration in the sets' `.lake`, which no other task reads.
 
 ## The wait lints
 

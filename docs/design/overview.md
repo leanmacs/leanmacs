@@ -237,8 +237,8 @@ its own under `packages/`: every feature is one, and the core's Lake
 package registers no package of its own since the features-as-packages
 roadmap's phase 8 ([packages.md](packages.md), "The module map"). The
 fixture set and its three fixture packages, used by tests alone, are under
-`tests/packages/` (`echo` among them, which holds Rust), the Rust bans
-check's set under `tests/rust-bans/`, a set with no package under `tests/empty-set/`, and the
+`tests/packages/` (`echo` among them, which holds Rust), a set with no
+package under `tests/empty-set/`, and the
 Lean formatter's host package is
 `tools/lean-fmt/` ([packages.md](packages.md), "The package set and its
 build"). The parts, the core's and, where a row names a default package,
