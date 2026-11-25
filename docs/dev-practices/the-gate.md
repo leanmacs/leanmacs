@@ -2833,8 +2833,12 @@ lint`, never a script over source text:
   every module of the core's libraries and of every package under
   `packages/` and `tests/packages/`, which the build elaborates with the
   library `Lint` loaded as a Lean plugin (`lintPlugin` in
-  `lean/lakefile.lean`, `plugins` in each package's lakefile). No module
-  imports it: it imports `Lean`, which the config base and the model tests
+  `lean/lakefile.lean`, `plugins` in each package's lakefile). The plugin
+  is named by the core's target `lintShared` (`@editor-core/lintShared`),
+  never by the facet `Lint:shared`: Lake does not memoise a plugin named by
+  a facet key, so each module's setup would build its own, and the `Lint`
+  modules would be built several times at once into the same files. No
+  module imports it: it imports `Lean`, which the config base and the model tests
   may not reach (the core imports check's fourth rule, below). A bench, or
   `config-test --timings`'s wall clock, says it measures real time with
   `set_option linter.rawClock false` and its reason.
@@ -2894,7 +2898,10 @@ lint`, never a script over source text:
   them. Each must load the core's `Lint` as a plugin, or have it by
   import (a module of it is, or imports, one of `Lint`'s: `Lint`,
   `LintTests` and `lint-test`, where loading it too would register the
-  linters twice); the check prints each that does neither and exits 1. It
+  linters twice); the check prints each that does neither and exits 1. A
+  library whose package names the facet key `@editor-core/Lint:shared`
+  instead of `@editor-core/lintShared` is refused like one that names no
+  plugin. It
   runs over the default set (`packages/`) and the fixture set
   (`tests/packages/`), so a package added to either without the `plugins`
   line fails the gate. A package a set reaches from outside its directory

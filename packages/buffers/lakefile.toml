@@ -43,7 +43,7 @@ name = "buffers"
 testDriver = "«buffers-test»"
 defaultTargets = ["Buffers", "BuffersTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package this one implements: the hook before a buffer
 # closes, the close others ask for, the names the ex names `b`, `ls` and

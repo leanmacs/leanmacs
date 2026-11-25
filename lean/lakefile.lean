@@ -47,18 +47,33 @@ plugin's must be: Lake initializes a plugin through
 `initialize_<library>`. -/
 lean_lib Lint where globs := #[.andSubmodules `Lint]
 
+/-- The shared library of `Lint`, the plugin every library loads
+(`lintPlugin`). The plugin is this plain target, not the facet key
+`Lint:shared`, because Lake (v4.35.0) resolves a plugin named by a facet
+key in an async continuation (`PartialBuildKey.fetchInCoreAux`, `.facet`),
+which it does not memoise: each module's setup built its own `Lint:shared`,
+and the `Lint` modules were rebuilt concurrently into the same
+`.olean`/`.ilean`/`.c` and dylib, so one build could lose a file another
+was writing (task `lake-builds-lint-modules-several-times-racing-on-ilean`).
+Lake fetches a package target's key synchronously and memoises it, so
+every module's plugin is this one job. -/
+target lintShared pkg : Dynlib := do
+  let some lib := pkg.findLeanLib? `Lint | error "no Lint library"
+  lib.shared.fetch
+
 /-- The build's linters as a Lean plugin (`lean --plugin`), which each
 library of this package but `Lint` and its tests loads as it elaborates
 each of its modules, and each package's lakefile names the same way
 (`plugins`): the plugin runs the library's `initialize` declarations,
 which register the linters and their options, and the modules it is
 loaded for import nothing of it, so the linters reach no import closure.
-It is the shared library of `Lint`, named with this package's name, so a
-package set that requires this package by path loads the same one. That
+It names `lintShared`, the target above, with this package's name, so a
+package set that requires this package by path loads the same one; every
+package's lakefile names it as `@editor-core/lintShared`. That
 every library and executable loads it, or imports `Lint`, is the lint
 plugins check's (`editorLintPlugins`, `tools/lint-plugins-check.sh`). -/
 def lintPlugin : TargetArray Dynlib :=
-  #[`@«editor-core»/Lint:shared]
+  #[`@«editor-core»/lintShared]
 
 /-- The editor's modules. Its root `Editor` is what user config is elaborated
 on at runtime, and the build makes its `.olean` files for that. Its second
@@ -1691,8 +1706,12 @@ def samePlugin (plugin lint : Target Dynlib) : Bool :=
 
 /-- Whether the modules of `lib`, a library or an executable's
 (`LeanExe.toLeanLib`), load the build's linters: one of its plugins, its
-package's among them (`LeanLib.plugins`), is `lintPlugin`'s, the core's
-`Lint` as a shared library, however the lakefile writes the key. -/
+package's among them (`LeanLib.plugins`), is `lintPlugin`'s, the key
+`@editor-core/lintShared` of the core's `lintShared` target, however the
+lakefile spells it. A lakefile that still names the facet
+`@editor-core/Lint:shared` does not count as loading the plugin, so the
+lint plugins check refuses it, which keeps that racing key out of the
+tree (`lintShared`). -/
 def loadsLint (lib : LeanLib) : Bool :=
   lib.plugins.any fun plugin => lintPlugin.any (samePlugin plugin)
 

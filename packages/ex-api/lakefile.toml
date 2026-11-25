@@ -30,7 +30,7 @@ keywords = ["editor-interface"]
 testDriver = "«ex-api-test»"
 defaultTargets = ["ExApi", "ExApiTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package of the shell: the name `shell-command`, which the
 # contract holds a bang line to be handed to.

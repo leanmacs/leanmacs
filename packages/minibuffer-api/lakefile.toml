@@ -45,7 +45,7 @@ keywords = ["editor-interface"]
 testDriver = "«minibuffer-api-test»"
 defaultTargets = ["MinibufferApi", "MinibufferApiTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 [[require]]
 name = "editor-core"

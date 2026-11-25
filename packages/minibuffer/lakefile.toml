@@ -37,7 +37,7 @@ name = "minibuffer"
 testDriver = "«minibuffer-test»"
 defaultTargets = ["Minibuffer", "MinibufferTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package this one implements: it declares the names of the
 # commands and of the mode that the Vim scheme, the core and other

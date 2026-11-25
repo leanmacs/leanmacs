@@ -4,7 +4,7 @@
 # refuses nothing of its library. It is never built.
 name = "linted"
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 [[require]]
 name = "editor-core"

@@ -44,7 +44,7 @@ test driver load (the core's `lintPlugin`). It is named on them, not on the
 package: the formatter elaborates this file under the package's own
 plugins, and the plugin is not for this file. -/
 def lintPlugin : TargetArray Dynlib :=
-  #[`@«editor-core»/Lint:shared]
+  #[`@«editor-core»/lintShared]
 
 /-- The package's crate: the path of its manifest. -/
 target editorRustCrate pkg : FilePath :=

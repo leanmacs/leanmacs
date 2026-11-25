@@ -54,7 +54,7 @@ name = "version-control"
 testDriver = "«version-control-test»"
 defaultTargets = ["VersionControl", "VersionControlTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package of the workspaces: the reach of the workspace at a
 # path, which the worktree list's visit reaches through, and its fake.

@@ -36,7 +36,7 @@ name = "shipped-themes"
 testDriver = "«shipped-themes-test»"
 defaultTargets = ["ShippedThemes", "ShippedThemesTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 [[require]]
 name = "editor-core"

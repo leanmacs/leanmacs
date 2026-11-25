@@ -62,7 +62,7 @@ keywords = ["editor-input-scheme"]
 testDriver = "«evil-test»"
 defaultTargets = ["Evil", "EvilTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package of evil: the names `insert-newline`, `insert-tab`,
 # `undo` and `redo`, which completion at point and the Edit menu reach, its

@@ -48,7 +48,7 @@ name = "themes"
 testDriver = "«themes-test»"
 defaultTargets = ["Themes", "ThemesTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package of the themes: the name `load-theme`, its fake and
 # the contract check this package's tests run.

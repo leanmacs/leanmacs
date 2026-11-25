@@ -56,7 +56,7 @@ keywords = ["editor-interface"]
 testDriver = "«compile-api-test»"
 defaultTargets = ["CompileApi", "CompileApiTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 [[require]]
 name = "editor-core"

@@ -1,2 +1,2 @@
-lint-plugins-check: unlinted: the lean_lib Unlinted loads no lint plugin, so the wait linters never run on it: name `@editor-core/Lint:shared` in its `plugins`, or its package's (`lintPlugin` in lean/lakefile.lean)
-lint-plugins-check: unlinted: the lean_exe unlinted-exe loads no lint plugin, so the wait linters never run on it: name `@editor-core/Lint:shared` in its `plugins`, or its package's (`lintPlugin` in lean/lakefile.lean)
+lint-plugins-check: unlinted: the lean_lib Unlinted loads no lint plugin, so the wait linters never run on it: name `@editor-core/lintShared` in its `plugins`, or its package's (`lintPlugin` in lean/lakefile.lean)
+lint-plugins-check: unlinted: the lean_exe unlinted-exe loads no lint plugin, so the wait linters never run on it: name `@editor-core/lintShared` in its `plugins`, or its package's (`lintPlugin` in lean/lakefile.lean)

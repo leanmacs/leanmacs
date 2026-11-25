@@ -60,7 +60,7 @@ printf '%s\n' "$lines" | awk -F "$tab" -v set="$1" '
     }
     if ($1 == "editor-core") core = 1
     if ($4 == "none") {
-      print "lint-plugins-check: " $1 ": the " $2 " " $3 " loads no lint plugin, so the wait linters never run on it: name `@editor-core/Lint:shared` in its `plugins`, or its package'"'"'s (`lintPlugin` in lean/lakefile.lean)"
+      print "lint-plugins-check: " $1 ": the " $2 " " $3 " loads no lint plugin, so the wait linters never run on it: name `@editor-core/lintShared` in its `plugins`, or its package'"'"'s (`lintPlugin` in lean/lakefile.lean)"
       refused = 1
     }
   }

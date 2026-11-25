@@ -57,7 +57,7 @@ name = "workspace"
 testDriver = "«workspace-test»"
 defaultTargets = ["Workspace", "WorkspaceTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package this one implements: it declares the reach of the
 # workspace at a path and the names others reach, and publishes the fake and

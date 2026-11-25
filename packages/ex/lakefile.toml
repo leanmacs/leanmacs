@@ -54,7 +54,7 @@ name = "ex"
 testDriver = "«ex-test»"
 defaultTargets = ["Ex", "ExTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package of the ex line: the names `ex` and `quit`, its fake
 # and the contract check this package's tests run.

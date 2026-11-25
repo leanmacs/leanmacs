@@ -39,7 +39,7 @@ keywords = ["editor-interface"]
 testDriver = "«working-set-api-test»"
 defaultTargets = ["WorkingSetApi", "WorkingSetApiTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 [[require]]
 name = "editor-core"

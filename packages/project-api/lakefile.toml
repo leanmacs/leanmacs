@@ -36,7 +36,7 @@ keywords = ["editor-interface"]
 testDriver = "«project-api-test»"
 defaultTargets = ["ProjectApi", "ProjectApiTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package of the compile mode: the reach names its listing
 # job (`Compile.listJob`, `CompileApi.Listing`) among the jobs a caller's

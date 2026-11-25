@@ -40,7 +40,7 @@ keywords = ["editor-interface"]
 testDriver = "«completion-api-test»"
 defaultTargets = ["CompletionApi", "CompletionApiTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 [[require]]
 name = "editor-core"

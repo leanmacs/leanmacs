@@ -38,7 +38,7 @@ name = "binding-search"
 testDriver = "«binding-search-test»"
 defaultTargets = ["BindingSearch", "BindingSearchTest"]
 leanOptions = { linter.all = true, warningAsError = true }
-plugins = ["@editor-core/Lint:shared"]
+plugins = ["@editor-core/lintShared"]
 
 # The interface package this one implements: it declares the name the
 # binding search is registered under, which the default config binds, and
