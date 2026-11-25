@@ -506,10 +506,6 @@ pub fn complete(service: u64, request: u64) -> bool {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the queue's own tests: `Queue::await_waiting` is their subject"
-)]
 mod tests {
     use super::*;
     use std::sync::Arc;
@@ -525,6 +521,16 @@ mod tests {
         "a call's return, a pull's park or a reading",
         Duration::from_secs(5),
     );
+
+    /// [`Queue::await_waiting`], the readout these tests are of: the one
+    /// place they call it.
+    fn await_waiting(queue: &Queue, pulls: usize, guard: HangGuard) -> bool {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "waits for `pulls` pulls to park on the queue, on `Queue::await_waiting`, the readout these tests are of"
+        )]
+        queue.await_waiting(pulls, guard)
+    }
 
     /// Starts `blocking` on a detached thread and returns where its result
     /// arrives. The thread is detached, not scoped, so a call that never
@@ -559,7 +565,7 @@ mod tests {
     /// ([`Queue::await_waiting`]); panics if they are not by the deadline.
     fn wait_for_parked(queue: &Queue, pulls: usize) {
         assert!(
-            queue.await_waiting(pulls, DEADLINE),
+            await_waiting(queue, pulls, DEADLINE),
             "{} pulls were parked, not {pulls}: {DEADLINE}",
             queue.waiting()
         );
@@ -682,7 +688,7 @@ mod tests {
         wait::recv(&held, DEADLINE).expect("the pull reaches its park");
         let awaited = {
             let queue = Arc::clone(&queue);
-            start(move || queue.await_waiting(1, DEADLINE))
+            start(move || await_waiting(&queue, 1, DEADLINE))
         };
         assert_eq!(
             wait::recv(&counts, DEADLINE),
@@ -707,12 +713,12 @@ mod tests {
         let queue = Arc::new(Queue::new());
         let counts = counts_awaited(&queue);
         let first = start_pull(&queue);
-        assert!(queue.await_waiting(1, DEADLINE));
+        assert!(await_waiting(&queue, 1, DEADLINE));
         // What that wait read, drained: the last reading was the park.
         assert_eq!(counts.try_iter().last(), Some(1));
         let awaited = {
             let queue = Arc::clone(&queue);
-            start(move || queue.await_waiting(2, DEADLINE))
+            start(move || await_waiting(&queue, 2, DEADLINE))
         };
         // The wait for two has read one and is parked, under the lock it
         // read the count with.
@@ -734,15 +740,19 @@ mod tests {
     fn await_waiting_says_no_once_its_bound_has_passed_with_no_pull_parked() {
         let queue = Queue::new();
         const NONE: HangGuard = HangGuard::held("a pull, which none makes", Duration::ZERO);
-        assert!(!queue.await_waiting(1, NONE));
-        assert!(queue.await_waiting(0, NONE));
+        assert!(!await_waiting(&queue, 1, NONE));
+        assert!(await_waiting(&queue, 0, NONE));
     }
 
     #[test]
     fn await_waiting_takes_a_bound_past_what_the_clock_can_count_as_no_bound() {
         let queue = Queue::new();
-        assert!(queue.await_waiting(0, DEADLINE.with_bound(Duration::MAX)));
-        assert!(queue.await_waiting(0, DEADLINE.with_bound(Duration::from_millis(u64::MAX))));
+        assert!(await_waiting(&queue, 0, DEADLINE.with_bound(Duration::MAX)));
+        assert!(await_waiting(
+            &queue,
+            0,
+            DEADLINE.with_bound(Duration::from_millis(u64::MAX))
+        ));
     }
 
     #[test]

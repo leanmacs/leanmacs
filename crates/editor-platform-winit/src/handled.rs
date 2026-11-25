@@ -82,10 +82,6 @@ impl Handled {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the counts' own tests: `Handled::wait_all` is their subject"
-)]
 mod tests {
     use super::*;
     use std::sync::Arc;
@@ -104,6 +100,16 @@ mod tests {
     /// out.
     const NOT_YET: HangGuard = HangGuard::held("the requests not yet carried out", Duration::ZERO);
 
+    /// [`Handled::wait_all`], the readout these tests are of: the one place
+    /// they call it.
+    fn wait_all(handled: &Handled, guard: HangGuard) -> bool {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "waits for every request sent to be carried out, on `Handled::wait_all`, the readout these tests are of"
+        )]
+        handled.wait_all(guard)
+    }
+
     /// Where each reading [`Handled::wait_all`] makes on `handled` arrives.
     fn readings(handled: &Handled) -> Receiver<Counts> {
         let (read, readings) = mpsc::channel();
@@ -120,16 +126,16 @@ mod tests {
 
     #[test]
     fn with_nothing_sent_everything_has_been_carried_out() {
-        assert!(Handled::default().wait_all(NOT_YET));
+        assert!(wait_all(&Handled::default(), NOT_YET));
     }
 
     #[test]
     fn a_request_sent_and_not_carried_out_runs_the_wait_out() {
         let handled = Handled::default();
         handled.sent();
-        assert!(!handled.wait_all(NOT_YET));
+        assert!(!wait_all(&handled, NOT_YET));
         handled.handled(1);
-        assert!(handled.wait_all(NOT_YET));
+        assert!(wait_all(&handled, NOT_YET));
     }
 
     #[test]
@@ -142,7 +148,7 @@ mod tests {
         {
             let handled = Arc::clone(&handled);
             thread::spawn(move || {
-                let _ = answer.send(handled.wait_all(DEADLINE));
+                let _ = answer.send(wait_all(&handled, DEADLINE));
             });
         }
         assert_eq!(

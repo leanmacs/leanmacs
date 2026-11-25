@@ -767,10 +767,6 @@ impl<R: Renderer> RenderLoop<R> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the loop's own tests: `RenderHandle::wait_resting` is their subject"
-)]
 mod tests {
     use std::sync::mpsc::{Receiver, channel};
     use std::sync::{Arc, Mutex, PoisonError};
@@ -789,6 +785,16 @@ mod tests {
     use crate::journal::{Counters, Entry, JOURNAL_CAPACITY};
     use crate::port::Target;
     use crate::schedule::DEFAULT_REFRESH_NS;
+
+    /// [`RenderHandle::wait_resting`], the readout these tests are of: the one
+    /// place they call it.
+    fn wait_resting(handle: &RenderHandle, guard: HangGuard) -> bool {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "waits for a step to record the loop at rest, on `RenderHandle::wait_resting`, the readout these tests are of"
+        )]
+        handle.wait_resting(guard)
+    }
 
     /// A refresh interval for the tests: a round number, so the times read
     /// easily.
@@ -1959,7 +1965,7 @@ mod tests {
         editor_wait::recv(&held, BOUND).expect("the step reaches its rest");
         let waited = {
             let handle = handle.clone();
-            std::thread::spawn(move || handle.wait_resting(BOUND))
+            std::thread::spawn(move || wait_resting(&handle, BOUND))
         };
         assert_eq!(
             editor_wait::recv(&readings, BOUND),
@@ -1982,9 +1988,9 @@ mod tests {
     fn wait_resting_says_no_once_its_bound_has_passed_with_the_loop_not_at_rest() {
         let mut rig = rig();
         let not_at_rest = HangGuard::held("the loop, which is not at rest", Duration::ZERO);
-        assert!(!rig.handle.wait_resting(not_at_rest));
+        assert!(!wait_resting(&rig.handle, not_at_rest));
         assert_eq!(rig.render.step(), Step::Wait(None));
-        assert!(rig.handle.wait_resting(not_at_rest));
+        assert!(wait_resting(&rig.handle, not_at_rest));
     }
 
     #[test]

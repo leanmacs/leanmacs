@@ -12,11 +12,6 @@
 //! documents of its own. A wait for a delivery blocks on the session with a
 //! bound, and nothing sleeps.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "the syntax service's wiring tests: they wait for a delivery on its readouts `Syntaxes::settle` and `Syntaxes::settle_exact` before they read the highlights"
-)]
-
 use std::mem::MaybeUninit;
 use std::ops::Range;
 use std::slice;
@@ -61,7 +56,21 @@ fn refresh_at_once() {
 /// for its text as it is now. The test sets the interval first
 /// ([`refresh_at_once`]).
 fn settled_quiet(document: &Document) -> bool {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "waits for an exact tree of the document's text as it is now, on `Syntaxes::settle_exact`: the highlights are read only once it is delivered"
+    )]
     syntaxes().settle_exact(&Snapshot::of(document), BOUND)
+}
+
+/// Waits, with a bound, for a delivery of `snapshot`'s revision or a newer
+/// one (`Syntaxes::settle`): the one place these tests call it.
+fn settled(snapshot: &Snapshot) -> bool {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "waits for a delivery of the snapshot's revision or a newer one, on `Syntaxes::settle`: the highlights are read only once it is delivered"
+    )]
+    syntaxes().settle(snapshot, BOUND)
 }
 
 /// The Rust fixture the highlights are drawn over.
@@ -234,7 +243,7 @@ fn highlighted(grammar: &str, text: &str) -> (Document, String, Vec<String>) {
 fn highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
     refresh_at_once();
     let (document, source, faces) = highlighted_items();
-    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert!(settled(&Snapshot::of(&document)));
     assert_eq!(
         drawn(&document),
         Some(fresh(&document, "rust", &source, &faces))
@@ -289,7 +298,7 @@ const MANIFEST: &str = include_str!("../../../tests/syntax/toml/manifest.toml");
 fn toml_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
     refresh_at_once();
     let (document, source, faces) = highlighted("toml", MANIFEST);
-    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert!(settled(&Snapshot::of(&document)));
     assert_eq!(
         drawn(&document),
         Some(fresh(&document, "toml", &source, &faces))
@@ -348,7 +357,7 @@ const PROGRAMS: &str = include_str!("../../../tests/syntax/lean/Programs.lean");
 fn lean_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
     refresh_at_once();
     let (document, source, faces) = highlighted("lean", PROGRAMS);
-    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert!(settled(&Snapshot::of(&document)));
     assert_eq!(
         drawn(&document),
         Some(fresh(&document, "lean", &source, &faces))
@@ -400,7 +409,7 @@ fn lean_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
 fn the_service_keeps_the_layout_spans_contract() {
     let (document, _, _) = highlighted_items();
     let snapshot = Snapshot::of(&document);
-    assert!(syntaxes().settle(&snapshot, BOUND));
+    assert!(settled(&snapshot));
     let spans = syntaxes().spans(snapshot.key()).unwrap();
     assert_eq!(
         spans_contract::check(&*spans, &document.snapshot()),
@@ -490,7 +499,7 @@ fn a_highlight_is_refused_with_its_status() {
 fn an_attach_with_the_same_grammar_keeps_the_highlights_and_another_grammar_drops_them() {
     let (document, source, faces) = highlighted_items();
     let snapshot = Snapshot::of(&document);
-    assert!(syntaxes().settle(&snapshot, BOUND));
+    assert!(settled(&snapshot));
     let before = drawn(&document).unwrap();
 
     assert_eq!(syntaxes().attach(&snapshot, "rust"), AttachStatus::Attached);
@@ -509,7 +518,7 @@ fn a_published_scene_draws_the_highlights() {
     const RED: Color = Color::rgb(0xcc, 0, 0);
     let (document, _, _) = highlighted_items();
     let snapshot = Snapshot::of(&document);
-    assert!(syntaxes().settle(&snapshot, BOUND));
+    assert!(settled(&snapshot));
     let display = Display::cells(8, 16);
     let wire = WireScene {
         size: [960, 640],
@@ -593,7 +602,7 @@ fn named(
 #[test]
 fn an_excerpt_document_over_a_highlighted_source_draws_its_highlights_at_every_excerpt_of_it() {
     let (document, _, _) = highlighted_items();
-    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert!(settled(&Snapshot::of(&document)));
     let excerpts = overlapping_excerpts(&document);
     let snapshot = Snapshot::of(&excerpts);
     let text = text_ref(&snapshot);
@@ -625,7 +634,7 @@ fn an_excerpt_document_over_a_highlighted_source_draws_its_highlights_at_every_e
 #[test]
 fn the_translated_spans_keep_the_layout_spans_contract() {
     let (document, _, _) = highlighted_items();
-    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert!(settled(&Snapshot::of(&document)));
     let excerpts = overlapping_excerpts(&document);
     let text = text_ref(&Snapshot::of(&excerpts));
     let spans = text.spans.clone().expect("the source's highlights");
@@ -636,7 +645,7 @@ fn the_translated_spans_keep_the_layout_spans_contract() {
 fn a_published_scene_of_an_excerpt_document_paints_a_keyword_in_its_face_in_both_excerpts() {
     const RED: Color = Color::rgb(0xcc, 0, 0);
     let (document, _, _) = highlighted_items();
-    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert!(settled(&Snapshot::of(&document)));
     let excerpts = overlapping_excerpts(&document);
     let snapshot = Snapshot::of(&excerpts);
     let display = Display::cells(8, 16);
@@ -830,7 +839,7 @@ fn within(spans: &[(Range<usize>, String)], range: &Range<usize>) -> Vec<(Range<
 #[test]
 fn a_fenced_rust_block_in_markdown_is_drawn_with_rusts_captures() {
     let document = injected_markdown(FENCED);
-    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert!(settled(&Snapshot::of(&document)));
     let drawn = drawn(&document).unwrap();
 
     // The host's spans first, as a Markdown highlight alone draws them.
@@ -880,7 +889,7 @@ fn a_fenced_rust_block_in_markdown_is_drawn_with_rusts_captures() {
 fn injected_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
     refresh_at_once();
     let document = injected_markdown(FENCED);
-    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert!(settled(&Snapshot::of(&document)));
 
     // An insert inside the Rust fence.
     let at = find(&document, "let x") + 4;
@@ -909,7 +918,7 @@ fn injected_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
 fn markdown_emphasis_and_inline_code_are_drawn_with_the_inline_grammars_captures() {
     let text = "Some *emphasis* and `code`.\n";
     let document = injected_markdown(text);
-    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    assert!(settled(&Snapshot::of(&document)));
 
     let drawn = drawn(&document).unwrap();
     let emphasis = find(&document, "*emphasis*");
@@ -927,7 +936,7 @@ fn markdown_emphasis_and_inline_code_are_drawn_with_the_inline_grammars_captures
 fn the_service_keeps_the_layout_spans_contract_with_layers() {
     let document = injected_markdown(FENCED);
     let snapshot = Snapshot::of(&document);
-    assert!(syntaxes().settle(&snapshot, BOUND));
+    assert!(settled(&snapshot));
     let spans = syntaxes().spans(snapshot.key()).unwrap();
     assert_eq!(
         spans_contract::check(&*spans, &document.snapshot()),
@@ -948,7 +957,7 @@ fn a_published_scene_draws_a_fenced_rust_keyword() {
     const RED: Color = Color::rgb(0xcc, 0, 0);
     let document = injected_markdown(FENCED);
     let snapshot = Snapshot::of(&document);
-    assert!(syntaxes().settle(&snapshot, BOUND));
+    assert!(settled(&snapshot));
     let display = Display::cells(8, 16);
     let wire = WireScene {
         size: [960, 1280],

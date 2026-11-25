@@ -148,6 +148,17 @@ impl Rig {
         }
     }
 
+    /// Waits until `count` searches are held back, on
+    /// [`Service::until_held_back`], the readout these tests are of: the one
+    /// place they call it.
+    fn until_held_back(&self, count: usize) -> bool {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "waits for `count` searches to be held back, on `Service::until_held_back`, the readout these tests are of"
+        )]
+        self.service.until_held_back(count, DEADLINE)
+    }
+
     /// Waits for the next completion.
     fn completion(&self) -> Option<u64> {
         editor_wait::recv(&self.completed, DEADLINE).ok()
@@ -311,7 +322,7 @@ fn a_delivery_holds_at_most_bound_matches_and_a_larger_file_is_cut() {
     );
     rig.gate.open();
     assert_eq!(rig.started(1, "x", 2), Some(Reply::Started));
-    assert!(rig.service.until_held_back(1, DEADLINE));
+    assert!(rig.until_held_back(1));
 
     let deliveries = rig.read_to_end(1, 2);
 
@@ -347,13 +358,13 @@ fn a_search_is_held_back_while_bound_matches_are_not_taken() {
     assert_eq!(rig.started(1, "x", 2), Some(Reply::Started));
 
     // `a` and `b` are kept; `c` is read and waits for room.
-    assert!(rig.service.until_held_back(1, DEADLINE));
+    assert!(rig.until_held_back(1));
     assert_eq!(rig.gate.entered(), 3);
 
     assert_eq!(paths(&rig.read(1, 2)), ["/w/a", "/w/b"]);
     // `c` and `d` are kept; `e` waits.
     assert!(rig.gate.until_entered(5));
-    assert!(rig.service.until_held_back(1, DEADLINE));
+    assert!(rig.until_held_back(1));
     assert_eq!(paths(&rig.read(1, 3)), ["/w/c", "/w/d"]);
     let rest = rig.read_to_end(1, 4);
     let rest: Vec<&str> = rest.iter().flat_map(paths).collect();
@@ -427,11 +438,11 @@ fn cancelling_a_search_held_back_ends_it() {
     let rig = Rig::over(five());
     rig.gate.open();
     assert_eq!(rig.started(1, "x", 1), Some(Reply::Started));
-    assert!(rig.service.until_held_back(1, DEADLINE));
+    assert!(rig.until_held_back(1));
 
     assert!(rig.service.cancel(1));
 
-    assert!(rig.service.until_held_back(0, DEADLINE));
+    assert!(rig.until_held_back(0));
     rig.service.shutdown();
     assert_eq!(rig.gate.entered(), 2);
 }

@@ -61,8 +61,9 @@ run = [
   # and the bans the root clippy.toml's, which every crate reads.
   "cargo clippy --workspace --all-targets --locked -- -D warnings",
   # The wait bans bite: the fixture tests/wait-lints calls each banned wait
-  # once, each call under an `#[expect]` of its own, so this passes only
-  # while clippy refuses every one of them. It is a workspace of its own,
+  # once, and each `allow-invalid` entry point no crate calls, each call
+  # under an `#[expect]` of its own, so this passes only while clippy
+  # refuses every one of them. It is a workspace of its own,
   # read `--locked --offline` (its Cargo.toml says how to seed its lock
   # again), and builds into target/wait-lints/ alone.
   "cargo clippy --offline --locked --manifest-path tests/wait-lints/Cargo.toml --target-dir target/wait-lints -- -D warnings",

@@ -2379,9 +2379,11 @@ lint`, never a script over source text:
   reason = …)]` that no longer covers a banned call is unfulfilled, which
   `-D warnings` fails. At a check that waits through a C function its
   reason names the row of `inferred-waits.md`. A `disallowed_methods`
-  opt-out sits on a statement, a `let`, an `fn` or an `impl`, never on a
-  module or a crate, since the wait bans are the same lint (but for a
-  readout's own tests, whose subject it is). **An item's
+  opt-out sits at its site: on the statement or `let` that makes the call,
+  or on the `fn` or `impl` whose call it is, never on a module or a crate,
+  a test module or file included, since the wait bans are the same lint. A
+  test module that waits on its readout again and again calls it through
+  one helper `fn`, whose statement carries the mark. **An item's
   mark never covers a wait**: a banned wait inside an `fn` or `impl` that
   carries a mark for the outside world has a statement-level `#[expect]`
   of its own, whose reason is the wait's. These scope rules are a
@@ -2395,7 +2397,13 @@ lint`, never a script over source text:
   it shows. Clippy over it passes, by its exit status, only while every
   one of those bans bites: one that stopped biting leaves its expectation
   unfulfilled. A wait ban added to the root `clippy.toml` gets its call
-  there (a reviewer rule). The pre-commit hook's Rust step does not run
+  there (a reviewer rule). So does each `allow-invalid` entry point that
+  no crate of the workspace calls (`parley::FontContext::new`,
+  `fontique::Collection::load_system_fonts` and `load_fonts_from_paths`,
+  in `unreached`): clippy does not refuse an `allow-invalid` path that
+  resolves to nothing, so such a ban bites only while an `#[expect]`
+  covers a call of it, and every other `allow-invalid` ban has one at its
+  site in the workspace. The pre-commit hook's Rust step does not run
   it.
 
 ## Formatting

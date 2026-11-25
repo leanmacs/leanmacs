@@ -893,16 +893,22 @@ fn event_loop() -> Result<EventLoop, String> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the adapter's own tests: `probe::await_requests_handled` is their subject"
-)]
 mod tests {
     use super::*;
     use editor_wait::HangGuard;
     use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
     use winit::event_loop::EventLoopProxyProvider;
+
+    /// [`probe::await_requests_handled`], the readout these tests are of:
+    /// the one place they call it.
+    fn await_requests_handled(platform: &WinitPlatform, guard: HangGuard) -> bool {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "waits for every request sent to be carried out, on `probe::await_requests_handled`, the readout these tests are of"
+        )]
+        probe::await_requests_handled(platform, guard)
+    }
 
     #[test]
     fn off_the_main_thread_a_run_is_refused_with_a_reason_and_reports_and_tells_nothing() {
@@ -1014,11 +1020,11 @@ mod tests {
         // Each is counted as sent, so a wait for them runs out until the
         // loop has counted both carried out.
         let not_yet = HangGuard::held("the requests not yet carried out", Duration::ZERO);
-        assert!(!probe::await_requests_handled(&platform, not_yet));
+        assert!(!await_requests_handled(&platform, not_yet));
         handled.handled(1);
-        assert!(!probe::await_requests_handled(&platform, not_yet));
+        assert!(!await_requests_handled(&platform, not_yet));
         handled.handled(1);
-        assert!(probe::await_requests_handled(&platform, not_yet));
+        assert!(await_requests_handled(&platform, not_yet));
 
         // Woken once for each, with it already on the channel: the loop
         // that wakes finds it. A request asks no close.
@@ -1042,7 +1048,7 @@ mod tests {
         let platform = WinitPlatform::new(|| false);
         platform.request(Request::Minimise);
         let no_bound = HangGuard::on("the requests carried out", Duration::MAX);
-        assert!(!probe::await_requests_handled(&platform, no_bound));
+        assert!(!await_requests_handled(&platform, no_bound));
     }
 
     /// A loop's waker that takes, at each wake-up, the lists of paths

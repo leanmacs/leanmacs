@@ -139,14 +139,18 @@ it cannot see.
   so the root `Cargo.toml`'s `[workspace.lints.clippy]` levels hold in it.
   A package's crate (`tests/packages/*/rust`, `packages/*/rust`) too.
 - An opt-out from `disallowed_methods` is an `#[expect(…, reason = "…")]`
-  on a statement, a `let`, an `fn` or an `impl`, never on a module or a
-  crate: the wait bans are the same lint, and a module's or crate's mark
-  would silence them there. The exception is a readout's own tests, whose
-  subject it is: its module's `mod tests`, or an integration test file
-  whose every test waits on it, may carry the mark at its head, naming the
-  readout.
+  at its site: on the statement or `let` that makes the banned call, or on
+  the `fn` or `impl` whose call it is; never on a module or a crate, a
+  test module and a test file included: the wait bans are the same lint,
+  and a module's or crate's mark would silence them there. Its reason says
+  what the site waits for, or reaches, and why. A test module that calls
+  its readout again and again does so through one helper `fn`, whose
+  statement carries the mark. A mark on an `assert!` does nothing (lint
+  attributes on a macro's statement are unused), so bind the call with a
+  `let` first.
 - An item's mark never covers a wait. A banned wait inside an `fn` or an
-  `impl` that carries a `disallowed_methods` mark has a statement-level
+  `impl` that carries a `disallowed_methods` mark for the outside world, or
+  for another wait, has a statement-level
   `#[expect(clippy::disallowed_methods, reason = "…")]` of its own, whose
   reason is the wait's. Prefer a statement's mark to an item's in a
   function that holds any wait.
@@ -155,6 +159,12 @@ it cannot see.
 - Each new wait-ban path that a crate other than its owner can call gets
   one call in `tests/wait-lints/src/lib.rs`, under an `#[expect]` of its
   own that covers that call alone.
+- Each `allow-invalid` ban has a call under an `#[expect]` that covers it
+  alone: at a site in the workspace, or, for an entry point no crate
+  calls, in `tests/wait-lints/src/lib.rs` (`unreached`). Clippy does not
+  refuse an `allow-invalid` path that resolves to nothing, so a ban with
+  no such call bans nothing and fails nothing. When the last site of one
+  goes, its call moves to the fixture.
 
 See the root `clippy.toml`'s header and
 `docs/dev-practices/the-gate.md`, "The wait lints".

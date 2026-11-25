@@ -424,10 +424,6 @@ impl Feeds {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the feeds' own tests: `Feeds::join` and the C function over it, `editor_ffi_events_script_join`, are their subject"
-)]
 mod tests {
     use super::*;
 
@@ -439,6 +435,16 @@ mod tests {
         "the step of another thread each wait ends on",
         Duration::from_secs(10),
     );
+
+    /// [`Feeds::join`], the readout these tests are of: the one place they
+    /// call it.
+    fn join(feeds: &Feeds, id: u64, guard: HangGuard) -> bool {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "waits for the feed's script to end, on `Feeds::join`, the readout these tests are of"
+        )]
+        feeds.join(id, guard)
+    }
 
     /// Where each reading a join of `feeds` makes of whether its feed has
     /// ended arrives.
@@ -476,7 +482,7 @@ mod tests {
         assert_ne!(feed, 0, "the feeder starts");
         editor_wait::recv(&held, BOUND).expect("the feeder reaches its first push");
         thread::scope(|scope| {
-            let joined = scope.spawn(|| (feeds.join(feed, BOUND), queue.queued()));
+            let joined = scope.spawn(|| (join(&feeds, feed, BOUND), queue.queued()));
             assert_eq!(
                 editor_wait::recv(&readings, BOUND),
                 Ok(false),
@@ -497,7 +503,8 @@ mod tests {
             );
         });
         // Joined once: the id names no feed any more.
-        assert!(!feeds.join(
+        assert!(!join(
+            &feeds,
             feed,
             HangGuard::held("a feed already joined", Duration::ZERO)
         ));
@@ -506,9 +513,14 @@ mod tests {
     #[test]
     fn a_join_of_an_id_that_names_no_feed_is_refused_at_once() {
         let feeds = Feeds::new();
-        assert!(!feeds.join(0, BOUND));
-        assert!(!feeds.join(1, BOUND));
-        assert!(!editor_ffi_events_script_join(0, BOUND.as_millis()));
+        assert!(!join(&feeds, 0, BOUND));
+        assert!(!join(&feeds, 1, BOUND));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the C function over `Feeds::join`, which these tests are of, of an id that names no feed: it answers at once"
+        )]
+        let joined = editor_ffi_events_script_join(0, BOUND.as_millis());
+        assert!(!joined);
     }
 
     #[test]

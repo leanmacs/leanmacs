@@ -41,13 +41,13 @@
 # banned call fails the lint, and so does a path below that resolves to
 # nothing. Its scope:
 #
-# - An opt-out from `disallowed_methods` sits on a statement, a `let`, an
-#   `fn` or an `impl` block, never on a module or a crate: the wait bans are
-#   the same lint, and a module's or crate's mark would silence them there.
-#   The one exception is a readout's own tests, whose subject it is: its
-#   module's `mod tests`, or an integration test file whose every test waits
-#   on it (the syntax session's and `editor-ffi`'s syntax tests), may carry
-#   the mark at its head, naming the readout.
+# - An opt-out from `disallowed_methods` sits at its site: on the
+#   statement or `let` that makes the banned call, or on the `fn` or `impl`
+#   block whose call it is; never on a module or a crate, a test module and
+#   a test file included: the wait bans are the same lint, and a module's or
+#   crate's mark would silence them there. A test module that waits on its
+#   readout again and again calls it through one helper `fn` of its own,
+#   whose statement carries the mark; that helper is the site.
 # - An item's mark never covers a wait. A banned wait inside an `fn` or an
 #   `impl` that carries a `disallowed_methods` mark for the outside world has
 #   a statement-level `#[expect]` of its own, whose reason is the wait's.
@@ -65,10 +65,11 @@
 #   `--sleep`; and the echo service's reap of its ended workers, which never
 #   waits); the test hooks that tell a join will wait (`Worker`, the watch
 #   service), which ask `is_finished` only to say so; each readout's own
-#   tests, the subject (`queue`, `service`, `scripted`, the process
-#   service's `streaming`, `handled` and the winit adapter's, `render_loop`,
-#   `session`, grep's `service/tests.rs`, and `editor-ffi`'s `events`,
-#   `live` and `syntax`), and a readout that forwards to another
+#   tests, at the helper each module calls it through or at each call
+#   (`queue`, `service`, `scripted`, the process service's `streaming`,
+#   `handled` and the winit adapter's, `render_loop`, `session`, grep's
+#   `service/tests.rs`, and `editor-ffi`'s `events`, `live` and `syntax`),
+#   and a readout that forwards to another
 #   (`probe::await_requests_handled`, `Syntaxes::settle` and
 #   `settle_exact`); the adapters' contract checks (the window contract's
 #   measurements, the process contract's streaming properties, the winit
@@ -101,7 +102,15 @@
 # them is refused (its `Cargo.toml` says how `mise run lint` runs it). The
 # readouts no crate but their owner can call (`Handled::wait_all`,
 # `Live::await_at_most`, `Feeds::join`) are not in it; an `#[expect]` at
-# each of their sites fails the lint if their entry goes.
+# each of their sites fails the lint if their entry goes. An
+# `allow-invalid` ban, which clippy does not refuse when its path resolves
+# to nothing, bites only while an `#[expect]` covers a call of it: each one
+# has a site in the workspace, but for the entry points no crate calls
+# (`parley::FontContext::new`, `fontique::Collection::load_system_fonts`
+# and `load_fonts_from_paths`), which `tests/wait-lints/` calls in
+# `unreached`, each under an `#[expect]` of its own. Seen to bite on
+# 2026-11-25: with `load_system_fonts` misspelled here, clippy over the
+# fixture fails with "this lint expectation is unfulfilled" at its call.
 #
 # Seen to bite once by hand, on 2026-11-23: with the `#[expect]` on the job
 # clock's read in `crates/editor-ffi/src/timers.rs` (`Monotonic::now_ms`)
@@ -225,7 +234,8 @@ disallowed-methods = [
   # service in `editor-ffi`, an example run on demand, or the adapter's own
   # contract check. A core's tests run on the port's fake.
   # `allow-invalid`: a crate that does not reach the adapter cannot resolve
-  # the path; a wrong one leaves an `#[expect]` at its sites unfulfilled.
+  # the path; a wrong one leaves an `#[expect]` at its sites unfulfilled, or,
+  # for an entry point no crate calls, its call in `tests/wait-lints/`.
   { path = "editor_fs_std::StdFs::system", allow-invalid = true, reason = "the real file system is made in one place, the process's file service; everything else takes an `Fs`, and a test hands it `FakeFs`" },
   { path = "editor_process_std::StdProcesses::system", allow-invalid = true, reason = "real processes are started in one place, the process's process service; a test runs on `FakeProcesses`" },
   { path = "editor_watch_notify::NotifyWatch::system", allow-invalid = true, reason = "real files are watched in one place, the process's watch service; a test runs on `FakeWatch`" },

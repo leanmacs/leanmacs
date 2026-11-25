@@ -149,10 +149,6 @@ pub extern "C" fn editor_ffi_live_await(kind: u8, target: u64, bound_ms: u64) ->
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the count's own tests: `Live::await_at_most` and the C function over it, `editor_ffi_live_await`, are their subject"
-)]
 mod tests {
     use std::sync::mpsc::{Receiver, channel};
     use std::sync::{Arc, Mutex, PoisonError};
@@ -177,6 +173,16 @@ mod tests {
     /// wait: a kind that names no handles, or a target every count meets.
     const AT_ONCE: HangGuard = HangGuard::on("an answer given at once", Duration::ZERO);
 
+    /// [`Live::await_at_most`], the readout these tests are of: the one place
+    /// they call it.
+    fn await_at_most(live: &Live, target: u64, guard: HangGuard) -> bool {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "waits for the live count to come down to `target`, on `Live::await_at_most`, the readout these tests are of"
+        )]
+        live.await_at_most(target, guard)
+    }
+
     /// Where each count [`Live::await_at_most`] reads on `live` arrives.
     fn readings(live: &Live) -> Receiver<u64> {
         let (read, readings) = channel();
@@ -199,7 +205,7 @@ mod tests {
         let readings = readings(&live);
         let waited = {
             let live = Arc::clone(&live);
-            thread::spawn(move || live.await_at_most(1, BOUND))
+            thread::spawn(move || await_at_most(&live, 1, BOUND))
         };
         assert_eq!(
             editor_wait::recv(&readings, BOUND),
@@ -227,26 +233,30 @@ mod tests {
     fn a_wait_says_no_once_its_bound_has_passed_with_the_count_above_its_target() {
         let live = Live::new();
         live.add();
-        assert!(!live.await_at_most(0, NOT_FREED));
-        assert!(live.await_at_most(1, NOT_FREED));
+        assert!(!await_at_most(&live, 0, NOT_FREED));
+        assert!(await_at_most(&live, 1, NOT_FREED));
         live.free();
-        assert!(live.await_at_most(0, NOT_FREED));
+        assert!(await_at_most(&live, 0, NOT_FREED));
     }
 
     #[test]
     fn a_kind_that_names_no_handles_is_refused_at_once() {
         for kind in [0, COUNTERS + 1, u8::MAX] {
-            assert!(
-                !editor_ffi_live_await(kind, u64::MAX, AT_ONCE.as_millis()),
-                "kind {kind}"
-            );
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the C function over `Live::await_at_most`, which these tests are of, of a kind that names no handles: it answers at once"
+            )]
+            let met = editor_ffi_live_await(kind, u64::MAX, AT_ONCE.as_millis());
+            assert!(!met, "kind {kind}");
         }
         // Every count is at most the largest there is.
         for kind in [SNAPSHOTS, DOCUMENTS, COUNTERS] {
-            assert!(
-                editor_ffi_live_await(kind, u64::MAX, AT_ONCE.as_millis()),
-                "kind {kind}"
-            );
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the C function over `Live::await_at_most`, which these tests are of, for a target every count meets: it answers at once"
+            )]
+            let met = editor_ffi_live_await(kind, u64::MAX, AT_ONCE.as_millis());
+            assert!(met, "kind {kind}");
         }
     }
 }

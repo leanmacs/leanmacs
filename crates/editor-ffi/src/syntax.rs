@@ -1339,10 +1339,6 @@ pub extern "C" fn editor_ffi_syntax_refresh_after(milliseconds: u64) {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the syntax service's own tests: `Syntaxes::settle` and `Syntaxes::settle_exact` are their subject"
-)]
 mod tests {
     use super::*;
     use editor_syntax::clock::ManualClock;
@@ -1354,6 +1350,26 @@ mod tests {
     /// hang guard: a delivery; only a hang reaches the bound, and the test
     /// then fails as a hang. The longest a test waits for one.
     const BOUND: HangGuard = HangGuard::on("a delivery", Duration::from_secs(10));
+
+    /// [`Syntaxes::settle`], the readout these tests are of: the one place
+    /// they call it.
+    fn settle(service: &Syntaxes, snapshot: &Snapshot, guard: HangGuard) -> bool {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "waits for a delivery of the snapshot's revision or a newer one, on `Syntaxes::settle`, the readout these tests are of"
+        )]
+        service.settle(snapshot, guard)
+    }
+
+    /// [`Syntaxes::settle_exact`], the readout these tests are of: the one
+    /// place they call it.
+    fn settle_exact(service: &Syntaxes, snapshot: &Snapshot, guard: HangGuard) -> bool {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "waits for an exact tree of the snapshot's revision or a newer one, on `Syntaxes::settle_exact`, the readout these tests are of"
+        )]
+        service.settle_exact(snapshot, guard)
+    }
 
     /// The kinds of the events on `queue`, once it is quit, up to the quit.
     fn drained(queue: &Queue) -> Vec<EventKind> {
@@ -1375,12 +1391,12 @@ mod tests {
         let document = Document::new("{\"a\": 1}");
         let snapshot = Snapshot::of(&document);
         assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
-        assert!(service.settle(&snapshot, BOUND));
+        assert!(settle(&service, &snapshot, BOUND));
         // A second delivery, still with no highlighter.
         assert!(document.replace(7, 8, "2"));
         let second = Snapshot::of(&document);
         service.touched(second.key(), second.text().revision());
-        assert!(service.settle(&second, BOUND));
+        assert!(settle(&service, &second, BOUND));
 
         let grammar = GrammarName::new("json");
         let query = SyntaxQuery {
@@ -1404,7 +1420,7 @@ mod tests {
         assert!(document.replace(7, 8, "3"));
         let third = Snapshot::of(&document);
         service.touched(third.key(), third.text().revision());
-        assert!(service.settle(&third, BOUND));
+        assert!(settle(&service, &third, BOUND));
 
         assert_eq!(drained(&NOTICES), [EventKind::Parsed]);
     }
@@ -1415,7 +1431,7 @@ mod tests {
         let document = Document::new(text);
         let snapshot = Snapshot::of(&document);
         assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
-        assert!(service.settle(&snapshot, BOUND));
+        assert!(settle(service, &snapshot, BOUND));
         let grammar = GrammarName::new("json");
         let query = SyntaxQuery {
             query: Arc::new(
@@ -1443,11 +1459,11 @@ mod tests {
         assert!(document.replace(7, 8, "2"));
         let edited = Snapshot::of(&document);
         service.touched(edited.key(), edited.text().revision());
-        assert!(service.settle(&edited, BOUND));
+        assert!(settle(&service, &edited, BOUND));
 
         clock.advance(REFRESH_AFTER_MS);
         service.wake();
-        assert!(service.settle_exact(&edited, BOUND));
+        assert!(settle_exact(&service, &edited, BOUND));
 
         // The edit's one delivery is reported, and the refresh's none.
         assert_eq!(drained(&NOTICES), [EventKind::Parsed]);
@@ -1464,17 +1480,17 @@ mod tests {
         assert!(document.replace(1, 2, "2"));
         let edited = Snapshot::of(&document);
         service.touched(edited.key(), edited.text().revision());
-        assert!(service.settle(&edited, BOUND));
+        assert!(settle(&service, &edited, BOUND));
         clock.advance(50);
         service.wake();
-        assert!(service.settle_exact(&edited, BOUND));
+        assert!(settle_exact(&service, &edited, BOUND));
 
         // No interval at all: refreshed with the clock where it is.
         service.refresh_after(Duration::ZERO);
         assert!(document.replace(1, 2, "3"));
         let again = Snapshot::of(&document);
         service.touched(again.key(), again.text().revision());
-        assert!(service.settle_exact(&again, BOUND));
+        assert!(settle_exact(&service, &again, BOUND));
     }
 
     #[test]
@@ -1653,7 +1669,7 @@ mod tests {
         drop(numbers);
 
         assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
-        assert!(service.settle(&snapshot, BOUND));
+        assert!(settle(&service, &snapshot, BOUND));
         assert_eq!(
             service.kept_names(&snapshot, QueryKind::TextObjects),
             Ok(vec!["n".to_owned()])
@@ -1683,7 +1699,7 @@ mod tests {
 
         assert!(service.detach(snapshot.key()));
         assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
-        assert!(service.settle(&snapshot, BOUND));
+        assert!(settle(&service, &snapshot, BOUND));
         assert_eq!(
             service.kept_captures(&snapshot, QueryKind::Indents, 0..3),
             Err(KeptStatus::NoQuery)

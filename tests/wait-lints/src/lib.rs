@@ -6,8 +6,9 @@
 //! bites leaves its expectation unfulfilled, which `-D warnings` fails.
 //! No expectation covers two banned calls, so none is fulfilled by a call
 //! other than the one it names. A wait ban added to the root `clippy.toml`
-//! gets its call here (.agents/rules/structure.md, "Clippy's bans"). It
-//! type-checks and never runs.
+//! gets its call here (.agents/rules/structure.md, "Clippy's bans"), and so
+//! does an `allow-invalid` ban that no crate of the workspace calls at an
+//! `#[expect]` of its own ([`unreached`]). It type-checks and never runs.
 
 #![allow(deprecated, reason = "the deprecated timed primitives are banned too")]
 
@@ -170,6 +171,29 @@ pub fn readouts(
         reason = "shows the ban on `editor_ffi::syntax::Syntaxes::settle_exact` bites"
     )]
     let _ = syntaxes.settle_exact(snapshot, GUARD);
+}
+
+/// Each entry point of the outside world that the root `clippy.toml` bans
+/// with `allow-invalid` and no crate of the workspace calls, once: with no
+/// site under an `#[expect]` anywhere else, a path among them that stopped
+/// resolving would ban nothing and fail nothing. Every other
+/// `allow-invalid` path has such a site.
+pub fn unreached(collection: &mut parley::fontique::Collection) {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "shows the ban on `parley::FontContext::new` bites"
+    )]
+    let _ = parley::FontContext::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "shows the ban on `fontique::Collection::load_system_fonts` bites"
+    )]
+    collection.load_system_fonts();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "shows the ban on `fontique::Collection::load_fonts_from_paths` bites"
+    )]
+    collection.load_fonts_from_paths(Vec::<std::path::PathBuf>::new());
 }
 
 /// Each C function Lean calls to wait, once, its `bound_ms` made from the
