@@ -52,16 +52,6 @@ def pulledParsed : IO Bool := do
   let some event ← Ffi.takeQueued .editor | return false
   return event.kind == .parsed && event.source.kind == .library
 
-/-- How many events the editor queue held, each pulled: what a mode set over
-a highlighted text leaves once its tree and its layers are delivered, the
-library's reports of parses. It never parks a pull on an empty queue. -/
-def drainedParsed : IO Nat := do
-  let mut pulled := 0
-  while (← Ffi.queued .editor) > 0 do
-    discard (Ffi.takeQueued .editor)
-    pulled := pulled + 1
-  return pulled
-
 /-- The mark of `onRealSyntaxTree`: it runs a real background service (`Editor/RealHost.lean`). -/
 def onRealSyntaxTree.realHost : Editor.RealHost :=
   .service

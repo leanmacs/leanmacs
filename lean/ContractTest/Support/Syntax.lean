@@ -1,4 +1,5 @@
 import Editor.Ffi.Document
+import Editor.Ffi.Events
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Syntax
 import Editor.Scene
@@ -10,8 +11,9 @@ import Editor.Text.Real
 /-!
 # Contract tests: support: Syntax
 
-The real syntax tree binding: a handler that settles after an attach, and the
-binding over documents of texts. Shared by several test modules; it holds no
+The real syntax tree binding: a handler that settles after an attach, the
+binding over documents of texts, and the editor queue drained of the
+library's reports of parses. Shared by several test modules; it holds no
 checks of its own.
 -/
 
@@ -69,5 +71,15 @@ def syntaxTreeOver (texts : Array String) :
         table.add (← document.snapshot)
   let real ← RealSyntaxTree.new table.reader
   return (documents, table, ids, settling table real.handle)
+
+/-- How many events the editor queue held, each pulled: what a mode set over
+a highlighted text leaves once its tree and its layers are delivered, the
+library's reports of parses. It never parks a pull on an empty queue. -/
+def drainedParsed : IO Nat := do
+  let mut pulled := 0
+  while (← Ffi.queued .editor) > 0 do
+    discard (Ffi.takeQueued .editor)
+    pulled := pulled + 1
+  return pulled
 
 end ContractTest
