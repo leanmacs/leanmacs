@@ -1,20 +1,24 @@
 import Editor.Ffi.Document
-import Editor.Ffi.Events
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Syntax
 import Editor.Scene
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
+import Editor.Test.Linked.Syntax
 import Editor.Text
 import Editor.Text.Real
 
 /-!
 # Contract tests: support: Syntax
 
-The real syntax tree binding: a handler that settles after an attach, the
-binding over documents of texts, and the editor queue drained of the
-library's reports of parses. Shared by several test modules; it holds no
-checks of its own.
+The real syntax tree binding: a handler that settles before a question of
+captures and after an attach, and the binding over documents of texts.
+Shared by several test modules; it holds no checks of its own. The handler
+that settles after an attach alone and the editor queue drained of the
+library's reports of parses are the linked kit's
+(`Editor.Test.Linked.settlingAttach`, `Editor.Test.Linked.drainedParsed`,
+`Editor/Test/Linked/Syntax.lean`), which a package's grammar check uses
+too.
 -/
 
 namespace ContractTest
@@ -23,28 +27,12 @@ open Editor
 
 -- inferred-waits W90: stays (the syntax adapter's contract support: its subject is the real binding's deliveries)
 set_option linter.inferredWait false in
-/-- `handler`, a real syntax tree binding's over `table`, which after an
-attach waits, with a bound, for the attached text's tree to be delivered:
-so a highlighter set after the attach sees no delivery of that parse, and
-no `parsed` event of it is left on the editor queue, which the watch checks
-pull after these. A delivery a check makes after a highlight, by an edit,
-leaves one, which the check pulls (`pulledParsed`). -/
-def settlingAttach (table : Snapshots) (handler : SyntaxTreeHandler) : SyntaxTreeHandler :=
-  fun request => do
-  let reply ← handler request
-  if let .attach snapshot _ := request then
-    if let some found← table.find? snapshot then
-      discard (Ffi.syntaxSettle found Ffi.treeGuard)
-  return reply
-
--- inferred-waits W90: stays (the syntax adapter's contract support: its subject is the real binding's deliveries)
-set_option linter.inferredWait false in
 /-- `handler`, a real syntax tree binding's over `table`, which waits, with
 a bound, for a snapshot's tree to be delivered before it forwards a question
 of its captures or of a kept query's, and after an attach
 (`settlingAttach`). -/
 def settling (table : Snapshots) (handler : SyntaxTreeHandler) : SyntaxTreeHandler :=
-  settlingAttach table fun request => do
+  Editor.Test.Linked.settlingAttach table fun request => do
     let asked :=
       match request with
       | .captures snapshot _ _ _ => some snapshot
@@ -71,15 +59,5 @@ def syntaxTreeOver (texts : Array String) :
         table.add (← document.snapshot)
   let real ← RealSyntaxTree.new table.reader
   return (documents, table, ids, settling table real.handle)
-
-/-- How many events the editor queue held, each pulled: what a mode set over
-a highlighted text leaves once its tree and its layers are delivered, the
-library's reports of parses. It never parks a pull on an empty queue. -/
-def drainedParsed : IO Nat := do
-  let mut pulled := 0
-  while (← Ffi.queued .editor) > 0 do
-    discard (Ffi.takeQueued .editor)
-    pulled := pulled + 1
-  return pulled
 
 end ContractTest

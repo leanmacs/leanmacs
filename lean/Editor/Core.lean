@@ -30,11 +30,11 @@ import Editor.Test.Frame
 import Editor.Test.Hosted
 import Editor.Test.Linked.Bench
 import Editor.Test.Linked.Frames
+import Editor.Test.Linked.Grammar
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Shipped
-import Editor.Test.Linked.Syntax
 import Editor.Test.Linked.Trees
 import Editor.Test.Listings
 import Editor.Test.Modes

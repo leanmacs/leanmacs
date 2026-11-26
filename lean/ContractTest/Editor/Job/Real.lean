@@ -34,6 +34,7 @@ import Editor.SyntaxTree
 import Editor.SyntaxTree.Real
 import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Services
+import Editor.Test.Linked.Syntax
 import Editor.Text
 import Editor.Text.Real
 import Editor.Watch

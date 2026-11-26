@@ -582,13 +582,16 @@ private opaque syntaxSettleRaw (snapshot : @& Snapshot) (boundMs : UInt64) : IO 
 /-- `syntaxSettle` is an inferred wait (`Editor/InferredWait.lean`): a real
 service's readout whose fake exists (`FakeSyntaxService`), allowed only in
 the real binding's adapter (`Editor.SyntaxTree.Real`), its delivery
-contract (`Editor.SyntaxTree.DeliveryContract`), and the linked kit's
+contract (`Editor.SyntaxTree.DeliveryContract`), the linked kit's
 modules that hand it on, each under a mark of its own
-(`Editor.Test.Linked.Shipped`, `Editor.Test.Linked.Syntax`). -/
+(`Editor.Test.Linked.Shipped`, `Editor.Test.Linked.Syntax`,
+`Editor.Test.Linked.Grammar`), and the headless host's driver, whose
+`highlights` directive waits on the delivery of the tree it reads
+(`Editor.Headless`). -/
 def syntaxSettle.inferredWait : InferredWait :=
   .realEffect
     [`Editor.SyntaxTree.Real, `Editor.SyntaxTree.DeliveryContract, `Editor.Test.Linked.Shipped,
-      `Editor.Test.Linked.Syntax]
+      `Editor.Test.Linked.Syntax, `Editor.Test.Linked.Grammar, `Editor.Headless]
 
 /-- For tests: waits, within the hang guard `guard`, for the library to
 deliver a tree of `snapshot`'s revision, or a newer one, with layers found

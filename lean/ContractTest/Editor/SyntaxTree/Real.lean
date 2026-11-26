@@ -25,6 +25,7 @@ import Editor.Scene
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Contract
 import Editor.SyntaxTree.Real
+import Editor.Test.Linked.Syntax
 import Editor.Text
 import Editor.Text.Real
 import Editor.Vocabulary
@@ -41,6 +42,7 @@ module `ContractTest` runs them; its module doc says what each shows.
 namespace ContractTest
 
 open Editor
+open Editor.Test.Linked (settlingAttach drainedParsed)
 
 /-- Whether the editor queue holds exactly one event, the library's report
 of a parse delivered, which is pulled: what an edit of a highlighted text

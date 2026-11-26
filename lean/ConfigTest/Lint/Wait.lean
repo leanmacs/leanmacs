@@ -97,7 +97,7 @@ def ConfigTest.LintFixture.kitJoin (drive : Editor.Test.Linked.Driven) : IO Edit
   drive.join ConfigTest.LintFixture.guard
 
 /--
-error: `Editor.Ffi.syntaxSettle`, in `ConfigTest.LintFixture.syntaxSettled`, is an inferred wait (realEffect): it infers done from something shared, not from a signal for this work. It is allowed only in Editor.Ffi.Syntax, Editor.SyntaxTree.Real, Editor.SyntaxTree.DeliveryContract, Editor.Test.Linked.Shipped, Editor.Test.Linked.Syntax and the test modules that mirror them; wait on the work's own handle, promise or flush, or, for a site a later phase removes, `set_option linter.inferredWait false in` with its row of docs/dev-practices/inferred-waits.md
+error: `Editor.Ffi.syntaxSettle`, in `ConfigTest.LintFixture.syntaxSettled`, is an inferred wait (realEffect): it infers done from something shared, not from a signal for this work. It is allowed only in Editor.Ffi.Syntax, Editor.SyntaxTree.Real, Editor.SyntaxTree.DeliveryContract, Editor.Test.Linked.Shipped, Editor.Test.Linked.Syntax, Editor.Test.Linked.Grammar, Editor.Headless and the test modules that mirror them; wait on the work's own handle, promise or flush, or, for a site a later phase removes, `set_option linter.inferredWait false in` with its row of docs/dev-practices/inferred-waits.md
 
 Note: This linter can be disabled with `set_option linter.inferredWait false`
 -/
