@@ -2363,6 +2363,69 @@ library's answers, holds the model and the real binding to the same
 properties. It is the seventh sub-port of the editor's port
 (`docs/design/lean-runtime.md`, "The editor's port is a composite").
 
+**Registering a grammar** (the syntax-runtime-grammars roadmap's phase 1,
+2026-11-26). The port registers a grammar at run time:
+`Syntax::register` takes a `GrammarSource` (a native library's path, the
+symbol it exports its language under, and an optional declared
+`ReparsePolicy`) and answers the registered `GrammarName` or a
+`RegistrationRefusal` value: not found, not loadable (no library this
+platform can open), unsupported ABI, missing symbol, or unsupported (the
+adapter loads no grammar at run time). The source carries no grammar kind:
+native libraries are the only run-time form, and a second would be a new
+field.
+
+- **The core decides** (`editor_syntax::registry::Registry`, which an
+  adapter holds behind a lock and hands only its load step): the name is
+  the symbol without its `tree_sitter_` prefix; the policy is the declared
+  one, else `Whole`, since a loaded grammar cannot be swept for grammar
+  quality when it loads; a later registration of a name replaces the
+  earlier one, and a registered grammar replaces a compiled-in one of the
+  same name, for parsers opened afterwards, while a parser opened before
+  keeps its grammar; a refusal changes nothing; the listing is the
+  compiled-in names, then the registered ones in the order first
+  registered; each entry keeps its source, so the queries declared beside
+  its library can be found. A registered grammar ships no query: its
+  queries are read in Lean and handed in as a mode's override.
+- **The worker orders it.** The registry is the syntax service's state, so
+  in production a registration reaches the syntax only as a request on the
+  worker's queue (`Handle::register`, with a reply called once on the
+  worker's thread, and `Handle::flush_registrations`, a barrier). Each step
+  answers every queued registration, in order and with no lock held, before
+  its next round or refresh, so an attach made after an answer opens the
+  registered grammar. When the loop ends, by a stop or a panic, every
+  registration still queued is answered `None` (`editor_syntax::worker`,
+  "Registrations").
+- **A service behind the completion queue** (`editor-ffi`'s `grammars`):
+  `editor_ffi_grammars_start` queues the registration on the syntax worker
+  and returns at once; the worker's answer is kept under the request's id
+  and completed from the syntax service's source (6), and
+  `editor_ffi_grammars_take` hands it out once as a status, with the name
+  lent when registered. A cancel withdraws the wait while the queued
+  registration is still worked, and a flush is completed behind every
+  registration started before it. In Lean it is a request a job awaits
+  (`JobRequest.grammar`, `Grammar.register`, with its data and refusals in
+  `lean/Editor/SyntaxTree/Registration.lean` beside the syntax tree
+  interface), so the editor thread never waits for it and a command cannot
+  make it; the runner's service is `Job.realGrammars`, its fake
+  `Job.FakeGrammars` and its model the pure `GrammarRegistry`
+  (`lean/Editor/SyntaxTree/Registration/Model.lean`), which the job model
+  answers with and the syntax tree model lists, attaches and compiles for.
+- **The fake and the contract.** `fake::Libraries` is the fake with a
+  table: it "loads" grammars of the fake's shape, each with its own list
+  delimiters, from an in-memory table keyed by path, and nothing touches
+  the disk. The registration properties (success, the override of a
+  compiled-in name, the default policy, each refusal) are a contract of
+  their own, `contract::registration::check`, separate from
+  `contract::check`, held against the fake alone in this phase; an adapter
+  that loads no grammar runs `contract::registration::check_unsupported`.
+  Each property is seen to bite on a broken registering syntax.
+- **The real adapter answers unsupported** for every registration and reads
+  no file (`crates/editor-syntax-treesitter/tests/registration.rs`); the
+  Lean job contract (`JobContract.grammarProperties`) holds the job model
+  with no table and the runner over the real service to that same answer.
+  "How grammars are loaded: compiled in", above, still holds until native
+  libraries are loaded (the roadmap's phase 2).
+
 ### Highlights, as built
 
 Built by the syntax roadmap's phase 2 (2026-11-16).
