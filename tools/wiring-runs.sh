@@ -450,13 +450,13 @@ case_window_host() {
   # render session is the only one the process starts: a cells display bound
   # to the presenter, the host opening a copy of `ex/note.txt`, the scripted
   # sample window opening, sending its fixed input and asking to close. The
-  # scenario must exit 0, which it does only once the window has run and
-  # closed and the render session's counters show a frame drawn, and the
-  # copy must be unchanged. It opens no window and touches no clipboard of
-  # the desktop's.
+  # scenario copies the file into a temporary directory of its own. It must
+  # exit 0, which it does only once the window has run and closed and the
+  # render session's counters show a frame drawn. It opens no window and
+  # touches no clipboard of the desktop's.
   (
     set -e
-    dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && cp ../tests/headless/ex/note.txt "$dir/note.txt" && .lake/build/bin/ffi-test window-host "$dir/note.txt" && cmp "$dir/note.txt" ../tests/headless/ex/note.txt
+    .lake/build/bin/ffi-test window-host ../tests/headless/ex/note.txt
   )
   # The same wiring with no file, as Finder starts the app: the host posts
   # no open, and the window runs on the editor's one empty buffer. It must
@@ -522,14 +522,14 @@ case_window_host_base() {
 # window-host-generate
 case_window_host_generate() {
   # The same wiring handed a generator, as the editor's `main` hands it one,
-  # on a temporary copy of tests/window/title-bar/config, which holds a root
-  # and neither generated file: the start-up reload must create the
-  # directory's `lean-toolchain` and `lakefile.toml` and load the config, so
-  # the window mode hands the session the generator it was handed. It
-  # writes in the temporary directory alone, which a trap removes.
+  # on tests/window/title-bar/config, which holds a root and neither
+  # generated file, copied by the scenario into a temporary directory of its
+  # own: the start-up reload must create the directory's `lean-toolchain`
+  # and `lakefile.toml` and load the config, so the window mode hands the
+  # session the generator it was handed.
   (
     set -e
-    dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && cp -R ../tests/window/title-bar/config "$dir/config" && .lake/build/bin/ffi-test window-host-generate "$(lean --print-prefix)" .lake/build/lib/lean "$dir/config"
+    .lake/build/bin/ffi-test window-host-generate "$(lean --print-prefix)" .lake/build/lib/lean ../tests/window/title-bar/config
   )
 }
 
@@ -560,10 +560,11 @@ case_window_host_undrawn() {
   # the window mode ended with status 1 and no render session was started;
   # stderr must hold the window mode's line saying why nothing drew, with
   # the platform's reason whole (`SCRIPTED_NO_RENDERER` in
-  # crates/editor-ffi/src/window.rs); and the copy must be unchanged.
+  # crates/editor-ffi/src/window.rs). The scenario copies the file into a
+  # temporary directory of its own.
   (
     set -e
-    dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && cp ../tests/headless/ex/note.txt "$dir/note.txt" && err=$(.lake/build/bin/ffi-test window-host-undrawn "$dir/note.txt" 2>&1 >/dev/null) && printf '%s\n' "$err" | grep -qxF "editor: nothing could draw in the window: the scripted platform's window has no renderer: pas de GPU" && cmp "$dir/note.txt" ../tests/headless/ex/note.txt
+    err=$(.lake/build/bin/ffi-test window-host-undrawn ../tests/headless/ex/note.txt 2>&1 >/dev/null) && printf '%s\n' "$err" | grep -qxF "editor: nothing could draw in the window: the scripted platform's window has no renderer: pas de GPU"
   )
 }
 

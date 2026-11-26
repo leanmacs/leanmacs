@@ -362,8 +362,8 @@ def windowHostGenerateScenario.realHost : Editor.RealHost :=
 
 /-- The window mode's wiring (`Editor.Window.host`) handed a generator, as
 the editor's `main` hands it one: config is loaded at start from
-`configDir`, a directory of the caller's own that holds a root and neither
-generated file, with a generator that creates files in that directory, for
+`configDir`, a directory of the caller's own (`windowScenarios` hands it a
+copy it made) that holds a root and neither generated file, with a generator that creates files in that directory, for
 a made-up pin and a made-up package set. The start-up reload must create
 the directory's `lean-toolchain`, holding the pin, and its `lakefile.toml`,
 requiring the set, and load the config, which keeps the standard title
@@ -615,6 +615,28 @@ def windowHostRestartScenario (sysroot oleanDir configDir : String) : IO UInt8 :
   finally
     IO.FS.removeDirAll dir
 
+/-- Copies the file or directory at `source`, its directories and files
+with their bytes, to `target`. -/
+private partial def copyTree (source target : System.FilePath) : IO Unit := do
+  if ← source.isDir then
+    IO.FS.createDirAll target
+    for entry in ← source.readDir do
+      copyTree entry.path (target / entry.fileName)
+  else
+    IO.FS.writeBinFile target (← IO.FS.readBinFile source)
+
+/-- Runs `scenario` on a copy of the file or directory at `path`, made under
+the same name in a temporary directory of the scenario's own, which is
+removed once the scenario has returned: a scenario that may write what it
+is handed is given a checked-in fixture as it is, and leaves it as it was.
+The copy's path is absolute. -/
+private def onCopyOf (path : String) (scenario : String → IO UInt8) : IO UInt8 :=
+  IO.FS.withTempDir fun directory => do
+    let source : System.FilePath := path
+    let copy := directory / (source.fileName.getD "copy")
+    copyTree source copy
+    scenario copy.toString
+
 /-- Says how `command`, a scenario of `windowScenarios`, is run, and gives
 the exit status 2. -/
 private def scenarioUsage (command arguments : String) : IO UInt8 := do
@@ -631,11 +653,14 @@ own arguments (`Editor.Scenario`): how the root's `main` reaches them, as
 the build's `linter.wiringSet` requires, and what `ffi-test
 wiring-scenarios` lists for reviewers holding each to its case in
 `tools/wiring-runs.sh` (`.agents/rules/structure.md`, "The wiring set's
-runs"). -/
+runs"). `window-host` with a file, `window-host-undrawn` and
+`window-host-generate` each run on a copy of what they are given, in a
+temporary directory of their own (`onCopyOf`), so a caller hands them a
+checked-in fixture as it is. -/
 def windowScenarios : List Editor.Scenario :=
   [{  command := "window-host"
       run := fun
-        | [file] => windowHostScenario (some file)
+        | [file] => onCopyOf file fun copy => windowHostScenario (some copy)
         | [] => windowHostScenario none
         | _ => scenarioUsage "window-host" "[<file>]" },
     { command := "window-host-config"
@@ -652,7 +677,8 @@ def windowScenarios : List Editor.Scenario :=
         | _ => scenarioUsage "window-host-base" "<sysroot> <olean dir> <config dir>" },
     { command := "window-host-generate"
       run := fun
-        | [sysroot, oleanDir, configDir] => windowHostGenerateScenario sysroot oleanDir configDir
+        | [sysroot, oleanDir, configDir] =>
+          onCopyOf configDir fun copy => windowHostGenerateScenario sysroot oleanDir copy
         | _ => scenarioUsage "window-host-generate" "<sysroot> <olean dir> <config dir>" },
     { command := "window-host-direct"
       run := fun
@@ -660,7 +686,7 @@ def windowScenarios : List Editor.Scenario :=
         | _ => scenarioUsage "window-host-direct" "<editor> <sysroot> <config dir>" },
     { command := "window-host-undrawn"
       run := fun
-        | [file] => windowHostUndrawnScenario file
+        | [file] => onCopyOf file windowHostUndrawnScenario
         | _ => scenarioUsage "window-host-undrawn" "<file>" }]
 
 end FfiTest
