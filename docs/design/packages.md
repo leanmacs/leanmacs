@@ -3356,7 +3356,7 @@ and the core's Lake package registers no `Package`.
 | The scene and display types: `Editor.Appearance`, `Editor.Face`, `Editor.Face.Vocabulary`, `Editor.Highlight`, `Editor.Menu`, `Editor.ModeLine`, `Editor.Scene`, `Editor.Scroll`, `Editor.TabBar` | 9 | core | yes |
 | Keys and modes: `Editor.InputScheme`, `Editor.Invocation`, `Editor.Key.Notation`, `Editor.Keymap`, `Editor.Mode`, `Editor.Role`, `Editor.Vocabulary` | 7 | core | yes |
 | Completion: `Editor.Completion`, `Editor.Completion.AtPoint`, `Editor.Completion.Candidate`, `Editor.Completion.Display`, `Editor.Completion.Filtering`, `Editor.Completion.Keys`, `Editor.Completion.Later`, `Editor.Completion.Style` | 8 | core | yes |
-| Languages and indentation: `Editor.Indent`, `Editor.Language`, `Editor.Language.IndentUnit` | 3 | core | yes |
+| Languages, the grammars config declares, and indentation: `Editor.Indent`, `Editor.Language`, `Editor.Language.Grammar`, `Editor.Language.Grammar.Answer`, `Editor.Language.Grammar.Register`, `Editor.Language.IndentUnit` | 6 | core | yes |
 | What an ex line and a typed path are as data: `Editor.Ex.Line`, `Editor.TypedPath` | 2 | core | yes |
 | The quit rule and its name, which the loop runs and the package `ex` registers a command under: `Editor.Quit` | 1 | core | yes |
 | Session restore: the journal reconciler the loop runs after each publish, and the data and formats it keeps: `Editor.Restore`, `Editor.Restore.Document`, `Editor.Restore.Frame`, `Editor.Restore.Indexed`, `Editor.Restore.Journal`, `Editor.Restore.Kept`, `Editor.Restore.Records`, `Editor.Restore.Value`, `Editor.Restore.Workspaces` | 9 | core | yes |

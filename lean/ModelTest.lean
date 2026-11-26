@@ -90,6 +90,8 @@ import ModelTest.Editor.Jumps.Go
 import ModelTest.Editor.Key.Notation
 import ModelTest.Editor.Keymap
 import ModelTest.Editor.Language
+import ModelTest.Editor.Language.Grammar
+import ModelTest.Editor.Language.Grammar.Answer
 import ModelTest.Editor.Layout
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
@@ -1194,6 +1196,15 @@ names a scheme's key:
 - `modeDescriptionChecks`: a mode's descriptions of its roles and
   suffixes (`Mode.roleDescs`, `Mode.localDescs`) are on their keys in its
   keymaps;
+- `grammarAnswerChecks`: the answers recorded for config's declared
+  grammars (`Editor/Language/Grammar/Answer.lean`), pure: an answer is
+  found only under the generation it was recorded for;
+- `grammarDeclarationChecks`: a grammar declaration
+  (`Editor/Language/Grammar.lean`), pure: its defaults, the values it is
+  given, the problems of a symbol that registers another name and of a
+  relative path, a later owner's declaration over an earlier's, the tree
+  a buffer's language resolves to in each case, and the sentences a
+  refusal and an unread query file are said in;
 - `modeRegistryChecks`: modes in the registry
   (`Editor/Config/Registry.lean`): a mode's lineage, and the active keymaps
   of a view, in precedence order;
@@ -1560,6 +1571,8 @@ def checks : List Check :=
     modeRecordChecks ++
     modeDescriptionChecks ++
     languageMatchChecks ++
+    grammarAnswerChecks ++
+    grammarDeclarationChecks ++
     modeRegistryChecks ++
     modeDispatchChecks ++
     modeEnterChecks ++
