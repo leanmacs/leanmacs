@@ -64,7 +64,7 @@ def environmentRegistryChecks : List Check :=
               #[directoryShape a', directoryShape b] &&
             (EnvironmentApi.DirectorySource.ordered #[b, a]).map (·.name) == #["b", "a"]) },
     { name :=
-        "the base choice: inherited with nothing registered, the latest value of a name, and a name nobody answers to refused with the bases listed, inherited first"
+        "the base choice: inherited with nothing registered, the latest value of a name, and a name nobody answers to refused with the bases listed, inherited first, each once, joined a, b and c"
       run :=
         let x := fakeBase "x" "/bin/x"
         let y := fakeBase "y" "/bin/y"
@@ -83,7 +83,22 @@ def environmentRegistryChecks : List Check :=
             | .error said => said == EnvironmentApi.unknownBase "nope" #["inherited", "x"]
             | .ok _ => false) &&
             EnvironmentApi.unknownBase "nope" #["inherited", "x"] ==
-              "no base environment is named nope; the bases are inherited and x; children keep the base they had") },
+              "no base environment is named nope; the bases are inherited and x; children keep the base they had" &&
+            -- Each name once, `inherited` first, three or more joined `a, b and c`.
+            (match
+              EnvironmentApi.BaseSource.choose #[x, y, y', fakeBase "inherited" "/bin/i"]
+                "nope" with
+            | .error said =>
+              said ==
+                "no base environment is named nope; the bases are inherited, x and y; children keep the base they had"
+            | .ok _ => false) &&
+            -- With nothing registered, `inherited` alone.
+            (match EnvironmentApi.BaseSource.choose #[] "nope" with
+            | .error said =>
+              said ==
+                "no base environment is named nope; the bases are inherited; children keep the base they had"
+            | .ok _ => false) &&
+            EnvironmentApi.listedNames #[] == "none") },
     { name :=
         "registered: an unknown base name gives no base and the message; a known one a base and no message; the directory sources in the hook's order"
       run :=

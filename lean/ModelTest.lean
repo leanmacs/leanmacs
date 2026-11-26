@@ -1264,7 +1264,8 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   reading rules (`EnvironmentApi.lean`): the directory-source hook keeps
   registration order and replaces a value of a name in its place; the base
   choice gives `inherited` with nothing registered and the latest value of
-  a name, and refuses a name nobody answers to with the bases listed;
+  a name, and refuses a name nobody answers to with the bases listed,
+  `inherited` first, each once, joined `a, b and c`;
   `registered` keeps the base installed before for an unknown name; and,
   on the job model, with nothing registered a child starts exactly as its
   command says with no lookup, and the base setting picks the registered
