@@ -11,6 +11,9 @@
 //!   contract ([`completer_contract`]).
 //! - [`buffer`]: the plain-data buffers that cross the boundary, lent,
 //!   borrowed and reclaimed.
+//! - [`frame`]: a streaming child's output, framed (lines, bytes) and
+//!   bounded, as plain data: the frames the process service makes and a
+//!   package's crate is handed, one type on both sides.
 //! - [`worker`]: a thread and the owner that ends it ([`Worker`]), whose
 //!   drop asks the thread to stop and joins it on every path, so a thread a
 //!   test starts never outlives the test.
@@ -32,8 +35,10 @@
 //! | A rule of how a service is named or numbered | [`service`] | Its unit tests |
 //! | A rule every completer keeps | A property of [`completer_contract`] | Its tests, on the fake and on completers written to break it, and `tests/queue.rs` on the real one |
 //! | A thread a service starts and must end | [`worker::Worker`] | The unit tests of [`worker`] |
+//! | Another way to frame a child's stream, or a rule of the bound | A variant of [`frame::Framing`] and of [`frame::Frames`], and the [`frame::Framer`]'s state | The unit tests of [`frame`]; and, since `editor-process` and `editor-ffi` match [`frame::Frames`] exhaustively, an arm there |
 
 pub mod buffer;
+pub mod frame;
 pub mod queue;
 pub mod service;
 pub mod worker;

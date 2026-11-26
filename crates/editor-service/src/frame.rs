@@ -16,8 +16,23 @@
 //! delivered whole unless the stream ends there: [`Outbox::too_long`] says
 //! so, and the service ends the child with it once one more byte of the
 //! stream shows the line goes on.
+//!
+//! It lives here, in the service conventions, rather than in
+//! `editor-process`, so that a package's crate that takes a streaming
+//! child over is handed the same frames the process service makes, one
+//! type on both sides. It is plain data, with no thread and no port: what
+//! it adds to every package crate's reach is a value and its rules,
+//! nothing that runs. `editor-process` re-exports it
+//! (`editor_process::frame`, `editor_process::Stream`).
 
-use crate::Stream;
+/// One of a child's output streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Stream {
+    /// Its standard output.
+    Out,
+    /// Its standard error.
+    Err,
+}
 
 /// How a stream reaches its job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

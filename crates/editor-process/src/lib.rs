@@ -11,7 +11,9 @@
 //! and written a request at a time, framed and bounded ([`frame`]), each
 //! completed through a closure it is given, cancelled by killing the
 //! child's group, and every child killed and reaped at shutdown. The crate
-//! has no dependencies and knows nothing about Lean.
+//! depends on nothing of the editor's but the service conventions
+//! (`editor-service`, whose [`frame`] it re-exports) and the typed time
+//! bounds, and knows nothing about Lean.
 //!
 //! # The rules of the port
 //!
@@ -88,8 +90,14 @@ use std::path::PathBuf;
 
 pub mod contract;
 pub mod fake;
-pub mod frame;
 pub mod service;
+
+/// How a streaming child's output is framed and bounded: plain data that
+/// lives in `editor-service`, so that a package's crate taking a child over
+/// is handed the same frames.
+pub use editor_service::frame;
+/// One of a child's output streams, `editor-service`'s.
+pub use editor_service::frame::Stream;
 
 /// What to start: a program, its arguments, its environment and the
 /// directory it runs in. The module docs have the rules.
@@ -179,15 +187,6 @@ pub enum Exit {
     Code(i32),
     /// It was ended by this signal.
     Signal(i32),
-}
-
-/// One of a child's output streams.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Stream {
-    /// Its standard output.
-    Out,
-    /// Its standard error.
-    Err,
 }
 
 /// Why something was not done: a kind the editor decides on, and the
