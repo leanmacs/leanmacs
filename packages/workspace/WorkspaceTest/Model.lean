@@ -62,7 +62,9 @@ them.
   the label, the working directory of a buffer with no workspace, the
   refusals, that no step runs a process, a fallback that exits 1
   still listing what it printed, and the text after a location typed
-  into the input, the list opened matched against it;
+  into the input, the list opened matched against it, the lister and
+  filter under a login-shell base and a directory source (fakes), and a
+  filter that is not there said in the echo area;
 - `projectWorkspaceChecks`: the project's workspaces
   (`Workspace/Projects.lean`), pure: the worktrees in the reply's
   order, those not found labelled by `Workspace.labelOf`, then the table's

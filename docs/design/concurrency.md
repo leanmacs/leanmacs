@@ -871,6 +871,20 @@ and changes on disk:
     `PATH` entries come first, so a project's pinned tool wins over the
     shell's), then its own. If the shell fails, children get launchd's
     environment under mise's, and the echo area says why once.
+    A bare-named child, the workspace finder's `fzf` among them, is found
+    on the `PATH` its layers give it: under the login shell's base,
+    Homebrew's `fzf` is found from a Finder start, and a workspace's mise
+    entries still come first. With launchd's environment alone (the
+    built-in base, or a shell that failed) and no `fzf` on it, the finder
+    says `workspace-files: fzf: the program or the directory is not there:
+    …` in the echo area, never an empty list. A filter that starts and
+    exits 1 is the open rdm:task/filter-failure-reads-as-no-matches.
+    Pinned by `WorkspaceTest.findFileChecks` (the finder's lister and
+    filter under a base and a directory source, and the missing filter),
+    `ModelTest.filteringChecks` (any filtering source's children
+    prepared), `ModelTest.environmentLayerChecks`, and the process
+    contracts (a bare name on the child's `PATH`). The Finder start itself
+    is under "Still to verify".
   - *The registry* gives the layers. The sources are packages registered at
     the extension points of the core's interface library `environment-api`
     (`lean/EnvironmentApi.lean`; [packages.md](packages.md), "The core
@@ -3476,6 +3490,18 @@ reload leaves the old config's watch delivering.
   one buffer (that `NSTreatUnknownArgumentsAsOpen = NO` took). Everything
   but receiving the real Apple Event is pinned by tests; trying it is the
   roadmap `macos-app`'s phase 6, the owner's.
+- Starting the bundle from Finder or the Dock, where launchd hands the
+  editor its minimal environment, is macOS's behaviour and is covered by no
+  test: an accepted gap. Everything from the installed layers to a child's
+  `PATH` is pinned (the process section, "A child's environment, as
+  built"); what a real launchd start hands the editor, and the default set
+  composed with the finder, are not. The owner confirms it by hand while
+  dogfooding: started from Finder, `SPC p f` in a buffer of a workspace
+  whose `mise.toml` pins no `fzf` lists the workspace's files through
+  Homebrew's `fzf` (roadmap `process-environment-sources`, "Done looks
+  like"). No script, bundle run or expected scene stands in for it
+  (`.agents/rules/gates.md`, "Prefer a gap in coverage to a fragile
+  check").
 - The system's quit has been seen only in the window adapter's contract
   example, which calls `terminate:` and sends its own process the quit
   Apple Event. A Quit from the Dock's menu and a logout from loginwindow

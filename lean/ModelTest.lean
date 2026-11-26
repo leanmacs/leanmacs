@@ -554,7 +554,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   partial-listing statuses and the failures naming the program, a lister's or a filter's time-out among them; and through the loop on the driver, a new text
   cancelling the old generation, a stale batch never listed, the filter's
   order kept with the style's ranges, and a missing filter said in the
-  echo area;
+  echo area; and the lister and filter started with their layers'
+  environment;
 - `sourceContractChecks`: the completion sources' contract
   (`Editor/Completion/Contract.lean`) on the model, the fake and the key
   hints' source, run on the kit's

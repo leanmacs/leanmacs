@@ -38,6 +38,9 @@ choice, per source.
   is no failure. Any other exit that is not 0, and a refusal, fail the
   source, naming the filter's program: `fzf` not installed is said as
   that, never as an empty list.
+- **Both children get the environment their layers give them**
+  (`Process.prepared`, through `runWithin` and `runHead`), so a bare-named
+  filter is found on the layers' `PATH`.
 - **It delivers one batch**, the first `limit` records, even an empty one,
   so an answer of no matches replaces the previous text's at once. A
   failure throws, and `Completion.answering` finishes the job with

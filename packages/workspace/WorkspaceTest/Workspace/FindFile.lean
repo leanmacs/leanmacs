@@ -8,6 +8,7 @@ import Editor.Job
 import Editor.Job.Model
 import Editor.Loop.Driver
 import Editor.Process
+import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.State
 import Editor.Test.Driver
@@ -19,6 +20,9 @@ import Editor.Test.Prompts
 import Editor.Test.Sources
 import Editor.Test.Workspace
 import Editor.Workspace
+import EnvironmentApi
+import EnvironmentApiTest.Fake
+import EnvironmentApiTest.Model
 import FilesApi
 import FilesApiTest.Fake
 import Workspace.FindFile
@@ -76,6 +80,130 @@ def refused (driver : TestDriver) (keys : String) : String × Bool × Nat × Boo
   let after := drainedAfter opened keys
   (after.loop.state.echo, after.loop.state.prompt.isSome, after.pending.size + after.posting.size,
     after.jobs.processes.started.size == before)
+
+/-- The fake base's `PATH` in the layered checks: Homebrew's directory
+first. The fakes of `environment-api` (`EnvironmentApiTest.fakeBase`,
+`EnvironmentApiTest.fakeDirectory`) stand for the default set's
+`login-shell` base and `mise` source, which this package may not import.
+The default set's choice of those is pinned by `LoginShellTest`,
+`ConfigTest.environmentHostChecks` and the headless fixture
+`tests/headless/environment-sources`; the order of the lookups and what each
+runs over by the core's `ModelTest.environmentLayerChecks`; that a bare
+`fzf` is then found on the `PATH` a child is given by the process contracts
+(`JobContract.processProperties`, and `ENVIRONMENT` in
+`crates/editor-process/src/contract.rs`). -/
+def basePath : String :=
+  "/opt/homebrew/bin:/usr/bin:/bin"
+
+/-- What the fake directory source, standing for mise, prints in `/w`: its
+own entry, then the base's `PATH`. -/
+def toolsPath : String :=
+  "/w/.tools/bin:" ++ basePath
+
+/-- The home directory of the window mode in the layered checks, where the
+fake base is looked up, as login-shell looks its base up there. -/
+def home : System.FilePath :=
+  "/home/u"
+
+/-- The mode of the layered checks: the window mode, with `home`. -/
+def windowMode : Process.Host :=
+  .window (some home)
+
+/-- The lookup the fake base, `EnvironmentApiTest.fakeBase` in `home`, runs
+in the window mode: built from the fake itself, over no variables. -/
+def baseLookup : Option Process.Command :=
+  match (EnvironmentApiTest.fakeBase (directory := home)).base windowMode with
+  | .lookup resolved directory =>
+    match resolved.program with
+    | .at path => some (resolved.command path directory {})
+    | _ => none
+  | .inherited => none
+
+/-- The lookup `EnvironmentApiTest.fakeDirectory` runs in `/w` over
+`below`: built from the fake itself. -/
+def directoryLookup (below : Process.Environment) : Option Process.Command :=
+  (EnvironmentApiTest.fakeDirectory.source windowMode).bind fun resolved =>
+    match resolved.program with
+    | .at path => some (resolved.command path "/w" below)
+    | _ => none
+
+/-- `command` with `path` as its `PATH` layer, under its own environment, as
+the core's `Environment.over` puts it: so git's lister keeps its own
+variables under the layer. -/
+def preparedWith (path : String) (command : Process.Command) : Process.Command :=
+  { command with environment := Process.Environment.over #[("PATH", path)] command.environment }
+
+/-- The finder's filter over git's lister at `/w`, for the empty text. -/
+def wFilter : Process.Command :=
+  (Workspace.FindFile.filtering git "/w").filterFor ""
+
+/-- The scripts of a layered scene whose topmost `PATH` is `path`: the fake
+base's lookup printing `basePath`, the fake directory source's (when
+`directory`) printing `toolsPath`, and the finder's lister and filter with
+`path` as their layer, each answering `wRecords`. -/
+def layeredScripts (path : String) (directory : Bool) : Array Process.Script :=
+  let lookups : Array Process.Script :=
+    (baseLookup.map fun command =>
+            #[{ command,
+                reply :=
+                  EnvironmentApiTest.printed
+                    (EnvironmentApiTest.linesOf #[("PATH", basePath)]) }]).getD
+        #[] ++
+      if directory then
+        ((directoryLookup { set := #[("PATH", basePath)] }).map fun command =>
+              #[{ command,
+                  reply :=
+                    EnvironmentApiTest.printed
+                      (EnvironmentApiTest.linesOf #[("PATH", toolsPath)]) }]).getD
+          #[]
+      else #[]
+  lookups ++
+    #[{ command := preparedWith path (git.command "/w"), reply := ran wRecords },
+      { command := preparedWith path wFilter, reply := ran wRecords }]
+
+/-- `driver` reloaded with the fake base and `directories` installed in the
+window mode, as the host installs a registry (`EnvironmentApi.registered`),
+and `scripts` added. It is applied after the workspace is attached, so the
+attach's git runs stay on the driver's own scripts and only the finder's
+job runs over the layers. -/
+def withLayers (driver : TestDriver) (directories : Array EnvironmentApi.DirectorySource)
+    (scripts : Array Process.Script) : TestDriver :=
+  { driver with
+    jobs :=
+      { driver.jobs with
+        environments :=
+          ({ host := windowMode } : Process.Environments).install
+            (EnvironmentApi.registered directories
+                #[EnvironmentApiTest.fakeBase (directory := home)] "fake-base").1
+        processes :=
+          { driver.jobs.processes with scripts := driver.jobs.processes.scripts ++ scripts } } }
+
+/-- The finder's own children among `commands`: its lister, git, and its
+filter, fzf; none of the lookups. -/
+def finderChildren (commands : Array Process.Command) : Array Process.Command :=
+  commands.filter fun command => command.program == "git" || command.program == "fzf"
+
+/-- The `PATH` `command` is started with, split into its entries. -/
+def pathEntries (command : Process.Command) : Option (List String) :=
+  (command.environment.set.find? (·.1 == "PATH")).map fun (_, value) => value.splitOn ":"
+
+/-- `driver` with no script for the finder's filter at `/w`, whatever its
+text: on the process model a command with no script is refused `notFound`,
+which stands for a bare `fzf` on no directory of the `PATH` it is started
+with. The real refusal is the process contracts' (`ENVIRONMENT` in
+`crates/editor-process/src/contract.rs`, `JobContract.processProperties`). -/
+def unfiltered (driver : TestDriver) : TestDriver :=
+  let filter := (Workspace.FindFile.filtering git "/w").filter
+  { driver with
+    jobs :=
+      { driver.jobs with
+        processes :=
+          { driver.jobs.processes with
+            scripts :=
+              driver.jobs.processes.scripts.filter fun script =>
+                !(script.command.program == filter.program &&
+                    script.command.directory == filter.directory &&
+                    script.command.arguments.pop == filter.arguments) } } }
 
 end FindFileTest
 
@@ -264,6 +392,54 @@ def findFileChecks : List Check :=
                 labelOf inX == some "Find file in /x: " &&
                 (listings bare).take 1 == #[Workspace.Lister.fallback.command "/"] &&
                 labelOf bare == some "Find file in /: " },
+      { name :=
+          "under a login-shell base and a directory source, in the window mode, find-file-in-workspace's lister and its filter fzf are started with the layered environment: with no directory source fzf's PATH is the base's; with one, fzf's PATH is the directory source's entries, then the base's; the prompt lists what the filter answered"
+        run :=
+          pure <|
+            match driver with
+            | none => false
+            | some driver =>
+              let scene (directories : Array EnvironmentApi.DirectorySource) (path : String) :
+                TestDriver × Nat :=
+                let opened := settledAfter driver "C-o w"
+                let before := opened.jobs.processes.started.size
+                (drainedAfter
+                    (withLayers opened directories (layeredScripts path !directories.isEmpty))
+                    "C-o f",
+                  before)
+              let (baseOnly, beforeBase) := scene #[] basePath
+              let (both, beforeBoth) := scene #[EnvironmentApiTest.fakeDirectory] toolsPath
+              let bothChildren := finderChildren (startedAfter both beforeBoth)
+              finderChildren (startedAfter baseOnly beforeBase) ==
+                  #[preparedWith basePath (git.command "/w"), preparedWith basePath wFilter] &&
+                listedTexts baseOnly == some #["src/w.lean", "src/b.lean", "only-w"] &&
+                baseOnly.jobs.reported.isEmpty &&
+                bothChildren ==
+                  #[preparedWith toolsPath (git.command "/w"), preparedWith toolsPath wFilter] &&
+                (bothChildren.back?.bind pathEntries) ==
+                  some ("/w/.tools/bin" :: basePath.splitOn ":") &&
+                listedTexts both == some #["src/w.lean", "src/b.lean", "only-w"] &&
+                both.jobs.reported.isEmpty },
+      { name :=
+          "with the built-in base and no fzf on the PATH the filter is started with, find-file-in-workspace says in the echo area that the filter is not there, naming the source, fzf and the lister, and lists nothing: the base's absence reads as an error, not as no files"
+        run :=
+          -- A filter that starts and exits 1 with an error on its standard
+          -- error (a mise shim with no version set) is
+          -- rdm:task/filter-failure-reads-as-no-matches, not this check.
+          pure <|
+            match driver with
+            | none => false
+            | some driver =>
+              let opened := settledAfter (unfiltered driver) "C-o w"
+              let before := opened.jobs.processes.started.size
+              let asked := drainedAfter opened "C-o f"
+              let echo := asked.loop.state.echo
+              -- The fixed head of a not-found refusal, before the platform's detail.
+              let notThere := (ProcessError.notFound "").describe
+              echo.startsWith s!"{Workspace.FindFile.sourceName}: fzf: {notThere}" &&
+                echo.endsWith s!", listing with the {git.origin.name} lister" &&
+                listedTexts asked == some #[] &&
+                startedAfter asked before == #[git.command "/w"] },
       { name :=
           "criterion 7 on the models: a workspace whose location cannot read files, the buffer's own or one handed as the argument, is refused with a message that names it, and no prompt opens, no job starts and no process runs; a local location the table does not know is refused too"
         run :=

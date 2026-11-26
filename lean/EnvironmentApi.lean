@@ -80,6 +80,10 @@ child gets the editor's own environment, and no lookup runs.
   base the login shell at a fixture shell and its directory source this
   library's fake at a fixture standing in for mise (no package may import
   another implementation package, so mise's own source cannot be there).
+- A feature's child under a base and a directory source, on the model: the
+  workspace finder's lister and filter, `WorkspaceTest.findFileChecks`, over
+  this library's fakes; and any filtering source's,
+  `ModelTest.filteringChecks`.
 - The host's wiring, once: `ConfigTest.environmentHostChecks`, over the
   headless host and the real elaborator.
 - The default set's wiring, once: the standing fixture
