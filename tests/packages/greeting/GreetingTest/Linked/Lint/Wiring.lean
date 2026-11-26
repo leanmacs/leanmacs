@@ -125,10 +125,8 @@ Note: This linter can be disabled with `set_option linter.wiringSet false`
 itself, so nothing holds its mode to the others'. -/
 def ByHand.main (arguments : List String) : IO UInt32 :=
   match arguments with
-  | ["--wiring"] =>
-    runAll ((CheckGroup.wiring checks).flatMap (·.2 ()))
-  | _ =>
-    runAll (CheckGroup.all checks ())
+  | ["--wiring"] => runAll ((CheckGroup.wiring checks).flatMap (·.2 ()))
+  | _ => runAll (CheckGroup.all checks ())
 
 /--
 error: `GreetingTest.WiringFixture.OwnReader.main` links the library and its imports reach `GreetingTest.Linked.Lint.Wiring.Wired`, a module of the wiring set, but it does not select its check set's checks by the shared wiring mode: read the mode with a shared reader (`Editor.CheckGroup.Mode.ofArguments?`, `Editor.CheckGroup.Mode.read?` or `Editor.CheckGroup.Mode.ofSubcommand?`) and run what `Editor.CheckGroup.select` selects by it from a check set
