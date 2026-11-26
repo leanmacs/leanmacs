@@ -132,19 +132,6 @@ if the check did not end in time. -/
 def checkScripted (composition : Bool) : IO (Option (List String)) :=
   return (← checkOn .scripted composition).map (·.1)
 
-/-- Why the library's scripted platform that cannot open a window says it
-cannot (`SCRIPTED_FAILURE` in `crates/editor-ffi/src/window.rs`). "é" is two
-bytes, so a reason whose length the glue took in characters would arrive
-cut. -/
-def scriptedFailure : String :=
-  "the scripted platform opens no window: pas d'écran"
-
-/-- Why nothing can draw in the window of the library's scripted platform
-whose renderer cannot be made (`SCRIPTED_NO_RENDERER` in
-`crates/editor-ffi/src/window.rs`). -/
-def scriptedNoRenderer : String :=
-  "the scripted platform's window has no renderer: pas de GPU"
-
 /-- What `windowRun` returns on `platform`; `none` if it does not return in
 time, in which case the window is closed so that no run is left behind. -/
 def runUntilReturn (platform : Editor.Ffi.Platform) :

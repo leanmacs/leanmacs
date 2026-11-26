@@ -22,6 +22,7 @@ import Editor.Window
 import Editor.Window.Real
 import FfiTest.Check
 import FfiTest.Support.Queues
+import FfiTest.Support.Windows
 import FilesApiTest.Fake
 
 /-!
@@ -456,11 +457,6 @@ def windowHostDirectScenario (editorPath sysroot configDir : String) : IO UInt8 
       "ffi-test window-host-direct: config loaded from the module directory the editor finds by default"
   return 0
 
-/-- The reason the library's scripted platform whose renderer cannot be
-made gives (`SCRIPTED_NO_RENDERER`, `crates/editor-ffi/src/window.rs`). -/
-def undrawnReason : String :=
-  "the scripted platform's window has no renderer: pas de GPU"
-
 /-- The mark of `windowHostUndrawnScenario`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
 def windowHostUndrawnScenario.realHost : Editor.RealHost :=
   .loop
@@ -473,7 +469,7 @@ and nothing draws in it. The host is handed a `say` that records what it
 says, and passes each line on to stderr. 0 when the window mode ended with
 status 1, no render session was started, and the host said exactly one
 line, `editor: ` and `Window.nothingDrew` of the scripted platform's
-reason, whole (`undrawnReason`); 1 otherwise, saying why on stderr. -/
+reason, whole (`scriptedNoRenderer`); 1 otherwise, saying why on stderr. -/
 def windowHostUndrawnScenario (file : String) : IO UInt8 := do
   let options : Editor.Window.Options :=
     { file := some file, config := none, configGiven := false, sysroot := none, oleans := []
@@ -491,7 +487,7 @@ def windowHostUndrawnScenario (file : String) : IO UInt8 := do
   if (← Editor.Ffi.renderCounters).isSome then
     IO.eprintln "ffi-test window-host-undrawn: a render session was started"
     return 1
-  let expected := "editor: " ++ Editor.Window.nothingDrew undrawnReason
+  let expected := "editor: " ++ Editor.Window.nothingDrew scriptedNoRenderer
   unless (← said.get) == #[expected] do
     IO.eprintln
         s!"ffi-test window-host-undrawn: the window mode said {repr (← said.get)}, not {repr expected} alone"

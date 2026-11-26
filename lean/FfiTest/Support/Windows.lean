@@ -6,11 +6,28 @@ import FfiTest.Support.Queues
 # FFI tests: support: Windows
 
 The scripted window: an unidentified key, a sample of what the window was asked,
-and a scripted run of it. Shared by several test modules; it holds no checks of
-its own.
+a scripted run of it, and the reasons the library's scripted platforms give
+for a window that does not open or cannot draw. Shared by several test
+modules; it holds no checks of its own.
 -/
 
 namespace FfiTest
+
+/-- Why the library's scripted platform that cannot open a window says it
+cannot (`SCRIPTED_FAILURE` in `crates/editor-ffi/src/window.rs`). "é" is two
+bytes, so a reason whose length the glue took in characters would arrive
+cut. -/
+def scriptedFailure : String :=
+  "the scripted platform opens no window: pas d'écran"
+
+/-- Why nothing can draw in the window of the library's scripted platform
+whose renderer cannot be made (`SCRIPTED_NO_RENDERER` in
+`crates/editor-ffi/src/window.rs`). The one Lean copy of that reason: the
+window binding's checks (`FfiTest/Editor/Ffi/Window.lean`) and the window
+mode's undrawn scenario (`FfiTest/Editor/Window/Real.lean`) both hold the
+library to it. -/
+def scriptedNoRenderer : String :=
+  "the scripted platform's window has no renderer: pas de GPU"
 
 /-- The words of a key the scripted platform could not identify, with no
 modifier held. -/
