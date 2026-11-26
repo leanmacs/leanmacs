@@ -152,13 +152,17 @@ def processEnvironmentChecks : List Check :=
               some
                 "environment: the base, login: login exited with status 1: not trusted; children start without the base's variables" &&
             baseAgain.isNone &&
-            first == some ("environment: /p/d: first exited with status 1: not trusted" ++ tail "first") &&
+            first ==
+              some ("environment: /p/d: first exited with status 1: not trusted" ++ tail "first") &&
             second ==
-              some ("environment: /p/d: second exited with status 1: not trusted" ++ tail "second") &&
+              some
+                ("environment: /p/d: second exited with status 1: not trusted" ++ tail "second") &&
             firstAgain.isNone &&
-            firstE == some ("environment: /p/e: first exited with status 1: not trusted" ++ tail "first") &&
+            firstE ==
+              some ("environment: /p/e: first exited with status 1: not trusted" ++ tail "first") &&
             secondE ==
-              some ("environment: /p/e: second exited with status 1: not trusted" ++ tail "second")) },
+              some
+                ("environment: /p/e: second exited with status 1: not trusted" ++ tail "second")) },
     { name :=
         "installSources takes the sources and drops every entry, the base's included, and every resolved program, and keeps the mode and the limit"
       run :=
