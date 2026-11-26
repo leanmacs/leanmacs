@@ -7,6 +7,12 @@
 //! `cdylib`: a `cdylib`'s path cannot reach another crate's tests on stable
 //! Cargo, and a Rust `cdylib` does not export the C symbols of a static
 //! archive linked into it (the crate docs).
+//!
+//! It also copies the checked-in highlights query to
+//! `OUT_DIR/queries/highlights.scm`, so the library's own directory holds
+//! `queries/` beside it: the layout a grammar declaration's default query
+//! directory reads (`defineGrammar`, `lean/Editor/Language/Grammar.lean`),
+//! which lets a declaration of the fixture give its name and path alone.
 
 use std::path::PathBuf;
 
@@ -21,6 +27,7 @@ fn main() {
         "grammar/src/tree_sitter/alloc.h",
         "grammar/src/tree_sitter/array.h",
         "grammar/exports.c",
+        "grammar/queries/highlights.scm",
     ] {
         println!("cargo:rerun-if-changed={input}");
     }
@@ -49,6 +56,21 @@ fn main() {
         .status()
         .unwrap_or_else(|error| panic!("running {command:?}: {error}"));
     assert!(status.success(), "{command:?} failed: {status}");
+
+    let queries = out.join("queries");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the build script writes the fixture's query layout into OUT_DIR, beside the library"
+    )]
+    std::fs::create_dir_all(&queries)
+        .unwrap_or_else(|error| panic!("creating {}: {error}", queries.display()));
+    let highlights = queries.join("highlights.scm");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the build script writes the fixture's query layout into OUT_DIR, beside the library"
+    )]
+    std::fs::copy("grammar/queries/highlights.scm", &highlights)
+        .unwrap_or_else(|error| panic!("copying to {}: {error}", highlights.display()));
 
     println!(
         "cargo:rustc-env=EDITOR_SYNTAX_FIXTURE_INI_LIBRARY={}",

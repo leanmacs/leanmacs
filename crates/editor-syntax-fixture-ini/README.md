@@ -24,7 +24,10 @@ The editor never links it (`deny.toml`).
   (`editor_syntax::contract::Corpus::highlights`).
 - `build.rs`: compiles `grammar/src/parser.c` and `grammar/exports.c` with
   the C compiler `cc` finds, and links them as `OUT_DIR/libtree-sitter-ini.dylib`
-  (macOS) or `OUT_DIR/libtree-sitter-ini.so` (elsewhere).
+  (macOS) or `OUT_DIR/libtree-sitter-ini.so` (elsewhere). It also copies
+  `grammar/queries/highlights.scm` to `OUT_DIR/queries/highlights.scm`, so
+  the library's directory has the layout a grammar declaration's default
+  query directory reads (`<library dir>/queries/`).
 - `src/main.rs`: prints the built library's path, for `mise run ffi-test` to
   hand to Lean's `contract-test`.
 

@@ -24,11 +24,18 @@
 //! dependent crate is tested, and a Rust `cdylib` does not export the C
 //! symbols of a static archive linked into it.
 //!
+//! **Its queries beside it.** The build script also copies
+//! `grammar/queries/highlights.scm` to `queries/highlights.scm` in the
+//! library's own directory, the layout a grammar declaration's default query
+//! directory reads (`<library dir>/queries/`), so Lean's wiring check
+//! declares the fixture by its name and path alone.
+//!
 //! **Its exports**, each a fixture for one property, not a grammar to use:
 //! [`SYMBOL`], the grammar; [`OVERRIDING_SYMBOL`], the same grammar under a
 //! compiled-in name; and [`ABI_0_SYMBOL`], a language of ABI 0.
 
-/// The built library's absolute path.
+/// The built library's absolute path. Its directory holds
+/// `queries/highlights.scm`, a copy of [`HIGHLIGHTS`].
 pub const LIBRARY: &str = env!("EDITOR_SYNTAX_FIXTURE_INI_LIBRARY");
 
 /// The grammar's name.
@@ -50,3 +57,25 @@ pub const NOT_A_LIBRARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/grammar/gr
 
 /// The highlights query that sits beside the grammar's library.
 pub const HIGHLIGHTS: &str = include_str!("../grammar/queries/highlights.scm");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn the_highlights_query_sits_in_the_queries_directory_beside_the_library() {
+        let path = Path::new(LIBRARY)
+            .parent()
+            .expect("the library has a directory")
+            .join("queries")
+            .join("highlights.scm");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the test reads the query the build script wrote beside the library, the layout a declaration's default query directory reads"
+        )]
+        let read = std::fs::read_to_string(&path);
+        let query = read.unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+        assert_eq!(query, HIGHLIGHTS);
+    }
+}
