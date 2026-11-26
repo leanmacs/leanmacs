@@ -12,6 +12,11 @@
 //!   service reports the request once through its completer. A request
 //!   cancelled first gets none.
 //! - **`cancel` stops the work** and is safe for an id that is unknown.
+//! - **A flush is reported behind the work it covers** ([`Echo::flush`]):
+//!   once every echo request started before it has been reported or
+//!   cancelled. An attached request, whose child may live as long as its
+//!   job, is not waited for, as the process service's flush does not wait
+//!   for a live streaming child.
 //! - **Plain data only.** The reply is taken by the request's id once the
 //!   completion has arrived ([`Echo::take`]).
 //!
@@ -65,6 +70,9 @@ struct Request {
     /// Which start of the id this is, so a reply worked for a request that
     /// was cancelled cannot fill a later one with the same id.
     start: u64,
+    /// Whether it reads a child taken over ([`Echo::attach`]), which a
+    /// flush does not wait for.
+    attached: bool,
     /// Its answer, once it is ready.
     reply: Option<Answer>,
 }
@@ -85,6 +93,35 @@ struct State {
     requests: HashMap<u64, Request>,
     /// How many starts there have been.
     starts: u64,
+    /// The flushes not yet reported, oldest first: each with the starts of
+    /// the echo requests it still waits for.
+    flushes: Vec<Flush>,
+}
+
+/// A flush not yet reported ([`Echo::flush`]).
+#[derive(Debug)]
+struct Flush {
+    /// The flush's id, reported once it waits for nothing.
+    id: u64,
+    /// The starts of the requests it waits for, not yet reported or
+    /// cancelled.
+    waiting: Vec<u64>,
+}
+
+impl State {
+    /// Takes `start` out of every flush's wait, and takes out and returns
+    /// the ids of the flushes that then wait for nothing, oldest first.
+    fn settled(&mut self, start: u64) -> Vec<u64> {
+        for flush in &mut self.flushes {
+            flush.waiting.retain(|&waited| waited != start);
+        }
+        let (ready, waiting): (Vec<_>, Vec<_>) = self
+            .flushes
+            .drain(..)
+            .partition(|flush| flush.waiting.is_empty());
+        self.flushes = waiting;
+        ready.into_iter().map(|flush| flush.id).collect()
+    }
 }
 
 /// The echo service, reporting through `C`.
@@ -135,7 +172,7 @@ impl<C: Completer + 'static> Echo<C> {
     /// the reply is worked on a thread of its own.
     pub fn start(&self, id: u64, text: &str) -> bool {
         let text = text.to_owned();
-        self.begin(id, move || Answer::Echoed(Reply::to(&text)))
+        self.begin(id, false, move || Answer::Echoed(Reply::to(&text)))
     }
 
     /// Reads the streaming child `streams`, taken over, as the request `id`
@@ -145,12 +182,38 @@ impl<C: Completer + 'static> Echo<C> {
     /// once the child has ended or was cancelled; what it read is taken
     /// with [`Echo::take_read`].
     pub fn attach(&self, id: u64, streams: Box<dyn ChildStreams>) -> bool {
-        self.begin(id, move || Answer::Read(attach::consume(&*streams)))
+        self.begin(id, true, move || Answer::Read(attach::consume(&*streams)))
     }
 
-    /// Starts the request `id`, whose answer `work` makes on a worker of
-    /// its own.
-    fn begin(&self, id: u64, work: impl FnOnce() -> Answer + Send + 'static) -> bool {
+    /// Reports `id` once every echo request started before this call has
+    /// been reported or cancelled, behind their reports: at once when none
+    /// is in flight. An attached request is not waited for. It returns at
+    /// once, and keeps no reply.
+    pub fn flush(&self, id: u64) {
+        {
+            let mut state = self.shared.state();
+            let waiting: Vec<u64> = state
+                .requests
+                .values()
+                .filter(|request| !request.attached && request.reply.is_none())
+                .map(|request| request.start)
+                .collect();
+            if !waiting.is_empty() {
+                state.flushes.push(Flush { id, waiting });
+                return;
+            }
+        }
+        self.shared.completer.complete(id);
+    }
+
+    /// Starts the request `id`, attached or not, whose answer `work` makes
+    /// on a worker of its own.
+    fn begin(
+        &self,
+        id: u64,
+        attached: bool,
+        work: impl FnOnce() -> Answer + Send + 'static,
+    ) -> bool {
         let start = {
             let mut state = self.shared.state();
             if state.requests.contains_key(&id) {
@@ -158,7 +221,14 @@ impl<C: Completer + 'static> Echo<C> {
             }
             state.starts += 1;
             let start = state.starts;
-            state.requests.insert(id, Request { start, reply: None });
+            state.requests.insert(
+                id,
+                Request {
+                    start,
+                    attached,
+                    reply: None,
+                },
+            );
             start
         };
         let shared = Arc::clone(&self.shared);
@@ -166,7 +236,7 @@ impl<C: Completer + 'static> Echo<C> {
             .name("echo".into())
             .spawn(move || shared.finish(id, start, work()));
         let Ok(worker) = worker else {
-            self.shared.state().requests.remove(&id);
+            self.cancel(id);
             return false;
         };
         let mut workers = self.workers();
@@ -197,9 +267,20 @@ impl<C: Completer + 'static> Echo<C> {
 
     /// Cancels the request `id`, and returns whether it was in use. Its reply
     /// is dropped, and it is reported to nobody if it was not yet; a report
-    /// made before the cancel may still arrive, and the caller ignores it.
+    /// made before the cancel may still arrive, and the caller ignores it. A
+    /// flush that waited only for it is reported.
     pub fn cancel(&self, id: u64) -> bool {
-        self.shared.state().requests.remove(&id).is_some()
+        let (cancelled, ready) = {
+            let mut state = self.shared.state();
+            match state.requests.remove(&id) {
+                Some(request) => (true, state.settled(request.start)),
+                None => (false, Vec::new()),
+            }
+        };
+        for flush in ready {
+            self.shared.completer.complete(flush);
+        }
+        cancelled
     }
 
     /// The reply to the request `id`, once it is ready, and the request is no
@@ -233,16 +314,21 @@ impl<C: Completer + 'static> Echo<C> {
 
 impl<C: Completer> Shared<C> {
     /// Holds `reply` as the answer of the request `id` of the start
-    /// `start`, and reports it, unless that request was cancelled.
+    /// `start`, and reports it, unless that request was cancelled; then
+    /// reports each flush that waited only for it, behind it.
     fn finish(&self, id: u64, start: u64, reply: Answer) {
-        {
+        let ready = {
             let mut state = self.state();
             match state.requests.get_mut(&id) {
                 Some(request) if request.start == start => request.reply = Some(reply),
                 _ => return,
             }
-        }
+            state.settled(start)
+        };
         self.completer.complete(id);
+        for flush in ready {
+            self.completer.complete(flush);
+        }
     }
 }
 
@@ -329,6 +415,7 @@ mod tests {
             8,
             Request {
                 start: 0,
+                attached: false,
                 reply: None,
             },
         );
@@ -351,6 +438,7 @@ mod tests {
             2,
             Request {
                 start: 99,
+                attached: false,
                 reply: None,
             },
         );
@@ -378,6 +466,133 @@ mod tests {
         assert_eq!(read.text(), "one\n<exited 0>");
         assert_eq!(echo.take_read(6), None, "taken once");
         assert!(echo.start(6, "free again"));
+    }
+
+    #[test]
+    fn a_flush_with_nothing_in_flight_is_reported_at_once() {
+        let echo = echo();
+        echo.flush(20);
+        assert_eq!(echo.shared.completer.take(), [20]);
+    }
+
+    #[test]
+    fn a_flush_is_reported_after_every_earlier_echo_request_and_an_attached_request_does_not_hold_it()
+     {
+        let echo = echo();
+        // A request still being worked, and an attached one, whose child
+        // lives: they are inserted as `begin` leaves them, so nothing
+        // finishes them until the test does.
+        {
+            let mut state = echo.shared.state();
+            state.requests.insert(
+                8,
+                Request {
+                    start: 1,
+                    attached: false,
+                    reply: None,
+                },
+            );
+            state.requests.insert(
+                9,
+                Request {
+                    start: 2,
+                    attached: true,
+                    reply: None,
+                },
+            );
+            state.starts = 2;
+        }
+        echo.flush(20);
+        assert!(
+            echo.shared.completer.take().is_empty(),
+            "the flush is held by the request still worked"
+        );
+        echo.shared.finish(8, 1, Answer::Echoed(Reply::to("late")));
+        assert_eq!(
+            echo.shared.completer.take(),
+            [8, 20],
+            "the flush is reported after the request it covers"
+        );
+    }
+
+    #[test]
+    fn a_flush_held_by_a_request_is_reported_once_that_request_is_cancelled() {
+        let echo = echo();
+        echo.shared.state().requests.insert(
+            8,
+            Request {
+                start: 1,
+                attached: false,
+                reply: None,
+            },
+        );
+        echo.flush(20);
+        assert!(echo.shared.completer.take().is_empty());
+        assert!(echo.cancel(8));
+        assert_eq!(echo.shared.completer.take(), [20]);
+    }
+
+    #[test]
+    fn an_attached_request_cancelled_while_its_consumer_is_blocked_in_a_pull_gets_no_completion_once_its_child_is_cancelled()
+     {
+        use editor_service::frame::Framing;
+        use editor_service::stream::fake::FakeSource;
+        use editor_service::stream::{InputClosed, Pulled, StreamSource};
+        use editor_service::wait::recv;
+        use std::sync::mpsc::{Receiver, Sender, channel};
+
+        /// The fake's streams, with the consumer's first pull held: it says
+        /// it is pulling, and goes on only once the test lets it, so the
+        /// test acts while the consumer is blocked in its pull, every run.
+        struct Held {
+            streams: Box<dyn ChildStreams>,
+            pulling: Mutex<Option<Sender<()>>>,
+            release: Mutex<Receiver<()>>,
+        }
+
+        impl ChildStreams for Held {
+            fn pull(&self) -> Pulled {
+                if let Some(pulling) = self.pulling.lock().expect("unpoisoned").take() {
+                    pulling.send(()).expect("the test waits for the pull");
+                    let release = self.release.lock().expect("unpoisoned");
+                    recv(&release, DEADLINE).expect("the test lets the pull go");
+                }
+                self.streams.pull()
+            }
+
+            fn write(&self, bytes: Vec<u8>) -> Result<(), InputClosed> {
+                self.streams.write(bytes)
+            }
+        }
+
+        let echo = echo();
+        let fake = FakeSource::new();
+        let child = fake.child(Framing::Lines, Framing::Lines, 64, false);
+        let streams = fake.take_over(child.id()).expect("taken over");
+        let (pulling, pulled) = channel();
+        let (release, released) = channel();
+        let held = Held {
+            streams,
+            pulling: Mutex::new(Some(pulling)),
+            release: Mutex::new(released),
+        };
+
+        assert!(echo.attach(6, Box::new(held)));
+        recv(&pulled, DEADLINE).expect("the consumer pulls");
+        // The job's cancel: its wait withdrawn first, then its child ended.
+        assert!(echo.cancel(6));
+        child.cancel();
+        release.send(()).expect("the consumer is held in its pull");
+        echo.join_workers();
+
+        assert!(
+            echo.shared.completer.take().is_empty(),
+            "a request cancelled first is reported to nobody"
+        );
+        assert!(
+            echo.shared.state().requests.is_empty(),
+            "and the service keeps nothing of it"
+        );
     }
 
     #[test]

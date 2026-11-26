@@ -27,6 +27,7 @@ typedef struct {
 bool echo_ffi_start(uint64_t id, const uint8_t *text, size_t len);
 bool echo_ffi_cancel(uint64_t id);
 bool echo_ffi_take(uint64_t id, echo_raw_reply *out);
+void echo_ffi_flush(uint64_t id);
 void echo_ffi_free(uint8_t *text, size_t len);
 
 // `Echo.Real.start : UInt64 → @& String → IO Bool`
@@ -39,6 +40,12 @@ lean_obj_res echo_glue_start(uint64_t id, b_lean_obj_arg text) {
 // `Echo.Real.cancel : UInt64 → IO Bool`
 lean_obj_res echo_glue_cancel(uint64_t id) {
   return lean_io_result_mk_ok(lean_box(echo_ffi_cancel(id)));
+}
+
+// `Echo.Real.flush : UInt64 → IO Unit`
+lean_obj_res echo_glue_flush(uint64_t id) {
+  echo_ffi_flush(id);
+  return lean_io_result_mk_ok(lean_box(0));
 }
 
 // `Echo.Real.takeRaw : UInt64 → IO (Option (String × UInt32))`: the text and
