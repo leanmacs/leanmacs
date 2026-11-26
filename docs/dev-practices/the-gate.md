@@ -1689,6 +1689,15 @@ package's tests are by convention are in
   not name, or a linked test `editorPackages` misses, would go unrun: a
   gap reviewers hold (gates-by-exit-status phase 4 removed the lists of
   required lines, `.agents/rules/gates.md`).
+- **`--no-linked` is shown on stand-ins.** `lean-test` runs
+  `package-set.sh` in a temporary directory with a stand-in `lake` first
+  on the PATH, which names a package whose linked test exits 3 and which
+  has one fixture, on a stand-in harness that passes: `run` must exit 3
+  and `--no-linked run` 0, so a broken skip, which would run each default
+  linked test a second time, fails the gate. A set with a linked test and
+  no fixture must exit 2 under `--no-linked run`, and `--no-linked` with
+  another step, or with `--wiring`, is a usage error, 2. Each is decided
+  by the script's exit status alone, and the check needs no build.
 - **The default packages' own checks.** `shipped-themes`: sixteen checks
   in its driver (`ShippedThemesTest/Model.lean`), the completeness check
   on each theme among them; a linked test that holds each theme's picture

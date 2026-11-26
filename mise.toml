@@ -101,7 +101,7 @@ run = "cargo test --workspace --locked"
 # jobs wait from read it as Lean's runtime does (`Pool.expected`): they pass
 # under a bare `lake test` whatever the variable says.
 [tasks.lean-test]
-description = "Run the Lean model tests with `lake test` and the build's linters' checks with `lake exe lint-test`, and those of each package of the fixture set, the default packages (the shipped themes, the compile mode) among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
+description = "Run the Lean model tests with `lake test` and the build's linters' checks with `lake exe lint-test`, and those of each package of the fixture set, the default packages (the shipped themes, the compile mode) among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh); and tools/package-set.sh's `--no-linked` on stand-ins, by its exit status"
 dir = "lean"
 run = [
   # The stand-in for CI's elan that `user-sets-test` and `user-sets-check`
@@ -145,6 +145,58 @@ run = [
   # tests/empty-set requires the core alone, so it holds no package and the
   # step must exit 2, saying so. Its output is shown only when it does not.
   "status=0; out=$(sh ../tools/package-set.sh test ../tests/empty-set 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -q 'names no package of the set'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # `run --no-linked` (tools/package-set.sh), which ffi-test gives the
+  # default set so that no linked test runs twice, shown on stand-ins in a
+  # temporary directory by exit status alone; it builds nothing and needs no
+  # build. A stand-in `lake`, first on the PATH, names for the set `fails`
+  # one package, `p`, whose linked test is a stand-in that exits 3 and which
+  # has one headless fixture, run by a stand-in harness that passes and
+  # prints the count line `run` requires; for the set `only`, one package,
+  # `q`, with that linked test and no fixture; and passes any other command.
+  # - `run fails` must exit 3: the linked test ran, and its status is the
+  #   step's.
+  # - `--no-linked run fails` must exit 0: the linked test was skipped and
+  #   the fixture ran. Were the skip broken, it would exit 3, as the gate's
+  #   `--no-linked run ../packages` would run each default linked test a
+  #   second time.
+  # - `--no-linked run only` must exit 2: with its linked test skipped, the
+  #   set holds nothing to run (3 were the skip broken, 0 were the empty run
+  #   not refused).
+  # - `--no-linked test fails` must exit 2, a usage error (0 were it taken,
+  #   as the stand-in passes the test), and so must `--wiring --no-linked
+  #   run fails`, though that one would exit 2 as an empty run as well.
+  '''
+dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && dir=$(cd "$dir" && pwd -P) || exit 1
+mkdir -p "$dir/bin" "$dir/oleans" "$dir/fails/.lake/build/bin" "$dir/only" "$dir/p/tests/headless/one/config" "$dir/q" || exit 1
+: >"$dir/p/tests/headless/one/script" && : >"$dir/p/tests/headless/one/expected" || exit 1
+printf '#!/bin/sh\nexit 3\n' >"$dir/linked" || exit 1
+printf '#!/bin/sh\necho "fixture-test: ran 1 fixtures stepped under the stand-in, 0 left to the CLI"\n' >"$dir/fails/.lake/build/bin/fixture-test" || exit 1
+cat >"$dir/bin/lake" <<LAKE || exit 1
+#!/bin/sh
+[ "\$3" = query ] || exit 0
+case \$2 in
+  "$dir/fails") printf 'p\t%s\tPTest.Linked\t%s\n' "$dir/p" "$dir/linked" ;;
+  "$dir/only") printf 'q\t%s\tQTest.Linked\t%s\n' "$dir/q" "$dir/linked" ;;
+  *) exit 2 ;;
+esac
+LAKE
+chmod +x "$dir/bin/lake" "$dir/linked" "$dir/fails/.lake/build/bin/fixture-test" || exit 1
+check() {
+  want=$1
+  shift
+  status=0
+  PATH="$dir/bin:$PATH" sh ../tools/package-set.sh "$@" || status=$?
+  test "$status" -eq "$want" || {
+    echo "lean-test: tools/package-set.sh $* exited $status, not $want" >&2
+    exit 1
+  }
+}
+check 3 run "$dir/fails" "$dir" "$dir/oleans"
+check 0 --no-linked run "$dir/fails" "$dir" "$dir/oleans"
+check 2 --no-linked run "$dir/only" "$dir" "$dir/oleans"
+check 2 --no-linked test "$dir/fails"
+check 2 --wiring --no-linked run "$dir/fails" "$dir" "$dir/oleans"
+''',
 ]
 
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
