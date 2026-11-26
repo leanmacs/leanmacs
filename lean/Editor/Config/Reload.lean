@@ -21,12 +21,12 @@ the model tests run it with outcomes built by hand
 - **Installing is the only place config changes anything.** An accepted
   outcome replaces the files, replaces the config's entries in the registry,
   commands, jobs, key bindings, modes, ex bindings, faces, themes,
-  segments, languages, completion sources,
+  segments, languages, grammar declarations, completion sources,
   completion styles and completion displays
   (`Registry.replace`, `Registry.replaceJobs`, `Registry.replaceBindings`,
   `Registry.replaceModes`, `Registry.replaceEx`, `Registry.replaceFaces`,
   `Registry.replaceThemes`, `Registry.replaceSegments`,
-  `Registry.replaceLanguages`,
+  `Registry.replaceLanguages`, `Registry.replaceGrammars`,
   `Registry.replaceSources`, `Registry.replaceStyles`, never an append),
   and its prefix names (`Registry.replacePrefixNames`; a binding's
   description is on the binding, so it is replaced with it),
@@ -168,6 +168,17 @@ the model tests run it with outcomes built by hand
   runtime performs the effects of one event in order on the editor thread, so
   no command or handler of the old config runs after the install. The reload
   starts no job of the new config.
+- **An install registers the declared grammars.** When the installed
+  registry's grammar table (`Registry.grammarTable`, config's declarations
+  over the packages') is not empty, an installed outcome's effects hold
+  `registerGrammars` with the table and the generation the install just
+  set, after `cancelJobs config` and before its report. The host starts the
+  core's job `register-grammars` for it, owned by `config`, so the next
+  install cancels it before starting its own, and its command never runs
+  (`Editor/Language/Grammar/Register.lean`). A rejected outcome, and an
+  install with no grammar declared, start none: the recorded answers are of
+  an older generation, so none of them applies
+  (`Language.Grammar.treeOf`).
 - **The base is kept** from the first outcome that has it, accepted or not,
   and handed to every later job, so it is imported once.
 - **Every outcome is reported**, with its diagnostics.
@@ -383,6 +394,11 @@ inductive Effect (β σ : Type) where
   /-- Say this in the echo area: what a reload had to say of the package
   set instead of building it. -/
   | say (text : String)
+  /-- Register these grammars, the registry's grammar table, for the config
+generation `generation`: the core's job `register-grammars`
+(`Editor/Language/Grammar/Register.lean`), owned by `config`, so the next
+install's `cancelJobs` cancels it. -/
+  | registerGrammars (generation : Nat) (grammars : Array Language.Grammar)
 
 namespace State
 
@@ -511,8 +527,14 @@ private def stepTheme {β σ : Type} (state : State β σ) : Event β σ → Sta
   | .finished outcome =>
     let (state, report) := state.install outcome
     -- The old config's jobs go when, and only when, the new one is in.
+    -- The new config's grammars are registered after the old config's
+    -- jobs, its registration among them, are cancelled.
+    let grammars := state.registry.grammarTable.toArray
+    let registering :=
+      if grammars.isEmpty then #[] else #[.registerGrammars state.registry.generation grammars]
     let installed :=
-      if report.installed then #[.cancelJobs .config, .report report] else #[.report report]
+      if report.installed then #[.cancelJobs .config] ++ registering ++ #[.report report]
+      else #[.report report]
     let (state, packages) := state.packagesAfter outcome.facts
     if state.pending then
       let (state, effects) := state.start

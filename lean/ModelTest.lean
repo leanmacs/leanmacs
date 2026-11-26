@@ -945,8 +945,9 @@ The config session's decisions are tested here too, with no elaborator:
 - `setupChecks`: what a `setup` registers, commands, stores, jobs, key
   bindings (in a prompt category too, and of keys given as values), the leader and the localleader, modes, ex bindings and faces,
   a job given as its work, an ex name's fixed arguments and menus, a
-  store's codec across a restart and a job reported as stopped by one, and
-  when it is refused;
+  store's codec across a restart and a job reported as stopped by one,
+  grammar declarations (`defineGrammar`) with their defaults and the values
+  given, and when it is refused;
 - `setupHintChecks`: a binding's description (`bindKey`'s `desc`) and a
   prefix's name (`prefixName`), as a `setup` collects them, and the names
   it refuses;
@@ -1020,7 +1021,11 @@ The config session's decisions are tested here too, with no elaborator:
   editor's starts one build after its report and keeps what it read; none
   while a build is in flight, whoever started it, and one again once it
   ended; none for a reload that matches; and what it has to say instead
-  (no `lake`) is said once;
+  (no `lake`) is said once. An install puts config's grammar declarations
+  in the registry, which tells the loop of them beside the languages that
+  name them, and starts their registration for the new generation after
+  cancelling config's jobs and before its report; a rejected reload, and
+  an install that declares none, start none;
 - `reloadHintChecks`: an install replaces config's descriptions and prefix
   names with its bindings, so a later config without them clears them;
 - `packageChecks`: packages (`Editor/Package.lean`) and registering them

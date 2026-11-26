@@ -1501,6 +1501,8 @@ def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ
         running := started.rekeyed started.keyed
     | .say text =>
       running := running.said text
+    | .registerGrammars _ _ =>
+      pure ()
   return running
 
 /-- Sets what the last reload read of the package set

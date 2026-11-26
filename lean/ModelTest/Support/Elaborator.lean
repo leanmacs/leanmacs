@@ -190,6 +190,9 @@ inductive Seen where
   | buildPackages (order : PackageSet.Order)
   /-- This was said of the package set. -/
   | say (text : String)
+  /-- The registration of these grammars, by name, was started for this
+  config generation. -/
+  | registerGrammars (generation : Nat) (names : Array String)
   deriving DecidableEq, Repr
 
 /-- `effect` as a check compares it. -/
@@ -203,6 +206,7 @@ def seen : Config.Effect ModelBase ModelHandle → Seen
   | .appearance appearance => .appearance appearance
   | .buildPackages order => .buildPackages order
   | .say text => .say text
+  | .registerGrammars generation grammars => .registerGrammars generation (grammars.map (·.name))
 
 /-- The outcome of a reload that built the files called `names`, whose
 `setup` is `setup`, on a base that holds no module. Built by hand: no

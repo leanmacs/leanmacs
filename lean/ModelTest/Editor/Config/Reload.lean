@@ -787,6 +787,22 @@ def reloadChecks : List Check :=
             grammarOf kept == some "ini" && told kept == declared && grammarOf bare == none &&
             told bare == []) },
     { name :=
+        "an installed reload whose config declares grammars starts their registration for the new generation, after cancelling config's jobs and before its report; an installed reload that declares none, and a rejected one, start none"
+      run :=
+        let setup : SetupM Unit := do
+          defineGrammar "ini" "/opt/grammars/libtree-sitter-ini.so"
+          defineGrammar "conf" "/opt/grammars/libconf.so"
+        let (loaded, declaring) := reduce [.requested, .finished (accepted ["a"] setup)]
+        let (_, rejecting) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (_, plain) := reduce [.requested, .finished (accepted ["a"] (greets "1"))]
+        pure
+          (loaded.registry.generation == 1 &&
+            declaring ==
+              #[.start none #[], .cancelJobs "config", .registerGrammars 1 #["ini", "conf"],
+                .report 1 true #[] 1 0] &&
+            !rejecting.any (· matches .registerGrammars ..) &&
+            !plain.any (· matches .registerGrammars ..)) },
+    { name :=
         "an installed reload puts config's syntax refresh delay in the registry, which tells the loop of it; a rejected reload leaves it, and a config that sets none goes back to none"
       run :=
         let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (syntaxRefreshDelay 250))]
