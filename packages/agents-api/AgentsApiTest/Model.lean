@@ -1,4 +1,6 @@
 import AgentsApiTest.AgentsApi
+import AgentsApiTest.AgentsApiTest.Contract
+import AgentsApiTest.AgentsApiTest.Fake
 import AgentsApiTest.AgentsApiTest.Protocol
 import AgentsApiTest.Check
 
@@ -16,21 +18,30 @@ imports the test modules and runs their checks:
 - `agentsApiChecks`: the interface library (`AgentsApi.lean`): the service's
   request vocabulary read back as it was written and a malformed request
   refused, the agent registration point a choice by name, and an agent's
-  command.
+  command;
+- `fakeChecks`: the fake of the service (`AgentsApiTest/Fake.lean`) at the
+  runner's port: what each request answers and when a `next` completes;
+- `contractBiteChecks`: three flawed fakes, each refused by the contract on
+  the property it breaks;
+- `contractFailures`: the contract (`AgentsApiTest/Contract.lean`) against
+  the fake.
 -/
 
 /-- Every check of the test driver, in the order they run. -/
 def AgentsApiTest.checks : List AgentsApiTest.Check :=
-  AgentsApiTest.protocolChecks ++ AgentsApiTest.agentsApiChecks
+  AgentsApiTest.protocolChecks ++ AgentsApiTest.agentsApiChecks ++ AgentsApiTest.fakeChecks ++
+    AgentsApiTest.contractBiteChecks
 
 /-- Runs the checks, and prints each that failed; the exit status is 1 when
 one did. -/
 def main : IO UInt32 := do
-  let failed ← AgentsApiTest.failures AgentsApiTest.checks
+  let failed :=
+    (← AgentsApiTest.failures AgentsApiTest.checks) ++ (← AgentsApiTest.contractFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   if failed.isEmpty then
-    IO.println s!"agents-api-test: {AgentsApiTest.checks.length} checks passed"
+    IO.println
+        s!"agents-api-test: {AgentsApiTest.checks.length} checks passed, and {AgentsApiTest.Contract.properties.length} properties of the service agents hold of its fake"
     return 0
   else
     return 1
