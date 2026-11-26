@@ -92,6 +92,11 @@
 //!
 //! - [`Syntax::reparse_policy`]: the grammar's policy in the table; none
 //!   when the grammar is not in it.
+//! - [`Syntax::register`]: refused as unsupported, with no file read: this
+//!   adapter loads no grammar at run time until native libraries do
+//!   (the roadmap `syntax-runtime-grammars`, phase 2), so its registration
+//!   check is `editor_syntax::contract::registration::check_unsupported`
+//!   (`tests/registration.rs`).
 //! - [`Syntax::parser`]: a new parser with the grammar's language set; none
 //!   when the grammar is not in the table, or the library refuses its
 //!   language (an ABI it does not speak).
@@ -134,8 +139,8 @@
 use std::ops::Range;
 
 use editor_syntax::{
-    Capture, GrammarName, Match, MatchCapture, Node, QueryError, QueryErrorKind, QueryKind,
-    ReparsePolicy, Setting, Syntax,
+    Capture, GrammarName, GrammarSource, Match, MatchCapture, Node, QueryError, QueryErrorKind,
+    QueryKind, RegistrationRefusal, ReparsePolicy, Setting, Syntax,
 };
 use editor_text::{InputEdit, Point, Snapshot};
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
@@ -296,6 +301,12 @@ impl Syntax for TreeSitter {
 
     fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy> {
         self::grammar(grammar).map(|grammar| grammar.policy)
+    }
+
+    fn register(&self, _: &GrammarSource) -> Result<GrammarName, RegistrationRefusal> {
+        // It loads no grammar at run time: every grammar is compiled in
+        // (the crate docs, "How grammars are loaded").
+        Err(RegistrationRefusal::Unsupported)
     }
 
     fn parser(&self, grammar: &GrammarName) -> Option<TreeSitterParser> {
