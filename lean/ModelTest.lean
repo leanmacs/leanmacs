@@ -1274,7 +1274,8 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   base of that name, `inherited` when unset, config's choice over a
   package's default;
 - `environmentApiChecks`: `environment-api`'s fakes keep its directory and
-  base contracts on the model rigs, and the contracts fail a package that
+  base contracts on the model rigs, a base whose program is probed among
+  them, and the contracts fail a package that
   registers nothing and a source that ignores its output;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;

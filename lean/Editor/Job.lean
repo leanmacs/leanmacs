@@ -87,7 +87,8 @@ A job reaches the environments its host shares through one request,
 (`Editor/Process/Environment.lean`) and is answered at once, as `now` is:
 the layers the host installed from the registry (a base, then directory
 sources; `EnvironmentApi.lean`),
-what each source's executable resolved to, and the cached lookups, the
+what each source's executable resolved to (from candidates' stamps, or
+from probes run through the process service), and the cached lookups, the
 base's and each directory and source's. The process operations ask it
 before they start a child, so a child gets its layers' variables under its
 command's own (`Process.prepared`).
@@ -495,28 +496,55 @@ def Process.firstStamped (candidates : Array System.FilePath) : JobM (Option Sys
       return some candidate
   return none
 
+/-- The first absolute path one of `probes` names, each run in order as a
+raw process request, so with the editor's own environment and never looked
+up, under the time limit `limit` and the output limit of a lookup: a run
+that is refused, does not exit 0, or names no absolute path passes to the
+next, and nothing is said of it. -/
+def Process.firstProbed (probes : Array Process.Probe) (limit : Nat) :
+    JobM (Option System.FilePath) := do
+  for probe in probes do
+    match ← Process.request (.runWithin probe.command Process.lookupOutput limit) with
+    | .ok { exit := .code 0, stdout, .. } =>
+      if let some path := probe.answer.read stdout then
+        return some path
+    | _ =>
+      pure ()
+  return none
+
+/-- What the source `name` resolved to, as the shared state has it: the
+answer an earlier job kept (`policy.programs`), else `resolve`'s, which is
+then kept for every job until a reload. -/
+def Process.resolvedOnce (policy : Process.Policy) (name : String)
+    (resolve : JobM (Option System.FilePath)) : JobM (Option System.FilePath) := do
+  match policy.programs.find? (·.1 == name) with
+  | some (_, found) =>
+    return found
+  | none =>
+    let found ← resolve
+    Process.askEnvironment (.resolved name found)
+    return found
+
 /-- Where `source`'s executable is, as the shared state has it: its path;
 or the first of its candidates, resolved by an earlier job or else from the
-candidates' stamps, which is then kept for every job until a reload; or,
-with none of them there, what the source does then. -/
-def Process.programOf (policy : Process.Policy) (source : Process.Source) :
+candidates' stamps; or the first path its probes name, run under `limit`,
+else its fallback; each of the last two kept for every job until a reload.
+With none of its candidates there, what the source does then. -/
+def Process.programOf (policy : Process.Policy) (source : Process.Source) (limit : Nat) :
     JobM (Except Process.WhenNone System.FilePath) := do
   match source.program with
   | .at path =>
     return .ok path
   | .firstOf candidates whenNone =>
-    let found ←
-      match policy.programs.find? (·.1 == source.name) with
-      | some (_, found) =>
-        pure found
-      | none =>
-        do
-          let found ← Process.firstStamped candidates
-          Process.askEnvironment (.resolved source.name found)
-          pure found
+    let found ← Process.resolvedOnce policy source.name (Process.firstStamped candidates)
     return match found with
       | some executable => .ok executable
       | none => .error whenNone
+  | .probed probes otherwise =>
+    let found ←
+      Process.resolvedOnce policy source.name do
+        return some ((← Process.firstProbed probes limit).getD otherwise)
+    return .ok (found.getD otherwise)
 
 /-- The entry of `slot` for `source` run by `executable` in `directory` over
 `below`: the cached one while the stamps of `stampNames` there and in its
@@ -541,21 +569,23 @@ def Process.lookedUp (slot : Process.Slot) (source : Process.Source)
   return entry
 
 /-- The variables `source` gives in `slot`, looked up in `directory` over
-`below`, its result kept by the stamps of `stampNames`: none when it failed,
-so it is skipped and the layers below are kept, or when its executable is
-at none of its candidates, which is recorded once for the slot when the
-source reports it. -/
+`below`, its result kept by the stamps of `stampNames`, its lookup and any
+probes run under its own time limit, else the shared one: none when it
+failed, so it is skipped and the layers below are kept, or when its
+executable is at none of its candidates, which is recorded once for the
+slot when the source reports it. -/
 def Process.sourceVariables (slot : Process.Slot) (source : Process.Source)
     (directory : System.FilePath) (stampNames : Array String) (below : Array (String × String))
     (policy : Process.Policy) : JobM (Array (String × String)) := do
-  match ← Process.programOf policy source with
+  let limit := source.limit.getD policy.limit
+  match ← Process.programOf policy source limit with
   | .error .skip =>
     return #[]
   | .error .report =>
     let candidates :=
       match source.program with
       | .firstOf candidates _ => candidates
-      | .at _ => #[]
+      | .at _ | .probed .. => #[]
     let cached : Option Process.Entry ← Process.askEnvironment (.cached slot)
     if cached.isNone then
       Process.askEnvironment
@@ -563,7 +593,7 @@ def Process.sourceVariables (slot : Process.Slot) (source : Process.Source)
     return #[]
   | .ok executable =>
     match
-      (← Process.lookedUp slot source executable directory stampNames below policy.limit).found with
+      (← Process.lookedUp slot source executable directory stampNames below limit).found with
     | .variables variables =>
       return variables
     | .failed _ =>
@@ -575,8 +605,10 @@ directory source's for its directory in order, each looked up over the
 layers before it, all under its own. It is returned unchanged when the
 process service would refuse it, a directory or a program that is not
 absolute; when it clears the editor's environment; and when the base is
-the inherited one with no directory source. A source whose lookup failed
-is skipped, which the shared state reports once for its slot. -/
+the inherited one with no directory source. A source whose executable is
+probed runs its probes before its first lookup, once until a reload
+(`Process.programOf`). A source whose lookup failed is skipped, which the
+shared state reports once for its slot. -/
 def Process.prepared (command : Process.Command) : JobM Process.Command := do
   if !command.directory.isAbsolute || command.namesRelative || command.environment.clear then
     return command

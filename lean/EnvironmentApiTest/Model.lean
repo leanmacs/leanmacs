@@ -69,13 +69,15 @@ def failingRun : Except ProcessError Process.Ran :=
   .ok { exit := .code 1, stdout := .empty, stderr := "fake failing here\n".toUTF8 }
 
 /-- The executable `program` names on a model scene, and the files that
-make it the one found: its path, or the first candidate, which the model
-then holds. -/
+make it the one found: its path; the first candidate, which the model then
+holds; or a probed program's fallback, since a scene scripts no probe, so
+the process model refuses each (`notFound`) and it passes to the next. -/
 def executableOf : Process.Program → System.FilePath × FileModel
   | .at path => (path, ({} : FileModel))
   | .firstOf candidates _ =>
     let first : System.FilePath := candidates[0]?.getD "/rig/no-candidate"
     (first, ({} : FileModel).withFile first "x".toUTF8)
+  | .probed _ otherwise => (otherwise, ({} : FileModel))
 
 /-- `model` with each script of `command` answering `reply` instead. -/
 def reanswered (model : JobModel) (command : Process.Command)

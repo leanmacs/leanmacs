@@ -17,7 +17,9 @@ import ModelTest.Check
 
 The model tests of `Editor/Process/Environment.lean`: `processEnvironmentChecks`
 and `environmentLayerChecks`, the latter of the layers, a base under two
-directory sources the core does not name (`EnvironmentApiTest.fakeSource`).
+directory sources the core does not name (`EnvironmentApiTest.fakeSource`),
+and of a base whose executable is probed or that has a time limit of its
+own.
 mise's lookup checks are the mise package's (`MiseTest.miseLookupChecks`).
 The root module `ModelTest` runs them; its module doc says what each shows.
 -/
@@ -299,7 +301,22 @@ def processEnvironmentChecks : List Check :=
             foundOf (ran (.code 0) "[1]" "") ==
               .failed (.unparsable "a JSON object of strings" "it is not an object") &&
             foundOf (.error .noSuchProcess) == .failed (.refused .noSuchProcess) &&
-            foundOf (.error (.timedOut 5000)) == .failed (.timedOut 5000)) }]
+            foundOf (.error (.timedOut 5000)) == .failed (.timedOut 5000)) },
+    { name :=
+        "a probe's answer is the first line of its output, trimmed, as an absolute path: a line names it whole, a last field the line's last field; an empty, relative or non-UTF-8 output names none"
+      run :=
+        let read := Process.ProbeAnswer.read
+        pure
+          (read .line "/opt/homebrew/bin/fish\n".toUTF8 == some "/opt/homebrew/bin/fish" &&
+            read .line "  /bin/zsh  \nsecond\n".toUTF8 == some "/bin/zsh" &&
+            read (.lastField ':') "u:********:501:20::0:0:U:/Users/u:/opt/homebrew/bin/bash\n".toUTF8 ==
+              some "/opt/homebrew/bin/bash" &&
+            read .line "".toUTF8 == none &&
+            read .line "\n".toUTF8 == none &&
+            read .line "zsh\n".toUTF8 == none &&
+            read (.lastField ':') "u:x:zsh\n".toUTF8 == none &&
+            read (.lastField ':') "u:x:\n".toUTF8 == none &&
+            read .line ⟨#[0x2F, 0xFF, 0x0A]⟩ == none) }]
 
 /-! ## The layers, over sources the core does not name -/
 
@@ -387,6 +404,48 @@ def layeredStarts (directory : System.FilePath) : Array Process.Command :=
 def layeredModel (scripts : Array Process.Script) (files : FileModel := {})
     (sources : Process.Sources := layeredSources) : JobModel :=
   { files, processes := { scripts }, environments := { sources } }
+
+/-- A script of `command` printing `stdout` as it is. -/
+def printing' (command : Process.Command) (stdout : String) : Process.Script :=
+  { command, reply := printed stdout }
+
+/-- The command of the probe `/bin/<name>`, run in `/` with no environment of
+its own. -/
+def probeCommand (name : String) : Process.Command :=
+  { program := s!"/bin/{name}", directory := "/" }
+
+/-- The probe `/bin/<name>`, whose output names a path on its first line. -/
+def probe (name : String) : Process.Probe :=
+  { command := probeCommand name, answer := .line }
+
+/-- The base's lookup at `program`, run in `/` over the editor's environment
+alone. -/
+def lookupAt (program : String) : Process.Command :=
+  { program, directory := "/", environment := { set := #[] } }
+
+/-- The fake base `login`, its executable at `/bin/login`, with `limit` as its
+own time limit. -/
+def limitedLogin (limit : Option Nat) : Process.Source :=
+  { fakeSource "login" "/bin/login" with limit }
+
+/-- The sources of the probe checks: the base `login`, its executable the
+first path `probes` name, else `/bin/fallback`, with `limit` as its own,
+looked up in `/`, and no directory source. -/
+def probedSources (probes : Array Process.Probe) (limit : Option Nat := none) : Process.Sources :=
+  { base := .lookup { limitedLogin limit with program := .probed probes "/bin/fallback" } "/" }
+
+/-- `layeredChild directory` as it is started over the base's `variables`
+alone. -/
+def overBase (directory : System.FilePath) (variables : Array (String × String)) :
+    Process.Command :=
+  { layeredChild directory with
+    environment := Process.Environment.over variables (layeredChild directory).environment }
+
+/-- The scripts of the children in `/p/d` and `/p/e` over the base's
+`variables` alone. -/
+def probedChildren (variables : Array (String × String)) : Array Process.Script :=
+  #[{ command := overBase "/p/d" variables, reply := printed "built" },
+    { command := overBase "/p/e" variables, reply := printed "built" }]
 
 /-- The checks of a child's layered environment on the models, over a base
 and two directory sources the core does not name (`fakeSource`): the order
@@ -532,6 +591,95 @@ def environmentLayerChecks : List Check :=
               #[layeredChild "/p/d", layeredChild "/p/d", layeredChild "/p/e"] &&
             other.reported ==
               #[Process.failureMessage (.directory "/p/d" "first") missing,
-                Process.failureMessage (.directory "/p/e" "first") missing]) }]
+                Process.failureMessage (.directory "/p/e" "first") missing]) },
+    { name :=
+        "a base whose program is probed runs its probes in order through the process service over the editor's own environment, its lookup at the first absolute path one names, starting no later probe, once for two children, and both again after a reload"
+      run :=
+        let model :=
+          layeredModel
+            (#[exitingOne (probeCommand "p1") "", printing' (probeCommand "p2") "/bin/second\n",
+                  printing (lookupAt "/bin/second") baseVariables] ++
+                probedChildren baseVariables)
+            (sources := probedSources #[probe "p1", probe "p2"])
+        let inD := after (runsOn (layeredChild "/p/d")) model
+        let inE := after (runsOn (layeredChild "/p/e")) inD
+        let reloaded :=
+          { inE with
+            environments := inE.environments.installSources (probedSources #[probe "p1", probe "p2"]) }
+        let again := after (runsOn (layeredChild "/p/d")) reloaded
+        let firstWins :=
+          after (runsOn (layeredChild "/p/d"))
+            (layeredModel
+              (#[printing' (probeCommand "p1") "/bin/first\n",
+                    printing' (probeCommand "p2") "/bin/second\n",
+                    printing (lookupAt "/bin/first") baseVariables] ++
+                  probedChildren baseVariables)
+              (sources := probedSources #[probe "p1", probe "p2"]))
+        let once :=
+          #[probeCommand "p1", probeCommand "p2", lookupAt "/bin/second",
+            overBase "/p/d" baseVariables, overBase "/p/e" baseVariables]
+        pure
+          (inE.processes.started == once &&
+            again.processes.started ==
+              once ++
+                #[probeCommand "p1", probeCommand "p2", lookupAt "/bin/second",
+                  overBase "/p/d" baseVariables] &&
+            firstWins.processes.started ==
+              #[probeCommand "p1", lookupAt "/bin/first", overBase "/p/d" baseVariables] &&
+            (probeCommand "p1").environment == {} &&
+            again.reported.isEmpty) },
+    { name :=
+        "a base whose probes all fail, or name a relative path, runs its lookup at its fallback, and nothing is said of the probes"
+      run :=
+        let fallbackScripts :=
+          #[printing (lookupAt "/bin/fallback") baseVariables] ++ probedChildren baseVariables
+        let unscripted :=
+          after (runsOn (layeredChild "/p/d"))
+            (layeredModel fallbackScripts (sources := probedSources #[probe "p1", probe "p2"]))
+        let relative :=
+          after (runsOn (layeredChild "/p/d"))
+            (layeredModel (#[printing' (probeCommand "p1") "zsh\n"] ++ fallbackScripts)
+              (sources := probedSources #[probe "p1", probe "p2"]))
+        pure
+          (unscripted.processes.started ==
+              #[lookupAt "/bin/fallback", overBase "/p/d" baseVariables] &&
+            relative.processes.started ==
+              #[probeCommand "p1", lookupAt "/bin/fallback", overBase "/p/d" baseVariables] &&
+            unscripted.reported.isEmpty && relative.reported.isEmpty) },
+    { name :=
+        "a source's own limit replaces the shared one: a base limited to 2000 ms whose lookup takes 3000 is killed at 2000 and said once, the child unchanged; with no limit of its own the shared 5000 lets it finish; a probe that takes 3000 is killed at 2000 and passes to the next"
+      run :=
+        let slowLookup : Process.Script :=
+          { printing (lookupAt "/bin/login") baseVariables with takes := 3000 }
+        let unchanged : Process.Script :=
+          { command := layeredChild "/p/d", reply := printed "built" }
+        let limited :=
+          after (runsOn (layeredChild "/p/d"))
+            (layeredModel #[slowLookup, unchanged]
+              (sources := { base := .lookup (limitedLogin (some 2000)) "/" }))
+        let shared :=
+          after (runsOn (layeredChild "/p/d"))
+            (layeredModel (#[slowLookup] ++ probedChildren baseVariables)
+              (sources := { base := .lookup (limitedLogin none) "/" }))
+        let slowProbe : Process.Script :=
+          { printing' (probeCommand "p1") "/bin/first\n" with takes := 3000 }
+        let probed :=
+          after (runsOn (layeredChild "/p/d"))
+            (layeredModel
+              (#[slowProbe, printing' (probeCommand "p2") "/bin/second\n",
+                    printing (lookupAt "/bin/second") baseVariables] ++
+                  probedChildren baseVariables)
+              (sources := probedSources #[probe "p1", probe "p2"] (some 2000)))
+        pure
+          (limited.processes.started == #[lookupAt "/bin/login", layeredChild "/p/d"] &&
+            limited.processes.killed == #[lookupAt "/bin/login"] &&
+            limited.reported == #[Process.failureMessage (.base "login") (.timedOut 2000)] &&
+            shared.processes.started.back? == some (overBase "/p/d" baseVariables) &&
+            shared.reported.isEmpty &&
+            probed.processes.killed == #[probeCommand "p1"] &&
+            probed.processes.started ==
+              #[probeCommand "p1", probeCommand "p2", lookupAt "/bin/second",
+                overBase "/p/d" baseVariables] &&
+            probed.reported.isEmpty) }]
 
 end ModelTest

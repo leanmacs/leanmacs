@@ -15,6 +15,7 @@ def programText : Process.Program → String
   | .at path => s!"at {path}"
   | .firstOf candidates .skip => s!"first of {", ".intercalate (candidates.toList.map toString)}, else skip"
   | .firstOf candidates .report => s!"first of {", ".intercalate (candidates.toList.map toString)}, else report"
+  | .probed probes otherwise => s!"probed by {", ".intercalate (probes.toList.map fun probe => " ".intercalate (probe.command.program :: probe.command.arguments.toList))}, else {otherwise}"
 
 /-- The directory sources `registered` gives in the mode `host`, by name and
 program, or `none`. -/

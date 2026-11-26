@@ -215,6 +215,21 @@ def environmentApiChecks : List Check :=
           (baseContract EnvironmentApiTest.fakePackage "fake-base"
             (modelBaseRig fakeBase .headless linesOf)) },
     { name :=
+        "a fake base whose program is probed, its probes unanswered, keeps the base contract on the model rig at its fallback"
+      run :=
+        let probe : Process.Probe :=
+          { command := { program := "/fake/bin/probe", directory := "/" }, answer := .line }
+        let probedBase : EnvironmentApi.BaseSource :=
+          { fakeBase with
+            base := fun _ =>
+              .lookup
+                { fakeSource "fake-base" "/fake/bin/base" with
+                  program := .probed #[probe] "/fake/bin/base" }
+                "/" }
+        contractHolds
+          (baseContract EnvironmentApiTest.fakePackage "fake-base"
+            (modelBaseRig probedBase .headless linesOf)) },
+    { name :=
         "the directory-source contract bites: a package that registers nothing fails D1, and a source that ignores its output fails D2 and D3, the rest holding"
       run := do
         let empty ←

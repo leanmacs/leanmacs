@@ -28,12 +28,14 @@ requests, so nothing of `Std` or `Lean` reaches config's closure.
 ## The rules
 
 - **A source is data, not a program.** A `Source` is a name, where its
-  executable is (`Program`: a path, or the first of some candidates whose
-  stamp a file request answers, with what to do when none is there), the
-  command a lookup runs (built from the executable, the directory and the
-  environment so far), a parser from its output to variables or a reason,
-  what that output must be (for a message), and, for a directory source,
-  the names of the files whose stamps keep its result. None of it reaches a
+  executable is (`Program`: a path; the first of some candidates whose
+  stamp a file request answers, with what to do when none is there; or the
+  first absolute path some probes print, commands run through the process
+  service, with a path to fall back to), the command a lookup runs (built
+  from the executable, the directory and the environment so far), a parser
+  from its output to variables or a reason, what that output must be (for
+  a message), for a directory source the names of the files whose stamps
+  keep its result, and, if it has one, its own time limit. None of it reaches a
   request or the editor state, so a source can be handed through a registry
   and its lookup run in a job through the process service, with no
   `EditorM` in the reply. An executable is never looked up by bare name:
@@ -58,9 +60,11 @@ requests, so nothing of `Std` or `Lean` reaches config's closure.
   lookup runs. A config rejected at start-up leaves nothing installed until
   a reload installs one.
 - **A lookup** runs its source's command through the process service, with
-  a time limit (`ProcessRequest.runWithin`, `Environments.limit`) and an
-  output limit (`Process.lookupOutput`), and sets every variable its parser
-  reads from what it printed.
+  a time limit (`ProcessRequest.runWithin`: the source's own, `Source.limit`,
+  else the shared `Environments.limit`) and an output limit
+  (`Process.lookupOutput`), and sets every variable its parser reads from
+  what it printed. A probed program's probes run under the same limits,
+  before the lookup, once until a reload.
 - **The caches** are the entries of the shared state, each under its
   `Slot`: the base's under `.base`, kept until a reload, so the base is
   looked up at most once per run; and one for each directory and source
@@ -375,6 +379,39 @@ inductive WhenNone where
   | report
   deriving DecidableEq, Repr
 
+/-- How a probe's standard output names a path (`Probe`). -/
+inductive ProbeAnswer where
+  /-- Its first line, whole. -/
+  | line
+  /-- The last field of its first line, the fields separated by
+  `separator`: the login shell of a passwd line, with `':'`. -/
+  | lastField (separator : Char)
+  deriving DecidableEq, Repr
+
+/-- The path `output` names as `answer` reads it: its first line, trimmed,
+whole or its last field, trimmed; `none` when the output is not UTF-8, or
+the path is empty or not absolute. -/
+def ProbeAnswer.read (answer : ProbeAnswer) (output : ByteArray) : Option System.FilePath := do
+  let text ← String.fromUTF8? output
+  let line := ((text.splitOn "\n").headD "").trimAscii.toString
+  let named : String :=
+    match answer with
+    | .line => line
+    | .lastField separator =>
+      ((line.splitOn (String.singleton separator)).getLastD "").trimAscii.toString
+  let path : System.FilePath := ⟨named⟩
+  if named.isEmpty || !path.isAbsolute then none else some path
+
+/-- A command whose standard output may name where a source's executable is:
+run through the process service, with the editor's own environment and its
+source's time limit, and read as `answer` says. -/
+structure Probe where
+  /-- What it runs: an absolute program in an absolute directory. -/
+  command : Command
+  /-- How its output names a path. -/
+  answer : ProbeAnswer
+  deriving DecidableEq, Repr
+
 /-- Where a source's executable is. It is never a bare name. -/
 inductive Program where
   /-- At `path`, an absolute path. -/
@@ -382,6 +419,11 @@ inductive Program where
   /-- At the first of `candidates` whose stamp a file request answers,
   resolved once and kept until a reload; `whenNone` when none is there. -/
   | firstOf (candidates : Array System.FilePath) (whenNone : WhenNone)
+  /-- At the first absolute path one of `probes` names, each run in order
+  through the process service: a refused, failing, empty or relative
+  answer passes to the next, and nothing is said of it. At `otherwise` when
+  none names one. Resolved once and kept until a reload. -/
+  | probed (probes : Array Probe) (otherwise : System.FilePath)
   deriving DecidableEq, Repr
 
 /-- A source of variables for a child's environment, as data: a base, or a
@@ -405,6 +447,9 @@ structure Source where
   directory and in each of its ancestors keep its result. A base ignores
   it. -/
   stampNames : Array String := #[]
+  /-- How long its lookups and probes may run, in milliseconds; `none` is
+  the shared limit (`Environments.limit`). -/
+  limit : Option Nat := none
 
 /-- What a lookup's run came to, as an entry's finding: the variables
 `source`'s parser reads from a run that exited 0, or why not. -/
@@ -480,15 +525,16 @@ def failureMessage : Slot → Failure → String
     s!"environment: the base, {source}: {failure.describe source}; children start without the base's variables"
 
 /-- What a job reads before it builds a child's environment: the layers,
-what each `firstOf` source has resolved to, and the time limit of a lookup,
-in milliseconds. -/
+what each `firstOf` or `probed` source has resolved to, and the shared time
+limit of a lookup, in milliseconds. -/
 structure Policy where
   /-- The layers. -/
   sources : Sources
-  /-- What each `firstOf` source resolved to, by name, once a job resolved
-  it. -/
+  /-- What each `firstOf` or `probed` source resolved to, by name, once a
+  job resolved it. -/
   programs : Array (String × Option System.FilePath)
-  /-- How long a lookup may run, in milliseconds. -/
+  /-- How long a lookup of a source with no limit of its own may run, in
+  milliseconds. -/
   limit : Nat
 
 /-- The state every job of a host shares: the mode, the time limit, the
@@ -503,7 +549,8 @@ structure Environments where
   limit : Nat := 5000
   /-- The layers. -/
   sources : Sources := {}
-  /-- What each `firstOf` source resolved to, by name, until a reload. -/
+  /-- What each `firstOf` or `probed` source resolved to, by name, until a
+  reload. -/
   programs : Array (String × Option System.FilePath) := #[]
   /-- Each slot's entry, oldest first: the base's, and one for each
   directory and source. -/
