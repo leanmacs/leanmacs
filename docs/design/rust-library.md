@@ -2133,7 +2133,9 @@ phase 1 (2026-11-16) made each edit deliver its incremental reparse and an
 idle refresh restore exactness, gave each grammar a reparse policy, and
 restated the contract to match.
 
-**How grammars are loaded: compiled in.** Each grammar is a crates.io
+**How grammars are loaded.** Two ways, both through the one adapter.
+
+*Compiled in.* Each grammar is a crates.io
 grammar crate, pinned exactly (`tree-sitter-rust` 0.24.2,
 `tree-sitter-json` 0.24.8, `tree-sitter-md` 0.5.4 and
 `tree-sitter-toml-ng` 0.7.0, over `tree-sitter` 0.27.2), or, for Lean,
@@ -2144,28 +2146,43 @@ the generated `parser.c` (and the grammar's scanner, if it has one) with
 `cc` when Cargo builds the library; the objects end up in
 the editor's one Rust archive, the crate the package-set build generates
 from `editor-ffi` and the set's package crates (`libeditor_rust.a` for a
-set with none), which Lake links. Nothing is fetched, generated or
-loaded at run time. Lean is vendored because no crates.io crate builds
+set with none), which Lake links. Lean is vendored because no crates.io crate builds
 against the pinned library: the one Lean grammar crate, `tree-sitter-lean4`,
 has a normal dependency on tree-sitter 0.25, which cannot coexist with
 0.27.2. The workspace excludes `vendor/`, so the copy is a path dependency
 whose dev-dependencies never enter the lock, and `mise run c-fmt` leaves its
-generated C alone. Set aside, and why:
+generated C alone.
 
-- **Native libraries** loaded with `dlopen`: a second build product for
-  each grammar and platform, a search path, a check of the ABI when one is
-  loaded and a failure at run time, and bundling into the app, for no gain
-  while the set of grammars is fixed when the library is built (a
-  non-goal of the roadmap is to download or build grammars at run time).
+*Native libraries, at run time* (the syntax-runtime-grammars roadmap's
+phase 2, 2026-11-26). A grammar is registered ("Registering a grammar",
+below) from a shared library (`.dylib` on macOS, `.so` on Linux) exporting
+`tree_sitter_<name>`: the same generated C, linked as a library rather than
+statically. This is how Emacs, Helix and Neovim load grammars. The
+adapter's module `native` opens it with `libloading` (pinned `=0.8.9`, the
+copy the graph already builds for `ash`, `dlib`, `khronos-egl`, `wgpu-hal`
+and `x11rb`), wraps its language function with `tree-sitter-language`'s
+`LanguageFn`, and checks the language's ABI version against the pinned
+library's `MIN_COMPATIBLE_LANGUAGE_VERSION..=LANGUAGE_VERSION` before any
+parser is made. A loaded library is never unloaded: a language, and every
+parser and tree of it, points into its code. The editor never finds,
+fetches or compiles a grammar: the library's path is named by the user's
+config or a package (the roadmap's later phases) and handed in. `unsafe`
+is denied across the adapter crate and allowed only at `native`'s three
+sites, each with its reason.
+
+Set aside, and why:
+
 - **WebAssembly grammars**, through tree-sitter's `wasm` feature: it brings
   wasmtime, a JIT and hundreds of crates, and a `.wasm` build of each
   grammar to make or fetch. Its sandbox protects against a grammar that is
-  not trusted; every grammar here is pinned and reviewed.
-- `tree-sitter-loader`, which finds and builds grammars at run time, and a
+  not trusted; a native grammar is the compiled C every other editor loads,
+  and parses at native speed.
+- `tree-sitter-loader`, which finds grammars in directories and compiles
+  their C with the machine's compiler, which the editor never does; and a
   parser of our own.
 
 `deny.toml` bans `wasmtime` and `tree-sitter-loader` outright, and lets only
-the adapter depend on tree-sitter and the grammars. The grammars are Rust,
+the adapter depend on tree-sitter, the grammars and `libloading`. The grammars are Rust,
 for the editor's own language, JSON, which the Lean model reproduces, and
 Markdown's two grammars, the inline one as an injected layer ("Injections,
 indentation and text objects, as built", below).
@@ -2369,8 +2386,9 @@ properties. It is the seventh sub-port of the editor's port
 symbol it exports its language under, and an optional declared
 `ReparsePolicy`) and answers the registered `GrammarName` or a
 `RegistrationRefusal` value: not found, not loadable (no library this
-platform can open), unsupported ABI, missing symbol, or unsupported (the
-adapter loads no grammar at run time). The source carries no grammar kind:
+platform can open), unsupported ABI, missing symbol, or unsupported (a
+syntax that loads no grammar at run time, as the fake with no table; the
+real adapter loads native libraries since phase 2). The source carries no grammar kind:
 native libraries are the only run-time form, and a second would be a new
 field.
 
@@ -2416,15 +2434,64 @@ field.
   the disk. The registration properties (success, the override of a
   compiled-in name, the default policy, each refusal) are a contract of
   their own, `contract::registration::check`, separate from
-  `contract::check`, held against the fake alone in this phase; an adapter
-  that loads no grammar runs `contract::registration::check_unsupported`.
-  Each property is seen to bite on a broken registering syntax.
-- **The real adapter answers unsupported** for every registration and reads
-  no file (`crates/editor-syntax-treesitter/tests/registration.rs`); the
-  Lean job contract (`JobContract.grammarProperties`) holds the job model
-  with no table and the runner over the real service to that same answer.
-  "How grammars are loaded: compiled in", above, still holds until native
-  libraries are loaded (the roadmap's phase 2).
+  `contract::check`, held against the fake with its table and against the
+  real adapter on its fixture library; a syntax that loads no grammar runs
+  `contract::registration::check_unsupported`, as the fake with no table
+  does. Each property is seen to bite on a broken registering syntax.
+- **The real adapter loads native libraries** (phase 2, 2026-11-26;
+  "How grammars are loaded", above). Its `native` module refuses in this
+  order: a path that is not absolute is not found, with nothing read
+  (`dlopen` would search the system's paths for a bare name); a path the
+  disk says is not there is not found; any other answer of the disk, or a
+  file `dlopen` will not open, is not loadable; a symbol the library does
+  not export is a missing symbol; a language whose ABI version is outside
+  the pinned library's range is an unsupported ABI, refused before any
+  parser is made (`native::abi_supported`, pinned with version numbers).
+  `register` loads before it takes the registry's lock, so nothing that
+  reads the grammars waits for a `dlopen`; in the process the load runs on
+  the syntax worker's thread. The library is never unloaded. The fixture
+  is `crates/editor-syntax-fixture-ini`, a test-only crate whose build
+  script compiles a small INI grammar of ours (generated by the tree-sitter
+  CLI 0.27.2, checked in) and its fixture exports into a shared library:
+  `tree_sitter_ini`, the grammar, whose name is not compiled in;
+  `tree_sitter_json`, the same grammar under a compiled-in name; and
+  `tree_sitter_abi_0`, a language of ABI 0. It is a build-script product,
+  not a Cargo `cdylib`, because a `cdylib`'s path cannot reach another
+  crate's tests on stable Cargo and a Rust `cdylib` does not export a
+  static archive's C symbols. On it the adapter keeps
+  `contract::registration::check`
+  (`crates/editor-syntax-treesitter/tests/registration.rs`) and the syntax
+  contract on the INI grammar loaded at run time
+  (`tests/contract.rs`), drawn with the highlights query beside the library
+  (`Corpus::highlights`, since a registered grammar ships none);
+  `editor-ffi`'s `tests/grammars.rs` registers it through the C functions.
+  The Lean job contract (`JobContract.grammarProperties`, over a
+  `GrammarFixture`) holds the job model and the fake grammar service, each
+  given the table that describes the fixture library, and the runner over
+  the real service on the built library, to the same answers: the grammar
+  registered under `ini` for each policy, a library not there, a missing
+  symbol and ABI 0 each refused as itself. `mise run ffi-test` hands
+  `contract-test` the library's path, printed by the fixture crate's
+  binary.
+
+**Code signing and a loaded grammar** (2026-11-26; shared with the rdm
+task `packages-load-native-libraries-at-run-time`).
+
+- **Today.** The app is signed ad-hoc (`codesign --force -s -`, the
+  `editorApp` build, `mise run app`), without the hardened runtime, and is
+  not notarized (`packaging/macos/README.txt`; `docs/design/lean-runtime.md`).
+  Library validation is a protection of the hardened runtime, so it does
+  not apply, and `dlopen` loads a grammar library the app did not sign.
+- **Notarization** requires the hardened runtime, which turns library
+  validation on. That refuses a library not signed by Apple or with the
+  app's Team ID, which every package's grammar library is.
+- **What notarization must add** for a package's grammar to keep loading
+  with no step by the user: the `com.apple.security.cs.disable-library-validation`
+  entitlement on the app, or signing each staged grammar library with the
+  app's identity when the bundle or the set is built. A library built on
+  the user's machine by the user's own set can be covered only by the
+  entitlement.
+- This phase changes no signing.
 
 ### Highlights, as built
 

@@ -10,11 +10,12 @@
 //! grammar at run time: every source is refused as
 //! [`RegistrationRefusal::Unsupported`], and nothing it lists changes.
 //!
-//! In this phase [`check`] is held against the fake with a table alone
-//! ([`crate::fake::Libraries`], over [`crate::fake::libraries::corpus`]),
-//! and the real adapter, which loads no grammar yet, runs
-//! [`check_unsupported`]. Once the real adapter loads native libraries it
-//! runs [`check`] on its fixture library.
+//! [`check`] is held against the fake with a table
+//! ([`crate::fake::Libraries`], over [`crate::fake::libraries::corpus`]), in
+//! this module's tests, and against the real adapter on its fixture grammar
+//! library (`crates/editor-syntax-treesitter/tests/registration.rs`, over
+//! `editor-syntax-fixture-ini`). [`check_unsupported`] is held against
+//! [`crate::fake::Parens`], the fake with no table.
 //!
 //! Each property is seen to bite on a broken registering syntax written to
 //! break it, in this module's tests.

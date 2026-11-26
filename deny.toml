@@ -357,10 +357,13 @@
 # explicitly banned").
 #
 # The plain bans of `wasmtime` and `tree-sitter-loader` hold the decision
-# that grammars are compiled in (the adapter's crate docs, "How grammars
-# are loaded"): neither tree-sitter's `wasm` feature nor its loader enters
-# the graph unnoticed. Neither is in the graph, so neither could be seen to
-# bite on its own edge: with the `wasm` feature turned on, `cargo deny`
+# of how grammars are loaded (the adapter's crate docs, "How grammars are
+# loaded"): the editor never finds, fetches or compiles a grammar; it loads
+# native grammar libraries through `libloading`, and leaves WebAssembly
+# grammars set aside. So neither tree-sitter's `wasm` feature nor its
+# loader enters the graph unnoticed. Neither is in the graph, so neither
+# could be seen to bite on its own edge: with the `wasm` feature turned on,
+# `cargo deny`
 # could not resolve the graph from the index on 2026-11-16 (wasmtime
 # 48.0.8 wants a `wasmprinter` the index lacked). The form of a plain ban
 # was seen to bite instead, with `wasmtime`'s entry naming
@@ -399,6 +402,18 @@
 # registry crate. In the same commit it joined the wrappers of
 # `tree-sitter-language`: with the wrapper not yet there, it fails on the new
 # edge ("crate 'tree-sitter-language = 0.1.9' is explicitly banned").
+#
+# Native grammar libraries (2026-11-26, the syntax-runtime-grammars
+# roadmap's phase 2) brought three entries. `libloading` is how the Syntax
+# port's adapter opens a grammar library, in its `native` module; its
+# wrappers are the adapter and the third-party crates that already depend
+# on it, so no other crate of the workspace may load a library at run
+# time. The adapter joined the wrappers of `tree-sitter-language`: it names
+# `LanguageFn` once, to wrap a loaded library's language function, since
+# tree-sitter does not re-export it. And `editor-syntax-fixture-ini`, the
+# fixture grammar library built for tests, has as wrappers the two crates
+# whose tests load it, each by a dev-dependency, so the editor never links
+# it.
 #
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
@@ -568,8 +583,8 @@ deny = [
   { crate = "editor-syntax-fixture-ini", wrappers = ["editor-syntax-treesitter", "editor-ffi"], reason = "the fixture grammar library is built for tests alone: the adapter's contract and registration tests and editor-ffi's grammar wiring test load it, each by a dev-dependency; the editor never links it" },
   { crate = "streaming-iterator", wrappers = ["tree-sitter"], reason = "tree-sitter's query cursor iterates with it, and the adapter names it only through tree-sitter's re-export: no crate of the workspace depends on it" },
   { crate = "regex", wrappers = ["tree-sitter"], reason = "regular expressions are tree-sitter's, for a query's `#match?` predicates, behind the Syntax port: no crate of the workspace depends on it" },
-  { crate = "wasmtime", reason = "grammars are compiled in (crates/editor-syntax-treesitter, \"How grammars are loaded\"): tree-sitter's `wasm` feature, which loads grammars built as WebAssembly, stays off" },
-  { crate = "tree-sitter-loader", reason = "grammars are compiled in (crates/editor-syntax-treesitter, \"How grammars are loaded\"): nothing finds, builds or loads a grammar at run time" },
+  { crate = "wasmtime", reason = "the editor never finds, fetches or compiles a grammar, and loads native ones through `libloading` (crates/editor-syntax-treesitter, \"How grammars are loaded\"); WebAssembly grammars, tree-sitter's `wasm` feature, are set aside" },
+  { crate = "tree-sitter-loader", reason = "the editor never finds, fetches or compiles a grammar, and loads native ones through `libloading` (crates/editor-syntax-treesitter, \"How grammars are loaded\"): nothing finds or builds a grammar" },
   { crate = "regex-cursor", wrappers = ["editor-search-regex"], reason = "the regex library stays behind the search engine port: only its adapter crate may name its types" },
   { crate = "regex-automata", wrappers = ["regex-cursor", "regex", "globset", "ignore"], reason = "regex-cursor's engines are built on it, and so are regex's, tree-sitter's for a query's `#match?` predicates, and ignore's and globset's, which compile an ignore file's globs to regexes inside the library; it stays behind the search engine port, the Syntax port and the files port with them: no crate of the workspace may name it" },
   { crate = "regex-syntax", wrappers = ["editor-search-regex", "regex-cursor", "regex-automata", "regex", "proptest", "globset"], reason = "the regex syntax's tree is built by the search engine port's adapter alone, from the pattern tree of editor-search, so no pattern string in the library's syntax is ever made by a crate of the workspace; the other wrappers are the third-party crates that depend on it: regex-cursor and regex-automata, regex, tree-sitter's, proptest, for its generated strings, and globset, ignore's, which compiles an ignore file's globs to regexes inside the library" },

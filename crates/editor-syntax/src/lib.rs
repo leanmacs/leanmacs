@@ -60,9 +60,14 @@
 //! libraries keyed by path ([`fake::libraries::table`]).
 //! [`contract::registration::check`] holds a registering syntax to a
 //! [`contract::registration::RegistrationCorpus`] (success, the override of
-//! a compiled-in name, the default policy, each refusal), and
-//! [`contract::registration::check_unsupported`] holds one that loads no
-//! grammar to refusing every source as unsupported, changing nothing.
+//! a compiled-in name, the default policy, each refusal): the fake with its
+//! table keeps it here, and the real adapter, which loads native grammar
+//! libraries, on its fixture library in its own tests.
+//! [`contract::registration::check_unsupported`] holds a syntax that loads
+//! no grammar, as the fake with no table, to refusing every source as
+//! unsupported, changing nothing. A grammar that ships no query, as one
+//! registered ships none, is held to [`contract::check`] with the
+//! highlights query beside its library ([`contract::Corpus::highlights`]).
 //!
 //! # Where an addition goes
 //!
@@ -78,7 +83,7 @@
 //! | A rule of what a refresh does | [`session`] ("The refresh round") | Its unit tests, single-threaded, and the contract's [`contract::CONVERGES`] |
 //! | A grammar | The real adapter's table, with a corpus its contract test runs | That crate's `tests/contract.rs` |
 //! | A rule of registration: the name, the override, the default policy, provenance | [`registry`] | Its unit tests; mirrored in `lean/Editor/SyntaxTree/Registration/Model.lean` |
-//! | Something more asked of registration | A property of [`contract::registration`], with a broken registering syntax it catches | Held against [`fake::Libraries`] in the contract's tests |
+//! | Something more asked of registration | A property of [`contract::registration`], with a broken registering syntax it catches | Held against [`fake::Libraries`] in the contract's tests, and against the real adapter on its fixture library in its `tests/registration.rs` |
 //! | When a registration is answered | [`worker`] ("Registrations") | Its unit tests, stepped by hand, and `tests/worker.rs` on a real thread |
 //! | A grammar's reparse policy | The real adapter's table, and the `policy` of its corpus | The contract's [`contract::REPARSE_POLICY`] and [`contract::GRAMMAR_QUALITY`]; the real Rust grammar's convergence after the idle interval in the adapter's `tests/refresh.rs` |
 

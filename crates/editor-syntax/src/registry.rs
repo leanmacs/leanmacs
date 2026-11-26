@@ -5,8 +5,8 @@
 //! An adapter keeps a [`Registry`] of its own grammar type behind a lock
 //! (its `register` takes `&self`), and hands [`Registry::register`] the
 //! step that turns a [`GrammarSource`] into its grammar, or a refusal: the
-//! fake's table lookup ([`crate::fake::Libraries`]), and a real library's
-//! `dlopen` once it loads one. Everything else is decided here:
+//! fake's table lookup ([`crate::fake::Libraries`]), and the real adapter's
+//! `dlopen` of a native grammar library. Everything else is decided here:
 //!
 //! - **The name** is the source's ([`GrammarSource::name`]): its symbol
 //!   without the `tree_sitter_` prefix.

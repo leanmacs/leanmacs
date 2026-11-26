@@ -5,8 +5,9 @@
 //! The registry of grammars is state of the process's syntax service
 //! ([`crate::syntax`]), held by its worker (`editor_syntax::worker`,
 //! "Registrations"), so a registration is a request on the worker's queue,
-//! answered before its next round. From the next phase on, answering one
-//! is file I/O (a `dlopen`), and it waits behind any round in progress, so
+//! answered before its next round. Answering one is file I/O (the real
+//! adapter's `dlopen` of a native grammar library), and it waits behind any
+//! round in progress, so
 //! the editor thread never waits for it: in Lean it is a request a job
 //! awaits (`JobRequest.grammar`, `lean/Editor/Job.lean`), in the shape of
 //! the other services here (the crate docs, "Services and completions").
