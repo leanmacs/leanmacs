@@ -1,0 +1,56 @@
+# A conversation with an agent, run stepped by the fixture harness
+# (`fixture-test`; docs/dev-practices/headless-mode.md, "A package's
+# fixtures"): its service is agents-api's fake over the conversation script
+# (`AgentsApiTest.FixtureSupport`), and its agent's child the process fake's,
+# paused for ever (`AcpTest.FixtureSupport`), so no real adapter is started.
+# It is stepped only: through the CLI it would start the user's real
+# `claude-agent-acp`, so it has no entry in the real-thread set. What it
+# prints must be exactly `expected`.
+#
+# The file opened is the working directory's marker, so its buffer is in
+# the workspace `/work/lean`, where the session starts. The prompt's reply,
+# the tool call folded, the usage, the title and the mode the session
+# reports are shown; `/Edit` finds the tool call's row and `<Tab>` unfolds
+# it to its final diff; a cancel with no turn in flight says so; and a stop
+# ends the session.
+
+reload
+settle
+
+key : Semicolon shift
+commit e /work/lean/lakefile.lean
+key <Enter> Enter -
+settle
+
+key : Semicolon shift
+commit agent-start
+key <Enter> Enter -
+settle
+scene
+
+key : Semicolon shift
+commit agent-prompt Read notes.txt.
+key <Enter> Enter -
+settle
+advance 50
+settle
+scene
+
+key / Slash -
+commit Edit
+key <Enter> Enter -
+key <Tab> Tab -
+settle
+scene
+
+key : Semicolon shift
+commit agent-cancel
+key <Enter> Enter -
+settle
+scene
+
+key : Semicolon shift
+commit agent-stop
+key <Enter> Enter -
+settle
+scene

@@ -1,0 +1,50 @@
+reload 1: installed, 1 files, 0 commands
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+job 1 load-file: started
+job 1 load-file: ok
+job 2 find-workspace: started
+job 2 find-workspace: ok
+job 3 find-mode-markers: started
+job 3 find-mode-markers: ok
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+job 4 agent-session: started
+job 4 agent-session: ok
+scene 0x0, focused 4, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "lakefile.lean" +4, mode-line.inactive "/work/lean" +4 | mode-line.inactive "code" +4, mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 4 0,0 0x0: "claude-code in /work/lean\ntitle: (untitled)\nmode: Auto (mode-auto)\nusage: -\n\n-- starting claude-code in /work/lean\n", scroll 0, selections 0..0, padding 8 8
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*agent: claude-code lean@lean*" +4, mode-line.modified "●" +4 | mode-line.secondary "agent-conversation" +4, mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+job 5 agent-send: started
+job 5 agent-send: ok
+job 4 agent-session: ok
+scene 0x0, focused 4, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "lakefile.lean" +4, mode-line.inactive "/work/lean" +4 | mode-line.inactive "code" +4, mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 4 0,0 0x0: "claude-code in /work/lean\ntitle: Example title\nmode: Ask (mode-ask)\nusage: 1200 of 200000, 0.01 USD\n\n-- starting claude-code in /work/lean\n> Read notes.txt.\nDone.\n[+] edit: Edit notes.txt (completed) /work/example/notes.txt\n-- turn 1: end_turn\n", scroll 0, selections 0..0, padding 8 8
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*agent: claude-code lean@lean*" +4, mode-line.modified "●" +4 | mode-line.secondary "agent-conversation" +4, mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
+key arrived: / Slash -
+key arrived: <Enter> Enter -
+key arrived: <Tab> Tab -
+scene 0x0, focused 4, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "lakefile.lean" +4, mode-line.inactive "/work/lean" +4 | mode-line.inactive "code" +4, mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 4 0,0 0x0: "claude-code in /work/lean\ntitle: Example title\nmode: Ask (mode-ask)\nusage: 1200 of 200000, 0.01 USD\n\n-- starting claude-code in /work/lean\n> Read notes.txt.\nDone.\n[-] edit: Edit notes.txt (completed) /work/example/notes.txt\n  /work/example/notes.txt\n      alpha\n    - beta\n    + gamma\n-- turn 1: end_turn\n", scroll 0, selections 163..163, padding 8 8
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*agent: claude-code lean@lean*" +4, mode-line.modified "●" +4 | mode-line.secondary "agent-conversation" +4, mode-line.secondary "9:1" +4, mode-line.secondary "64%" +4
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 0x0, focused 4, echo "agent-cancel: no turn in flight", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "lakefile.lean" +4, mode-line.inactive "/work/lean" +4 | mode-line.inactive "code" +4, mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 4 0,0 0x0: "claude-code in /work/lean\ntitle: Example title\nmode: Ask (mode-ask)\nusage: 1200 of 200000, 0.01 USD\n\n-- starting claude-code in /work/lean\n> Read notes.txt.\nDone.\n[-] edit: Edit notes.txt (completed) /work/example/notes.txt\n  /work/example/notes.txt\n      alpha\n    - beta\n    + gamma\n-- turn 1: end_turn\n", scroll 0, selections 163..163, padding 8 8
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*agent: claude-code lean@lean*" +4, mode-line.modified "●" +4 | mode-line.secondary "agent-conversation" +4, mode-line.secondary "9:1" +4, mode-line.secondary "64%" +4
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 0x0, focused 4, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "lakefile.lean" +4, mode-line.inactive "/work/lean" +4 | mode-line.inactive "code" +4, mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
+view 4 0,0 0x0: "claude-code in /work/lean\ntitle: Example title\nmode: Ask (mode-ask)\nusage: 1200 of 200000, 0.01 USD\n\n-- starting claude-code in /work/lean\n> Read notes.txt.\nDone.\n[-] edit: Edit notes.txt (completed) /work/example/notes.txt\n  /work/example/notes.txt\n      alpha\n    - beta\n    + gamma\n-- turn 1: end_turn\n-- session stopped\n", scroll 0, selections 163..163, padding 8 8
+status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*agent: claude-code lean@lean*" +4, mode-line.modified "●" +4 | mode-line.secondary "agent-conversation" +4, mode-line.secondary "9:1" +4, mode-line.secondary "60%" +4

@@ -1,3 +1,7 @@
 # lean-fmt's config for this package (`mise run lean-fmt`, through
-# tools/package-set.sh fmt). Every file is checked with the defaults, as
-# the core is: this package holds no headless fixture.
+# tools/package-set.sh fmt). The Lean files under `tests/` are no modules of
+# this package and are not built with it: the headless fixture's config
+# files, each a module of a config directory, another Lake package, which
+# the editor elaborates at runtime. Everything else is checked with the
+# defaults, as the core is.
+exclude = ["tests/**"]
