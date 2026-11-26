@@ -350,6 +350,12 @@ mod tests {
         fn reparse_policy(&self, _: &GrammarName) -> Option<crate::ReparsePolicy> {
             None
         }
+        fn register(
+            &self,
+            _: &crate::GrammarSource,
+        ) -> Result<GrammarName, crate::RegistrationRefusal> {
+            Err(crate::RegistrationRefusal::Unsupported)
+        }
         fn parse(&self, _: &mut (), _: &Snapshot, _: Option<&()>) {}
         fn edit(&self, _: &mut (), _: &InputEdit) {}
         fn compile(&self, _: &GrammarName, _: &str) -> Result<(), QueryError> {

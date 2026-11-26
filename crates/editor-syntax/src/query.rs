@@ -216,6 +216,12 @@ mod tests {
         fn reparse_policy(&self, grammar: &GrammarName) -> Option<crate::ReparsePolicy> {
             Parens.reparse_policy(grammar)
         }
+        fn register(
+            &self,
+            _: &crate::GrammarSource,
+        ) -> Result<GrammarName, crate::RegistrationRefusal> {
+            Err(crate::RegistrationRefusal::Unsupported)
+        }
         fn parse(
             &self,
             parser: &mut ParensParser,

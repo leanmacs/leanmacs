@@ -918,6 +918,10 @@ pub(crate) mod tests {
     ///
     /// Its grammar's policy is `policy`: incremental by default, and none
     /// for a test of a grammar that declares none.
+    ///
+    /// It refuses every registration as unsupported, and logs each
+    /// registration and each parse in `calls`, in the order they came:
+    /// `register <symbol>` and `parse`.
     pub(crate) struct Recording {
         pub(crate) olds: Mutex<Vec<Option<Vec<InputEdit>>>>,
         pub(crate) old_nodes: Mutex<Vec<Option<Vec<Node>>>>,
@@ -925,6 +929,7 @@ pub(crate) mod tests {
         pub(crate) hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
         pub(crate) recovers: Recovers,
         pub(crate) policy: Option<ReparsePolicy>,
+        pub(crate) calls: Mutex<Vec<String>>,
     }
 
     /// What [`Recording`]'s incremental parse of a text with an error
@@ -973,6 +978,7 @@ pub(crate) mod tests {
                 hook: Mutex::default(),
                 recovers: Recovers::AsFresh,
                 policy: Some(ReparsePolicy::Incremental),
+                calls: Mutex::default(),
             }
         }
     }
@@ -991,12 +997,20 @@ pub(crate) mod tests {
         fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy> {
             Parens.reparse_policy(grammar).and(self.policy)
         }
+        fn register(
+            &self,
+            source: &crate::GrammarSource,
+        ) -> Result<GrammarName, crate::RegistrationRefusal> {
+            lock(&self.calls).push(format!("register {}", source.symbol));
+            Err(crate::RegistrationRefusal::Unsupported)
+        }
         fn parse(
             &self,
             parser: &mut ParensParser,
             text: &Snapshot,
             old: Option<&ParensTree>,
         ) -> ParensTree {
+            lock(&self.calls).push("parse".to_owned());
             lock(&self.olds).push(old.map(|old| old.edits().to_vec()));
             lock(&self.old_nodes).push(old.map(|old| Parens.nodes(old)));
             if let Some(hook) = lock(&self.hook).take() {

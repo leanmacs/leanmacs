@@ -38,11 +38,13 @@ use editor_text::{ChangeSet, InputEdit, Origin, Revision, Snapshot, Text, Transa
 
 use crate::highlight::{HighlightSpan, Highlighter};
 use crate::port::{
-    Capture, GrammarName, Match, Node, QueryError, QueryErrorKind, QueryKind, ReparsePolicy,
-    Setting, Syntax,
+    Capture, GrammarName, GrammarSource, Match, Node, QueryError, QueryErrorKind, QueryKind,
+    RegistrationRefusal, ReparsePolicy, Setting, Syntax,
 };
 use crate::query::{captures_in, flatten, overlaps, widened};
 use crate::session::{Consumer, Latest, Outcome, Parsed, Session, Source};
+
+pub mod registration;
 
 /// What is language-specific in the contract: a grammar, texts of it, and
 /// queries.
@@ -1061,6 +1063,9 @@ impl<S: Syntax> Syntax for Watched<S> {
     fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy> {
         self.syntax.reparse_policy(grammar)
     }
+    fn register(&self, source: &GrammarSource) -> Result<GrammarName, RegistrationRefusal> {
+        self.syntax.register(source)
+    }
     fn parse(&self, parser: &mut S::Parser, text: &Snapshot, old: Option<&S::Tree>) -> S::Tree {
         self.olds
             .lock()
@@ -1432,6 +1437,10 @@ mod tests {
                 parser,
                 remembered: None,
             })
+        }
+
+        fn register(&self, _: &GrammarSource) -> Result<GrammarName, RegistrationRefusal> {
+            Err(RegistrationRefusal::Unsupported)
         }
 
         fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy> {

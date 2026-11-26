@@ -99,6 +99,12 @@ impl Syntax for Gated {
     fn reparse_policy(&self, grammar: &GrammarName) -> Option<editor_syntax::ReparsePolicy> {
         Parens.reparse_policy(grammar)
     }
+    fn register(
+        &self,
+        _: &editor_syntax::GrammarSource,
+    ) -> Result<GrammarName, editor_syntax::RegistrationRefusal> {
+        Err(editor_syntax::RegistrationRefusal::Unsupported)
+    }
     fn parse(
         &self,
         parser: &mut ParensParser,

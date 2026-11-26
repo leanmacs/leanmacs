@@ -52,9 +52,13 @@ use editor_text::{InputEdit, Point, Snapshot};
 
 use crate::contract::Corpus;
 use crate::port::{
-    Capture, GrammarName, Match, MatchCapture, Node, QueryError, QueryErrorKind, QueryKind,
-    ReparsePolicy, Setting, Syntax,
+    Capture, GrammarName, GrammarSource, Match, MatchCapture, Node, QueryError, QueryErrorKind,
+    QueryKind, RegistrationRefusal, ReparsePolicy, Setting, Syntax,
 };
+
+pub mod libraries;
+
+pub use libraries::Libraries;
 
 /// The fake: the `parens` grammar.
 #[derive(Debug, Default, Clone, Copy)]
@@ -75,6 +79,25 @@ ERROR @error
 
 /// The named kinds of the `parens` grammar.
 const NAMED_KINDS: [&str; 4] = ["document", "list", "atom", "ERROR"];
+
+/// The two characters a grammar of the fake's shape opens and closes a list
+/// with: `(` and `)` for `parens`, and others for the grammars the fake with
+/// a table registers ([`Libraries`]). Everything else about the grammar is
+/// the same: what an atom is, how an error and a missing close are made, and
+/// how a query is spelled, with the two characters in place of the parens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Delimiters {
+    /// What opens a list.
+    pub open: char,
+    /// What closes one.
+    pub close: char,
+}
+
+/// The `parens` grammar's delimiters.
+pub const PARENS: Delimiters = Delimiters {
+    open: '(',
+    close: ')',
+};
 
 /// The fake's parser. It holds nothing: every parse reads the whole text.
 #[derive(Debug, Default)]
@@ -154,10 +177,7 @@ impl Syntax for Parens {
     }
 
     fn parse(&self, _: &mut ParensParser, text: &Snapshot, _: Option<&ParensTree>) -> ParensTree {
-        ParensTree {
-            nodes: Arc::new(parse(&text.to_string(), text)),
-            edits: Vec::new(),
-        }
+        parse_whole(text, PARENS)
     }
 
     fn parse_in(
@@ -166,24 +186,7 @@ impl Syntax for Parens {
         text: &Snapshot,
         ranges: &[Range<usize>],
     ) -> ParensTree {
-        let end = ranges.last().map_or(0, |range| range.end);
-        let source: String = text
-            .to_string()
-            .char_indices()
-            .take_while(|(offset, _)| *offset < end)
-            .map(|(offset, c)| {
-                let inside = ranges.iter().any(|range| range.contains(&offset));
-                match c {
-                    _ if inside => c.to_string(),
-                    '\n' => "\n".to_owned(),
-                    _ => " ".repeat(c.len_utf8()),
-                }
-            })
-            .collect();
-        ParensTree {
-            nodes: Arc::new(parse(&source, text)),
-            edits: Vec::new(),
-        }
+        parse_ranges(text, ranges, PARENS)
     }
 
     fn edit(&self, tree: &mut ParensTree, edit: &InputEdit) {
@@ -197,7 +200,12 @@ impl Syntax for Parens {
                 offset: 0,
             });
         }
-        compile(source)
+        compile(source, PARENS)
+    }
+
+    fn register(&self, _: &GrammarSource) -> Result<GrammarName, RegistrationRefusal> {
+        // The fake with no table: it loads no grammar.
+        Err(RegistrationRefusal::Unsupported)
     }
 
     fn shipped_query(&self, grammar: &GrammarName, kind: QueryKind) -> Option<String> {
@@ -279,7 +287,7 @@ impl Syntax for Parens {
 /// and its children.
 struct Built {
     /// Its kind.
-    kind: &'static str,
+    kind: String,
     /// Whether it is named.
     named: bool,
     /// Its field.
@@ -297,13 +305,13 @@ struct Built {
 impl Built {
     /// A node of no children.
     fn leaf(
-        kind: &'static str,
+        kind: impl Into<String>,
         named: bool,
         field: Option<&'static str>,
         range: Range<usize>,
     ) -> Self {
         Self {
-            kind,
+            kind: kind.into(),
             named,
             field,
             range,
@@ -318,7 +326,7 @@ impl Built {
     fn flatten(self, depth: u32, text: &Snapshot, nodes: &mut Vec<Node>) {
         let point = |offset| text.offset_to_point(offset).unwrap_or(Point::new(0, 0));
         nodes.push(Node {
-            kind: self.kind.to_owned(),
+            kind: self.kind,
             named: self.named,
             field: self.field.map(str::to_owned),
             depth,
@@ -352,11 +360,47 @@ fn named_children(nodes: &[Node], at: usize) -> Vec<Range<usize>> {
         .collect()
 }
 
-/// The nodes of `source` in the `parens` grammar, in pre-order, with points
-/// of `text`: a text `source` is a prefix of byte for byte, or a version of
-/// one with only blanks in place of some bytes. A list still open closes
-/// where `source` ends, and the root is over the whole of `text`.
-fn parse(source: &str, text: &Snapshot) -> Vec<Node> {
+/// The tree of the whole of `text` in the grammar of `delimiters`.
+fn parse_whole(text: &Snapshot, delimiters: Delimiters) -> ParensTree {
+    ParensTree {
+        nodes: Arc::new(parse(&text.to_string(), text, delimiters)),
+        edits: Vec::new(),
+    }
+}
+
+/// The tree of the bytes of `text` in `ranges`, in the grammar of
+/// `delimiters`: every byte outside them read as a blank (a line feed as
+/// itself), and the text as ending where the last range ends.
+fn parse_ranges(text: &Snapshot, ranges: &[Range<usize>], delimiters: Delimiters) -> ParensTree {
+    let end = ranges.last().map_or(0, |range| range.end);
+    let source: String = text
+        .to_string()
+        .char_indices()
+        .take_while(|(offset, _)| *offset < end)
+        .map(|(offset, c)| {
+            let inside = ranges.iter().any(|range| range.contains(&offset));
+            match c {
+                _ if inside => c.to_string(),
+                '\n' => "\n".to_owned(),
+                _ => " ".repeat(c.len_utf8()),
+            }
+        })
+        .collect();
+    ParensTree {
+        nodes: Arc::new(parse(&source, text, delimiters)),
+        edits: Vec::new(),
+    }
+}
+
+/// The nodes of `source` in the grammar of `delimiters`, in pre-order, with
+/// points of `text`: a text `source` is a prefix of byte for byte, or a
+/// version of one with only blanks in place of some bytes. A list still open
+/// closes where `source` ends, and the root is over the whole of `text`.
+fn parse(source: &str, text: &Snapshot, delimiters: Delimiters) -> Vec<Node> {
+    let Delimiters {
+        open: opens,
+        close: closes,
+    } = delimiters;
     // The children of the root, and of each list still open, innermost
     // last, with where each list opened.
     let mut root: Vec<Built> = Vec::new();
@@ -369,7 +413,7 @@ fn parse(source: &str, text: &Snapshot) -> Vec<Node> {
         None => root.push(node),
     };
     for (offset, c) in source.char_indices().chain([(source.len(), ' ')]) {
-        let ends_atom = is_blank(c) || c == '(' || c == ')';
+        let ends_atom = is_blank(c) || c == opens || c == closes;
         if ends_atom {
             if let Some(start) = atom.take() {
                 push(
@@ -385,23 +429,33 @@ fn parse(source: &str, text: &Snapshot) -> Vec<Node> {
             break;
         }
         match c {
-            '(' => open.push((
+            _ if c == opens => open.push((
                 offset,
-                vec![Built::leaf("(", false, Some("open"), offset..offset + 1)],
+                vec![Built::leaf(
+                    opens,
+                    false,
+                    Some("open"),
+                    offset..offset + c.len_utf8(),
+                )],
             )),
-            ')' => match open.pop() {
+            _ if c == closes => match open.pop() {
                 Some((start, mut children)) => {
-                    children.push(Built::leaf(")", false, Some("close"), offset..offset + 1));
+                    children.push(Built::leaf(
+                        closes,
+                        false,
+                        Some("close"),
+                        offset..offset + c.len_utf8(),
+                    ));
                     let list = Built {
                         children,
-                        ..Built::leaf("list", true, None, start..offset + 1)
+                        ..Built::leaf("list", true, None, start..offset + c.len_utf8())
                     };
                     push(&mut open, &mut root, list);
                 }
                 None => {
                     let error = Built {
                         error: true,
-                        ..Built::leaf("ERROR", true, None, offset..offset + 1)
+                        ..Built::leaf("ERROR", true, None, offset..offset + c.len_utf8())
                     };
                     push(&mut open, &mut root, error);
                 }
@@ -413,7 +467,7 @@ fn parse(source: &str, text: &Snapshot) -> Vec<Node> {
     while let Some((start, mut children)) = open.pop() {
         children.push(Built {
             missing: true,
-            ..Built::leaf(")", false, Some("close"), end..end)
+            ..Built::leaf(closes, false, Some("close"), end..end)
         });
         let list = Built {
             children,
@@ -430,8 +484,10 @@ fn parse(source: &str, text: &Snapshot) -> Vec<Node> {
     nodes
 }
 
-/// The query `source` spells, in the `parens` grammar.
-fn compile(source: &str) -> Result<ParensQuery, QueryError> {
+/// The query `source` spells, in the grammar of `delimiters`.
+fn compile(source: &str, delimiters: Delimiters) -> Result<ParensQuery, QueryError> {
+    let open = format!("\"{}\"", delimiters.open);
+    let close = format!("\"{}\"", delimiters.close);
     let mut query = ParensQuery {
         patterns: Vec::new(),
         names: Vec::new(),
@@ -456,8 +512,8 @@ fn compile(source: &str) -> Result<ParensQuery, QueryError> {
             return Err(syntax);
         };
         let kind = match kind {
-            "\"(\"" => Kind::Anonymous("(".to_owned()),
-            "\")\"" => Kind::Anonymous(")".to_owned()),
+            _ if kind == open => Kind::Anonymous(delimiters.open.to_string()),
+            _ if kind == close => Kind::Anonymous(delimiters.close.to_string()),
             kind if NAMED_KINDS.contains(&kind) => Kind::Named(kind.to_owned()),
             kind if kind.chars().all(|c| c.is_alphanumeric() || c == '_') => {
                 return Err(QueryError {

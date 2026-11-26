@@ -319,6 +319,28 @@ pub trait Syntax: Send + Sync + 'static {
     /// it.
     fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy>;
 
+    /// Registers the grammar `source` names, and answers the name it is
+    /// registered under ([`GrammarSource::name`]), or why not.
+    ///
+    /// On success the name is listed by [`grammars`](Self::grammars), opens
+    /// a parser and declares the source's policy, [`ReparsePolicy::Whole`]
+    /// when the source declares none. A name already registered, or compiled
+    /// in, is replaced for parsers opened afterwards; a parser opened before
+    /// keeps its grammar. A registered grammar ships no query
+    /// ([`shipped_query`](Self::shipped_query) answers `None` for it, a
+    /// compiled-in name it replaces included): its queries are read from
+    /// beside its library and handed in by the caller. A refusal leaves
+    /// every grammar as it was. An implementation that loads no grammar at
+    /// run time answers [`RegistrationRefusal::Unsupported`] for every
+    /// source.
+    ///
+    /// The decisions are the core's ([`crate::registry`]), and an adapter
+    /// supplies only the load step. In production a registration reaches
+    /// it only from the worker ([`crate::Handle::register`]), in order with
+    /// the rounds. The properties are
+    /// [`crate::contract::registration`]'s.
+    fn register(&self, source: &GrammarSource) -> Result<GrammarName, RegistrationRefusal>;
+
     /// The tree of `text`. With `old`, a tree of an earlier text that has
     /// been told every edit since ([`edit`](Self::edit)), the parse reuses
     /// what the edits left alone; the tree is the same either way.
