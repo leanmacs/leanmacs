@@ -208,9 +208,9 @@ jobs:
       commit: ${{ github.sha }}
       ref: ${{ github.sha }}
 
-  # The secret scan (`mise run secrets-scan`: the probe, then gitleaks over
-  # main's history, merges and the uncommitted tree; docs/dev-practices/
-  # publishing.md, "The secret scan"). A job of its own because it needs the
+  # The secret scan (`mise run secrets-scan`: gitleaks over main's history,
+  # merges and the uncommitted tree; docs/dev-practices/publishing.md, "The
+  # secret scan"). A job of its own because it needs the
   # full history, which the gate does not, and only gitleaks.
   secrets-scan:
     runs-on: ubuntu-24.04
@@ -235,5 +235,5 @@ jobs:
       # which are public once pushed, so they are scanned too.
       - name: Make the local main the commit under test
         run: '[ "$(git rev-parse --abbrev-ref HEAD)" = main ] || git branch --force main HEAD'
-      # The probe sets its own git identity; the scan reads only.
+      # The scan reads only.
       - run: mise run secrets-scan
