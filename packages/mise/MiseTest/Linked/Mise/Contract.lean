@@ -1,6 +1,5 @@
 import Editor.Job
 import Editor.Job.Contract
-import Editor.Job.Runner
 import Editor.Process
 import Editor.Process.Environment
 import Editor.RealHost

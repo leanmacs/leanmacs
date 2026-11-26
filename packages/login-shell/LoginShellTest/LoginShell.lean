@@ -1,4 +1,3 @@
-import Editor.Config.Registry
 import Editor.Job
 import Editor.Job.Model
 import Editor.Process
