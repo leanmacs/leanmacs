@@ -167,7 +167,10 @@ impl<P: Processes + 'static> Handed<P> {
 
     /// Writes every byte of `bytes` to the child's standard input, blocking
     /// until they are in its pipe: after a job's write the writer holds,
-    /// if there is one.
+    /// if there is one. A consumer writes from one thread at a time: two
+    /// writes from clones at once are each written whole, in the order they
+    /// reach the slot, but the replies are not told apart, so each may be
+    /// answered with the other's.
     ///
     /// # Errors
     ///
