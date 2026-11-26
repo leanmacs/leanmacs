@@ -51,7 +51,9 @@ requests, so nothing of `Std` or `Lean` reaches config's closure.
   names (`Editor/Setup.lean`; config's choice, else a package's default,
   else `inherited`). Each is given for each mode (`Host`), and a source that
   gives none in a mode is left out there (`Registered.sources`). A base name
-  nothing answers to gives no base, and the host keeps the one it had. With
+  nothing answers to gives no base, which would keep the one installed; the
+  reload reducer refuses such a config before the host installs anything
+  (`Editor/Config/Reload.lean`). With
   nothing registered a child gets the editor's own environment, and no
   lookup runs. A config rejected at start-up leaves nothing installed until
   a reload installs one.
@@ -446,7 +448,8 @@ source for each mode. A host installs them at every reload that installs
 (`Environments.install`). -/
 structure Registered where
   /-- The base for each mode; `none` keeps the base installed before, which
-  is what a name no registered base answers to comes to. -/
+  is what a name no registered base answers to comes to (the reload reducer
+  refuses such a config, so the host never installs one). -/
   base : Option (Host → Base) := some fun _ => .inherited
   /-- The directory sources, in order; one that gives `none` in a mode is
   left out there. -/

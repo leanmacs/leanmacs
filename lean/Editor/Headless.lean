@@ -270,10 +270,12 @@ as before, so reload and job completion work as they did.
   (`EnvironmentApi.ofRegistry`: every directory source registered, and the
   base `Config.Registry.baseName` names) and hands the layers to
   `Job.Environments.install`, which drops every cached environment, the
-  base's and each directory's. A base name nothing answers to installs no
-  base, so the environments keep the one they had, and the reload's report
-  names it (`Config.Report.unknownBase`), which is printed as `base: …` and
-  said in the echo area. A config rejected at start-up installs nothing, so
+  base's and each directory's. A config whose registry names a base
+  nothing answers to is rejected by the reducer (`Config.Report.baseRefused`,
+  `Editor/Config/Reload.lean`), so nothing is installed and the
+  environments keep the one they had; its error is printed as a
+  `diagnostic:` line and said in the echo area. A config rejected at
+  start-up, for an unknown base or anything else, installs nothing, so
   children start with the editor's own environment until a reload
   installs. Pinned by `ConfigTest.environmentHostChecks`.
 - **The host is handed its display** (`Collaborators.display`), a maker
@@ -1279,7 +1281,6 @@ def reportLines (report : Config.Report) : Array String :=
     report.unknownStyles.map (fun name => s!"style: {Completion.Style.unknown name}") ++
     report.unknownDisplays.map (fun name => s!"display: {Completion.Display.unknown name}") ++
     report.unknownAtPoints.map (fun name => s!"at-point: {Completion.AtPoint.unknown name}") ++
-    report.unknownBase.toArray.map (fun sentence => s!"base: {sentence}") ++
     report.unusableRules.map fun sentence => s!"rule: {sentence}"
 
 /-- How a job that has ended is reported, after `job <id> <name>: `. -/

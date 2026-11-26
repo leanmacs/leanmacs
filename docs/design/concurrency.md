@@ -857,8 +857,9 @@ and changes on disk:
     (config's, else a package's default, else `inherited`). At every reload
     that installs, the host reads them (`EnvironmentApi.ofRegistry`) and
     installs them in the shared state (`Job.Environments.install`); a source
-    may give none in a mode, and a base name nothing answers to keeps the
-    base installed before, which the reload's report says. With nothing
+    may give none in a mode, and a config whose registry names a base
+    nothing answers to is rejected at reload, so nothing is installed and
+    the base installed before is kept. With nothing
     registered, children start exactly as their commands say. The first job
     to resolve a source's executable keeps the answer in the shared state
     until a reload. The core names no source.

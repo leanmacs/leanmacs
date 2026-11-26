@@ -3012,7 +3012,7 @@ modules that imported them or `FilesApi` for a feature's sake, moved out.
 | `FilesApi` | `Editor.Test.Ex` | the kit's ex line binds `w`, `e` and their kin to the names files-api declares | the kit's stand-in, while tests use it |
 | `FilesApi` | `Editor.Test.Workspace` | the kit's stand-in: its attach registers at `FilesApi.Opened` in place of the workspace's | the kit's stand-in, while tests use it |
 | `EnvironmentApi` | `Editor.Headless` | at every reload that installs, the host reads the registry's environment sources through it (`EnvironmentApi.ofRegistry`) and installs the layers | for good: the core reads a child's layers through it |
-| `EnvironmentApi` | `Editor.Config.Reload` | the reload's report names a base nothing answers to (`Report.unknownBase`) | for good: the core reads a child's layers through it |
+| `EnvironmentApi` | `Editor.Config.Reload` | a reload whose registry names a base nothing answers to is rejected, its error listing the bases (`Report.baseRefused`) | for good: the core reads a child's layers through it |
 | `EnvironmentApi` | `Editor` (the config base) | config registers sources at its points on any set | for good: the core reads a child's layers through it |
 
 ### The core interface library `environment-api`
@@ -3036,8 +3036,9 @@ package may import it. Its module docs say where an addition goes.
   config's choice, else the latest package's default (a package's
   `environmentBase` is a default, as its `useStyleFor` is), else
   `inherited` (`Config.Registry.baseName`). A name nothing answers to
-  installs, its report says so with the bases listed, and children keep the
-  base they had.
+  refuses the config at reload, with a diagnostic that lists the bases
+  there are, and children keep the base they had; at start-up nothing of
+  config's is installed, as for any rejected start-up reload.
 - **`processEnvironment` is retired.** A config that calls it is refused
   with a message naming its replacement: leave the package `mise` out for
   no lookup, `Mise.executable` for mise at a path

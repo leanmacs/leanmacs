@@ -265,8 +265,9 @@ place, so config's `Mise.executable` replaces the mise package's value
 where the package put it. `EnvironmentApi.BaseSource` is a choice by name
 (`BaseSource.choose`), the name given by the core's setting
 `environmentBase`, beside the core's built-in `inherited`, launchd's
-environment; a name nothing answers to is said at reload, and children keep
-the base they had.
+environment; a name nothing answers to refuses the config at reload, with a
+diagnostic that lists the bases there are, and children keep the base they
+had.
 
 ### How the values travel
 

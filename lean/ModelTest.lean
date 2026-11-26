@@ -1008,7 +1008,10 @@ The config session's decisions are tested here too, with no elaborator:
   editor's starts one build after its report and keeps what it read; none
   while a build is in flight, whoever started it, and one again once it
   ended; none for a reload that matches; and what it has to say instead
-  (no `lake`) is said once;
+  (no `lake`) is said once. A reload whose registry would name a base of a
+  child's environment no source answers to, config's choice or a package's
+  default, is rejected with an error that lists the bases, and the config
+  loaded stays;
 - `reloadHintChecks`: an install replaces config's descriptions and prefix
   names with its bindings, so a later config without them clears them;
 - `packageChecks`: packages (`Editor/Package.lean`) and registering them

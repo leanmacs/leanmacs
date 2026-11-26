@@ -2299,9 +2299,10 @@ def baseNameOf (sources : Process.Sources) : String :=
 child's environment"), over the headless host and the real elaborator: a
 reload that installs puts the layers the registry gives
 (`EnvironmentApi.ofRegistry`) in the state every job shares and drops every
-entry, the base's included; a rejected one changes neither; a base no source
-answers to is said and the base is kept; and a message the environments
-report is the echo of the next scene. -/
+entry, the base's included; a rejected one changes neither; a config that
+chooses a base no source answers to is rejected, with a diagnostic that lists
+the bases, and the base is kept; and a message the environments report is the
+echo of the next scene. -/
 def environmentHostChecks (context : Context) : List Check :=
   [{  name :=
         "an installed reload whose config registers a directory source puts that source in the host's environments and drops every entry, the base's included; a rejected reload changes neither"
@@ -2330,7 +2331,7 @@ def environmentHostChecks (context : Context) : List Check :=
           let sources := (← state.get).sources
           return baseNameOf sources == Process.inheritedName && sources.directories.isEmpty },
     { name :=
-        "a config that chooses a base no source answers to reloads, the echo area and the report name it and list the bases, and children keep the base they had; once it chooses a registered base, that base is installed"
+        "criterion 7: a config that chooses a base no source answers to is rejected at reload, its diagnostic and the echo area name it and list the bases, and children keep the base they had; once it chooses a registered base, that base is installed"
       run :=
         withEnvironments context [("init.lean", baseConfig "nope")] fun session state _ => do
           session.resize 320 96
@@ -2343,9 +2344,10 @@ def environmentHostChecks (context : Context) : List Check :=
           session.ask [.reload]
           let chosen := baseNameOf (← state.get).sources
           let lines ← session.output.get
-          return lines.contains "reload 1: installed, 1 files, 0 commands" &&
-              lines.contains s!"base: {said}" &&
-              echo == s!"reload: {said}".quote &&
+          return lines.contains "reload 1: rejected" &&
+              lines.contains s!"diagnostic: setup:0:0: error: {said}" &&
+              echo == s!"reload: setup:0:0: error: {said}".quote &&
+              lines.contains "reload 2: installed, 1 files, 0 commands" &&
               kept == "old" &&
               chosen == "b" },
     { name := "a failed lookup the host's environments record is the echo of the next scene"

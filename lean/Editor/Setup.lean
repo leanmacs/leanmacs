@@ -438,8 +438,9 @@ def setup : SetupM Unit := do
 ```
 
 In a package, `environmentBase` is a default, which config's overrides.
-Choosing it twice in one `setup` is refused. A name no base answers to is
-said at reload, and children keep the base they had. A reload that
+Choosing it twice in one `setup` is refused. A name no base answers to
+refuses the config at reload, with a diagnostic that lists the bases there
+are, and children keep the base they had. A reload that
 installs takes the layers, and drops every cached environment, the base's
 and each directory's. `processEnvironment`, which chose mise or no lookup,
 is retired: a `setup` that calls it is refused with a message that names
@@ -1211,7 +1212,8 @@ def titleBar (style : Window.TitleBar) : SetupM Unit :=
 `name` at `EnvironmentApi.BaseSource`, or the core's `inherited`, the base
 when nothing chooses one. In config it is the choice; in a package, a
 default, which config's choice overrides. A name no registered base answers
-to is said at reload, and children keep the base they had. The editor
+to refuses the config at reload, with a diagnostic that lists the bases
+there are, and children keep the base they had. The editor
 refuses the `setup` for choosing it twice. -/
 def environmentBase (name : String) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.environmentBase name))

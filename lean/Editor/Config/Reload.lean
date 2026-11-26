@@ -146,12 +146,21 @@ the model tests run it with outcomes built by hand
   window after the start-up reload (`Window.titleBarAtOpen`), so a reload
   that changes it takes effect at the next start. A rejected outcome
   changes none of it.
-- **A base nobody registered is said.** An install whose registry names a
-  base of a child's environment (`Registry.baseName`) that no base source
-  answers to (`EnvironmentApi.ofRegistry`) still installs; its report names
-  it and lists the bases there are (`Report.unknownBase`), which the echo
-  area says after the at-point sentences, and the host keeps the base it
-  had (`Editor/Headless.lean`, "A child's environment").
+- **A base nobody registered refuses the config.** An accepted outcome
+  whose registry, once installed, would name a base of a child's
+  environment (`Registry.baseName`: config's choice, else the latest
+  package's default) that no base source answers to
+  (`EnvironmentApi.ofRegistry`) is rejected like any outcome that built no
+  config: its report is rejected, its diagnostics end with an error that
+  names the base and lists the bases there are (`Report.baseRefused`,
+  `EnvironmentApi.unknownBase`), which the echo area says, and the files,
+  registry, cells and settings the last install left stay, so the host
+  keeps the base it had (`Editor/Headless.lean`, "A child's environment").
+  A package's default that nothing answers to refuses a config that
+  chooses none, which can choose a registered base to load. At start-up
+  it is a rejected start-up reload like any other: nothing of config's is
+  installed, and children get the editor's own environment until a reload
+  installs.
 - **Every install is a new config generation.** An install sets config's
   workspace roots in the registry (`Registry.workspaceRoots`) and bumps
   its generation (`Registry.generation`), which a directory's cached
@@ -239,14 +248,17 @@ structure Report where
   registered modes' lists name that no at-point source is registered under,
   in order, each once: they are never asked. -/
   unknownAtPoints : Array String := #[]
-  /-- What is said of the base of a child's environment the registry names
-  (`Registry.baseName`) when no base answers to it
-  (`EnvironmentApi.unknownBase`): children keep the base they had. -/
-  unknownBase : Option String := none
   /-- What is said of each display rule of the installed config whose target
   the layout it chose lacks, in order (`Report.leftOut`): those rules are
   left out, and the rest are kept. -/
   unusableRules : Array String := #[]
+
+/-- The error a reload is rejected with when the registry it would install
+names a base of a child's environment (`Registry.baseName`) that no base
+source answers to: `message`, `EnvironmentApi.unknownBase`'s, which lists the
+bases there are, about `setup` and no place in it. -/
+def Report.baseRefused (message : String) : Diagnostic :=
+  { source := "setup", severity := .error, message }
 
 /-- What is said of the display rule at `place` of a `setup`, 1-based, left
 out at install for `reason`, its target's `DisplayTarget.missing?`. -/
@@ -259,12 +271,11 @@ message, then ` (and <n> more)` when it has more errors; for one rejected
 with no error to name, `reload: rejected`. A reload that installs says
 nothing, so a working config does not cover what a command said, unless its
 config named a theme, listed segments or chose completion styles,
-displays or a base nobody registered, or made display rules whose targets do not
+displays nobody registered, or made display rules whose targets do not
 exist: then `reload: ` and the sentences, `Theme.unknown`'s, then each
 `ModeLine.unknown`, then each `Completion.Style.unknown`, then each
-`Completion.Display.unknown`, then each `Completion.AtPoint.unknown`, then
-the unknown base (`unknownBase`) and then each rule left out
-(`unusableRules`), joined by `; `. The whole report is the host's to
+`Completion.Display.unknown`, then each `Completion.AtPoint.unknown`, and
+then each rule left out (`unusableRules`), joined by `; `. The whole report is the host's to
 print. -/
 def Report.echo (report : Report) : Option String :=
   if report.installed then
@@ -274,7 +285,6 @@ def Report.echo (report : Report) : Option String :=
         report.unknownStyles.map Completion.Style.unknown ++
         report.unknownDisplays.map Completion.Display.unknown ++
         report.unknownAtPoints.map Completion.AtPoint.unknown ++
-        report.unknownBase.toArray ++
         report.unusableRules
     if sentences.isEmpty then none else some s!"reload: {"; ".intercalate sentences.toList}"
   else
@@ -454,44 +464,52 @@ def install (state : State β σ) (outcome : Outcome β σ) : State β σ × Rep
         (rule, (rule.target.missing? chosen).map (Report.leftOut (index + 1)))
     let displayRules := (checked.filter (·.2.isNone)).map (·.1)
     let unusableRules := checked.filterMap (·.2)
-    let (cells, lost) :=
-      state.cells.install .config built.registrations.stores state.parked built.registrations.codecs
-    let state :=
-      { state with
-        files := built.files,
-        registry :=
-          { state.registry.replaceOwned .config
-              built.registrations with
-            styleChoices := built.registrations.styleChoices
-            displayChoices := built.registrations.displayChoices
-            environmentBase := built.registrations.environmentBases.back?
-            autoReload := built.registrations.autoReload.back?.getD false
-            workspaceRoots := built.registrations.workspaceRoots
-            workspaceListers := built.registrations.workspaceListers
-            generation := state.registry.generation + 1
-            displayRules
-            shellTimeLimit := built.registrations.shellTimeLimit
-            leader := built.registrations.leader
-            localLeader := built.registrations.localLeader
-            syntaxRefreshDelay := built.registrations.syntaxRefreshDelay },
-        cells, parked := #[], cellsRevision := state.cellsRevision + 1 }
-    let (themeName, unknownTheme) :=
-      chooseAt state.registry state.themeName built.registrations.theme
-    let modeLine := built.registrations.modeLine
-    let unknownSegments := (modeLine.map fun order => (state.registry.resolve order).2).getD #[]
-    let unknownStyles := state.registry.unknownStyles
-    let unknownDisplays := state.registry.unknownDisplays
-    let unknownAtPoints := state.registry.unknownAtPoints
-    let unknownBase :=
-      (EnvironmentApi.ofRegistry state.registry.extensionsAt state.registry.baseName).2
-    ({ state with
-        themeName, modeLine, framePadding := built.registrations.framePadding
-        keyHintDelay := built.registrations.keyHintDelay
-        layout := built.registrations.layout, tabBar := built.registrations.tabBar
-        titleBar := built.registrations.titleBar },
-      { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
-        files := state.files.size, commands := state.commands, unknownTheme, unknownSegments
-        unknownStyles, unknownDisplays, unknownAtPoints, unknownBase, unusableRules })
+    let registry :=
+      { state.registry.replaceOwned .config
+          built.registrations with
+        styleChoices := built.registrations.styleChoices
+        displayChoices := built.registrations.displayChoices
+        environmentBase := built.registrations.environmentBases.back?
+        autoReload := built.registrations.autoReload.back?.getD false
+        workspaceRoots := built.registrations.workspaceRoots
+        workspaceListers := built.registrations.workspaceListers
+        generation := state.registry.generation + 1
+        displayRules
+        shellTimeLimit := built.registrations.shellTimeLimit
+        leader := built.registrations.leader
+        localLeader := built.registrations.localLeader
+        syntaxRefreshDelay := built.registrations.syntaxRefreshDelay }
+    -- A base no source answers to refuses the config, and the one loaded stays.
+    match (EnvironmentApi.ofRegistry registry.extensionsAt registry.baseName).2 with
+    | some message =>
+      (state,
+        { number := state.finished, installed := false
+          diagnostics := outcome.diagnostics.push (Report.baseRefused message),
+          files := state.files.size
+          commands := state.commands })
+    | none =>
+      let (cells, lost) :=
+        state.cells.install .config built.registrations.stores state.parked
+          built.registrations.codecs
+      let state :=
+        { state with
+          files := built.files, registry
+          cells, parked := #[], cellsRevision := state.cellsRevision + 1 }
+      let (themeName, unknownTheme) :=
+        chooseAt state.registry state.themeName built.registrations.theme
+      let modeLine := built.registrations.modeLine
+      let unknownSegments := (modeLine.map fun order => (state.registry.resolve order).2).getD #[]
+      let unknownStyles := state.registry.unknownStyles
+      let unknownDisplays := state.registry.unknownDisplays
+      let unknownAtPoints := state.registry.unknownAtPoints
+      ({ state with
+          themeName, modeLine, framePadding := built.registrations.framePadding
+          keyHintDelay := built.registrations.keyHintDelay
+          layout := built.registrations.layout, tabBar := built.registrations.tabBar
+          titleBar := built.registrations.titleBar },
+        { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
+          files := state.files.size, commands := state.commands, unknownTheme, unknownSegments
+          unknownStyles, unknownDisplays, unknownAtPoints, unusableRules })
 
 /-- The appearance the window is to be asked for, and the state that
 remembers it: when the window is open and the paper of the theme now in

@@ -31,9 +31,9 @@ core interface for good: a source is a package, and the core names none.
   `Config.Registry.baseName`). The core's own base, launchd's environment
   with no lookup, answers to `inherited` (`Process.inheritedName`) unless a
   package registers a base of that name; of two values of one name the
-  latest wins (`BaseSource.choose`). A name nothing answers to is refused
-  with `unknownBase`, which lists the bases there are, and children keep
-  the base they had.
+  latest wins (`BaseSource.choose`). A name nothing answers to refuses
+  the config at reload with `unknownBase`, which lists the bases there
+  are, and children keep the base they had.
 
 ## Who reads them
 
@@ -44,8 +44,10 @@ child's environment"): it reads the registry it was handed through
 the environments every job shares (`Job.Environments.install`). A running
 job cannot ask the registry (`docs/design/extension-points.md`, "To a job"),
 so `Process.prepared` reads what was installed (`EnvironmentRequest.policy`).
-The reload reducer reads it too (`Config.State.install`), for the report of
-an unknown base (`Config.Report.unknownBase`). With nothing registered a
+The reload reducer reads it first (`Config.State.install`), and rejects a
+config whose registry names a base nothing answers to, with `unknownBase` as
+its error (`Config.Report.baseRefused`), so the host only ever installs a
+known base. With nothing registered a
 child gets the editor's own environment, and no lookup runs.
 
 ## Where an addition goes
