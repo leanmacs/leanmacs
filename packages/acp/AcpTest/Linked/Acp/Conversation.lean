@@ -27,12 +27,13 @@ the check's, and the clock moves only when the check advances it.
 The stage's host is handed the core's test kit's ex line, minibuffer and
 attach stand-in (a buffer that takes in a file gets the workspace at
 `/work/example`), `files-api`'s fake, then the packages the root hands
-in, `acp`'s, with its crate's service dropped (a stepped stage's package
-services are its fakes), then the check's own package (`probePackage`).
-It imports no implementation package: the keys a check presses are read
-from the test scheme's role table, never named. Each check opens
-`/work/example/lakefile.lean`, starts a session with `agent-start`, and
-types `agent-prompt Read notes.txt.` on the kit's ex line.
+in, `acp`'s, with its crate's service dropped (a stepped
+stage's package services are its fakes), then the check's own package
+(`probePackage`). It imports no implementation package: the keys a check
+presses are read from the test scheme's role table, never named. Each AC
+check opens `/work/example/lakefile.lean`, starts a session with
+`agent-start`, and types `agent-prompt Read notes.txt.` on the kit's ex
+line.
 
 - **AC1**: the reply, the tool call and its final diff are shown.
 - **AC2**: the default registration sends no `setMode`, starts its child
@@ -43,6 +44,14 @@ types `agent-prompt Read notes.txt.` on the kit's ex line.
   one published scene.
 - **AC4**: an answer and a cancel, forced in both orders, end the turn
   `cancelled` with no permission request pending.
+- **The commands' refusals** (`refusalChecks`): `agent-start` on a buffer
+  with no workspace, at a root no workspace of the project is at, in a
+  workspace where commands cannot run, and with no `claude-code`
+  registered; `agent-prompt` before the session is open, while a prompt is
+  on its way and while a turn is in flight; `agent-answer` with malformed
+  words, a ticket not pending, an option the request did not offer, and a
+  ticket answered already. Each is said in the echo area, and the fake is
+  handed no open, prompt or answer for it.
 
 None is of the wiring set: the root runs them in a plain group.
 -/
@@ -83,11 +92,28 @@ focused buffer's conversation holds. -/
 def probeName : String :=
   "test-probe"
 
+/-- The name of the check's command that says, in the echo area, the
+number of every conversation in acp's store. -/
+def storeName : String :=
+  "test-store"
+
+/-- The name of the check's command that gives the focused buffer a
+workspace on another machine, where commands cannot run. -/
+def toReachable : String :=
+  "test-to-reachable"
+
+/-- The workspace `test-to-reachable` gives: a pod's `/app`, which a command
+would reach through `kube`. -/
+def reachable : Location :=
+  .reachable "kube" "pod" "/app"
+
 /-- The check's own package: `test-cursor-to-call`, which reads the
 conversation from acp's store and the call's row from its render
 (`Acp.Conversation.rowOf`), and places the cursor there as compile places
-its followers; and `test-probe`, which says the pending tickets, the turn
-in flight and whether the buffer is read-only. -/
+its followers; `test-probe`, which says the pending tickets, the turn
+in flight and whether the buffer is read-only; `test-store`, which says the
+number of every conversation in the store; and `test-to-reachable`, which
+gives the focused buffer a workspace where commands cannot run. -/
 def probePackage : Package :=
   { name := "acp-test"
     setup := do
@@ -102,7 +128,12 @@ def probePackage : Package :=
             Acp.Conversation.ofBuffer? call.target.window.buffer | message "probe: none"
           let readOnly := ((← editorState).buffer? call.target.window.buffer).any (·.readOnly)
           message
-              s!"probe: pending {conversation.pending.toList}, turn {conversation.turn}, read-only {readOnly}" }
+              s!"probe: pending {conversation.pending.toList}, turn {conversation.turn}, read-only {readOnly}"
+      commandWith storeName fun _ => do
+          message s!"store: {((← Acp.Conversation.conversations).map (·.number)).toList}"
+      commandWith toReachable fun call => do
+          discard <| Workspace.register reachable "git@example.invalid:o/r.git"
+          Workspace.setBufferWorkspace call.target.window.buffer reachable }
 
 /-- The packages a stage's host is handed (the module docs). -/
 def stagePackages (packages : Array Package) : Array Package :=
@@ -235,6 +266,158 @@ def ordersOf (fake : Fake) : IO (Array Order) := do
       | .send _ order => some order
       | _ => none
 
+/-- Whether the echo area's text `echo` says `text`. -/
+def says (echo text : String) : Bool :=
+  (echo.splitOn text).length > 1
+
+/-- Types `line` on the kit's ex line, steps the session to rest, and returns
+what the echo area then says. -/
+def echoAfter (session : Session) (line : String) : IO String := do
+  unless ← exStepped session line do
+    return "the ex line was not handled"
+  session.echo
+
+/-- The echo area's text after `test-store`. -/
+def storeProbe (session : Session) : IO String := do
+  session.ask [.run storeName]
+  session.echo
+
+/-- The commands the stage's process fake was asked to start. -/
+def startedCommands (fakes : Stage.Fakes) : IO (Array Process.Command) := do
+  return (← fakes.services.processes.started).filterMap fun (_, request) =>
+      match request with
+      | .start command _ => some command
+      | _ => none
+
+/-- A package named as acp's that registers `agent-start` alone, and so no
+agent at `AgentsApi.Agent`: the stage of a set where nobody registered
+`claude-code`. -/
+def startOnly : Package :=
+  { name := "acp", setup := commandWith Acp.Conversation.startName Acp.Conversation.startCommand }
+
+/-- The checks of the commands' refusals (the module docs of
+`Acp/Conversation.lean`): each refusal is said in the echo area, and
+nothing is sent. -/
+def refusalChecks (context : HostContext) (packages : Array Package) : List Check :=
+  [{  name :=
+        "agent-start refuses a buffer with no workspace, a root no workspace of the project is at, and a workspace where commands cannot run, and opens no session"
+      run :=
+        withConversation context packages Fake.conversation fun session fake fakes => do
+          session.ask [.reload]
+          let bare ← echoAfter session Acp.Conversation.startName
+          session.ask [.open opened]
+          session.step
+          let nowhere ← echoAfter session s!"{Acp.Conversation.startName} /work/nowhere"
+          session.ask [.run toReachable]
+          let remote ← echoAfter session Acp.Conversation.startName
+          let requests := (← fake.log).map (·.1)
+          let commands ← startedCommands fakes
+          let store ← storeProbe session
+          saw
+              (says bare "agent-start: " && says bare " has no workspace" &&
+                says nowhere "agent-start: no workspace of " &&
+                says nowhere " is at /work/nowhere" &&
+                says remote "agent-start: " &&
+                says remote " where commands cannot run" &&
+                requests.isEmpty &&
+                commands.isEmpty &&
+                says store "store: []")
+              s!"bare {bare}; nowhere {nowhere}; remote {remote}; requests {repr requests}; commands {repr commands}; store {store}" },
+    { name :=
+        "agent-start refuses when no agent named claude-code is registered, and opens no session"
+      run :=
+        withConversation context #[startOnly] Fake.conversation fun session fake fakes => do
+          session.ask [.reload]
+          session.ask [.open opened]
+          session.step
+          session.ask [.run Acp.Conversation.startName]
+          session.step
+          let said ← session.echo
+          let requests := (← fake.log).map (·.1)
+          let commands ← startedCommands fakes
+          saw
+              (says said s!"agent-start: no agent named {Acp.defaultAgent}" && requests.isEmpty &&
+                commands.isEmpty)
+              s!"said {said}; requests {repr requests}; commands {repr commands}" },
+    { name := "agent-prompt refuses before the session is open, and sends nothing"
+      run :=
+        withConversation context packages Fake.conversation fun session fake _ => do
+          session.ask [.reload]
+          session.ask [.open opened]
+          session.step
+          -- agent-start's command runs, but no fake steps: its session job
+          -- waits in the fake scheduler, so the session is not open.
+          sendEx session Acp.Conversation.startName
+          unless ← session.handled do
+            return false
+          sendEx session s!"{Acp.Conversation.promptName} {promptText}"
+          unless ← session.handled do
+            return false
+          let early ← session.echo
+          session.step
+          let orders ← ordersOf fake
+          let lines ← conversationLines session
+          unless ← stopped session do
+            return false
+          saw
+              (says early "agent-prompt: the session is not open yet" && orders.isEmpty &&
+                !lines.contains s!"> {promptText}")
+              s!"early {early}; orders {repr orders}; lines {lines}" },
+    { name :=
+        "agent-prompt refuses while a prompt is on its way and while a turn is in flight, and sends one prompt"
+      run :=
+        withConversation context packages Fake.cancellable fun session fake _ => do
+          unless ← started session do
+            return false
+          -- Both lines run before any fake steps: the first prompt's
+          -- send waits in the fake scheduler, so its reply has not come.
+          sendEx session s!"{Acp.Conversation.promptName} {promptText}"
+          sendEx session s!"{Acp.Conversation.promptName} again"
+          unless ← session.handled do
+            return false
+          let onItsWay ← session.echo
+          session.step
+          let inFlight ← echoAfter session s!"{Acp.Conversation.promptName} third"
+          let probed ← probe session
+          let orders ← ordersOf fake
+          unless ← stopped session do
+            return false
+          saw
+              (says onItsWay "agent-prompt: a turn is in flight" &&
+                says inFlight "agent-prompt: a turn is in flight" &&
+                says probed "turn (some 1)" &&
+                orders == #[.prompt promptText])
+              s!"on its way {onItsWay}; in flight {inFlight}; probe {probed}; orders {repr orders}" },
+    { name :=
+        "agent-answer refuses malformed words, a ticket that is not pending and an option the request did not offer, and answers a ticket once"
+      run :=
+        withConversation context packages Fake.cancellable fun session fake _ => do
+          unless ← started session do
+            return false
+          unless ← exStepped session s!"{Acp.Conversation.promptName} {promptText}" do
+            return false
+          let answer := Acp.Conversation.answerName
+          let noOption ← echoAfter session s!"{answer} 1 nope"
+          let notPending ← echoAfter session s!"{answer} 9 {Contract.allow}"
+          let alone ← echoAfter session s!"{answer} 1"
+          let noTicket ← echoAfter session s!"{answer} one {Contract.allow}"
+          let before ← ordersOf fake
+          let first ← echoAfter session s!"{answer} 1 {Contract.allow}"
+          let twice ← echoAfter session s!"{answer} 1 {Contract.allow}"
+          let orders ← ordersOf fake
+          unless ← stopped session do
+            return false
+          saw
+              (says noOption "agent-answer: the request 1 offers no option nope" &&
+                says notPending "agent-answer: no permission request 9 is pending" &&
+                says alone "agent-answer: give a ticket and an option's id" &&
+                says noTicket "agent-answer: one is no ticket" &&
+                !before.any (· matches .answer ..) &&
+                !says first "agent-answer: " &&
+                says twice "agent-answer: no permission request 1 is pending" &&
+                (orders.filter (· matches .answer ..)) == #[.answer 1 Contract.allow])
+              s!"no option {noOption}; not pending {notPending}; alone {alone}; no ticket {noTicket}; first {first}; twice {twice}; orders {repr orders}" }]
+
 /-- The checks of a conversation through the stepped host, over `packages`,
 the packages the root hands in (`Acp.packages`). -/
 def conversationChecks (context : HostContext) (packages : Array Package) : List Check :=
@@ -360,7 +543,7 @@ def conversationChecks (context : HostContext) (packages : Array Package) : List
                   afterTwo - baseTwo == cost + 1 &&
                   twoRow)
                 s!"cost {cost}; queued {queuedOne}, drained {drained}, after one {afterOne} from {second}, one row {oneRow}; asleep moved {movedAsleep} queued {queuedAsleep}; queued two {queuedTwo}, after two {afterTwo} from {baseTwo}; two row {twoRow}" }] ++
-    [true, false].map fun answerFirst =>
+    ([true, false].map fun answerFirst =>
       { name :=
           s!"AC4: a cancel ends the turn cancelled with no permission request pending: {if answerFirst then "answer then cancel" else "cancel then answer"}"
         run :=
@@ -420,6 +603,7 @@ def conversationChecks (context : HostContext) (packages : Array Package) : List
                   rows &&
                   later &&
                   laterLines.contains "> again")
-                s!"parked first {parkedFirst}; orders {repr sentOrder}; model {repr (model.map (·.protocol))}; probe {probed}; lines {lines}; later {later}" }
+                s!"parked first {parkedFirst}; orders {repr sentOrder}; model {repr (model.map (·.protocol))}; probe {probed}; lines {lines}; later {later}" }) ++
+    refusalChecks context packages
 
 end AcpTest.Linked
