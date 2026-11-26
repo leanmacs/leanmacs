@@ -146,19 +146,19 @@ def processEnvironmentChecks : List Check :=
         let ((), state, firstAgain) := state.handle (.record (.directory "/p/d" "first") entry)
         let ((), state, firstE) := state.handle (.record (.directory "/p/e" "first") entry)
         let ((), _, secondE) := state.handle (.record (.directory "/p/e" "second") entry)
-        let tail := "; its children get the editor's environment"
+        let tail (source : String) := s!"; its children start without {source}'s variables"
         pure
           (base ==
               some
-                "environment: the base, login: login exited with status 1: not trusted; children start from the editor's environment" &&
+                "environment: the base, login: login exited with status 1: not trusted; children start without the base's variables" &&
             baseAgain.isNone &&
-            first == some ("environment: /p/d: first exited with status 1: not trusted" ++ tail) &&
+            first == some ("environment: /p/d: first exited with status 1: not trusted" ++ tail "first") &&
             second ==
-              some ("environment: /p/d: second exited with status 1: not trusted" ++ tail) &&
+              some ("environment: /p/d: second exited with status 1: not trusted" ++ tail "second") &&
             firstAgain.isNone &&
-            firstE == some ("environment: /p/e: first exited with status 1: not trusted" ++ tail) &&
+            firstE == some ("environment: /p/e: first exited with status 1: not trusted" ++ tail "first") &&
             secondE ==
-              some ("environment: /p/e: second exited with status 1: not trusted" ++ tail)) },
+              some ("environment: /p/e: second exited with status 1: not trusted" ++ tail "second")) },
     { name :=
         "installSources takes the sources and drops every entry, the base's included, and every resolved program, and keeps the mode and the limit"
       run :=
@@ -293,7 +293,7 @@ def processEnvironmentChecks : List Check :=
     { name := "each failure's message has its own words"
       run :=
         let say := Process.failureMessage (.directory "/p/d" "mise")
-        let tail := "; its children get the editor's environment"
+        let tail := "; its children start without mise's variables"
         pure
           (say (.exited 1 "not trusted") ==
               "environment: /p/d: mise exited with status 1: not trusted" ++ tail &&
@@ -775,7 +775,7 @@ def environmentLayerChecks : List Check :=
               #[fakeLookup "login" "/" #[], fakeLookup "first" "/p/d" baseVariables,
                 fakeLookup "second" "/p/d" baseVariables, layeredStarted "/p/d" baseAndSecond] &&
             once.reported ==
-              #["environment: /p/d: first exited with status 1: not trusted; its children get the editor's environment"] &&
+              #["environment: /p/d: first exited with status 1: not trusted; its children start without first's variables"] &&
             twice.processes.started ==
               once.processes.started.push (layeredStarted "/p/d" baseAndSecond) &&
             twice.reported == once.reported) },
@@ -795,7 +795,7 @@ def environmentLayerChecks : List Check :=
         let reloaded := { inE with environments := inE.environments.installSources layeredSources }
         let again := after (runsOn (layeredChild "/p/d")) reloaded
         let message :=
-          "environment: the base, login: login exited with status 1: no login; children start from the editor's environment"
+          "environment: the base, login: login exited with status 1: no login; children start without the base's variables"
         pure
           (inD.processes.started.back? == some (layeredStarted "/p/d" firstAndSecond) &&
             inE.processes.started.back? == some (layeredStarted "/p/e" firstAndSecond) &&

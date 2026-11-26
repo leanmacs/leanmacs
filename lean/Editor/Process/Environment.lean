@@ -447,12 +447,14 @@ inductive Slot where
   | directory (directory : System.FilePath) (source : String)
   deriving DecidableEq, Repr
 
-/-- What the echo area says of a failed lookup in `slot`. -/
+/-- What the echo area says of a failed lookup in `slot`: the failure, and
+that children start without that source's variables alone, the other layers
+being kept. -/
 def failureMessage : Slot → Failure → String
   | .directory directory source, failure =>
-    s!"environment: {directory}: {failure.describe source}; its children get the editor's environment"
+    s!"environment: {directory}: {failure.describe source}; its children start without {source}'s variables"
   | .base source, failure =>
-    s!"environment: the base, {source}: {failure.describe source}; children start from the editor's environment"
+    s!"environment: the base, {source}: {failure.describe source}; children start without the base's variables"
 
 /-- What a job reads before it builds a child's environment: the layers,
 what each `firstOf` source has resolved to, and the time limit of a lookup,
