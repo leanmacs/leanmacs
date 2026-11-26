@@ -5,7 +5,8 @@
 //! (`docs/design/agent-hosting.md`, "ACP").
 //!
 //! It is `agents-api`'s service `agents`, which `acp`'s Lean library binds
-//! (`Acp/Real.lean`): `open` hands it a child, `next` waits for a session's
+//! (`Acp/Real.lean`): `open` hands it a child, `load` hands it a child and
+//! the id of a session the agent stored, `next` waits for a session's
 //! events, and an order (`prompt`, `cancel`, `set mode`, `answer`) goes to a
 //! session from any job.
 //!
@@ -32,9 +33,12 @@
 //! - **An answer** goes straight to the parked request from the caller's
 //!   thread ([`session::Link::answer`]), and completes at once.
 //! - **A session's state is freed** once its last event is taken, or once
-//!   it has ended after its job withdrew a `next` of it or its `open`. A
-//!   withdrawn `open` ends the session too, as no job knows its number:
-//!   its link is dropped ([`Acp::cancel`]).
+//!   it has ended after its job withdrew a `next` of it or its `open`, or
+//!   before it opened, which refuses its `open`. A withdrawn `open` ends the
+//!   session too, as no job knows its number: its link is dropped
+//!   ([`Acp::cancel`]).
+//! - **Events before the open are queued**: a load (`session/load`) posts
+//!   the session's history before it opens, and the first `next` takes it.
 //!
 //! The logic is here and in the modules below, over two ports: the
 //! [`Completer`] and the [`Connector`], which starts a session on a child.
@@ -181,7 +185,8 @@ struct Held {
     /// Whether its last event has been posted.
     ended: bool,
     /// Whether its job has gone: a `next` of it was withdrawn, or its `open`
-    /// was, so that no job knows its number.
+    /// was, or its `open` was refused because it ended first, so that no job
+    /// knows its number.
     abandoned: bool,
 }
 
@@ -319,6 +324,12 @@ impl<C: Completer> Shared<C> {
 
     /// The requests to report for the event `event` the session `number`
     /// posted: its waiting `next`, and its `open` if it ended first.
+    ///
+    /// An event posted before the session opened is queued like any other:
+    /// a load's history comes before its `Opened`, and is the first `next`'s.
+    /// An `open` refused because its session ended first marks the session
+    /// abandoned, as no job will know its number: its queue is freed, never
+    /// held for a `next` that cannot come.
     fn queued(state: &mut State, number: u64, event: Event) -> Vec<u64> {
         let ended = matches!(event, Event::Ended(_));
         let Some(held) = state.sessions.get_mut(&number) else {
@@ -334,6 +345,7 @@ impl<C: Completer> Shared<C> {
         held.ended |= ended;
         let waiting = held.waiting.take();
         let opening = if ended { held.opening.take() } else { None };
+        held.abandoned |= opening.is_some();
         let mut report = Vec::new();
         if let Some(id) = waiting
             && state.ready(id, None)
@@ -398,9 +410,10 @@ impl<C: Completer + Send + Sync + 'static, K: Connector> Acp<C, K> {
         }
     }
 
-    /// Opens a session on the streaming child `child`, as the request `id`,
-    /// which completes once the agent has a session, or refused if the
-    /// session ends first. Whether it started: not while `id` is in use, nor
+    /// Opens a session on the streaming child `child`, as the request `id`:
+    /// a new one, or the one `setup` loads ([`Setup::load`]). It completes
+    /// once the agent has the session, or refused if the session ends
+    /// first. Whether it started: not while `id` is in use, nor
     /// when the child could not be taken over.
     pub fn open(&self, id: u64, child: u64, setup: Setup) -> bool {
         let number = {

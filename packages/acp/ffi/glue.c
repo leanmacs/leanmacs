@@ -25,6 +25,9 @@ typedef struct {
 
 bool acp_ffi_open(uint64_t request, uint64_t child, const uint8_t *cwd,
                   size_t cwd_len, const uint8_t *mcp, size_t mcp_len);
+bool acp_ffi_load(uint64_t request, uint64_t child, const uint8_t *cwd,
+                  size_t cwd_len, const uint8_t *mcp, size_t mcp_len,
+                  const uint8_t *session, size_t session_len);
 bool acp_ffi_next(uint64_t request, uint64_t session);
 bool acp_ffi_prompt(uint64_t request, uint64_t session, const uint8_t *text,
                     size_t len);
@@ -54,6 +57,15 @@ lean_obj_res acp_glue_open(uint64_t request, uint64_t child, b_lean_obj_arg cwd,
   return lean_io_result_mk_ok(
       lean_box(acp_ffi_open(request, child, bytes_of(cwd), length_of(cwd),
                             bytes_of(servers), length_of(servers))));
+}
+
+// `Acp.Real.load : UInt64 → UInt64 → @& String → @& String → @& String →
+// IO Bool`: the open's arguments, then the agent's id of the session to load.
+lean_obj_res acp_glue_load(uint64_t request, uint64_t child, b_lean_obj_arg cwd,
+                           b_lean_obj_arg servers, b_lean_obj_arg session) {
+  return lean_io_result_mk_ok(lean_box(acp_ffi_load(
+      request, child, bytes_of(cwd), length_of(cwd), bytes_of(servers),
+      length_of(servers), bytes_of(session), length_of(session))));
 }
 
 // `Acp.Real.next : UInt64 → UInt64 → IO Bool`

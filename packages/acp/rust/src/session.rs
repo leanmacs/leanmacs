@@ -18,6 +18,18 @@
 //!   `session/set_config_option` and no config of its own: the host's Claude
 //!   settings are used as they are (roadmap Decisions). A mode is set only
 //!   when a caller orders it ([`Order::SetMode`]).
+//! - **It loads**, when its [`Setup`] names a session ([`Setup::load`]):
+//!   `initialize` as above, then `session/load` of that id with the working
+//!   directory and the MCP servers in place of `session/new`, and posts
+//!   [`Output::Opened`] with the loaded id and the modes the response
+//!   carries. The agent replays the session's history, from its own store,
+//!   as `session/update` notifications before it answers; they go through
+//!   the handler below like any other, so they are posted, merged, before
+//!   `Opened`. An agent whose `initialize` does not offer `loadSession` is
+//!   sent nothing more: the session ends as [`Ending::ProtocolError`] with
+//!   the words `the agent does not offer session/load`. Nothing else
+//!   differs: no `session/set_mode`, no `session/set_config_option`, no
+//!   config of its own, and never `session/resume`, which replays nothing.
 //! - **A handler returns at once.** A `session/update` is made plain
 //!   ([`crate::filter`]), its tool calls merged ([`crate::merge`]), and
 //!   posted. A `session/request_permission` is parked under a ticket
@@ -56,11 +68,11 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::v1::schema::{
-    CancelNotification, ContentBlock, EnvVariable, InitializeRequest, McpServer as SdkServer,
-    McpServerStdio, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
+    CancelNotification, ContentBlock, EnvVariable, InitializeRequest, LoadSessionRequest,
+    McpServer as SdkServer, McpServerStdio, NewSessionRequest, PromptRequest, PromptResponse,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionNotification, SessionUpdate, SetSessionModeRequest,
-    TextContent,
+    SelectedPermissionOutcome, SessionId, SessionModeState, SessionNotification, SessionUpdate,
+    SetSessionModeRequest, TextContent,
 };
 use agent_client_protocol::v1::{ConnectionTo, Responder};
 use agent_client_protocol::{Agent, Client, Lines};
@@ -94,6 +106,9 @@ pub struct Setup {
     pub cwd: String,
     /// The MCP servers.
     pub servers: Vec<McpServer>,
+    /// The agent's id of a session to load (`session/load`) in place of
+    /// opening a new one; `None` opens a new one (`session/new`).
+    pub load: Option<String>,
 }
 
 /// An order the session's main future carries out.
@@ -110,8 +125,8 @@ pub enum Order {
 /// What a session posts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Output {
-    /// It opened: what `session/new` answered (its `session` number is the
-    /// service's to fill).
+    /// It opened: what `session/new` or `session/load` answered (its
+    /// `session` number is the service's to fill).
     Opened(Opened),
     /// An event.
     Event(Event),
@@ -281,9 +296,10 @@ impl Link {
     }
 }
 
-/// What `session/new` answered, made plain.
-fn opened_of(new: &NewSessionResponse) -> Opened {
-    let (mode, modes) = new.modes.as_ref().map_or((None, Vec::new()), |modes| {
+/// The session `session_id` opened, in the modes `modes` that
+/// `session/new` or `session/load` answered, made plain.
+fn opened_of(session_id: &SessionId, modes: Option<&SessionModeState>) -> Opened {
+    let (mode, modes) = modes.map_or((None, Vec::new()), |modes| {
         (
             Some(modes.current_mode_id.0.to_string()),
             modes
@@ -299,13 +315,13 @@ fn opened_of(new: &NewSessionResponse) -> Opened {
     });
     Opened {
         session: 0,
-        session_id: new.session_id.0.to_string(),
+        session_id: session_id.0.to_string(),
         mode,
         modes,
     }
 }
 
-/// An MCP server as `session/new` carries it.
+/// An MCP server as `session/new` and `session/load` carry it.
 fn server_of(server: &McpServer) -> SdkServer {
     SdkServer::Stdio(
         McpServerStdio::new(server.name.clone(), server.command.clone())
@@ -327,6 +343,56 @@ type Turn =
 /// A response a session does not wait on, awaited and dropped.
 type Ignored = Pin<Box<dyn Future<Output = ()> + Send>>;
 
+/// The words a load ends with when the agent does not offer
+/// `session/load`.
+const NO_LOAD: &str = "the agent does not offer session/load";
+
+/// Opens the session `setup` asks for, after `initialize`: a new one, or
+/// the one it loads, whose history the agent replays as notifications
+/// before it answers. Gives its id and what to post.
+///
+/// # Errors
+///
+/// The agent answered a request with an error, or `setup` loads a session
+/// and the agent does not offer `session/load` (nothing is sent then).
+async fn opening(
+    cx: &ConnectionTo<Agent>,
+    setup: Setup,
+) -> agent_client_protocol::Result<(SessionId, Opened)> {
+    let initialized = cx
+        .send_request(InitializeRequest::new(ProtocolVersion::V1))
+        .block_task()
+        .await?;
+    let servers = setup.servers.iter().map(server_of).collect();
+    match setup.load {
+        Some(id) => {
+            if !initialized.agent_capabilities.load_session {
+                return Err(agent_client_protocol::Error::new(
+                    agent_client_protocol::ErrorCode::INTERNAL_ERROR,
+                    NO_LOAD,
+                ));
+            }
+            let session_id = SessionId::new(id);
+            let loaded = cx
+                .send_request(
+                    LoadSessionRequest::new(session_id.clone(), setup.cwd).mcp_servers(servers),
+                )
+                .block_task()
+                .await?;
+            let opened = opened_of(&session_id, loaded.modes.as_ref());
+            Ok((session_id, opened))
+        }
+        None => {
+            let new = cx
+                .send_request(NewSessionRequest::new(setup.cwd).mcp_servers(servers))
+                .block_task()
+                .await?;
+            let opened = opened_of(&new.session_id, new.modes.as_ref());
+            Ok((new.session_id, opened))
+        }
+    }
+}
+
 /// The connection's main future: opens the session, then carries out the
 /// orders and posts each prompt's end, until the agent's output ends or the
 /// orders do.
@@ -336,18 +402,8 @@ async fn main(
     mut orders: mpsc::UnboundedReceiver<(u64, Order)>,
     shared: Arc<Shared>,
 ) -> agent_client_protocol::Result<()> {
-    cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
-        .block_task()
-        .await?;
-    let new = cx
-        .send_request(
-            NewSessionRequest::new(setup.cwd.clone())
-                .mcp_servers(setup.servers.iter().map(server_of).collect()),
-        )
-        .block_task()
-        .await?;
-    let session_id = new.session_id.clone();
-    (shared.outbox)(Output::Opened(opened_of(&new)));
+    let (session_id, opened) = opening(&cx, setup).await?;
+    (shared.outbox)(Output::Opened(opened));
     let mut prompts: FuturesUnordered<Turn> = FuturesUnordered::new();
     let mut ignored: FuturesUnordered<Ignored> = FuturesUnordered::new();
     let mut turns = 0;

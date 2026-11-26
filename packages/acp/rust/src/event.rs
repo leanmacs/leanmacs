@@ -111,6 +111,14 @@ pub enum Event {
         /// The text.
         text: String,
     },
+    /// A chunk of the user's message, as the agent echoes it: a loaded
+    /// session's history replays the user's prompts this way.
+    UserChunk {
+        /// The agent's id of the message, when given.
+        message_id: Option<String>,
+        /// The text.
+        text: String,
+    },
     /// A tool call, whole.
     ToolCall(Call),
     /// A permission request, parked.
@@ -302,6 +310,10 @@ impl Event {
                 .optional("message", message_id.as_ref())
                 .field("text", text)
                 .done(),
+            Self::UserChunk { message_id, text } => Line::of("user")
+                .optional("message", message_id.as_ref())
+                .field("text", text)
+                .done(),
             Self::ToolCall(call) => Line::of("toolCall").call(call).done(),
             Self::Permission {
                 ticket,
@@ -433,6 +445,20 @@ mod tests {
                     text: "a\tb".into(),
                 },
                 "chunk\ttext=a\\tb",
+            ),
+            (
+                Event::UserChunk {
+                    message_id: Some("msg-u1".into()),
+                    text: "Read notes.txt.".into(),
+                },
+                "user\tmessage=msg-u1\ttext=Read notes.txt.",
+            ),
+            (
+                Event::UserChunk {
+                    message_id: None,
+                    text: "a\tb".into(),
+                },
+                "user\ttext=a\\tb",
             ),
             (
                 Event::ToolCall(call()),

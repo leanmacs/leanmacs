@@ -42,13 +42,29 @@ fn setup() -> Setup {
             arguments: vec!["--flag".into()],
             environment: vec![("KEY".into(), "value".into())],
         }],
+        load: None,
+    }
+}
+
+/// The setup that loads the session `sess-0002`, with the same directory
+/// and servers.
+fn loading() -> Setup {
+    Setup {
+        load: Some("sess-0002".into()),
+        ..setup()
     }
 }
 
 impl Rig {
-    /// A session over a scripted transport, spawned on a fresh pool and not
-    /// yet stepped.
+    /// A session opened with the tests' setup, over a scripted transport,
+    /// spawned on a fresh pool and not yet stepped.
     fn new() -> Self {
+        Self::with(setup())
+    }
+
+    /// A session opened with `setup`, over a scripted transport, spawned on
+    /// a fresh pool and not yet stepped.
+    fn with(setup: Setup) -> Self {
         let (outgoing, written) = mpsc::unbounded::<String>();
         let (agent, incoming) = mpsc::unbounded();
         let ending: EndingCell = Arc::default();
@@ -60,7 +76,7 @@ impl Rig {
             incoming,
             ending: Arc::clone(&ending),
         };
-        let (link, future) = session(transport, setup(), outbox);
+        let (link, future) = session(transport, setup, outbox);
         let pool = LocalPool::new();
         pool.spawner().spawn_local(future).expect("spawned");
         Self {
@@ -462,5 +478,141 @@ fn an_output_that_ends_with_no_ending_recorded_ends_the_session_failed_as_closed
         vec![Output::Event(Event::Ended(Ending::Failed(
             "the session was closed".into()
         )))]
+    );
+}
+
+/// The `initialize` result of an agent that offers `session/load`.
+fn offers_load() -> Value {
+    json!({"protocolVersion": 1, "agentCapabilities": {"loadSession": true}, "authMethods": []})
+}
+
+/// The result of `session/new` or `session/load`: two modes, `mode-ask`
+/// current.
+fn two_modes() -> Value {
+    json!({"modes": {"currentModeId": "mode-ask",
+        "availableModes": [{"id": "mode-ask", "name": "Ask"},
+            {"id": "mode-auto", "name": "Auto", "description": "Acts alone"}]}})
+}
+
+/// What a session opened on `sess-0002` with [`two_modes`] posts.
+fn opened_loaded() -> Output {
+    Output::Opened(Opened {
+        session: 0,
+        session_id: "sess-0002".into(),
+        mode: Some("mode-ask".into()),
+        modes: vec![
+            Mode {
+                id: "mode-ask".into(),
+                name: "Ask".into(),
+                description: None,
+            },
+            Mode {
+                id: "mode-auto".into(),
+                name: "Auto".into(),
+                description: Some("Acts alone".into()),
+            },
+        ],
+    })
+}
+
+#[test]
+fn a_load_sends_initialize_then_session_load_with_its_id_directory_and_servers_and_never_session_new()
+ {
+    let mut rig = Rig::with(loading());
+    let initialize = rig.lines().remove(0);
+    assert_eq!(initialize["method"], "initialize");
+    rig.answer(&initialize, offers_load());
+    let lines = rig.lines();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["method"], "session/load");
+    assert_eq!(
+        lines[0]["params"],
+        json!({"sessionId": "sess-0002", "cwd": "/work/example", "mcpServers": [
+            {"name": "example-server", "command": "/usr/local/bin/example",
+                "args": ["--flag"], "env": [{"name": "KEY", "value": "value"}]}]})
+    );
+    rig.answer(&lines[0], two_modes());
+    assert_eq!(rig.posted(), vec![opened_loaded()]);
+    assert!(
+        rig.lines().is_empty(),
+        "no session/new, no set_mode and no config of its own"
+    );
+    assert!(rig.link.order(16, Order::Prompt("Again.".into())));
+    let prompt = rig.lines().remove(0);
+    assert_eq!(prompt["method"], "session/prompt");
+    assert_eq!(
+        prompt["params"]["sessionId"], "sess-0002",
+        "the loaded session is prompted"
+    );
+}
+
+#[test]
+fn a_load_posts_the_replayed_history_in_order_before_opened_whose_id_is_the_loaded_one() {
+    let mut rig = Rig::with(loading());
+    let initialize = rig.lines().remove(0);
+    rig.answer(&initialize, offers_load());
+    let load = rig.lines().remove(0);
+    rig.update(json!({"sessionUpdate": "user_message_chunk",
+        "content": {"type": "text", "text": "Read notes.txt."}, "messageId": "msg-u1"}));
+    rig.update(json!({"sessionUpdate": "agent_message_chunk",
+        "content": {"type": "text", "text": "Done."}, "messageId": "msg-1"}));
+    rig.update(
+        json!({"sessionUpdate": "tool_call", "toolCallId": "call-edit-1",
+        "title": "Edit notes.txt", "kind": "edit", "status": "completed"}),
+    );
+    rig.answer(&load, two_modes());
+    assert_eq!(
+        rig.posted(),
+        vec![
+            Output::Event(Event::UserChunk {
+                message_id: Some("msg-u1".into()),
+                text: "Read notes.txt.".into()
+            }),
+            Output::Event(Event::Chunk {
+                message_id: Some("msg-1".into()),
+                text: "Done.".into()
+            }),
+            Output::Event(Event::ToolCall(Call {
+                title: "Edit notes.txt".into(),
+                kind: "edit".into(),
+                status: "completed".into(),
+                ..Call::empty("call-edit-1")
+            })),
+            opened_loaded(),
+        ]
+    );
+}
+
+#[test]
+fn an_agent_that_does_not_offer_session_load_gets_nothing_after_initialize_and_the_session_ends_as_a_protocol_error()
+ {
+    let mut rig = Rig::with(loading());
+    let initialize = rig.lines().remove(0);
+    rig.answer(
+        &initialize,
+        json!({"protocolVersion": 1, "agentCapabilities": {}, "authMethods": []}),
+    );
+    assert!(rig.lines().is_empty(), "nothing after initialize");
+    assert_eq!(
+        rig.posted(),
+        vec![Output::Event(Event::Ended(Ending::ProtocolError(
+            "the agent does not offer session/load".into()
+        )))]
+    );
+    assert!(!rig.link.order(17, Order::Cancel), "the session has ended");
+}
+
+#[test]
+fn a_user_chunk_outside_a_load_is_posted_too() {
+    let mut rig = Rig::new();
+    rig.open();
+    rig.update(json!({"sessionUpdate": "user_message_chunk",
+        "content": {"type": "text", "text": "Again."}}));
+    assert_eq!(
+        rig.posted(),
+        vec![Output::Event(Event::UserChunk {
+            message_id: None,
+            text: "Again.".into()
+        })]
     );
 }

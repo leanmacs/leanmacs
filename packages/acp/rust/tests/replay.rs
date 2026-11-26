@@ -22,9 +22,14 @@
 //!   `session/cancel` that our client has not sent already, it orders one
 //!   cancel.
 //!
+//! The session is opened with the setup the fixture's second client line
+//! asks for: its directory, and, when it is a `session/load`, the session
+//! it loads ([`Setup::load`]).
+//!
 //! After the last line the agent's output ends, as an exit 0. The produced
-//! lines are the `opened` reply's, then each event's; on a mismatch the
-//! test prints them, so updating the expected file after a deliberate change
+//! lines are the `opened` reply's and each event's, in the order the session
+//! posted them, so a load's history comes before its `opened`; on a
+//! mismatch the test prints them, so updating the expected file after a deliberate change
 //! is a copy that review reads. The fixtures are read with `include_str!`,
 //! so the test touches no file.
 
@@ -69,9 +74,32 @@ struct Replay {
     request: u64,
 }
 
+/// The setup a fixture's session is opened with: its second client line's
+/// directory, with no MCP server, loading that line's session when the line
+/// is a `session/load`.
+fn setup_of(fixture: &str) -> Setup {
+    let opening = fixture
+        .lines()
+        .map(|text| serde_json::from_str::<Value>(text).expect("a fixture line is JSON"))
+        .filter(|entry| entry["from"] == "client")
+        .nth(1)
+        .expect("a fixture has a client line after initialize");
+    let params = &opening["msg"]["params"];
+    Setup {
+        cwd: params["cwd"].as_str().expect("a directory").to_owned(),
+        servers: Vec::new(),
+        load: (opening["msg"]["method"] == "session/load").then(|| {
+            params["sessionId"]
+                .as_str()
+                .expect("a load's session id")
+                .to_owned()
+        }),
+    }
+}
+
 impl Replay {
-    /// A session opened in the fixtures' directory with no MCP server.
-    fn new() -> Self {
+    /// A session opened with `setup`.
+    fn new(setup: Setup) -> Self {
         let (outgoing, written) = mpsc::unbounded::<String>();
         let (agent, incoming) = mpsc::unbounded();
         let ending: EndingCell = Arc::default();
@@ -82,10 +110,6 @@ impl Replay {
             outgoing: outgoing.sink_map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe)),
             incoming,
             ending: Arc::clone(&ending),
-        };
-        let setup = Setup {
-            cwd: "/work/example".into(),
-            servers: Vec::new(),
         };
         let (link, future) = session(transport, setup, outbox);
         let pool = LocalPool::new();
@@ -224,7 +248,7 @@ impl Replay {
 /// Replays `fixture` and holds the produced lines to `expected`, printing
 /// them on a mismatch, and to none of the auth placeholders.
 fn replays_to(fixture: &str, expected: &str) {
-    let produced = Replay::new().run(fixture);
+    let produced = Replay::new(setup_of(fixture)).run(fixture);
     let text = produced.join("\n") + "\n";
     for secret in AUTH {
         assert!(
@@ -263,10 +287,18 @@ fn the_cancel_fixture_replays_to_its_checked_in_events() {
 }
 
 #[test]
+fn the_load_fixture_replays_its_history_before_the_opened_reply() {
+    replays_to(
+        include_str!("fixtures/load.jsonl"),
+        include_str!("fixtures/load.events"),
+    );
+}
+
+#[test]
 fn a_client_line_that_differs_from_the_fixture_s_fails_the_replay() {
     let fixture =
         include_str!("fixtures/plain.jsonl").replacen("\"terminal\":false", "\"terminal\":true", 1);
-    let failed = std::panic::catch_unwind(move || Replay::new().run(&fixture));
+    let failed = std::panic::catch_unwind(move || Replay::new(setup_of(&fixture)).run(&fixture));
     assert!(
         failed.is_err(),
         "a client offering a terminal would be caught"

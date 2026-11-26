@@ -1,13 +1,15 @@
 //! What the session keeps of the agent's `session/update` notifications,
 //! made plain: the one place an SDK update becomes the crate's own data.
 //!
-//! Kept: a chunk of the agent's reply (text only), a tool call and its
-//! updates, the context window's usage and cost, the session's title, and
-//! its current mode. Dropped, as no event of this phase: the agent's list
-//! of commands (`available_commands_update`), its configuration options
-//! (`config_option_update`), the user's and the agent's thought chunks,
-//! plans, and every kind the SDK adds; every `_meta`; and any content of a
-//! call that is neither text nor a diff.
+//! Kept: a chunk of the agent's reply and of the user's message (text
+//! only; a loaded session's history replays the user's prompts as the
+//! latter, and the conversation decides when to show them), a tool call and
+//! its updates, the context window's usage and cost, the session's title,
+//! and its current mode. Dropped, as no event the editor shows: the agent's
+//! list of commands (`available_commands_update`), its configuration
+//! options (`config_option_update`), the agent's thought chunks, plans, and
+//! every kind the SDK adds; every `_meta`; any content of a chunk that is
+//! not text; and any content of a call that is neither text nor a diff.
 //!
 //! The agent's non-standard notifications, `auth/status_update` and
 //! `_auth/status_update`, never reach here: the session registers no
@@ -27,7 +29,8 @@ use crate::merge::Update;
 /// What the session keeps of one update.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Note {
-    /// An event that stands on its own: a chunk, usage, a title, a mode.
+    /// An event that stands on its own: a chunk of either side's message,
+    /// usage, a title, a mode.
     Event(Event),
     /// A tool call announced, whole.
     Announced(Call),
@@ -115,6 +118,12 @@ pub fn note(update: &SessionUpdate) -> Option<Note> {
                 text,
             })
         }),
+        SessionUpdate::UserMessageChunk(chunk) => text_of(&chunk.content).map(|text| {
+            Note::Event(Event::UserChunk {
+                message_id: chunk.message_id.as_ref().map(|id| id.0.to_string()),
+                text,
+            })
+        }),
         SessionUpdate::ToolCall(call) => Some(Note::Announced(call_of(call))),
         SessionUpdate::ToolCallUpdate(update) => Some(Note::Updated(
             update.tool_call_id.0.to_string(),
@@ -159,10 +168,32 @@ mod tests {
             r#"{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"example-command","description":"An example command.","input":null}]}"#,
             r#"{"sessionUpdate":"config_option_update","configOptions":[]}"#,
             r#"{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking"}}"#,
-            r#"{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"mine"}}"#,
+            r#"{"sessionUpdate":"user_message_chunk","content":{"type":"image","data":"AA==","mimeType":"image/png"}}"#,
         ] {
             assert_eq!(note(&update(dropped)), None, "{dropped}");
         }
+    }
+
+    #[test]
+    fn a_chunk_of_the_user_s_message_is_kept_with_its_message_id_when_given() {
+        assert_eq!(
+            note(&update(
+                r#"{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Read notes.txt."},"messageId":"msg-u1","_meta":{"example":1}}"#
+            )),
+            Some(Note::Event(Event::UserChunk {
+                message_id: Some("msg-u1".into()),
+                text: "Read notes.txt.".into()
+            }))
+        );
+        assert_eq!(
+            note(&update(
+                r#"{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"mine"}}"#
+            )),
+            Some(Note::Event(Event::UserChunk {
+                message_id: None,
+                text: "mine".into()
+            }))
+        );
     }
 
     #[test]

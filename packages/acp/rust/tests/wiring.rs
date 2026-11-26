@@ -6,13 +6,14 @@
 //!
 //! An integration test of its own, because the service and the completion
 //! queue are process-wide: it is the one test of its binary. No stream
-//! source is provided in this process, so an `open` is refused at its
-//! start, as a take-over with no process service is.
+//! source is provided in this process, so an `open` or a `load` is refused
+//! at its start, as a take-over with no process service is.
 
 use std::mem::MaybeUninit;
 
 use acp_service::ffi::{
-    RawReply, SERVICE, acp_ffi_answer, acp_ffi_free, acp_ffi_open, acp_ffi_take, acp_ffi_withdraw,
+    RawReply, SERVICE, acp_ffi_answer, acp_ffi_free, acp_ffi_load, acp_ffi_open, acp_ffi_take,
+    acp_ffi_withdraw,
 };
 use editor_service::queue::{COMPLETION, Event, Source, SourceKind};
 
@@ -56,4 +57,19 @@ fn a_request_started_through_the_c_functions_completes_on_the_completion_queue()
         !opened,
         "no stream source in this process: the take-over is refused"
     );
+    let session = "sess-0001";
+    // SAFETY: the pointers and lengths are the strings'.
+    let loaded = unsafe {
+        acp_ffi_load(
+            43,
+            7,
+            cwd.as_ptr(),
+            cwd.len(),
+            cwd.as_ptr(),
+            0,
+            session.as_ptr(),
+            session.len(),
+        )
+    };
+    assert!(!loaded, "a load's take-over is refused the same way");
 }

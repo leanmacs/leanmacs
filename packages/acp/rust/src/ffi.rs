@@ -80,8 +80,19 @@ unsafe fn text_of(text: *const u8, len: usize) -> String {
     String::from_utf8_lossy(unsafe { buffer::borrow(text, len) }).into_owned()
 }
 
-/// Opens a session on the streaming child `child`, in the directory of the
-/// `cwd_len` bytes at `cwd`, with the MCP servers the `mcp_len` bytes at
+/// The setup of a session in `cwd` with the MCP servers `mcp` lists
+/// ([`servers_of`]), loading the session `load` when there is one; `None`
+/// when `mcp` does not read.
+fn setup_of(cwd: String, mcp: &str, load: Option<String>) -> Option<Setup> {
+    Some(Setup {
+        cwd,
+        servers: servers_of(mcp)?,
+        load,
+    })
+}
+
+/// Opens a new session on the streaming child `child`, in the directory of
+/// the `cwd_len` bytes at `cwd`, with the MCP servers the `mcp_len` bytes at
 /// `mcp` list ([`servers_of`]), as the request `request` ([`Acp::open`]):
 /// whether it started.
 ///
@@ -99,10 +110,41 @@ pub unsafe extern "C" fn acp_ffi_open(
 ) -> bool {
     // SAFETY: the caller guarantees both pointers and lengths.
     let (cwd, mcp) = unsafe { (text_of(cwd, cwd_len), text_of(mcp, mcp_len)) };
-    let Some(servers) = servers_of(&mcp) else {
-        return false;
+    setup_of(cwd, &mcp, None).is_some_and(|setup| ACP.open(request, child, setup))
+}
+
+/// Loads the session whose agent's id is the `session_len` bytes at
+/// `session` (`session/load`) on the streaming child `child`, in the
+/// directory of the `cwd_len` bytes at `cwd`, with the MCP servers the
+/// `mcp_len` bytes at `mcp` list ([`servers_of`]), as the request `request`
+/// ([`Acp::open`]): whether it started. It completes as an open does, once
+/// the agent has replayed the session's history, which the session's first
+/// `next` takes.
+///
+/// # Safety
+///
+/// `cwd` points to `cwd_len` readable bytes, `mcp` to `mcp_len` and
+/// `session` to `session_len`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn acp_ffi_load(
+    request: u64,
+    child: u64,
+    cwd: *const u8,
+    cwd_len: usize,
+    mcp: *const u8,
+    mcp_len: usize,
+    session: *const u8,
+    session_len: usize,
+) -> bool {
+    // SAFETY: the caller guarantees the three pointers and lengths.
+    let (cwd, mcp, session) = unsafe {
+        (
+            text_of(cwd, cwd_len),
+            text_of(mcp, mcp_len),
+            text_of(session, session_len),
+        )
     };
-    ACP.open(request, child, Setup { cwd, servers })
+    setup_of(cwd, &mcp, Some(session)).is_some_and(|setup| ACP.open(request, child, setup))
 }
 
 /// Waits for the session `session`'s next events, as the request
@@ -246,6 +288,37 @@ mod tests {
             ])
         );
         assert_eq!(servers_of(""), Some(Vec::new()));
+    }
+
+    #[test]
+    fn a_load_s_setup_names_the_session_it_loads_and_an_open_s_none() {
+        let servers = "server\tname=bare\tcommand=bare\n";
+        let bare = McpServer {
+            name: "bare".into(),
+            command: "bare".into(),
+            arguments: Vec::new(),
+            environment: Vec::new(),
+        };
+        assert_eq!(
+            setup_of("/work/example".into(), servers, Some("sess-0001".into())),
+            Some(Setup {
+                cwd: "/work/example".into(),
+                servers: vec![bare.clone()],
+                load: Some("sess-0001".into()),
+            })
+        );
+        assert_eq!(
+            setup_of("/work/example".into(), servers, None),
+            Some(Setup {
+                cwd: "/work/example".into(),
+                servers: vec![bare],
+                load: None,
+            })
+        );
+        assert_eq!(
+            setup_of("/work/example".into(), "client\tname=x", None),
+            None
+        );
     }
 
     #[test]

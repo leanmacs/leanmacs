@@ -176,6 +176,7 @@ fn setup() -> Setup {
     Setup {
         cwd: "/work/example".into(),
         servers: Vec::new(),
+        load: None,
     }
 }
 
@@ -460,4 +461,87 @@ fn an_open_withdrawn_while_its_connector_runs_ends_its_session_once_open_and_fre
     pool.run_until_stalled();
     assert!(completer.take().is_empty(), "nothing completes for it");
     assert_eq!(acp.sessions(), 0, "it ended once open, and was freed");
+}
+
+/// The setup that loads the session `sess-0002`.
+fn loading() -> Setup {
+    Setup {
+        load: Some("sess-0002".into()),
+        ..setup()
+    }
+}
+
+impl Rig {
+    /// Starts a load as the request `id`, answers its `initialize` offering
+    /// `session/load`, and gives the `session/load` line.
+    fn loading(&mut self, id: u64) -> Value {
+        assert!(self.acp.open(id, 7, loading()));
+        let session = self.agents.borrow().len();
+        let initialize = self.lines(session).remove(0);
+        self.answer(
+            session,
+            &initialize,
+            json!({"protocolVersion": 1, "agentCapabilities": {"loadSession": true}}),
+        );
+        let load = self.lines(session).remove(0);
+        assert_eq!(load["method"], "session/load");
+        load
+    }
+
+    /// Sends the agent of session `session` the user's chunk `text`, as a
+    /// load's history replays it.
+    fn user_chunk(&self, session: usize, text: &str) {
+        self.send(
+            session,
+            &json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "sess-0002",
+                "update": {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": text}}}}),
+        );
+    }
+}
+
+#[test]
+fn a_load_s_history_posted_before_its_open_is_held_for_the_first_next() {
+    let mut rig = Rig::new();
+    let load = rig.loading(1);
+    rig.user_chunk(1, "Read notes.txt.");
+    rig.chunk(1, "Done.");
+    assert!(rig.reported().is_empty(), "not before the agent answers");
+    rig.answer(1, &load, json!({}));
+    assert_eq!(rig.reported(), [1]);
+    let Some(Reply::Opened(opened)) = rig.acp.take(1) else {
+        panic!("not opened");
+    };
+    assert_eq!(opened.session_id, "sess-0002");
+    assert!(rig.acp.next(2, opened.session));
+    assert_eq!(rig.reported_now(), [2], "at once: the history is held");
+    assert_eq!(
+        rig.acp.take(2),
+        Some(Reply::Batch(vec![
+            Event::UserChunk {
+                message_id: None,
+                text: "Read notes.txt.".into()
+            },
+            chunk("Done."),
+        ]))
+    );
+}
+
+#[test]
+fn a_load_whose_agent_answers_an_error_refuses_the_open_and_sessions_is_0_once_the_refusal_is_taken()
+ {
+    let mut rig = Rig::new();
+    let load = rig.loading(1);
+    rig.user_chunk(1, "Read notes.txt.");
+    rig.send(
+        1,
+        &json!({"jsonrpc": "2.0", "id": load["id"],
+            "error": {"code": -32603, "message": "an example failure"}}),
+    );
+    assert_eq!(rig.reported(), [1]);
+    assert!(matches!(rig.acp.take(1), Some(Reply::Refused(_))));
+    assert_eq!(
+        rig.acp.sessions(),
+        0,
+        "no job knows its number, so its history is freed, not held"
+    );
 }
