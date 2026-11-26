@@ -40,9 +40,10 @@ outside mise, such as Homebrew's, is on no child's `PATH` without this base.
 - **What is read** (`parse`): the variables between the first start marker
   and the first end marker that starts right after the start marker or
   right after a NUL, so a value that holds the marker's text cannot end
-  them. What rc files print before and after the markers is ignored. Each
-  piece is `NAME=value`, split at its first `=`; a value keeps any later
-  `=` and any newline.
+  them. What rc files print before and after the markers is ignored,
+  whatever its bytes: the markers are found in the bytes, and only the
+  variables between them are read as UTF-8. Each piece is `NAME=value`,
+  split at its first `=`; a value keeps any later `=` and any newline.
 - **What is kept.** Every variable but the shell's own per-session ones,
   `PWD`, `OLDPWD`, `SHLVL` and `_` (`sessionVariables`), which describe
   that shell, not the editor. A name that comes twice keeps its last
@@ -58,9 +59,10 @@ outside mise, such as Homebrew's, is on no child's `PATH` without this base.
   refused (`zeroLimit`), and so is a second call in one `setup`
   (`Extension.setting`, `Config.Registrations.settingTwice`).
 - **When it fails** (no shell where the probes point, a status other than
-  0, output with no markers, a run past its limit), children get the
-  editor's own environment (launchd's), still under every directory
-  source, and the echo area says why once per run, in the core's words
+  0, output with no markers, variables that are not UTF-8, a run past its
+  limit), children get the editor's own environment (launchd's), still
+  under every directory source, and the echo area says why once per run,
+  in the core's words
   (`Process.failureMessage (.base "login-shell")`).
 - **The headless mode looks nothing up**: the base is `.inherited` there, so
   the headless fixtures and every test start their children over the
@@ -128,21 +130,27 @@ kept. -/
 def sessionVariables : Array String :=
   #["PWD", "OLDPWD", "SHLVL", "_"]
 
-/-- The text after the first `beginMarker` in `text`, or `none`. -/
-def afterBegin (text : String) : Option String :=
-  match text.splitOn beginMarker with
-  | _ :: rest@(_ :: _) => some (beginMarker.intercalate rest)
-  | _ => none
+/-- Whether `pattern`'s bytes occur in `bytes` at `offset`. -/
+def bytesAt (bytes pattern : ByteArray) (offset : Nat) : Bool :=
+  offset + pattern.size ≤ bytes.size &&
+    (List.range pattern.size).all fun index => bytes[offset + index]! == pattern[index]!
 
-/-- The variables' text at the start of `rest`, up to the first `endMarker`
+/-- The first offset at or after `start` where `pattern` occurs in `bytes`,
+or `none`. -/
+def findBytes (bytes pattern : ByteArray) (start : Nat := 0) : Option Nat :=
+  (List.range' start (bytes.size + 1 - start)).find? (bytesAt bytes pattern ·)
+
+/-- The bytes after the first `beginMarker` in `bytes`, or `none`. -/
+def afterBegin (bytes : ByteArray) : Option ByteArray := do
+  let offset ← findBytes bytes beginMarker.toUTF8
+  pure (bytes.extract (offset + beginMarker.utf8ByteSize) bytes.size)
+
+/-- The variables' bytes at the start of `rest`, up to the first `endMarker`
 that starts it or follows a NUL, without that NUL; `none` with no such
 marker. -/
-def beforeEnd (rest : String) : Option String :=
-  if rest.startsWith endMarker then some ""
-  else
-    match rest.splitOn (String.singleton (Char.ofNat 0) ++ endMarker) with
-    | block :: _ :: _ => some block
-    | _ => none
+def beforeEnd (rest : ByteArray) : Option ByteArray :=
+  if bytesAt rest endMarker.toUTF8 0 then some .empty
+  else (findBytes rest (String.singleton (Char.ofNat 0) ++ endMarker).toUTF8).map (rest.extract 0 ·)
 
 /-- `piece`, `NAME=value`, split at its first `=`; refused with no `=` or
 an empty name. -/
@@ -157,14 +165,16 @@ def variableOf (piece : String) : Except String (String × String) :=
 `NAME=value` pieces between the first `beginMarker` and the first
 `endMarker` that starts right after it or right after a NUL, in order, a
 name that comes twice keeping its last value, without `sessionVariables`.
-What comes before and after the markers is ignored. Output that is not
-UTF-8, that has no start marker or no end marker after its variables, or a
-piece that is not `NAME=value`, is refused, with why. -/
+What comes before and after the markers is ignored. The markers are found
+in the bytes, and only the bytes between them are decoded, so what comes
+before and after them may be any bytes. Output that has no start marker, or
+no end marker after its variables, variables that are not UTF-8, or a piece
+that is not `NAME=value`, is refused, with why. -/
 def parse (bytes : ByteArray) : Except String (Array (String × String)) := do
-  let some text := String.fromUTF8? bytes | throw "it is not UTF-8"
-  let some rest := afterBegin text | throw "it holds no start marker"
+  let some rest := afterBegin bytes | throw "it holds no start marker"
   let some block := beforeEnd rest | throw "it holds no end marker after its variables"
-  let pieces := if block.isEmpty then [] else block.splitOn (String.singleton (Char.ofNat 0))
+  let some text := String.fromUTF8? block | throw "it is not UTF-8"
+  let pieces := if text.isEmpty then [] else text.splitOn (String.singleton (Char.ofNat 0))
   pieces.foldlM
       (fun kept piece => do
         let (named, value) ← variableOf piece

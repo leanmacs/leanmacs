@@ -72,11 +72,21 @@ def environmentOf (variables : Array (String × String)) : String :=
     LoginShell.endMarker ++
     "bye\nNOISE=after\n"
 
-/-- Whether `parse` reads `text` as `expected`. -/
-def parsesAs (text : String) (expected : Array (String × String)) : Bool :=
-  match LoginShell.parse text.toUTF8 with
+/-- `before`, then what the login shell prints with `variables`, then
+`after`, as bytes, so the noise may be bytes that are not UTF-8. -/
+def environmentBytes (before : ByteArray) (variables : Array (String × String))
+    (after : ByteArray) : ByteArray :=
+  before ++ (LoginShell.beginMarker ++ block variables ++ LoginShell.endMarker).toUTF8 ++ after
+
+/-- Whether `parse` reads `bytes` as `expected`. -/
+def parsesBytesAs (bytes : ByteArray) (expected : Array (String × String)) : Bool :=
+  match LoginShell.parse bytes with
   | .ok variables => variables == expected
   | .error _ => false
+
+/-- Whether `parse` reads `text` as `expected`. -/
+def parsesAs (text : String) (expected : Array (String × String)) : Bool :=
+  parsesBytesAs text.toUTF8 expected
 
 /-- Whether `parse` refuses `bytes` with `why`. -/
 def refusedWith (bytes : ByteArray) (why : String) : Bool :=
@@ -207,7 +217,22 @@ def loginShellChecks : List Check :=
                 LoginShell.endMarker)
               #[]) },
     { name :=
-        "the parser refuses output with no start marker, with no end marker after its variables, a piece that is not NAME=value, and bytes that are not UTF-8, each with its reason"
+        "the parser ignores bytes that are not UTF-8 before the start marker and after the end marker, and decodes only the variables between them"
+      run :=
+        pure
+          (parsesBytesAs
+              (environmentBytes ⟨#[0xFF, 0xFE, 10]⟩ #[("PATH", "/sh/bin"), ("HOME", "/u")]
+                ⟨#[10, 0xC3, 0x28, 0xFF]⟩)
+              #[("PATH", "/sh/bin"), ("HOME", "/u")] &&
+            parsesBytesAs
+              (environmentBytes ⟨#[0xFF]⟩ #[("V", s!"x{LoginShell.endMarker}y"), ("W", "1")]
+                ⟨#[0xFF]⟩)
+              #[("V", s!"x{LoginShell.endMarker}y"), ("W", "1")] &&
+            parsesBytesAs (environmentBytes ⟨#[0xE2, 0x82]⟩ #[] .empty) #[] &&
+            parsesBytesAs (environmentBytes ⟨#[0xFF]⟩ #[("LANG", "é€")] ⟨#[0xFF]⟩)
+              #[("LANG", "é€")]) },
+    { name :=
+        "the parser refuses output with no start marker, with no end marker after its variables, a piece that is not NAME=value, and variables that are not UTF-8, each with its reason"
       run :=
         pure
           (refusedWith "PATH=/bin\n".toUTF8 "it holds no start marker" &&
@@ -217,7 +242,16 @@ def loginShellChecks : List Check :=
               "the piece \"JUNK\" is not NAME=value" &&
             refusedWith (LoginShell.beginMarker ++ "=v" ++ nul ++ LoginShell.endMarker).toUTF8
               "the piece \"=v\" has no name" &&
-            refusedWith ⟨#[0xFF]⟩ "it is not UTF-8") },
+            refusedWith
+              (LoginShell.beginMarker.toUTF8 ++ "A=".toUTF8 ++ ⟨#[0xFF]⟩ ++
+                (nul ++ LoginShell.endMarker).toUTF8)
+              "it is not UTF-8" &&
+            refusedWith
+              (⟨#[0xFF]⟩ ++ LoginShell.beginMarker.toUTF8 ++ ⟨#[0xC3, 0x28]⟩ ++ "=v".toUTF8 ++
+                (nul ++ LoginShell.endMarker).toUTF8 ++
+                ⟨#[0xFF]⟩)
+              "it is not UTF-8" &&
+            refusedWith ⟨#[0xFF]⟩ "it holds no start marker") },
     { name := "the login shell keeps environment-api's base contract on the model rig"
       run :=
         contractHolds
