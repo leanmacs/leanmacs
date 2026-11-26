@@ -1,6 +1,0 @@
-config-test: 3 checks passed
-wiring-set: ran config-test ConfigTest.Editor.Job.Real 3 checks
-wiring-set: ran contract-test ContractTest
-wiring-set: ran tests/headless/dispatch/script at ffi-test
-wiring-set: ran window-host at ffi-test
-wiring-set: ran window-host at ffi-test
