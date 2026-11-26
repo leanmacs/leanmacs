@@ -82,8 +82,10 @@ here.
   `Editor/SyntaxTree/Registration/Model.lean`), which records what it
   registers: the registered name, or the refusal as `GrammarError.refused`.
   By default it has no table of libraries, so every registration is refused
-  `unsupported`, as the library's real adapter refuses one until it loads
-  native libraries. A test sets a table, as it sets the files.
+  `unsupported`, as a service that loads no grammar at run time would. A
+  test sets a table, as it sets the files: the job port's grammar contract
+  sets the one that describes the fixture grammar library the library's real
+  adapter loads (`JobContract.GrammarFixture.registry`).
 
 The model's clock is exact, where a real clock only promises "not before".
 So the contract of the port (`Editor/Job/Contract.lean`) holds inequalities

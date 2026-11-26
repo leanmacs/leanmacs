@@ -3,6 +3,7 @@ import Editor.Fuzzy.Contract
 import Editor.Grep.Model
 import Editor.Job
 import Editor.Process.Model
+import Editor.SyntaxTree.Registration.Model
 
 /-!
 # The contract of the job port
@@ -41,10 +42,11 @@ a rig (`PackageRig`): against the model of package services and against
 the runner over the fake package service by `model-test`, and against the
 runner over echo's crate by echo's linked test.
 The grammar registration has one too, `grammarProperties`, after the fuzzy
-request's: against the model with no table, against the runner over the fake
-grammar service with no table, and against the runner over the library's
-syntax worker, which loads no grammar yet, so all three answer
-`unsupported`.
+request's, over the fixture grammar library (`GrammarFixture`): against the
+model and the runner over the fake grammar service, each given a table that
+describes the fixture library, and against the runner over the library's
+syntax worker, which loads the built fixture library, so all three answer a
+registration of its grammar with its name and each refusal alike.
 The fuzzy request has one too, `fuzzyProperties`, after them: against the
 model, against the runner over the fake clock given the fuzzy model's
 handler, and against the runner given the library's binding. What needs
@@ -1753,30 +1755,103 @@ def fuzzyProperties : List Property :=
 /-! ## Grammar registrations
 
 A property of the grammar registration (`JobRequest.grammar`) is a job that
-registers and returns whether it was answered as it should be. It is run
-against the job model with no table of libraries, against the runner over
-the fake grammar service with none (`FakeGrammars`), and against the runner
-over the library's syntax worker, whose real adapter loads no grammar at run
-time yet: so the one answer all three hold to is the unsupported refusal,
-for every policy a source may declare and for a compiled-in name. -/
+registers and returns whether it was answered as it should be. The
+properties are over the fixture grammar library (`GrammarFixture`), and run
+against three implementations held to the same answers: the job model and
+the runner over the fake grammar service (`FakeGrammars`), each given the
+table that describes the fixture library (`GrammarFixture.registry`), and
+the runner over the library's syntax worker, whose real adapter loads the
+built fixture library from disk. A registration of the fixture's grammar
+answers its name, for every policy a source may declare; a library that is
+not there, a symbol the library does not export and a grammar of ABI 0 are
+each refused as their own refusal.
 
-/-- The source of `symbol` in a library that does not exist, declaring
-`policy`. -/
-def grammarSource (symbol : String) (policy : Option ReparsePolicy := none) : GrammarSource :=
-  { library := "/nonexistent/libtree-sitter-python.so", symbol, policy }
+No property registers a compiled-in name: on the real service that would
+replace the compiled-in grammar for the rest of the run. That a service with
+no table refuses every registration `unsupported` is the model's, pinned by
+`ModelTest.grammarRegistryChecks`. -/
+
+/-- The fixture grammar library: the shared library
+`crates/editor-syntax-fixture-ini` builds, a small INI grammar of our own
+that is not compiled in, exporting the symbols named in this namespace. The
+real run is handed the built library's path; the model's run a path it never
+reads from disk. -/
+structure GrammarFixture where
+  /-- The library's path: absolute, for the real run. -/
+  library : String
+
+namespace GrammarFixture
+
+/-- The symbol that exports the fixture's grammar. -/
+def symbol : String :=
+  "tree_sitter_ini"
+
+/-- The name its grammar is registered under. -/
+def name : String :=
+  "ini"
+
+/-- The symbol that exports the same grammar under a compiled-in name,
+`json`. No property registers it; the table lists it as the library does. -/
+def overridingSymbol : String :=
+  "tree_sitter_json"
+
+/-- A symbol the fixture library does not export. -/
+def absentSymbol : String :=
+  "tree_sitter_absent"
+
+/-- The symbol that exports a language of ABI 0, which no parsing library
+speaks. -/
+def abi0Symbol : String :=
+  "tree_sitter_abi_0"
+
+/-- The table of libraries that describes the fixture library: the one
+library, exporting its grammar, the same grammar under `json`'s name, and a
+grammar of another ABI. -/
+def registry (fixture : GrammarFixture) : GrammarRegistry :=
+  {
+    libraries :=
+      some
+        #[(fixture.library,
+            .exports
+              #[(symbol, .grammar), (overridingSymbol, .grammar), (abi0Symbol, .otherAbi)])] }
+
+end GrammarFixture
+
+/-- The source of `symbol` in `library`, declaring `policy`. -/
+def grammarSource (library symbol : String) (policy : Option ReparsePolicy := none) :
+    GrammarSource :=
+  { library, symbol, policy }
+
+/-- The policies a source may declare. -/
+def grammarPolicies : List (Option ReparsePolicy) :=
+  [none, some .incremental, some .whole]
 
 /-- The properties every implementation of the job port's grammar
-registration has, while the service loads no grammar at run time. -/
-def grammarProperties : List Property :=
+registration has, over `fixture`. -/
+def grammarProperties (fixture : GrammarFixture) : List Property :=
   [{  name :=
-        "a registration by a service that loads no grammar is refused as unsupported, for each declared policy and for a compiled-in name"
+        "a registration of the fixture library's grammar answers its name, for each declared policy"
+      holds :=
+        grammarPolicies.allM fun policy => do
+          match ← Grammar.register (grammarSource fixture.library GrammarFixture.symbol policy) with
+          | .ok name =>
+            return name == GrammarFixture.name
+          | .error _ =>
+            return false },
+    { name := "a library that is not there is refused not found, for each declared policy"
+      holds :=
+        grammarPolicies.allM fun policy => do
+          let source :=
+            grammarSource "/nonexistent/libtree-sitter-python.so" "tree_sitter_python" policy
+          return (← Grammar.register source) matches .error (.refused .notFound) },
+    { name := "a symbol the fixture library does not export is refused missing symbol"
       holds := do
-        let sources :=
-          [grammarSource "tree_sitter_python",
-            grammarSource "tree_sitter_python" (some .incremental),
-            grammarSource "tree_sitter_python" (some .whole), grammarSource "tree_sitter_json"]
-        sources.allM fun source => do
-            return (← Grammar.register source) matches .error (.refused .unsupported) }]
+        let source := grammarSource fixture.library GrammarFixture.absentSymbol
+        return (← Grammar.register source) matches .error (.refused .missingSymbol) },
+    { name := "the fixture library's grammar of ABI 0 is refused unsupported ABI"
+      holds := do
+        let source := grammarSource fixture.library GrammarFixture.abi0Symbol
+        return (← Grammar.register source) matches .error (.refused .unsupportedAbi) }]
 
 /-! ## Snapshots
 

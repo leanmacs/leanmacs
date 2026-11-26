@@ -91,14 +91,16 @@ say it. -/
 def grammarLeakName : String :=
   "every registration the grammar properties started is answered and taken, and the service keeps nothing"
 
-/-- The names of the job port's grammar properties that do not hold of the
-runner over the library's grammar registrations (`Job.realGrammars`, through
+/-- The names of the job port's grammar properties over `fixture`, the
+built fixture grammar library, that do not hold of the runner over the
+library's grammar registrations (`Job.realGrammars`, through
 `editor_ffi_grammars_*`, the syntax worker and the real adapter, which loads
-no grammar yet). `grammarLeakName` is among them if the service then keeps
-a wait or an answer. Each job has taken its answers before it ends, so the
-count is read once its properties have run. -/
-def grammarJobFailures (services : Job.Services) : IO (List String) := do
-  let failed ← JobContract.failures (runOnTimers services) JobContract.grammarProperties
+the library from disk). `grammarLeakName` is among them if the service then
+keeps a wait or an answer. Each job has taken its answers before it ends, so
+the count is read once its properties have run. -/
+def grammarJobFailures (services : Job.Services) (fixture : JobContract.GrammarFixture) :
+    IO (List String) := do
+  let failed ← JobContract.failures (runOnTimers services) (JobContract.grammarProperties fixture)
   let left ← Ffi.grammarsPending
   return failed.map (s!"the job runner over the library's grammar registrations: {·}") ++
       if left == 0 then [] else [s!"{grammarLeakName} ({left} left)"]

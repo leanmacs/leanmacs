@@ -257,7 +257,7 @@ def syntaxChecks (_ : Unit) : List Check :=
             first &&
             !second },
     { name :=
-        "a registration crosses: its start is taken, its completion arrives on the completion queue, and its take answers unsupported; an id in use is not taken"
+        "a registration crosses: its start is taken, its completion arrives on the completion queue, and its take answers not found for a library that is not there; an id in use is not taken"
       run := do
         let library := "/nonexistent/libtree-sitter-python.so"
         let started ← Editor.Ffi.grammarsStart 1340 library "tree_sitter_python" 0
@@ -265,7 +265,7 @@ def syntaxChecks (_ : Unit) : List Check :=
         let completed ← registrationCompleted 1340
         let taken ← Editor.Ffi.grammarsTake 1340
         let second ← Editor.Ffi.grammarsTake 1340
-        return started && !again && completed && taken matches .error .unsupported &&
+        return started && !again && completed && taken matches .error .notFound &&
             second matches .error .noAnswer &&
             (← Editor.Ffi.grammarsPending) == 0 },
     { name :=

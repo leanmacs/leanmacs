@@ -799,9 +799,10 @@ encodes what crosses to the library: the tag each policy crosses as
 (`Job.policyTag`), the tags `policy_of` reads in
 `crates/editor-ffi/src/grammars.rs`, and the port's answer for each answer
 the binding hands over (`Job.grammarAnswerOf`), each refusal of the
-library's as that refusal and each of the service's as `failed`. The library
-loads no grammar yet, so no registration reaches a refusal of its own, and
-these pin the mapping itself. -/
+library's as that refusal and each of the service's as `failed`. The grammar
+properties reach some refusals through the real service, on the fixture
+grammar library (`JobContract.grammarProperties`); these pin the whole
+mapping, the answers no property reaches included. -/
 def grammarChecks (_ : Unit) : List Check :=
   [{  name := "each policy crosses as the tag `policy_of` names it by: none 0, incremental 1, whole 2"
       run :=

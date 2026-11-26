@@ -262,7 +262,11 @@ run = [
   # text-object checks read (tests/syntax). Its third is the directory of
   # the fixture that stands in for fzf in the checks of a source a command
   # filters (tests/completion). Its fourth is the directory of the launch
-  # fixtures the launcher's tests read too (tests/launch). A compile over
+  # fixtures the launcher's tests read too (tests/launch). Its fifth is the
+  # fixture grammar library the job port's grammar properties register,
+  # built by Cargo and printed by the fixture crate's binary
+  # (crates/editor-syntax-fixture-ini): the line only builds it and passes
+  # its path, and a failed build fails the line. A compile over
   # the real process service is
   # no check of this executable any more, and nor are the workspace finder,
   # the listers and `:!`: they are the compile package's, the workspace
@@ -273,7 +277,7 @@ run = [
   # on those packages' own fixtures (packages/compile/tests/compile,
   # packages/workspace/tests/workspaces and tests/completion); the shell's
   # run on a rig over fakes, with no fixture.
-  ".lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion ../tests/launch",
+  "lib=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-syntax-fixture-ini) && .lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion ../tests/launch \"$lib\"",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment; its third argument is the directory of the syntax

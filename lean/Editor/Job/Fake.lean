@@ -2042,8 +2042,10 @@ registry (`Editor/SyntaxTree/Registration/Model.lean`) behind a reference.
 - A flush completes at once: every registration is answered at its start.
 
 Made with no table, the default, it refuses every registration
-`unsupported`, as the library's real adapter does until it loads native
-libraries. -/
+`unsupported`, as a syntax service that loads no grammar at run time would.
+Given the table that describes the fixture grammar library
+(`JobContract.GrammarFixture.registry`), it answers the job port's grammar
+contract as the library's real adapter does on the built library. -/
 structure FakeGrammars where private mk ::
   /-- The table of waits it completes through. -/
   completions : Completions

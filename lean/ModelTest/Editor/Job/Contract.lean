@@ -123,23 +123,31 @@ def fuzzyJobFailures : IO (List String) := do
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake clock: {·}")
 
+/-- The fixture grammar library as the model's runs name it: a path they
+never read from disk, described by its table
+(`JobContract.GrammarFixture.registry`). -/
+def modelFixture : JobContract.GrammarFixture :=
+  { library := "/fixture/libtree-sitter-ini.so" }
+
 -- inferred-waits W26: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
 set_option linter.inferredWait false in
 /-- The names of the job port's grammar properties that do not hold of the
-job model with no table, and of those that do not hold of the runner over the
-fake clock given the fake grammar service with no table
-(`Job.FakeGrammars`). -/
+job model given the fixture library's table, and of those that do not hold
+of the runner over the fake clock given the fake grammar service with the
+same table (`Job.FakeGrammars`). -/
 def grammarJobFailures : IO (List String) := do
+  let properties := JobContract.grammarProperties modelFixture
   let onModel ←
-    JobContract.failures (fun job => pure (job.runModel {}).1) JobContract.grammarProperties
+    JobContract.failures (fun job => pure (job.runModel { grammars := modelFixture.registry }).1)
+        properties
   let onFake ←
     JobContract.failures
         (fun job => do
           let rig ← Rig.new
-          let grammars ← Job.FakeGrammars.new rig.services.completions
+          let grammars ← Job.FakeGrammars.new rig.services.completions modelFixture.registry
           runOnFake job
               (some { rig with services := { rig.services with grammars := grammars.grammars } }))
-        JobContract.grammarProperties
+        properties
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake clock: {·}")
 

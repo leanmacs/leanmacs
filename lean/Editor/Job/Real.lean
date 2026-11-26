@@ -121,9 +121,11 @@ its source's library, symbol and policy tag (`policyTag`) with its wait's
 id, and its answer is taken by the id once, each of the library's refusals
 as `GrammarError.refused` of its own (`grammarAnswerOf`). One the library
 does not take is completed here, at once, `failed`, as a diff the library
-does not take is. Until the library loads native libraries, its answer is
-the unsupported refusal, so `contract-test`'s `ContractTest.grammarChecks`
-pins `policyTag` and `grammarAnswerOf` themselves.
+does not take is. The library's real adapter loads native grammar
+libraries, so `contract-test` holds this adapter to the job port's grammar
+contract on the fixture grammar library (`JobContract.grammarProperties`),
+and its `ContractTest.grammarChecks` pins `policyTag` and `grammarAnswerOf`
+themselves, the answers no property reaches included.
 
 ## The file watches
 
