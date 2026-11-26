@@ -29,7 +29,7 @@ def fullCall : ToolCall :=
 def everyEvent : Array Event :=
   #[.chunk (some "msg-1") "Done.", .chunk none "", .toolCall Contract.call, .toolCall fullCall,
     .permission 1 (some 1) fullCall Contract.options, .permission 2 none Contract.second #[],
-    .withdrawn 2, .usage 1200 200000 (some ("0.01", "USD")), .usage 0 0 none,
+    .withdrawn 2, .usage 1200 200000 (some ("0.01", "USD")), .usage 1200 200000 none,
     .title "Example title", .mode "mode-ask", .turnEnded 1 "end_turn", .ended (.exited 0),
     .ended (.exited (-1)), .ended (.signalled 9), .ended .lineTooLong, .ended (.failed "gone"),
     .ended (.protocolError "bad")]

@@ -178,7 +178,7 @@ def Event.take? : List Argument → Option (Event × List Argument)
     return (.permission ticket turn call options, rest)
   | .str "withdrawn" :: .nat ticket :: rest => some (.withdrawn ticket, rest)
   | .str "usage" :: .nat used :: .nat size :: .bool false :: rest =>
-    some (.usage size used none, rest)
+    some (.usage used size none, rest)
   | .str "usage" :: .nat used :: .nat size :: .bool true :: .str amount :: .str currency :: rest =>
     some (.usage used size (some (amount, currency)), rest)
   | .str "title" :: .str text :: rest => some (.title text, rest)
