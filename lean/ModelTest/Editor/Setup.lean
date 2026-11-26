@@ -862,28 +862,34 @@ def setupChecks : List Check :=
               refusal (titleBar .themed) == none)
         | _, _ => pure false },
     { name :=
-        "a setup's process environment is collected as it set it: inherited, mise with no path and mise with an absolute path; a setup that does not set it collects none"
+        "a setup's base environment is collected as the name it chose; a setup that chooses none collects none"
       run :=
-        let collected (setup : SetupM Unit) : Option (Option Process.Setting) :=
+        let collected (setup : SetupM Unit) : Option (Array String) :=
           match Config.Registrations.ofSetup setup with
-          | .ok registrations => some registrations.environment
+          | .ok registrations => some registrations.environmentBases
           | .error _ => none
         pure
-          (collected (processEnvironment .inherited) == some (some .inherited) &&
-            collected (processEnvironment (.mise none)) == some (some (.mise none)) &&
-            collected (processEnvironment (.mise (some "/opt/homebrew/bin/mise"))) ==
-              some (some (.mise (some "/opt/homebrew/bin/mise"))) &&
-            collected (command "first" (makes "1")) == some none) },
+          (collected (environmentBase "b") == some #["b"] &&
+            collected (command "first" (makes "1")) == some #[]) },
     { name :=
-        "a setup that gives mise a relative path, or sets the process environment twice, is refused with a message that says so"
+        "a setup that chooses the base environment twice is refused with a message that says so"
       run :=
         let twice : SetupM Unit := do
-          processEnvironment .inherited
-          processEnvironment (.mise none)
+          environmentBase "a"
+          environmentBase "b"
+        pure (refusal twice == some "the base environment is chosen twice") },
+    { name :=
+        "a setup that calls processEnvironment is refused, whatever it chose, with a message that names the mise package's setting, Mise.executable, and the path it gave"
+      run :=
+        let gone (setting : Process.Setting) : Bool :=
+          match refusal (processEnvironment setting) with
+          | some said =>
+            said == processEnvironmentGone setting && (said.splitOn "Mise.executable").length > 1
+          | none => false
+        let path := "/opt/homebrew/bin/mise"
         pure
-          (refusal (processEnvironment (.mise (some "bin/mise"))) ==
-              some "the path to mise must be absolute: bin/mise" &&
-            refusal twice == some "the process environment is set twice") },
+          (gone .inherited && gone .auto && gone (.mise none) && gone (.mise (some path)) &&
+            (((refusal (processEnvironment (.mise (some path)))).getD "").splitOn path).length > 1) },
     { name :=
         "a setup's workspace roots are collected in the order it declared them, each with the project it names, if any; a setup that declares none collects none"
       run :=

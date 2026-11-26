@@ -692,17 +692,20 @@ def reloadChecks : List Check :=
           (state.theme == Theme.builtin ++ #[defined "keyword" (coloured 1)] &&
             state.theme == loaded.theme) },
     { name :=
-        "an installed reload puts config's process environment in the registry, a rejected one leaves the one that was there, and a config that sets none gives none"
+        "an installed reload puts config's base name in the registry, a rejected one keeps it, and one that names none leaves the packages' default; config's choice overrides a package's default"
       run :=
-        let (loaded, _) :=
-          reduce [.requested, .finished (accepted ["a"] (processEnvironment .inherited))]
+        let start : ModelState :=
+          { (reduce []).1 with registry := { (reduce []).1.registry with baseDefaults := #["pkg"] } }
+        let (loaded, _) := reduceFrom start [.requested, .finished (accepted ["a"] (environmentBase "b"))]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
         let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
         pure
-          ((reduce []).1.registry.environment == none &&
-            loaded.registry.environment == some .inherited &&
-            kept.registry.environment == some .inherited &&
-            bare.registry.environment == none) },
+          ((reduce []).1.registry.environmentBase == none &&
+            loaded.registry.environmentBase == some "b" &&
+            loaded.registry.baseName == "b" &&
+            kept.registry.environmentBase == some "b" &&
+            bare.registry.environmentBase == none &&
+            bare.registry.baseName == "pkg") },
     { name :=
         "an installed reload puts config's workspace roots in the registry, which tells the loop of them with the config generation; every install bumps the generation, a rejected reload changes neither, and with nothing installed the generation is 0"
       run :=

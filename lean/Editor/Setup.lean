@@ -637,9 +637,10 @@ inductive SetupRequest where
   | tabBar (shown : TabBar.Shown)
   /-- Choose the title bar the window opens with (`Window.TitleBar`). -/
   | titleBar (style : Window.TitleBar)
-  /-- Choose where a child's environment comes from
-  (`Editor/Process/Environment.lean`). -/
-  | processEnvironment (setting : Process.Setting)
+  /-- Choose the base of a child's environment by name: a base source
+  registered at `EnvironmentApi.BaseSource`, or the core's `inherited`
+  (`Editor/Process/Environment.lean`). In a package it is a default. -/
+  | environmentBase (name : String)
   /-- Set auto-reload on or off (`Editor/Loop.lean`, "Auto-reload"). -/
   | autoReload (on : Bool)
   /-- Declare `root`, an absolute path, a workspace root, of the project
@@ -724,7 +725,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .layout _ => Unit
   | .tabBar _ => Unit
   | .titleBar _ => Unit
-  | .processEnvironment _ => Unit
+  | .environmentBase _ => Unit
   | .autoReload _ => Unit
   | .workspace .. => Unit
   | .workspaceLister _ => Unit
@@ -1198,21 +1199,37 @@ at the next start. The editor refuses the `setup` for choosing it twice. -/
 def titleBar (style : Window.TitleBar) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.titleBar style))
 
-/-- The message a setting of mise's path is refused with when the path is not
-absolute. -/
-def relativeMise (path : System.FilePath) : String :=
-  s!"the path to mise must be absolute: {path}"
+/-- Chooses the base of a child's environment by name
+(`Editor/Process/Environment.lean`): the base source registered under
+`name` at `EnvironmentApi.BaseSource`, or the core's `inherited`, the base
+when nothing chooses one. In config it is the choice; in a package, a
+default, which config's choice overrides. A name no registered base answers
+to is said at reload, and children keep the base they had. The editor
+refuses the `setup` for choosing it twice. -/
+def environmentBase (name : String) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.environmentBase name))
 
-/-- Chooses where a child's environment comes from: `inherited`, no lookup;
-`mise` with the absolute path of the executable, or with none, which takes
-the first of the usual places that exists; or `auto`, the default
-(`Editor/Process/Environment.lean`). Refuses the `setup` for a path that is
-not absolute. -/
-def processEnvironment (setting : Process.Setting) : SetupM Unit := do
-  if let .mise (some path) := setting then
-    unless path.isAbsolute do
-      throw (relativeMise path)
-  ExceptT.lift (Program.request (port := setupPort) (.processEnvironment setting))
+/-- What a `setup` that calls `processEnvironment` with `setting` is refused
+with: the setting is gone, since a child's environment comes from the
+packages' sources, and what replaces it, which names the mise package's
+setting, `Mise.executable`. -/
+def processEnvironmentGone (setting : Process.Setting) : String :=
+  let advice :=
+    match setting with
+    | .inherited =>
+      "to start children with the editor's own environment, leave the package `mise` out of the package set; its setting, `Mise.executable`, is gone with it"
+    | .mise (some path) =>
+      s!"to run mise at that path, call `Mise.executable \"{path}\"`, the setting of the package `mise`"
+    | .auto | .mise none =>
+      "the package `mise` looks for mise in the usual places itself; to run it at a path, call `Mise.executable`, its setting"
+  s!"`processEnvironment` is gone: a child's environment comes from the packages' environment sources; {advice}"
+
+/-- Kept only so that a config that still calls it elaborates and is then
+refused, with a message that names what replaces it
+(`processEnvironmentGone`): a child's environment comes from the packages'
+sources (`EnvironmentApi`), mise's from the package `mise`. -/
+def processEnvironment (setting : Process.Setting) : SetupM Unit :=
+  throw (processEnvironmentGone setting)
 
 /-- Turns auto-reload on, or with `false` off. With it on, a follow job
 watches each file buffer's file, and a change on disk reloads a buffer with

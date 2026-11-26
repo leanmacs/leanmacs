@@ -451,7 +451,7 @@ def install (state : State β σ) (outcome : Outcome β σ) : State β σ × Rep
               built.registrations with
             styleChoices := built.registrations.styleChoices
             displayChoices := built.registrations.displayChoices
-            environment := built.registrations.environment
+            environmentBase := built.registrations.environmentBases.back?
             autoReload := built.registrations.autoReload.back?.getD false
             workspaceRoots := built.registrations.workspaceRoots
             workspaceListers := built.registrations.workspaceListers
