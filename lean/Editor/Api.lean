@@ -382,6 +382,11 @@ has a case on the real binding. They are pinned once, on the models
   `indentUnitOf name` is the indent unit of the table's entry of a name,
   which the loop answers too, and `Target.indentUnit` the unit of a
   target's buffer's language, four spaces when it has none.
+- `setGrammarAnswers answers` records what the registration of config's
+  declared grammars answered, and `rehighlightGrammars names` has each
+  buffer whose language names one of those grammars highlighted again, as
+  its major mode now says, with no on-enter action
+  (`Editor/Language/Grammar/Register.lean`, whose job's command makes both).
 - `ViewId.setMajorMode view name` makes a mode the major mode of the buffer
   the view shows, and says whether it became it: `false`, with nothing
   run, when the buffer already had it. The loop that runs the command
@@ -1042,6 +1047,20 @@ none of. -/
 def BufferId.setLanguage (id : BufferId) (name : Option String) :
     EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.setLanguage id name)
+
+/-- Records `answers`, what the registration of config's declared grammars
+answered (`Editor/Language/Grammar/Answer.lean`), in place of the answers
+recorded before. The loop reads them when a buffer's major mode is set.
+Never refused. -/
+def setGrammarAnswers (answers : Language.Grammar.Answers) : EditorM Unit :=
+  EditorState.ask (.setGrammars answers)
+
+/-- Has each open buffer whose language's tree names one of `grammars`
+highlighted again: its text detached, then entered as its major mode's
+lineage and its language's tree, resolved against the recorded answers,
+now say (`Editor/Command/Dispatch.lean`). No on-enter action runs. -/
+def rehighlightGrammars (grammars : Array String) : EditorM Unit :=
+  EditorState.ask (.rehighlight grammars)
 
 /-- The name of the language the registry's table chooses for `path`
 (`Language.forPath`), or none when no entry matches: what a file's open

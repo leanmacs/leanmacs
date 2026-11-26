@@ -29,13 +29,16 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
   named, and so is a job, and what the name stands for is the registry's.
-  So four requests are answered with more than this handler by the loop,
+  So five requests are answered with more than this handler by the loop,
   which knows the registry: `setMajorMode` and `setBufferMajorMode`, which
   there refuse a name no mode is registered under and run the mode's
   on-enter actions, `startJob`, which there refuses a name no job is
-  registered under, and `loadTheme`, which there refuses a name no theme
-  is registered under. Here they take any name: this handler knows no
-  registry. Each is still a state operation, which this handler makes.
+  registered under, `loadTheme`, which there refuses a name no theme
+  is registered under, and `rehighlight`, which there highlights again the
+  buffers whose language names one of its grammars. Here they take any
+  name: this handler knows no registry. Each but `rehighlight` is still a
+  state operation, which this handler makes; this handler answers
+  `rehighlight` and changes nothing.
 - **Every request is answered from the state.** A question to the registry
   or config is `RegistryRequest`'s (`Editor/Command/Registry.lean`), and
   what ends the command or runs something registered inside it is
@@ -182,6 +185,14 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   read of the state (`EditorState.workspaceOf?`, `workspaces`).
 - **A buffer's language is recorded by name**, `setLanguage`, as its major
   mode is: any name is taken, and refused `noSuchBuffer` alone.
+- **Config's grammars are answered by two requests**: `setGrammars`
+  replaces the answers the registration of config's declared grammars
+  brought back (`Editor/State.lean`, "Config's grammars"), never refused;
+  and `rehighlight`, with grammar names, which the loop answers by
+  highlighting again each buffer whose language names one of them
+  (`Editor/Command/Dispatch.lean`), and which this handler answers with
+  the state unchanged. The core's `register-grammars` job's command makes
+  both (`Editor/Language/Grammar/Register.lean`).
 - **A session restore puts back what it read by four requests**
   (`Editor/Restore/Run.lean`), each plain data: `restoreFrame`, the
   frame's tabs and every window of them, refused `promptOpen` and
@@ -421,6 +432,12 @@ inductive StateRequest where
   /-- Record `name` as the language of the buffer `id`, or that it has
   none. -/
   | setLanguage (id : BufferId) (name : Option String)
+  /-- Replace the recorded answers of config's grammars with `answers`. -/
+  | setGrammars (answers : Language.Grammar.Answers)
+  /-- Highlight again each buffer whose language's tree names one of
+  `grammars`, as its major mode now says: answered by the loop, which
+  knows the registry. -/
+  | rehighlight (grammars : Array String)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -498,6 +515,8 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setProjectValue .. => Except WorkspaceRefusal Unit
   | .setUnscopedValue .. => Unit
   | .setLanguage .. => Except BufferRefusal Unit
+  | .setGrammars _ => Unit
+  | .rehighlight _ => Unit
 
 namespace EditorState
 
@@ -620,6 +639,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setProjectValue identity name value, state => state.setProjectValue identity name value
   | .setUnscopedValue name value, state => ((), state.setUnscopedValue name value)
   | .setLanguage id name, state => state.setLanguage id name
+  | .setGrammars answers, state => ((), state.setGrammars answers)
+  | .rehighlight _, state => ((), state)
 
 end EditorState
 

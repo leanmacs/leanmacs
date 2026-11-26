@@ -5,6 +5,7 @@ import Editor.Completion.Display
 import Editor.File
 import Editor.Floating
 import Editor.Invocation
+import Editor.Language.Grammar.Answer
 import Editor.Layout
 import Editor.Program
 import Editor.Scene
@@ -91,14 +92,28 @@ def stateRequests : List StateRequest :=
     .setLocalMark ⟨0⟩ 'b' (some (marker 1 7)), .setGlobalMark 'A' (some (.held ⟨0⟩ (marker 0 7))),
     .setGlobalMark 'B' (some (.held ⟨9⟩ (marker 0 7))),
     .setGlobalMark 'C' (some (.held ⟨0⟩ (marker 1 7))), .setGlobalMark 'D' (some (.file "/f" 1 2)),
-    .setGlobalMark 'A' none]
+    .setGlobalMark 'A' none, .setGrammars { generation := 1, answers := #[("ini", .registered {})] },
+    .rehighlight #["ini"]]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
 asks the text store nothing, so a marker's id is written out by hand. -/
 def stateRequestChecks : List Check :=
   let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
-  [{  name := "handOver keeps a restart's plan in the outbox, the latest in place of what was there"
+  [{  name := "setGrammars replaces the recorded answers; rehighlight is answered and changes no state"
+      run :=
+        pure <|
+          let first : Language.Grammar.Answers :=
+            { generation := 1, answers := #[("ini", .registered {})], registered := #["ini"] }
+          let second : Language.Grammar.Answers :=
+            { generation := 2, answers := #[("conf", .refused (.refused .notFound) false)]
+              registered := #["ini"] }
+          let (_, once) := EditorState.none.handle (.setGrammars first)
+          let (_, twice) := once.handle (.setGrammars second)
+          let (_, rehighlighted) := twice.handle (.rehighlight #["ini"])
+          EditorState.none.grammars == {} && once.grammars == first && twice.grammars == second &&
+            rehighlighted == twice },
+    { name := "handOver keeps a restart's plan in the outbox, the latest in place of what was there"
       run :=
         pure <|
           let plan (record : String) : Restart.Plan := { record, handover := default }

@@ -8,6 +8,7 @@ import Editor.Floating
 import Editor.GeneratedView
 import Editor.Invocation
 import Editor.JumpList
+import Editor.Language.Grammar.Answer
 import Editor.Layout
 import Editor.Marks
 import Editor.PackageSet.Running
@@ -1015,6 +1016,16 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
   changes nothing.
 - `removeMinorMode` takes a minor mode away; one the buffer does not have
   changes nothing.
+
+## Config's grammars
+
+`grammars` holds what the registration of config's declared grammars
+answered, stamped with the config generation it is of
+(`Editor/Language/Grammar/Answer.lean`). The core's `register-grammars`
+job's command sets it (`setGrammars`, which replaces it whole and is never
+refused), and the loop reads it when a buffer's major mode is set, with the
+generation it is told, to resolve the tree of the buffer's language
+(`Language.Grammar.treeOf`, `Editor/Command/Dispatch.lean`).
 
 ## Smaller rules
 
@@ -2259,6 +2270,10 @@ structure EditorState where
   it; kept for the editor's life, as `tabBar` is ("The minibuffer's place",
   in the module docs). -/
   candidateList : Option GeneratedView := none
+  /-- What the registration of config's declared grammars answered, of the
+  config generation it is stamped with ("Config's grammars", in the module
+  docs). -/
+  grammars : Language.Grammar.Answers := {}
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -3300,6 +3315,11 @@ def setMajorMode (id : BufferId) (name : String) (state : EditorState) :
       if buffer.major == some name then (false, buffer)
       else (true, { buffer with major := some name }))
     state
+
+/-- Replaces the recorded answers of config's grammars with `answers`
+("Config's grammars", in the module docs). Never refused. -/
+def setGrammars (answers : Language.Grammar.Answers) (state : EditorState) : EditorState :=
+  { state with grammars := answers }
 
 /-- Records `name` as the language of the buffer `id`, or, with `none`,
 that it has none. Any name is taken. Refused, with the state unchanged,

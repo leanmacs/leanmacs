@@ -162,6 +162,23 @@ from the next command.
   which a mode that takes the language's (`Mode.syntaxTreeOfLanguage`,
   `Editor/Language.lean`) gives. A buffer with no language, or one no
   entry is registered under, gives none: `code` over it is plain text.
+  The language's tree is resolved first against the grammars config
+  declares (`Loop.Registered.grammars`) and the answers their registration
+  recorded in the state (`EditorState.grammars`), under the config
+  generation the loop is told (`Language.Grammar.treeOf`,
+  `Editor/Language/Grammar.lean`): a declared grammar with no answer of
+  this generation, or one refused that the library does not list, gives
+  none, and a registered one fills in the queries read from its directory.
+- **Highlighting again** (`StateRequest.rehighlight`, made by the core's
+  `register-grammars` job's command) needs no window and runs no on-enter
+  action. For each open buffer, in the state's order, whose language's
+  tree names one of the request's grammars and whose major mode is
+  registered, the loop runs `Highlight.leave` on its text, then
+  `Highlight.enter` with the tree its major mode's lineage now says over
+  the resolved language's (`Mode.syntaxTreeOf`), when it says one. The
+  detach first makes the library open a new session, so a buffer whose
+  grammar was just overridden gets the new parser. Other buffers are asked
+  nothing.
 - **An on-enter action runs inside the command.** Its program is put before
   the rest of the command's and goes through this same transformation: its
   state requests are answered from the state the command had reached, its
@@ -608,6 +625,43 @@ compiler is shown for `Program.dispatched`, which is `partial`. -/
 instance {α : Type} : Inhabited (Program editorPort (Guarded α × EditorState)) :=
   ⟨.done (.interrupted, EditorState.none)⟩
 
+/-- The tree of the language called `language`, if `registered` has an
+entry of it, resolved against the declared grammars `registered` holds and
+the answers `state` recorded, under `registered`'s generation
+(`Language.Grammar.treeOf`): `none` for a buffer drawn plain. -/
+def Loop.Registered.treeOfLanguage (registered : Loop.Registered) (state : EditorState)
+    (language : Option String) : Option Mode.SyntaxTree :=
+  (language.bind fun name => registered.languages.find? (·.name == name)).bind fun language =>
+    Language.Grammar.treeOf registered.grammars state.grammars registered.generation
+      language.syntaxTree
+
+/-- The buffers `rehighlight grammars` highlights again, in the state's
+order: each open buffer whose language's tree, as `registered` holds it,
+names one of `grammars`, and whose major mode is registered, with that
+mode's name and lineage, root first. -/
+def Loop.Registered.rehighlighted (registered : Loop.Registered) (state : EditorState)
+    (grammars : Array String) : List (Buffer × String × List Mode) :=
+  state.buffers.toList.filterMap fun slot => do
+    let buffer ← slot
+    let name ← buffer.language
+    let language ← registered.languages.find? (·.name == name)
+    if !grammars.contains language.syntaxTree.grammar then
+      none
+    let major ← buffer.major
+    let lineage ← registered.entering major
+    return (buffer, major, lineage)
+
+/-- What `rehighlight grammars` runs ("Highlighting again", in the module
+docs): each buffer `rehighlighted` picks detached, then entered as its
+major mode's lineage now says over its language's resolved tree. -/
+def rehighlighting (registered : Loop.Registered) (state : EditorState) (grammars : Array String) :
+    EditorM Unit := do
+  for (buffer, major, lineage) in registered.rehighlighted state grammars do
+    Highlight.leave buffer.text
+    if let some tree := Mode.syntaxTreeOf lineage (registered.treeOfLanguage state buffer.language)
+    then
+      Highlight.enter major buffer.text tree
+
 /-- What runs when the mode `name`, of `lineage` (root first), has become
 the major mode of a buffer over `text` whose old major mode said
 `before` of how its text is parsed: the text highlighted with the new
@@ -658,9 +712,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     | none, _ => dispatched registered state (next (.error (.noSuchWindow view)))
     | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
     | some target, some lineage =>
-      let language :=
-        (target.buffer.language.bind fun name => registered.languages.find? (·.name == name)).map
-          (·.syntaxTree)
+      let language := registered.treeOfLanguage state target.buffer.language
       let before :=
         (target.buffer.major.bind registered.entering).bind (Mode.syntaxTreeOf · language)
       match state.handle (.setMajorMode view name) with
@@ -677,9 +729,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     | none, _ => dispatched registered state (next (.error (.noSuchBuffer id)))
     | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
     | some buffer, some lineage =>
-      let language :=
-        (buffer.language.bind fun name => registered.languages.find? (·.name == name)).map
-          (·.syntaxTree)
+      let language := registered.treeOfLanguage state buffer.language
       let before := (buffer.major.bind registered.entering).bind (Mode.syntaxTreeOf · language)
       let views := (state.windows.filter (·.buffer == id)).toList.map (·.id)
       match state.handle (.setBufferMajorMode id name) with
@@ -691,6 +741,14 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           | .error error =>
             pure (.error error)
       | (reply, state) => dispatched registered state (next reply)
+  | state, .step (.state (.rehighlight grammars)) next =>
+    let (reply, state) := state.handle (.rehighlight grammars)
+    dispatched registered state do
+      match ← (rehighlighting registered state grammars).run with
+      | .ok () =>
+        next reply
+      | .error error =>
+        pure (.error error)
   | state, .step (.state (.startJob name arguments key)) next =>
     if registered.jobs name then
       let (reply, state) := state.handle (.startJob name arguments key)

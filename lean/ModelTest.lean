@@ -1220,7 +1220,11 @@ names a scheme's key:
   and the leader then a suffix runs the mode's local command;
 - `modeEnterChecks`: a mode's on-enter action, on the editor's models: it
   runs once, with the view, when the mode becomes a buffer's major mode, a
-  derived mode's lineage root first, and a refusal runs nothing;
+  derived mode's lineage root first, and a refusal runs nothing; the `code`
+  mode over a buffer whose language names a declared grammar, plain until
+  an answer of the generation is recorded and highlighted with the recorded
+  query then; and highlighting again, which detaches and enters again only
+  the buffers whose language names the grammars, with no on-enter action;
 - `highlightFaceChecks`: the capture-to-face rule (`Editor/Highlight.lean`),
   pure: the shipped default from the face vocabulary, the fallback of a
   dotted capture to its first component, and config's mapping over both;

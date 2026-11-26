@@ -22,6 +22,8 @@ import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Keymap
 import Editor.Language
+import Editor.Language.Grammar
+import Editor.Language.Grammar.Answer
 import Editor.Layout
 import Editor.Loop
 import Editor.Menu
@@ -33,9 +35,11 @@ import Editor.Scene
 import Editor.State
 import Editor.State.Request
 import Editor.Store
+import Editor.SyntaxTree.Model
 import Editor.TabBar
 import Editor.Test.Config
 import Editor.Test.Loop
+import Editor.Test.Modes
 import Editor.Test.Models
 import Editor.Test.States
 import Editor.Text
@@ -208,12 +212,101 @@ def entered (steps : List (ViewId × String)) (registry : Config.Registry := ent
     some (texts.extract 2 texts.size, echoes, state.buffers.map (·.bind (·.major)))
   | (.error _, _) => none
 
+/-- The grammar `ini`, declared by config for the checks of a declared
+grammar's tree. -/
+def declaredIni : Language.Grammar :=
+  Language.Grammar.declare "ini" "/g/libtree-sitter-ini.so"
+
+/-- The language `ini` of `*.ini`, which names the declared grammar. -/
+def iniLanguage : Language :=
+  { name := "ini", patterns := [.extension "ini"], syntaxTree := { grammar := "ini" } }
+
+/-- The registry of the checks of a declared grammar's tree: the on-enter
+checks' modes with `modes` for config, the languages `json` and `ini`, the
+declaration of `ini`, and the config generation 1. -/
+def declaredRegistry (modes : Array Mode) : Config.Registry :=
+  { ((enterRegistry.replaceModes .config modes).replaceLanguages .compiled
+          #[Language.json, iniLanguage]).replaceGrammars
+      .config #[declaredIni] with
+    generation := 1 }
+
+/-- The editor's models with `ini` registered in the syntax tree model, as
+the library lists it once the registration's job has answered. -/
+def iniModel : EditorModel :=
+  { editorModel with
+    syntaxTree := { registry := { registered := #[("ini", declaredIni.source, .whole)] } } }
+
+/-- The answers of generation 1 that record `ini` registered with
+`queries`. -/
+def iniAnswered (queries : Language.Grammar.Queries) : Language.Grammar.Answers :=
+  { generation := 1, answers := #[("ini", .registered queries)], registered := #["ini"] }
+
 /-- The checks of a mode's on-enter action, on the editor's models: a
 command asks for a major mode by the request, and the loop that runs the
 command runs the mode's on-enter actions inside it
 (`Editor/Command/Dispatch.lean`). -/
 def modeEnterChecks : List Check :=
   [{  name :=
+        "the code mode over a buffer whose language names a declared grammar is plain while no answer of this generation is recorded, and is attached with the grammar and highlighted with the recorded highlights query once one is"
+      run :=
+        pure <|
+          let run (answers : Language.Grammar.Answers) : Option SyntaxTreeModel :=
+            let program : EditorM EditorState := do
+              let state :=
+                { ((← twoBuffers).setLanguage ⟨1⟩ (some "ini")).2 with grammars := answers }
+              let keys := enterKeys (declaredRegistry Language.modes)
+              return (← Loop.run keys state (entersMode ⟨1⟩ "code") []).state
+            match program.runModel iniModel with
+            | (.ok _, model) => some model.syntaxTree
+            | (.error _, _) => none
+          let answered := iniAnswered { highlights := some "(number) @number" }
+          let plain (model : Option SyntaxTreeModel) : Bool :=
+            model.any fun model => model.attached.isEmpty && model.highlighted.isEmpty
+          plain (run {}) && plain (run { answered with generation := 0 }) &&
+            (run answered).any fun model =>
+              model.attached.map (·.2) == #["ini"] &&
+                highlightedFaces model == some #["syntax.number"] },
+    { name :=
+        "rehighlighting grammars detaches and enters again the text of each buffer whose language's tree names one of them, as its major mode's lineage and its resolved tree now say, runs no on-enter action, and asks the syntax tree port nothing of other buffers"
+      run :=
+        pure <|
+          let coded : Mode :=
+            { name := "coded", syntaxTreeOfLanguage := true
+              onEnter := fun view => makes s!"coded in {view.index}" }
+          let registry := declaredRegistry #[coded]
+          let rehighlight : Dispatched := fun _ => do
+            rehighlightGrammars #["ini"]
+            return none
+          let keys : Loop.Keys TestScheme.scheme :=
+            { enterKeys registry with
+              command? := fun name =>
+                if name == "rehighlight" then some rehighlight else (enterKeys registry).command? name }
+          let first :=
+            iniAnswered { highlights := some "(number) @number", indents := some jsonIndents }
+          let second := iniAnswered { highlights := some "(string) @string" }
+          let entered : EditorM EditorState := do
+            let state := ((← twoBuffers).setLanguage ⟨0⟩ (some "json")).2
+            let state := { (state.setLanguage ⟨1⟩ (some "ini")).2 with grammars := first }
+            let state := (← Loop.run keys state (entersMode ⟨0⟩ "coded") []).state
+            return (← Loop.run keys state (entersMode ⟨1⟩ "coded") []).state
+          match entered.runModel iniModel with
+          | (.ok state, before) =>
+            let again : EditorM EditorState := do
+              return (← Loop.run keys { state with grammars := second }
+                    { command := "rehighlight" } []).state
+            match again.runModel before with
+            | (.ok _, after) =>
+              before.texts.contents.size == after.texts.contents.size &&
+                before.syntaxTree.kept.size == 1 && after.syntaxTree.kept.isEmpty &&
+                before.syntaxTree.highlighted.size == 2 &&
+                before.syntaxTree.highlighted[0]? == after.syntaxTree.highlighted[0]? &&
+                after.syntaxTree.highlighted.size == 2 &&
+                (after.syntaxTree.highlighted.back?.map fun (_, _, faces) => faceNames faces) ==
+                  some #["syntax.string"] &&
+                after.syntaxTree.attached.map (·.2) == #["json", "ini"]
+            | (.error _, _) => false
+          | (.error _, _) => false },
+    { name :=
         "the on-enter action runs once, with the view, when the mode becomes a buffer's major mode"
       run :=
         pure
