@@ -138,7 +138,11 @@ nothing prints a line for something else to count.
   and its own reader of the `--timings <file>` after the mode, and
   ffi-test, whose runs are subcommands, with
   `CheckGroup.Mode.ofSubcommand?`, which maps `wiring` to the wiring mode.
-  contract-test is of the set whole.
+  A linked test with no such module has a check set of plain groups and
+  reads its mode the same way; its wiring run selects no check and passes
+  with status 0, building no host (`CheckGroup.running`, pinned by
+  `ModelTest.checkGroupChecks`): an empty wiring selection is a subset of
+  the root's checks, not a failed root. contract-test is of the set whole.
 - **`linter.wiringSet`** (`lean/Lint/Wiring.lean`, in the build's plugin,
   imported by no module) holds the check sets true and complete: (t) a
   group's tag is its module's declaration, and a wiring module's list sits
@@ -190,9 +194,10 @@ nothing prints a line for something else to count.
    `linter.wiringSet` refuses the build until the check is reached from
    one. The root then runs it in its normal run, the gate's, and in its
    wiring mode, stress's, with nothing else to update.
-2. **A new linked test with such a module.** Read its mode with
-   `CheckGroup.Mode.ofArguments?`, select with `CheckGroup.select` (rule
-   (d)) and answer `wiring-modules`. `package-set.sh run` finds it through
+2. **A new linked test.** Give it a check set, read its mode with
+   `CheckGroup.Mode.ofArguments?`, run it through `CheckGroup.running`,
+   select with `CheckGroup.select` (rule (d), for one with such a module)
+   and answer `wiring-modules`. `package-set.sh run` finds it through
    Lake.
 3. **A window scenario.** Add an entry to `FfiTest.windowScenarios` and a
    line to `mise.toml`'s `window-scenarios` task.

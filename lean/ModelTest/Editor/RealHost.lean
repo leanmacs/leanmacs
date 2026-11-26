@@ -6,8 +6,8 @@ import ModelTest.Check
 
 The model tests of a root's check set as data, `checkGroupChecks`: what a
 normal run, a `--wiring` run and a listing of the wiring set's modules each
-select from the groups, and how a root reads its mode from its
-arguments. The root module `ModelTest` runs them; its module doc says what
+select from the groups, how a root reads its mode from its arguments,
+and that a wiring run that selects nothing passes without the root's run. The root module `ModelTest` runs them; its module doc says what
 they show.
 -/
 
@@ -82,6 +82,23 @@ def checkGroupChecks : List Check :=
         return CheckGroup.select .all sampleGroups 7 == CheckGroup.all sampleGroups 7 &&
             CheckGroup.select .wiring sampleGroups 3 == ["w1-3", "w2-3", "w3-3", "c3"] &&
             CheckGroup.Mode.all.what == "checks" &&
-            CheckGroup.Mode.wiring.what == "wiring-set checks" }]
+            CheckGroup.Mode.wiring.what == "wiring-set checks" },
+    { name :=
+        "a wiring run of a check set with no module of the wiring set selects nothing and passes, status 0, without the root's run, so it builds no context; a normal run of it, and a wiring run of a set with such a module, are the root's run"
+      run := do
+        let unwired : List (CheckGroup Nat String) :=
+          [.plain fun n => [s!"p{n}"], .wired "E" (.edge "e") fun n => [s!"e{n}"]]
+        let runs ← IO.mkRef 0
+        let run : IO UInt32 := do
+          runs.modify (· + 1)
+          return 7
+        let empty ← CheckGroup.running .wiring unwired run
+        let ranForEmpty ← runs.get
+        let normal ← CheckGroup.running .all unwired run
+        let wired ← CheckGroup.running .wiring sampleGroups run
+        return CheckGroup.select .wiring unwired 3 == [] && CheckGroup.selectsNothing .wiring unwired &&
+            empty == 0 && ranForEmpty == 0 && !CheckGroup.selectsNothing .all unwired &&
+            normal == 7 && !CheckGroup.selectsNothing .wiring sampleGroups && wired == 7 &&
+            (← runs.get) == 2 }]
 
 end ModelTest

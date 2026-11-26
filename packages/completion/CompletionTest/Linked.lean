@@ -1,6 +1,7 @@
 import CompletionTest.Linked.Completion.Styles
 import Editor.Completion.StyleContract
 import Editor.Fuzzy.Real
+import Editor.RealHost
 
 /-!
 # The linked test of the package `completion`
@@ -26,28 +27,47 @@ package may import"). A ranking is one call into the library, so no job
 service and no pump is started.
 -/
 
+/-- The root's check set (`Editor.CheckGroup`), over the fuzzy binding it is
+handed: the completion styles' contract (`shippedStyleFailures`), whose run
+names the properties that do not hold, in a plain group, since it holds no
+module of the wiring set. -/
+def CompletionTest.Linked.checks :
+    List (Editor.CheckGroup Editor.FuzzyHandler (IO (List String))) :=
+  [.plain fun fuzzy => [CompletionTest.shippedStyleFailures fuzzy]]
+
+/-- The usage, on stderr, and status 2. -/
+private def CompletionTest.Linked.usage : IO UInt32 := do
+  IO.eprintln
+      "usage: CompletionTest-Linked <sysroot> <core olean dir> [--wiring], or CompletionTest-Linked wiring-modules"
+  return 2
+
 /-- Runs the checks and exits 0 when all hold, 1 after naming on stderr the
 ones that do not, and 2 for a command line that is not the two
-directories, with `--wiring` after them or not, which runs nothing. -/
+directories, with `--wiring` after them or not. Its check set
+(`CompletionTest.Linked.checks`) holds no module of the wiring set, so with
+`--wiring` it selects no check and exits 0 (`Editor.CheckGroup.running`),
+and `wiring-modules` prints none. -/
 def main (arguments : List String) : IO UInt32 := do
   match arguments with
-  | [_, _] =>
-    let failed ← CompletionTest.shippedStyleFailures Editor.Fuzzy.real
-    for name in failed do
-      IO.eprintln s!"FAILED: {name}"
-    if failed.isEmpty then
-      IO.println
-          s!"completion linked test: {CompletionTest.linkedStyles.length * Editor.Completion.StyleContract.properties.length} checks passed"
-    (← IO.getStdout).flush
-    return if failed.isEmpty then 0 else 1
-  -- No module of the wiring set: it lists none, and its wiring run
-  -- (`tools/package-set.sh --wiring run`, the stress loop's
-  -- `linked-wiring`) selects no check and passes.
-  | [_, _, "--wiring"] =>
-    return 0
   | ["wiring-modules"] =>
+    for module in Editor.CheckGroup.modules CompletionTest.Linked.checks do
+      IO.println module
     return 0
+  | _ :: _ :: rest =>
+    match Editor.CheckGroup.Mode.ofArguments? rest with
+    | some mode =>
+      Editor.CheckGroup.running mode CompletionTest.Linked.checks do
+          let failed ←
+            (Editor.CheckGroup.select mode CompletionTest.Linked.checks Editor.Fuzzy.real).flatMapM
+                id
+          for name in failed do
+            IO.eprintln s!"FAILED: {name}"
+          if failed.isEmpty then
+            IO.println
+                s!"completion linked test: {CompletionTest.linkedStyles.length * Editor.Completion.StyleContract.properties.length} {mode.what} passed"
+          (← IO.getStdout).flush
+          return if failed.isEmpty then 0 else 1
+    | none =>
+      CompletionTest.Linked.usage
   | _ =>
-    IO.eprintln
-        "usage: CompletionTest-Linked <sysroot> <core olean dir> [--wiring], or CompletionTest-Linked wiring-modules"
-    return 2
+    CompletionTest.Linked.usage

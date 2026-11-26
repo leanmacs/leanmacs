@@ -121,29 +121,43 @@ def initializeCheck : IO Bool := do
     IO.eprintln "FAILED: the package's initialize did not run in the linked executable"
     return false
 
-/-- Runs the three checks and exits 0 when all hold, 1 when one does not, and 2
-for a command line that is not the two directories, with `--wiring` after
-them or not, which runs nothing. The exit is explicit, after the library's services are shut down and its queues quit, as the
-headless mode's is: a task may still be blocked in the library. -/
+/-- The root's check set (`Editor.CheckGroup`), over the toolchain's
+directory and the core's `.olean` directory: the three checks, each saying
+whether it held, in the order they run, in a plain group, since it holds no
+module of the wiring set. -/
+def checks : List (Editor.CheckGroup (String × String) (IO Bool)) :=
+  [.plain fun (sysroot, oleans) => [initializeCheck, libraryCheck, configCheck sysroot oleans]]
+
+/-- The usage, on stderr, and status 2. -/
+def usage : IO UInt32 := do
+  IO.eprintln
+      "usage: GreetingTest-Linked <sysroot> <core olean dir> [--wiring], or GreetingTest-Linked wiring-modules"
+  return 2
+
+/-- Runs the three checks and exits 0 when all hold, 1 when one does not, and
+2 for a command line that is not the two directories, with `--wiring` after
+them or not. Its check set (`checks`) holds no module of the wiring set, so
+with `--wiring` it selects no check and exits 0, building no host
+(`Editor.CheckGroup.running`), and `wiring-modules` prints none. The exit is
+explicit, after the library's services are shut down and its queues quit,
+as the headless mode's is: a task may still be blocked in the library. -/
 def main (arguments : List String) : IO UInt32 := do
   match arguments with
-  | [sysroot, oleans] =>
-    let initialized ← initializeCheck
-    let library ← libraryCheck
-    let config ← configCheck sysroot oleans
-    (← IO.getStdout).flush
-    Editor.Ffi.processesShutdown
-    Editor.Ffi.watchesShutdown
-    Editor.Ffi.quit
-    IO.Process.exit (if initialized && library && config then 0 else 1)
-  -- No module of the wiring set: it lists none, and its wiring run
-  -- (`tools/package-set.sh --wiring run`, the stress loop's
-  -- `linked-wiring`) selects no check and passes.
-  | [_, _, "--wiring"] =>
-    return 0
   | ["wiring-modules"] =>
+    for module in Editor.CheckGroup.modules checks do
+      IO.println module
     return 0
+  | sysroot :: oleans :: rest =>
+    match Editor.CheckGroup.Mode.ofArguments? rest with
+    | some mode =>
+      Editor.CheckGroup.running mode checks do
+          let held ← (Editor.CheckGroup.select mode checks (sysroot, oleans)).mapM id
+          (← IO.getStdout).flush
+          Editor.Ffi.processesShutdown
+          Editor.Ffi.watchesShutdown
+          Editor.Ffi.quit
+          IO.Process.exit (if held.all id then 0 else 1)
+    | none =>
+      usage
   | _ =>
-    IO.eprintln
-        "usage: GreetingTest-Linked <sysroot> <core olean dir> [--wiring], or GreetingTest-Linked wiring-modules"
-    return 2
+    usage

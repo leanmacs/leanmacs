@@ -13,7 +13,11 @@ builds this root's executable with the Rust library linked, and runs it in
 the package's directory with the Lean toolchain's directory and the core's
 `.olean` directory. It prints `themes linked test: N checks passed`, and
 exits 0 when all hold, 1 after naming on stderr the ones that do not, and 2
-for a command line that is not the two directories. The exit is explicit,
+for a command line that is not the two directories, with `--wiring` after
+them or not. Its check set (`ThemesTest.Linked.checks`) holds no module of
+the wiring set, so with `--wiring` it selects no check and exits 0, building
+no host (`Editor.CheckGroup.running`), and `wiring-modules` prints none. The
+exit is explicit,
 after the library's services are shut down and its queues quit: a task may
 still be blocked in the library.
 
@@ -48,30 +52,43 @@ core's Lake package, which it requires, hands a set none. -/
 def setPackages : Array Editor.Package :=
   Themes.EditorPackage.packages
 
+/-- The root's check set (`Editor.CheckGroup`): the themes' checks, over the
+harness's context, in a plain group, since it holds no module of the wiring
+set. -/
+def ThemesTest.Linked.checks :
+    List (Editor.CheckGroup Editor.Test.Linked.HostContext ThemesTest.Check) :=
+  [.plain ThemesTest.Linked.themeChecks]
+
+/-- The usage, on stderr, and status 2. -/
+private def ThemesTest.Linked.usage : IO UInt32 := do
+  IO.eprintln
+      "usage: ThemesTest-Linked <sysroot> <core olean dir> [--wiring], or ThemesTest-Linked wiring-modules"
+  return 2
+
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do
   match arguments with
-  | [sysroot, oleans] =>
-    let failed ←
-      Editor.Test.Linked.HostContext.run sysroot oleans setPackages fun context => do
-          let checks := ThemesTest.Linked.themeChecks context
-          let failed ← ThemesTest.failures checks
-          for name in failed do
-            IO.eprintln s!"FAILED: {name}"
-          if failed.isEmpty then
-            IO.println s!"themes linked test: {checks.length} checks passed"
-          return failed
-    (← IO.getStdout).flush
-    Editor.Test.Linked.shutdown
-    IO.Process.exit (if failed.isEmpty then 0 else 1)
-  -- No module of the wiring set: it lists none, and its wiring run
-  -- (`tools/package-set.sh --wiring run`, the stress loop's
-  -- `linked-wiring`) selects no check and passes.
-  | [_, _, "--wiring"] =>
-    return 0
   | ["wiring-modules"] =>
+    for module in Editor.CheckGroup.modules ThemesTest.Linked.checks do
+      IO.println module
     return 0
+  | sysroot :: oleans :: rest =>
+    match Editor.CheckGroup.Mode.ofArguments? rest with
+    | some mode =>
+      Editor.CheckGroup.running mode ThemesTest.Linked.checks do
+          let failed ←
+            Editor.Test.Linked.HostContext.run sysroot oleans setPackages fun context => do
+                let checks := Editor.CheckGroup.select mode ThemesTest.Linked.checks context
+                let failed ← ThemesTest.failures checks
+                for name in failed do
+                  IO.eprintln s!"FAILED: {name}"
+                if failed.isEmpty then
+                  IO.println s!"themes linked test: {checks.length} {mode.what} passed"
+                return failed
+          (← IO.getStdout).flush
+          Editor.Test.Linked.shutdown
+          IO.Process.exit (if failed.isEmpty then 0 else 1)
+    | none =>
+      ThemesTest.Linked.usage
   | _ =>
-    IO.eprintln
-        "usage: ThemesTest-Linked <sysroot> <core olean dir> [--wiring], or ThemesTest-Linked wiring-modules"
-    return 2
+    ThemesTest.Linked.usage

@@ -13,7 +13,11 @@ builds this root's executable with the Rust library linked, and runs it in
 the package's directory with the Lean toolchain's directory and the core's
 `.olean` directory. It prints `ex linked test: N checks passed`, and exits
 0 when all hold, 1 after naming on stderr the ones that do not, and 2 for a
-command line that is not the two directories. The exit is explicit, after
+command line that is not the two directories, with `--wiring` after them or
+not. Its check set (`ExTest.Linked.checkSet`) holds no module of the wiring
+set, so with `--wiring` it selects no check and exits 0, building no host
+(`Editor.CheckGroup.running`), and `wiring-modules` prints none. The exit
+is explicit, after
 the library's services are shut down and its queues quit: a task may still
 be blocked in the library.
 
@@ -74,33 +78,45 @@ def oleanDirectories : List String :=
 def ExTest.Linked.checks (context : Editor.Test.Linked.HostContext) : List ExTest.Check :=
   ExTest.Linked.exChecks context ++ ExTest.Linked.exScriptChecks context
 
+/-- The root's check set (`Editor.CheckGroup`): its checks (`checks`), over
+the harness's context, in a plain group, since it holds no module of the
+wiring set. -/
+def ExTest.Linked.checkSet : List (Editor.CheckGroup Editor.Test.Linked.HostContext ExTest.Check) :=
+  [.plain ExTest.Linked.checks]
+
+/-- The usage, on stderr, and status 2. -/
+private def ExTest.Linked.usage : IO UInt32 := do
+  IO.eprintln
+      "usage: ExTest-Linked <sysroot> <core olean dir> [--wiring], or ExTest-Linked wiring-modules"
+  return 2
+
 /-- Runs the checks (the module docs). -/
 def main (arguments : List String) : IO UInt32 := do
   match arguments with
-  | [sysroot, oleans] =>
-    let failed ←
-      Editor.Test.Linked.HostContext.run sysroot (":".intercalate (oleans :: oleanDirectories))
-          setPackages
-          (fun context => do
-            let checks := ExTest.Linked.checks context
-            let failed ← ExTest.failures checks
-            for name in failed do
-              IO.eprintln s!"FAILED: {name}"
-            if failed.isEmpty then
-              IO.println s!"ex linked test: {checks.length} checks passed"
-            return failed)
-          (imports := #[`Editor, `Ex.EditorPackage])
-    (← IO.getStdout).flush
-    Editor.Test.Linked.shutdown
-    IO.Process.exit (if failed.isEmpty then 0 else 1)
-  -- No module of the wiring set: it lists none, and its wiring run
-  -- (`tools/package-set.sh --wiring run`, the stress loop's
-  -- `linked-wiring`) selects no check and passes.
-  | [_, _, "--wiring"] =>
-    return 0
   | ["wiring-modules"] =>
+    for module in Editor.CheckGroup.modules ExTest.Linked.checkSet do
+      IO.println module
     return 0
+  | sysroot :: oleans :: rest =>
+    match Editor.CheckGroup.Mode.ofArguments? rest with
+    | some mode =>
+      Editor.CheckGroup.running mode ExTest.Linked.checkSet do
+          let failed ←
+            Editor.Test.Linked.HostContext.run sysroot
+                (":".intercalate (oleans :: oleanDirectories)) setPackages
+                (fun context => do
+                  let checks := Editor.CheckGroup.select mode ExTest.Linked.checkSet context
+                  let failed ← ExTest.failures checks
+                  for name in failed do
+                    IO.eprintln s!"FAILED: {name}"
+                  if failed.isEmpty then
+                    IO.println s!"ex linked test: {checks.length} {mode.what} passed"
+                  return failed)
+                (imports := #[`Editor, `Ex.EditorPackage])
+          (← IO.getStdout).flush
+          Editor.Test.Linked.shutdown
+          IO.Process.exit (if failed.isEmpty then 0 else 1)
+    | none =>
+      ExTest.Linked.usage
   | _ =>
-    IO.eprintln
-        "usage: ExTest-Linked <sysroot> <core olean dir> [--wiring], or ExTest-Linked wiring-modules"
-    return 2
+    ExTest.Linked.usage

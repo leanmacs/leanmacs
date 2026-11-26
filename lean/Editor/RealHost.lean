@@ -176,6 +176,23 @@ def select {κ α : Type} (mode : Mode) (groups : List (CheckGroup κ α)) (cont
   | .all => all groups context
   | .wiring => (wiring groups).flatMap (·.2 context)
 
+/-- Whether a run of `mode` over `groups` selects no check, which it tells
+with no context: a wiring run of a check set that holds no module of the
+wiring set (`modules`). Only a normal run's context says what it selects. -/
+def selectsNothing {κ α : Type} (mode : Mode) (groups : List (CheckGroup κ α)) : Bool :=
+  mode == .wiring && (modules groups).isEmpty
+
+/-- A root's run of `mode` over its check set `groups`: `run`, which builds
+the root's context and runs what `select` selects by `mode` over it, or,
+when the run selects no check (`selectsNothing`), nothing, with status 0.
+An empty wiring selection is a subset of the root's checks, not a failed
+root: the wiring run of a root with no module of the wiring set
+(`tools/package-set.sh --wiring run`, the stress loop's `linked-wiring`)
+passes, and builds no host. -/
+def running {κ α : Type} (mode : Mode) (groups : List (CheckGroup κ α)) (run : IO UInt32) :
+    IO UInt32 :=
+  if selectsNothing mode groups then pure 0 else run
+
 end CheckGroup
 
 /-- A run of a real host that a test executable makes as a subcommand of
