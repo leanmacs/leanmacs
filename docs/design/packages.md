@@ -1961,8 +1961,8 @@ interface packages of the default set (`project-api`, `vc-api`,
 `minibuffer-api`, `execute-command-api`, `binding-search-api`,
 `at-point-api`), the fixture
 set, each fixture package (`echo` among them), the writing guide's
-example package (`docs/packages/word-count/`), the empty set, and the
-formatter's host.
+example package (`docs/packages/word-count/`), the empty set, the
+formatter's host and lean-deny's host.
 
 - **A set's manifest holds path entries only.** With it present, a
   dependency the manifest does not hold fails the build (`dependency … not
@@ -1978,13 +1978,17 @@ formatter's host.
   why none is left out: a build must not write into the checkout.
 - **The core requires no git repository.** A set that requires the core by
   path would clone every git dependency of the core into its own
-  `.lake/packages`. So the Lean formatter is not a `require` of the core:
-  it is the one `require` of a package of its own, its host
-  (`tools/lean-fmt/lakefile.toml`), which nothing requires and whose
-  `packagesDir` keeps the clone and its build under `lean/.lake/packages`,
-  where CI caches it. `lake -d ../tools/lean-fmt exe lean-fmt … --root
-  <package>` runs it over any package ([the-gate.md](../dev-practices/the-gate.md),
-  "Formatting").
+  `.lake/packages`. So neither the Lean formatter nor lean-deny, the
+  checker of the structure rules, is a `require` of the core or of the
+  default set: each is the one `require` of a package of its own, its host
+  (`tools/lean-fmt/lakefile.toml`, `tools/lean-deny/lakefile.toml`),
+  which nothing requires and whose `packagesDir` keeps the clone and its
+  build under `lean/.lake/packages`, where CI caches it. `lake -d
+  ../tools/lean-fmt exe lean-fmt … --root <package>` runs the formatter
+  over any package ([the-gate.md](../dev-practices/the-gate.md),
+  "Formatting"), and `lake -d ../tools/lean-deny exe lean-deny check
+  --workspace <dir> --config <policy>` runs lean-deny over a workspace
+  ([the-gate.md](../dev-practices/the-gate.md), "The structure check").
 
 ### The toolchain links
 
@@ -1994,8 +1998,8 @@ runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
 default set and its forty-five packages, the twenty-seven default
 packages and the eighteen interface packages, the fixture set and its
 four packages, the writing guide's example package `word-count`, the
-empty set, the user-set fixture `tests/user-sets/hello-init`, and the
-formatter's host): `lean-fmt` refuses a root with no
+empty set, the user-set fixture `tests/user-sets/hello-init`, the
+formatter's host and lean-deny's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file, through the link, when Lake is
 run in that directory. So there is no copy to fall behind, and a bump of
 the pin (`AGENTS.md`, "Toolchains") changes one file. A new Lake root
@@ -2482,12 +2486,15 @@ for `ex-api`, whose contract names `shell-api`'s `shell-command`, and
   among them), but for the core's interface libraries and their test
   libraries, above. The root of a linked test alone names the base,
   above.
-- **Review holds the rule, and the three-layer rule beside it**
+- **lean-deny checks the rule, and the three-layer rule beside it**
   ([structure.md](../../.agents/rules/structure.md), "What a package may
-  import" and "Three layers"). No gate step checks either: a check that
-  read Lake's module graph with a shell script stood behind them, and was
-  removed (rdm task `lean-structure-rules-tool` is where automated
-  checking comes back). The rule is about direct `import` lines, by the
+  import" and "Three layers"), under `mise run lean-deny`: allow-only
+  rules 1–4 and `[layers]` of `packages/lean-deny.toml`, over Lake's
+  resolved module graph of the default set
+  ([the-gate.md](../dev-practices/the-gate.md), "The structure check").
+  The policy lists the internal modules and the test doubles, so a new
+  one is added to it (structure.md, "Keeping the policy in step"). The
+  rule is about direct `import` lines, by the
   kinds of importer above: a package's library, a test, the linked test's
   root and a module under that root. A package's library's globs must
   still hold every module of it ("A package's tests and the gate's steps
@@ -3562,15 +3569,20 @@ fixture set requires both, so the gate covers them.
 | `agents-api` | interface | none | none | none | declares the project store `agents-table` (`AgentsApi.Table.store`) with the agent table's types and pure reducer, and the points `AgentsApi.Agent`, `AgentsApi.ConversationView` and `AgentsApi.PermissionPolicy`, each a choice by name (`AgentsApi.Agent.named`, `AgentsApi.ConversationView.named`, `AgentsApi.PermissionPolicy.named`, each an `Extension.named`; the policy's type admits only an offered option or "ask", and a theorem says so), the package service `agents` (`AgentsApi.serviceName`) with its vocabulary, its replies and their argument encoding (`AgentsApi/Arguments.lean`), the protocol's model and theorems, the service's fake, its contract and its fixture support |
 | `acp` | implementation | `agents-api`, `buffers-api` | `AgentsApi.Agent` (`claude-code`), `AgentsApi.ConversationView` (`default`), `AgentsApi.PermissionPolicy` (`default`, which asks), `BuffersApi.Closing` | `AgentsApi.Agent` (the session job, an `Extension.workJob`, and `agent-start`), `AgentsApi.ConversationView`, `AgentsApi.PermissionPolicy` (`agent-events`) | brings the service `agents` (`Package.services`) over its crate `acp-service`; registers the session commands `agent-start`, `agent-prompt`, `agent-answer`, `agent-cancel`, `agent-stop` and `agent-toggle`, the queue's `agent-queue` and `agent-queue-answer` and the agents list's `agent-list` and `agent-visit`, with nine ex names, the jobs `agent-session`, `agent-send`, `agent-audit` and `agent-stall`, the modes `agent-conversation`, `agent-permissions` and `agent-list`, and the codec of the project store `agents-table`; no package imports it |
 
-Review holds this table and the one above to the tree
+This table and the one above are held to the tree
 ([structure.md](../../.agents/rules/structure.md), "Module map"): a change
 that adds, moves or removes a module under `lean/Editor/`, a package, a
 package's layer, or a package's registration at or read of an extension
 point updates the map in the same change, so every package of the default
 set has its row, with its layer as its lakefile declares it, and every
 (package, point) pair the library modules hold, by the rules above, is in
-that package's row. No gate step checks it; rdm task
-`lean-structure-rules-tool` is where automated checking comes back.
+that package's row. lean-deny checks part of it under `mise run
+lean-deny`: doc-modules rule 1 of `packages/lean-deny.toml` holds "The
+core's modules" to the core's `Editor.…` modules, and doc-packages rule 1
+holds columns 1–3 (package, layer, requires) of the first table above to
+the default set's lakefiles. Review holds the rest: columns 4 and 5, the
+names column, and this table (`agents-api`, `acp`, not in the default
+set).
 
 ### Where each feature went
 
@@ -3677,10 +3689,10 @@ that opens and takes no input.
 
 ## The core's root
 
-`Editor.Core`'s closure is the whole core, and review holds it so
-([structure.md](../../.agents/rules/structure.md), "Core imports"); no
-gate step checks it since its shell check was removed (rdm task
-`lean-structure-rules-tool`). Three rules hold of it:
+`Editor.Core`'s closure is the whole core, and lean-deny checks it so
+([structure.md](../../.agents/rules/structure.md), "Core imports") under
+`mise run lean-deny`: reachable rule 1 of `packages/lean-deny.toml` holds
+rule 2 below, and co-reach rule 1 rule 3. Three rules hold of it:
 
 1. **The root and what it imports hold no module of a feature that is
    moving out.** A moving feature is one whose edges from the core are

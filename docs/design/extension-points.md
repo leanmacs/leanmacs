@@ -134,10 +134,12 @@ the set has to change or be rebuilt against it.
   its linked test included. A test that imported another feature's
   implementation would stop building when that feature is left out; it
   uses the interface package's fake instead.
-- **Review holds the rule** ([structure.md](../../.agents/rules/structure.md),
-  "Three layers"), as it holds what a package imports of the core ("What
-  a package may import"): no gate step checks either, and rdm task
-  `lean-structure-rules-tool` is where automated checking comes back. The
+- **lean-deny checks the rule** ([structure.md](../../.agents/rules/structure.md),
+  "Three layers"), as it checks what a package imports of the core ("What
+  a package may import"): `[layers]` of `packages/lean-deny.toml`, under
+  `mise run lean-deny`, over Lake's resolved module graph of the default
+  set ([the-gate.md](../dev-practices/the-gate.md), "The structure
+  check"). The
   rule is about `import` lines; a `require` of an implementation package,
   which only orders registration, is not refused (the task
   `layer-requires-check`).

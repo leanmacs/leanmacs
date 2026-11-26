@@ -14,8 +14,9 @@ what it printed.
 - The Rust tests: `cargo test`, integration tests under `tests/` included.
 - The Lean test executables, and the packages' linked tests and fixtures.
 - The formatters: `cargo fmt`, lean-fmt, clang-format.
-- The structural tools: clippy, `cargo-deny`, the Lean linter plugin, the
-  workflow linters (actionlint, zizmor), and gitleaks, which decides the
+- The structural tools: clippy, `cargo-deny`, lean-deny (the Lean
+  counterpart of `cargo-deny`'s bans, over Lake's module graph), the Lean
+  linter plugin, the workflow linters (actionlint, zizmor), and gitleaks, which decides the
   secret scan's workflow step.
 - A thin driver that only invokes these and passes their exit status
   through is allowed. It decides nothing of its own.
@@ -104,11 +105,12 @@ Anything else is not a gate step, however useful its output.
   such as the stress loop. In the gate it is at most the thin driver
   above, deciding nothing beyond its own command's status.
 
-## Structure rules are reviewer rules
+## Structure rules come from structural tools or review
 
 - A structure rule (what a module may import, which layer may import
-  which, where a module sits, which targets load the linters) that only a
-  custom shell script could check is held by review, written in
-  `.agents/rules/structure.md`, not a gate step. Automated enforcement
-  comes only from a structural tool: `cargo-deny`, clippy, the compiler,
-  Lake, or the Lean linter plugin.
+  which, where a module sits, which targets load the linters) is written
+  in `.agents/rules/structure.md`. Automated enforcement comes only from a
+  structural tool: lean-deny (`mise run lean-deny`, which checks most of
+  that file's sections), `cargo-deny`, clippy, the compiler, Lake, or the
+  Lean linter plugin. A rule that only a custom shell script could check
+  is held by review, not a gate step.
