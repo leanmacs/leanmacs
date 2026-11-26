@@ -400,7 +400,10 @@ def ProbeAnswer.read (answer : ProbeAnswer) (output : ByteArray) : Option System
     | .lastField separator =>
       ((line.splitOn (String.singleton separator)).getLastD "").trimAscii.toString
   let path : System.FilePath := ⟨named⟩
-  if named.isEmpty || !path.isAbsolute then none else some path
+  if named.isEmpty || !path.isAbsolute then
+    none
+  else
+    some path
 
 /-- A command whose standard output may name where a source's executable is:
 run through the process service, with the editor's own environment and its

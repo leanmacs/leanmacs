@@ -309,7 +309,8 @@ def processEnvironmentChecks : List Check :=
         pure
           (read .line "/opt/homebrew/bin/fish\n".toUTF8 == some "/opt/homebrew/bin/fish" &&
             read .line "  /bin/zsh  \nsecond\n".toUTF8 == some "/bin/zsh" &&
-            read (.lastField ':') "u:********:501:20::0:0:U:/Users/u:/opt/homebrew/bin/bash\n".toUTF8 ==
+            read (.lastField ':')
+                "u:********:501:20::0:0:U:/Users/u:/opt/homebrew/bin/bash\n".toUTF8 ==
               some "/opt/homebrew/bin/bash" &&
             read .line "".toUTF8 == none &&
             read .line "\n".toUTF8 == none &&
@@ -598,22 +599,23 @@ def environmentLayerChecks : List Check :=
         let model :=
           layeredModel
             (#[exitingOne (probeCommand "p1") "", printing' (probeCommand "p2") "/bin/second\n",
-                  printing (lookupAt "/bin/second") baseVariables] ++
-                probedChildren baseVariables)
+                printing (lookupAt "/bin/second") baseVariables] ++
+              probedChildren baseVariables)
             (sources := probedSources #[probe "p1", probe "p2"])
         let inD := after (runsOn (layeredChild "/p/d")) model
         let inE := after (runsOn (layeredChild "/p/e")) inD
         let reloaded :=
           { inE with
-            environments := inE.environments.installSources (probedSources #[probe "p1", probe "p2"]) }
+            environments :=
+              inE.environments.installSources (probedSources #[probe "p1", probe "p2"]) }
         let again := after (runsOn (layeredChild "/p/d")) reloaded
         let firstWins :=
           after (runsOn (layeredChild "/p/d"))
             (layeredModel
               (#[printing' (probeCommand "p1") "/bin/first\n",
-                    printing' (probeCommand "p2") "/bin/second\n",
-                    printing (lookupAt "/bin/first") baseVariables] ++
-                  probedChildren baseVariables)
+                  printing' (probeCommand "p2") "/bin/second\n",
+                  printing (lookupAt "/bin/first") baseVariables] ++
+                probedChildren baseVariables)
               (sources := probedSources #[probe "p1", probe "p2"]))
         let once :=
           #[probeCommand "p1", probeCommand "p2", lookupAt "/bin/second",
@@ -638,14 +640,15 @@ def environmentLayerChecks : List Check :=
             (layeredModel fallbackScripts (sources := probedSources #[probe "p1", probe "p2"]))
         let relative :=
           after (runsOn (layeredChild "/p/d"))
-            (layeredModel (#[printing' (probeCommand "p1") "zsh\n"] ++ fallbackScripts)
-              (sources := probedSources #[probe "p1", probe "p2"]))
+            (layeredModel (#[printing' (probeCommand "p1") "zsh\n"] ++ fallbackScripts) (sources :=
+              probedSources #[probe "p1", probe "p2"]))
         pure
           (unscripted.processes.started ==
               #[lookupAt "/bin/fallback", overBase "/p/d" baseVariables] &&
             relative.processes.started ==
               #[probeCommand "p1", lookupAt "/bin/fallback", overBase "/p/d" baseVariables] &&
-            unscripted.reported.isEmpty && relative.reported.isEmpty) },
+            unscripted.reported.isEmpty &&
+            relative.reported.isEmpty) },
     { name :=
         "a source's own limit replaces the shared one: a base limited to 2000 ms whose lookup takes 3000 is killed at 2000 and said once, the child unchanged; with no limit of its own the shared 5000 lets it finish; a probe that takes 3000 is killed at 2000 and passes to the next"
       run :=
@@ -655,20 +658,20 @@ def environmentLayerChecks : List Check :=
           { command := layeredChild "/p/d", reply := printed "built" }
         let limited :=
           after (runsOn (layeredChild "/p/d"))
-            (layeredModel #[slowLookup, unchanged]
-              (sources := { base := .lookup (limitedLogin (some 2000)) "/" }))
+            (layeredModel #[slowLookup, unchanged] (sources :=
+              { base := .lookup (limitedLogin (some 2000)) "/" }))
         let shared :=
           after (runsOn (layeredChild "/p/d"))
-            (layeredModel (#[slowLookup] ++ probedChildren baseVariables)
-              (sources := { base := .lookup (limitedLogin none) "/" }))
+            (layeredModel (#[slowLookup] ++ probedChildren baseVariables) (sources :=
+              { base := .lookup (limitedLogin none) "/" }))
         let slowProbe : Process.Script :=
           { printing' (probeCommand "p1") "/bin/first\n" with takes := 3000 }
         let probed :=
           after (runsOn (layeredChild "/p/d"))
             (layeredModel
               (#[slowProbe, printing' (probeCommand "p2") "/bin/second\n",
-                    printing (lookupAt "/bin/second") baseVariables] ++
-                  probedChildren baseVariables)
+                  printing (lookupAt "/bin/second") baseVariables] ++
+                probedChildren baseVariables)
               (sources := probedSources #[probe "p1", probe "p2"] (some 2000)))
         pure
           (limited.processes.started == #[lookupAt "/bin/login", layeredChild "/p/d"] &&

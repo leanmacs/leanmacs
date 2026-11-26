@@ -543,7 +543,7 @@ def Process.programOf (policy : Process.Policy) (source : Process.Source) (limit
   | .probed probes otherwise =>
     let found ←
       Process.resolvedOnce policy source.name do
-        return some ((← Process.firstProbed probes limit).getD otherwise)
+          return some ((← Process.firstProbed probes limit).getD otherwise)
     return .ok (found.getD otherwise)
 
 /-- The entry of `slot` for `source` run by `executable` in `directory` over
@@ -592,8 +592,7 @@ def Process.sourceVariables (slot : Process.Slot) (source : Process.Source)
           (.record slot { stamps := #[], found := .failed (.missing candidates) })
     return #[]
   | .ok executable =>
-    match
-      (← Process.lookedUp slot source executable directory stampNames below limit).found with
+    match (← Process.lookedUp slot source executable directory stampNames below limit).found with
     | .variables variables =>
       return variables
     | .failed _ =>

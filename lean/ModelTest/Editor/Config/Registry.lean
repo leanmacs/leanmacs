@@ -1033,7 +1033,8 @@ def registryChecks : List Check :=
         pure
           (({} : Config.Registry).registered.answer .environmentBase == Process.inheritedName &&
             defaulted.registered.answer .environmentBase == "second" &&
-            { defaulted with environmentBase := some "chosen" }.registered.answer .environmentBase ==
+            { defaulted with environmentBase := some "chosen" }.registered.answer
+                .environmentBase ==
               "chosen") },
     { name :=
         "the collector keeps a job over an extension point with its point, a host installs it with its owner, and `Package.registered` lists its name among the jobs"
