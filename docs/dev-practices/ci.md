@@ -324,11 +324,10 @@ tools as the `ci` job does, run `mise run ci` once to build and gate, then
 config-test's timings of each check and the summary. The niceness is the
 loop's own, measured: at `nice -n 19` config-test ran 200 to 400 times
 slower and could not end inside the loop's limit
-([why](on-demand-checks.md#the-stress-loop-on-demand)). The
-`summary` job adds the shards' counts and prints
-`stress: ubuntu-24.04, 5 shards x 10 rounds, 2 x nproc hogs` and each
-suite's `<passed>/<rounds>`, and fails on any count short of all of them.
-It saves no cache. A failure is a bug: it is fixed and the workflow is
+([why](on-demand-checks.md#the-stress-loop-on-demand)). Each shard's
+Stress step exits with the loop's status, and the shards run with
+`fail-fast` off, so the run fails when any shard's loop does; no job adds
+up the shards' counts or reads their logs. It saves no cache. A failure is a bug: it is fixed and the workflow is
 dispatched again from round 1, never re-run shard by shard to collect
 passes. `tools/workflow-check.sh` holds it to its rules (below).
 
@@ -605,8 +604,7 @@ it runs the same in `linux-ci`'s copy of the checkout. It runs, in order:
      the one input `rounds`), `stress-runner` (every job on
      `ubuntu-24.04`), `stress-matrix` (exactly five shards, `fail-fast`
      off), `stress-steps` (one unconditional `mise run ci`, then one
-     `tools/stress.sh` step over config, contract, rust and open-file) and
-     `stress-summary` (a `summary` job that needs exactly `stress`).
+     `tools/stress.sh` step over config, contract, rust and open-file).
    - On `release.yml`: `release-trigger` (`workflow_call` alone, its three
      inputs required strings), `release-job` (exactly the jobs `publish`
      and `pages`; `publish` on `macos-26`, top-level permissions `{}` and

@@ -2,8 +2,9 @@
 
 What a module may import, where the core's modules sit, which targets
 load the build's linters, where a Rust crate's bans live and where a site
-may opt out of them, and how a Lake root reads the Lean pin. Review holds a change to these rules; no gate
-step checks them (`gates.md`). The Lean linters (the wait and real-host
+may opt out of them, how a Lake root reads the Lean pin, and that each
+item of the wiring set has its run. Review holds a change to these rules;
+no gate step checks them (`gates.md`). The Lean linters (the wait and real-host
 linters) and Lake's own resolution of `require`s stay automated, and
 rdm task `lean-structure-rules-tool` is where automated checking of the
 rules below comes back.
@@ -181,3 +182,24 @@ See the root `clippy.toml`'s header and
   than a link that dangles.
 
 See `docs/design/packages.md`, "The toolchain links".
+
+## The wiring set's runs
+
+Which runs the wiring set gets is read from code, but that each item has
+its run is no gate step: review holds it (`gates.md`). A gap here goes
+unrun with nothing to say so.
+
+- Every entry of `Editor.Test.Fixture.RealThread.entries` whose site
+  starts `ffi-test` has a case in `tools/wiring-runs.sh`, and every entry
+  whose site starts `bundle-test` a `headless` line in
+  `tools/bundle-test.sh`.
+- Every entry of `FfiTest.windowScenarios` has a case in
+  `tools/wiring-runs.sh`.
+- A module of the wiring set's checks sit in a `.wired` group of its
+  root's check set. `linter.wiringSet` already enforces this.
+- To check the first two, list the set with `fixture-test real-thread
+  --site <site>` and `ffi-test wiring-scenarios` and hold each line to
+  its case or `headless` line.
+
+See `docs/dev-practices/real-thread-checks.md`, "How the set runs" and
+"Adding a check to the wiring set".

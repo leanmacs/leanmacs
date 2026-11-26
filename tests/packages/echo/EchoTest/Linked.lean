@@ -22,7 +22,7 @@ echo port against the Rust-backed binding over them
 so, counting the contract's properties.
 
 Its checks are a check set (`EchoTest.Linked.checks`, `Editor.CheckGroup`,
-`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+`docs/dev-practices/real-thread-checks.md`, "How the set runs"):
 the lists of its modules of the wiring set in groups of their module, which
 the build's `linter.wiringSet` holds true and complete. With `--wiring`
 after the two directories it

@@ -69,7 +69,7 @@ the executable. The hosts load no config, so the elaborator is told to
 import `Editor` alone, found in the core's `.olean` directory.
 
 Its checks are a check set (`CompileTest.Linked.checks`, `Editor.CheckGroup`,
-`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+`docs/dev-practices/real-thread-checks.md`, "How the set runs"):
 the lists of its modules of the wiring set in groups of their module, which
 the build's `linter.wiringSet` holds true and complete. With `--wiring`
 after the two directories it

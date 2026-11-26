@@ -114,16 +114,20 @@ The headless fixtures run stepped by default (`fixture-test`;
 that keep running the CLI over a real loop thread are declared once, each
 with what it covers and the gate step that runs it, in
 `Editor.Test.Fixture.RealThread`, a module of the wiring set: the runner's
-are compared both ways (`tools/fixture-compare.sh`), and the others' subject
-is a real effect, the journal's write, abort, restart and recovery among
+are compared both ways by `case_compare` in `tools/wiring-runs.sh`, which
+runs each through the CLI and hands its output to `fixture-test … compare
+<script> <file>`, each step decided by its exit status, and the others'
+subject is a real effect, the journal's write, abort, restart and recovery among
 them (`restore/abort-script` then `restore-script`). The user-sets and
 bundle-sets restarts (W68, W69) run the real editor in their gate steps too.
 
-## How stress runs the set
+## How the set runs
 
-The stress loop (`tools/stress.sh`; [on-demand-checks.md](on-demand-checks.md),
-"The stress loop, on demand") runs exactly this set, and the gate runs each
-of it once, both read from code, never from a list kept here:
+The gate runs each item of this set once, and the stress loop
+(`tools/stress.sh`; [on-demand-checks.md](on-demand-checks.md), "The
+stress loop, on demand") runs it each round, both read from code, never
+from a list kept here. Every run passes or fails by its exit status;
+nothing prints a line for something else to count.
 
 - **A root's check set.** Each test root's checks are a check set,
   `List (Editor.CheckGroup κ α)` (`lean/Editor/RealHost.lean`), Lean-free
@@ -132,22 +136,20 @@ of it once, both read from code, never from a list kept here:
   `.plain` group. A module may have several groups where its lists sit
   between other modules' (FilesTest's `Files/Real.lean`): a normal run
   (`CheckGroup.all`) keeps the order the checks always ran in, and
-  `CheckGroup.wiring` merges a module's groups into one entry, so a run
-  says one line for each module. config-test, ffi-test and every linked
-  test with such a module take a wiring mode that runs those groups alone
-  (`config-test … --wiring`, `ffi-test wiring`, `<P>Test-Linked … --wiring`,
-  through `tools/package-set.sh --wiring run`) and answer
-  `wiring-modules`. Every root reads its mode with a shared reader of
+  `CheckGroup.wiring` merges a module's groups into one entry. config-test,
+  ffi-test and every linked test with such a module take a wiring mode
+  that runs those groups alone (`config-test … --wiring`, `ffi-test
+  wiring`, `<P>Test-Linked … --wiring`, through `tools/package-set.sh
+  --wiring run`) and answer `wiring-modules`, which a reviewer reads and
+  `package-set.sh --wiring run` uses to skip a linked test that holds no
+  such module. Every root reads its mode with a shared reader of
   `CheckGroup.Mode` and selects its checks by it with `CheckGroup.select`,
   so the roots cannot drift apart: a linked root with
   `CheckGroup.Mode.ofArguments?`, config-test with `CheckGroup.Mode.read?`
   and its own reader of the `--timings <file>` after the mode, and
   ffi-test, whose runs are subcommands, with
   `CheckGroup.Mode.ofSubcommand?`, which maps `wiring` to the wiring mode.
-  Each run of them prints
-  `wiring-set: ran <root> <module> <n> checks` for each module it ran
-  (`CheckGroup.ranLines`), and contract-test, of the set whole,
-  `wiring-set: ran contract-test ContractTest`.
+  contract-test is of the set whole.
 - **`linter.wiringSet`** (`lean/Lint/Wiring.lean`, in the build's plugin,
   imported by no module) holds the check sets true and complete: (t) a
   group's tag is its module's declaration, and a wiring module's list sits
@@ -159,50 +161,62 @@ of it once, both read from code, never from a list kept here:
   table of scenarios (`List Editor.Scenario`) and (d) selects its checks
   by the shared wiring mode: it reaches a check set, `CheckGroup.select`
   and one of the shared readers above. Naming the wiring groups
-  (`CheckGroup.wiring`, which the count lines of `CheckGroup.ranLines`
-  take) is not a wiring mode, nor is reading `--wiring` itself and
-  selecting by the mode it maps it to; greeting's fixtures show both
-  refused, and a `main` that reads the mode but never selects by it. model-test's `.wiring` modules are the linters'
-  fixtures and link no library, so (c) and (d) do not hold it. Its
-  fixtures are `ModelTest/Lint/Wiring.lean`, the modules under
-  `ModelTest/Lint/Wiring/` and greeting's
-  `GreetingTest/Linked/Lint/Wiring.lean`; its rules' functions are
-  `LintTest.lintWiringChecks`.
+  (`CheckGroup.wiring`) is not a wiring mode, nor is reading `--wiring`
+  itself and selecting by the mode it maps it to; greeting's fixtures show
+  both refused, and a `main` that reads the mode but never selects by it.
+  model-test's `.wiring` modules are the linters' fixtures and link no
+  library, so (c) and (d) do not hold it. Its fixtures are
+  `ModelTest/Lint/Wiring.lean`, the modules under `ModelTest/Lint/Wiring/`
+  and greeting's `GreetingTest/Linked/Lint/Wiring.lean`; its rules'
+  functions are `LintTest.lintWiringChecks`.
 - **The scenarios.** FfiTest's window scenarios are a table,
   `FfiTest.windowScenarios : List Editor.Scenario`, in their `.wiring`
   module: `main` dispatches each subcommand through it, and
   `ffi-test wiring-scenarios` lists it.
 - **The CLI's runs.** `tools/wiring-runs.sh` holds a case for each
   real-thread entry whose site is ffi-test and for each scenario, moved from
-  the gate's lines as they were; `wiring-runs.sh check` holds its cases to
-  `fixture-test real-thread --site ffi-test` and `ffi-test
-  wiring-scenarios` both ways. `prepare` stages what a case builds (the
-  greeting entry's install), `run` runs the cases and says
-  `wiring-set: ran <key> at ffi-test` for each. A case fails when any of
-  its steps fails, not only its last: `run` runs it with errexit as a
-  command of its own, never as a condition, where sh would ignore
-  errexit, and ffi-test shows it on the fixture cases
-  `tests/wiring-runs/cases` (`run --cases`). `tools/bundle-test.sh`
-  says the same of its entries at bundle-test and checks them against
-  `fixture-test real-thread --site bundle-test`; its `stage` and `headless`
-  modes split the stage from the runs.
-- **Once in the gate.** `mise run ffi-test` resets a ledger under
-  `target/gate/`, each step that runs one of the above appends its
-  `wiring-set: ran` lines (`tools/wiring-ledger.sh note`), the two
-  `package-set.sh run`s share a ledger of linked tests so the default set's
-  run does not run again what the fixture set's did (`--ledger`), and the
-  last step checks that each item the code lists ran exactly once
-  (`tools/wiring-ledger.sh expected` and `check`, with its fixtures under
-  `tests/wiring-ledger/`). `expected` checks each listing's status before
-  it reads its lines, and exits 2, naming the command, when one fails
-  (`tools/wiring-ledger-probe.sh`, on stand-in listings). Nothing in
-  `ci` runs a real root's wiring mode or calls `stress.sh`; the gate holds
-  `tools/package-set.sh run --wiring` on stand-ins instead
-  (`tools/package-set-probe.sh`).
+  the gate's lines as they were. `prepare` stages what a case builds (the
+  greeting entry's install), and `run` runs the cases, each passing or
+  failing by its status. A case fails when any of its steps fails, not
+  only its last: `run` runs it with errexit as a command of its own, never
+  as a condition, where sh would ignore errexit. `tools/bundle-test.sh`
+  has a `headless` line for each entry at bundle-test; its `stage` and
+  `headless` modes split the stage from the runs. That every entry and
+  scenario has its case or line is a reviewer rule
+  (`.agents/rules/structure.md`, "The wiring set's runs"), which
+  `fixture-test real-thread --site <site>` and `ffi-test
+  wiring-scenarios` list for.
+- **Once in the gate, by structure.** `mise run ffi-test` runs each root
+  once (ffi-test, contract-test and config-test, each a step), every
+  `wiring-runs.sh` case once (`run`), and the linked tests once through
+  the fixture set: `package-set.sh run ../tests/packages` runs every linked
+  test, since the fixture set requires the default set and Lake names
+  every default package for it too, and the default set's run is
+  `package-set.sh --no-linked run ../packages`, which runs its headless
+  fixtures on the shipped set's harness and no linked test. An item no
+  runner reaches is a gap reviewers hold, not a gate step. Nothing in `ci`
+  runs a real root's wiring mode or calls `stress.sh`.
 - **Each round of stress.** The loop's default suites are the wiring
-  modes, contract-test, the CLI's runs and the bundle's; after each round
-  it checks the round's lines against the same listings, and a round that
-  misses or repeats an item fails as `coverage`.
+  modes (`linked-wiring` over the fixture set alone), contract-test, the
+  CLI's runs and the bundle's; each run passes when it exits 0.
+
+### Adding a check to the wiring set
+
+1. **A Lean check in a module that declares `wiringSet.<M>`.** Put its
+   list in a `.wired "<M>" wiringSet.<M>` group of the root's check set.
+   `linter.wiringSet` refuses the build until the check is reached from
+   one. The root then runs it in its normal run, the gate's, and in its
+   wiring mode, stress's, with nothing else to update.
+2. **A new linked test with such a module.** Read its mode with
+   `CheckGroup.Mode.ofArguments?`, select with `CheckGroup.select` (rule
+   (d)) and answer `wiring-modules`. `package-set.sh run` finds it through
+   Lake.
+3. **A window scenario.** Add an entry to `FfiTest.windowScenarios` and a
+   case to `tools/wiring-runs.sh`.
+4. **A CLI fixture over a real loop thread.** Add an entry to
+   `RealThread.entries`, and a case to `tools/wiring-runs.sh` (site
+   ffi-test) or a `headless` line to `tools/bundle-test.sh` (site
+   bundle-test).
 
 ## config-test's wall time
 

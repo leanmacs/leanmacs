@@ -910,11 +910,14 @@ a fixture that differs, naming the first line with both texts, on a stale
 entry and on a root that holds none. The fixtures whose subject is the
 script runner over a real loop thread, the set's four runner entries
 (`script`, `keys-script`, `scene-script`, `ex/script`), are then run both
-ways and compared (`tools/fixture-compare.sh`): through the CLI, which
-must exit 0, and stepped, the two outputs required to be the same, with
-the lines each side alone has said when they are not, and to be the
-expected file; its four lines and `fixture-compare: compared 4 fixtures
-both ways` are required. What the fixtures show, by fixture: with `script`, whose job `count` sleeps
+ways and compared by `case_compare` in `tools/wiring-runs.sh`: it reads
+the entries from `fixture-test … compared`, runs each through the CLI,
+which must exit 0, and hands its output to `fixture-test … compare
+<script> <file>`, which runs it stepped and exits 1, saying the lines
+each side alone has, when the two outputs differ or are not the expected
+file. Each step is decided by its exit status; nothing reads their lines.
+The CLI runs are shell because Lean spawns no child process
+(`docs/design/overview.md`, "Rules of the boundary"). What the fixtures show, by fixture: with `script`, whose job `count` sleeps
 on the headless mode's fake clock, which the script advances (`advance 1`)
 before its `join`, and whose output must be exactly `expected`; with `keys-script`, which sends keys with their
 identity through the library's window input and whose output must be exactly
@@ -1637,7 +1640,7 @@ package's tests are by convention are in
 | `build` | Once, `lake -d <set dir> build --wfail :editor :editorFixtures`, the set's editor and its fixture harness. Then `lake -d <package> build --wfail`, its default targets under its own linter options, and `+<P>Test.Linked:editorLinked` when the package has that module | `lean` |
 | `fmt` | `lean-fmt format --check --root <package>`, then `lean-fmt check --root <package>`, from the formatter's host | `lean-fmt` |
 | `format` | `lean-fmt format` and `lean-fmt check --fix`, which rewrite | `lean-format` |
-| `run <sysroot> <core olean dir>` | The package's linked test, in its directory, with those two arguments. Then its fixtures, each `<package>/tests/headless/<name>/`, on the set's fixture harness, once for the package: `fixture-test <sysroot> <core olean dir> --repo <repository> run <package>/tests/headless` runs each stepped, on the fakes, and each must print exactly `<name>/expected`, but those the real-thread set leaves to the CLI ([headless-mode.md](headless-mode.md), "How the gate runs a fixture"); its count line must cover every fixture the step found | `ffi-test` |
+| `run <sysroot> <core olean dir>` | The package's linked test, in its directory, with those two arguments. Then its fixtures, each `<package>/tests/headless/<name>/`, on the set's fixture harness, once for the package: `fixture-test <sysroot> <core olean dir> --repo <repository> run <package>/tests/headless` runs each stepped, on the fakes, and each must print exactly `<name>/expected`, but those the real-thread set leaves to the CLI ([headless-mode.md](headless-mode.md), "How the gate runs a fixture"); its count line must cover every fixture the step found. With `--no-linked`, the fixtures alone; with `--wiring`, each linked test's wiring groups alone and no fixture (the stress loop's `linked-wiring`) | `ffi-test` |
 
 - **The gate gives every step the fixture set**, `tests/packages/`, which
   requires the fixture package `greeting-loud`, through it `greeting`, the
@@ -1647,8 +1650,8 @@ package's tests are by convention are in
   default packages, all twenty-five, with the eighteen interface
   packages ([packages.md](../design/packages.md), "The module map"), and
   the code the guide quotes are tested, built, format-checked and run through it. `run`
-  is also given the default set itself, `packages/`, so those packages'
-  linked tests and fixtures hold of the default set's editor, the one
+  is also given the default set itself, `packages/`, with `--no-linked`,
+  so those packages' fixtures hold of the default set's editor, the one
   that is shipped.
 - **The packages a step runs over** are those of the set that are path
   dependencies and hold a Lean library, other than the core. The script
@@ -1671,33 +1674,21 @@ package's tests are by convention are in
   compile mode's 98 model checks hold on the core's test kit.
 - **A package with no test driver fails `test`**, since Lake refuses to
   test it.
-- **`run` says what it ran, and the gate requires it.** A step's exit
-  status says nothing failed, not that anything ran. So `run` prints a line
-  for each linked test and each headless fixture (`package-set: linked test
-  <module> of <package>`, `package-set: headless fixture <name> of
-  <package>`) and a last line with the counts, and `ffi-test` keeps the
-  output and requires, over the fixture set, the fixture package's linked
-  test, `hello`, `reply`, the linked test of `echo` with its line (`echo
-  linked test: the contract's 7 properties hold on the Rust-backed
-  binding, each request completed through the completion queue`), the
-  linked test of `completion` with its line, `completion linked test: 6
-  checks passed`, and its fixture `completion-choices`, the linked test
-  of `shipped-themes` with the
-  line its pictures print, its fixtures `load-theme`, `package-names`,
-  `shipped-themes` and `themes`, the linked test of `compile` with its
-  line, `compile linked test: 8 checks passed`, its fixtures `config`,
-  `ex-names` and `shipped-formats`, the fixtures `mode-line` of
-  `mode-line`, `candidates` and `prompt` of `minibuffer`, `command-prompt`
-  of `execute-command`, `binding-search` of `binding-search` and
-  `at-point` and `at-point-tuned` of `at-point`, the three fixtures of
-  `word-count`, `as-config`, `count` and `from-config`, and `package-set:
-  ran 14 linked tests and 20 headless fixtures over 48 packages`, with the
-  line of each linked test, `ex`'s, `evil`'s, `themes`' and the files
-  cluster's among them; and over the default set, the default packages'
-  twelve linked tests and fifteen fixtures and `package-set: ran 12
-  linked tests and 15 headless fixtures over 43 packages`. A fixture or a linked test that is
-  renamed, moved or no longer found by the naming convention fails that
-  line.
+- **Each linked test runs once, by how the sets are invoked.** The
+  fixture set requires the default set, so Lake names every default
+  package for it too, and `ffi-test`'s `package-set.sh run
+  ../tests/packages` runs every linked test, fourteen today: the default
+  packages' twelve, `greeting`'s and `echo`'s. Its run over the default
+  set is `package-set.sh --no-linked run ../packages`, which runs that
+  set's fifteen fixtures on the shipped set's own harness and no linked
+  test, so none runs twice. Each passes or fails by its exit status. `run`
+  prints a line for each linked test and each headless fixture
+  (`package-set: linked test <module> of <package>`, `package-set:
+  headless fixture <name> of <package>`) and a last line with the counts,
+  for people reading the log; nothing requires them. A package Lake does
+  not name, or a linked test `editorPackages` misses, would go unrun: a
+  gap reviewers hold (gates-by-exit-status phase 4 removed the lists of
+  required lines, `.agents/rules/gates.md`).
 - **The default packages' own checks.** `shipped-themes`: sixteen checks
   in its driver (`ShippedThemesTest/Model.lean`), the completeness check
   on each theme among them; a linked test that holds each theme's picture
@@ -1778,16 +1769,8 @@ package's tests are by convention are in
 - **`run` refuses a directory that is not a whole fixture.** A directory
   under a package's `tests/headless/` with no `config/`, no `script` or no
   `expected` is exit 2, naming what is missing, and so is a set whose
-  packages hold no linked test and no fixture at all.
-- **`--only <package>`**, given once for each package and before the
-  step, runs the step over the named packages of the set alone, in the
-  set's order; `build` still builds the set's editor first. A name that is
-  no package of the set is exit 2, naming it. `run` over the named
-  packages still refuses to run nothing: over an interface package such
-  as `greeting-api`, which has no linked test and no fixture, it is exit
-  2. `lean-test` shows `--only greeting test` testing `greeting` alone and
-  `--only nosuch` refused; `ffi-test` shows `--only greeting-api run`
-  refused.
+  packages hold nothing the run could run: no linked test and no fixture
+  at all, or, with `--no-linked`, no fixture.
 - **The fixture's own checks.** `greeting`: three checks in its driver
   (`GreetingTest/Greeting.lean`), and the contract check of
   `greeting-api`, which it implements; a linked test
@@ -1824,9 +1807,8 @@ package's tests are by convention are in
   `lean-test` step, where `lake test` first builds the library under the
   package's linter options); a misformatted line fails `mise run lean-fmt`
   (`would-format`); a changed `expected` fails `mise run ffi-test`
-  with the diff; a fixture with its `script` moved away is refused by `run`
-  with exit 2; and with the `reply` fixture moved away `mise run ffi-test`
-  fails saying which line the package steps did not print.
+  with the diff; and a fixture with its `script` moved away is refused by
+  `run` with exit 2.
 - **`run` builds nothing**, so `ffi-test` still only runs what `lean`
   built, and may run beside `lean-fmt`.
 - **A set's Rust crates.** `ffi-test` requires the fixture set's package

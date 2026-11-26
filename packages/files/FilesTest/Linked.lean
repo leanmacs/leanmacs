@@ -54,7 +54,7 @@ at runtime, and each must already be linked into the executable. The
 config the hosts load names no declaration of this package.
 
 Its checks are a check set (`FilesTest.Linked.checks`, `Editor.CheckGroup`,
-`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+`docs/dev-practices/real-thread-checks.md`, "How the set runs"):
 the wiring set's lists in groups of their module, which the build's
 `linter.wiringSet` holds true and complete. With `--wiring` after the two directories it runs those groups alone, the
 stress loop's `linked-wiring` suite (`tools/package-set.sh run --wiring`),
