@@ -486,6 +486,25 @@
 # crate outright though it has no parent, while a wrapper naming a crate
 # absent from the graph passes the ban but fails `-D unused-wrapper`
 # ("wrapper for banned crate was not encountered").
+#
+# For the Agent Client Protocol's SDK (2026-11-26, acp-agents phase 4),
+# whose entries came in the phase that added its one user, the package
+# `acp`'s crate `acp-service`, which pins it exactly: with
+# `agent-client-protocol` added to `editor-service`'s dependencies, it fails
+# ("crate 'agent-client-protocol = 5.5.1' is explicitly banned"); with
+# `agent-client-protocol-schema` added there, the same way ("crate
+# 'agent-client-protocol-schema = 1.21.2' is explicitly banned"); and with
+# `agent-client-protocol-derive` added there, the same way ("crate
+# 'agent-client-protocol-derive = 5.5.1' is explicitly banned"). The SDK's
+# other dependencies (futures, serde, serde_json, tracing, uuid, ...) have
+# no entry: they are general libraries, and no type of theirs is a port's.
+#
+# The licences became checked in the same phase (`[licenses]`, below,
+# and `mise run deny`'s `licenses`), allowing exactly those the resolved
+# tree used then. cargo-deny's advisories were run by hand once then
+# (`cargo deny check advisories`, which needs the network, so it is no
+# gate step): one finding, RUSTSEC-2026-0192 (`ttf-parser` unmaintained),
+# reached through winit's Wayland back end, and none in the SDK's tree.
 
 [graph]
 all-features = false
@@ -564,4 +583,33 @@ deny = [
   { crate = "editor-launch-std", wrappers = ["editor-ffi"], reason = "the launcher's real adapters are linked into the library only by the crate that wires it together, for the editor's exec and its view of the main bundle, so the editor and the launcher exec the same way; everything else reaches the launcher's world through the core's ports, and its tests through the core's fakes" },
   { crate = "objc2-core-foundation", wrappers = ["editor-launch-std", "editor-raster-coretext", "fontique", "notify", "objc2-app-kit", "objc2-core-graphics", "objc2-core-services", "objc2-core-text", "objc2-core-video", "objc2-foundation", "objc2-quartz-core", "objc2-ui-kit", "raw-window-metal", "wgpu-hal", "winit-appkit", "winit-common", "winit-uikit"], reason = "CoreFoundation is named by the launcher's adapters, for the main bundle's path and identifier (src/identity.rs), and by the rasteriser port's macOS adapter, for a font's bytes and tables and the font-smoothing preference (src/coretext.rs); every other crate of the workspace reaches the system through a port; the other wrappers are the third-party crates that depend on it" },
   { crate = "editor-diff-imara", wrappers = ["editor-ffi"], reason = "the line diff's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
+  { crate = "agent-client-protocol", wrappers = ["acp-service"], reason = "the Agent Client Protocol's SDK stays inside the package acp's crate: its C functions and its plain events are the crate's own, and agents-api's consumers reach a session through the package service alone" },
+  { crate = "agent-client-protocol-schema", wrappers = ["agent-client-protocol"], reason = "the protocol's messages are named only through the SDK's re-export, `agent_client_protocol::v1::schema`, so the SDK's exact pin of its schema is the one the crate gets" },
+  { crate = "agent-client-protocol-derive", wrappers = ["agent-client-protocol"], reason = "the SDK's derive macros are the SDK's own: no crate of the workspace derives a JSON-RPC message" },
 ]
+
+# The licences the resolved tree may use, each compatible with the editor's
+# GPL-3.0-or-later: the permissive licences and MPL-2.0, whose files may be
+# combined with GPL code. An expression with an alternative passes when one
+# alternative is listed (r-efi's `MIT OR Apache-2.0 OR LGPL-2.1-or-later`).
+# A new licence is a decision, so it is made here, with the crate that
+# brings it. The workspace's own crates are not checked (`private`).
+[licenses]
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+
+[licenses.private]
+ignore = true

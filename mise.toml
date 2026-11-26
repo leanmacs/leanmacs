@@ -70,8 +70,8 @@ run = [
 ]
 
 [tasks.deny]
-description = "cargo-deny's bans over the dependency graph (deny.toml); stale `wrappers` are errors"
-run = "cargo deny --locked check -D unused-wrapper bans"
+description = "cargo-deny's bans and licences over the dependency graph (deny.toml); stale `wrappers` are errors"
+run = "cargo deny --locked check -D unused-wrapper bans licenses"
 
 [tasks.doc]
 description = "Rustdoc over every crate, private items included, with broken intra-doc links denied"
@@ -423,13 +423,14 @@ run = [
   # The Rust crates of a set (the facet `editorRustCrates`;
   # docs/design/packages.md, "Rust in a package"): the package-set build
   # finds a package's crate through the target `editorRustCrate` its
-  # lakefile declares, with no list kept by hand. The fixture set holds one,
-  # the fixture package `echo`'s crate `echo-service`, so its editor links
-  # the archive generated from `editor-ffi` and that crate
-  # (target/release/libeditor_rust_echo.a); the default set holds none, so
+  # lakefile declares, with no list kept by hand. The fixture set holds two,
+  # the fixture package `echo`'s crate `echo-service` and the opt-in package
+  # `acp`'s crate `acp-service`, so its editor links the archive generated
+  # from `editor-ffi` and those crates
+  # (target/release/libeditor_rust_echo_acp.a); the default set holds none, so
   # its editor links the core's (libeditor_rust.a), as `tests/empty-set`'s
   # and the core's own executables do.
-  "test \"$(lake -d ../tests/packages query :editorRustCrates | cut -f1,2)\" = \"$(printf 'echo\\techo-service')\"",
+  "test \"$(lake -d ../tests/packages query :editorRustCrates | cut -f1,2)\" = \"$(printf 'echo\\techo-service\\nacp\\tacp-service')\"",
   "test -z \"$(lake -d ../packages query :editorRustCrates)\"",
   # A set's archive comes back with its system libraries when the file that
   # holds them is gone and the archive is fresh (`buildRust`): rustc writes
@@ -439,7 +440,7 @@ run = [
   # names `-lz`, the system library `echo-service`'s zlib needs. It writes
   # only under target/, which `lean-fmt` does not read, and Cargo locks
   # that directory.
-  "f=../target/editor-rust/echo/native-static-libs && before=$(cat \"$f\") && rm \"$f\" && lake -d ../tests/packages build --wfail :editorRust && test \"$(cat \"$f\")\" = \"$before\" && grep -qw -- -lz \"$f\" || { echo \"ffi-test: building :editorRust did not write back $f\"; exit 1; }",
+  "f=../target/editor-rust/echo-acp/native-static-libs && before=$(cat \"$f\") && rm \"$f\" && lake -d ../tests/packages build --wfail :editorRust && test \"$(cat \"$f\")\" = \"$before\" && grep -qw -- -lz \"$f\" || { echo \"ffi-test: building :editorRust did not write back $f\"; exit 1; }",
   # A package's crate depends on `editor-service` and on nothing else of
   # the editor's, held by cargo-deny's bans over the crate generated from
   # the set (`lake -d <set> query :editorRustCrate`, which writes it under
@@ -571,15 +572,17 @@ run = [
   # And the record of the fixture set's editor names the `.olean` directory
   # of each of the set's Lake packages that holds a library, one a line,
   # the core's first and each package after the ones it requires:
-  # forty-nine directories and no more, each holding its package's modules,
+  # fifty-one directories and no more, each holding its package's modules,
   # the second the interface package `greeting-api`'s, which has no entry
   # module but whose modules `greeting` and `greeting-loud` import, the
-  # fifth `echo`'s, the next forty-three the default set's, which the set
+  # fifth `echo`'s, the next two the opt-in agents packages' (the interface
+  # `agents-api`'s, which has no entry module, then `acp`'s), the next
+  # forty-three the default set's, which the set
   # reaches through it (its eighteen interface packages each before the
   # first
   # package that requires it), and last the writing guide's example package
   # `word-count`'s, which the set requires after the default set.
-  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../tests/packages/greeting-api:GreetingApi ../tests/packages/greeting:Greeting/EditorPackage ../tests/packages/greeting-loud:GreetingLoud/EditorPackage ../tests/packages/echo:Echo/EditorPackage ../packages/shell-api:ShellApi ../packages/ex-api:ExApi ../packages/buffers-api:BuffersApi ../packages/ex:Ex/EditorPackage ../packages/frame-commands-api:FrameCommandsApi ../packages/frame-commands:FrameCommands/EditorPackage ../packages/evil-api:EvilApi ../packages/menu:Menu/EditorPackage ../packages/window-commands-api:WindowCommandsApi ../packages/window-commands:WindowCommands/EditorPackage ../packages/tab-commands-api:TabCommandsApi ../packages/tab-commands:TabCommands/EditorPackage ../packages/restore:Restore/EditorPackage ../packages/package-set:PackageSet/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/at-point-api:AtPointApi ../packages/evil:Evil/EditorPackage ../packages/themes-api:ThemesApi ../packages/themes:Themes/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/compile-api:CompileApi ../packages/project-api:ProjectApi ../packages/vc-api:VcApi ../packages/workspace:Workspace/EditorPackage ../packages/project-search-api:ProjectSearchApi ../packages/project-search:ProjectSearch/EditorPackage ../packages/working-set-api:WorkingSetApi ../packages/working-set:WorkingSet/EditorPackage ../packages/shell:Shell/EditorPackage ../packages/version-control:VersionControl/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage ../docs/packages/word-count:WordCount/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the fixture set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans",
+  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../tests/packages/greeting-api:GreetingApi ../tests/packages/greeting:Greeting/EditorPackage ../tests/packages/greeting-loud:GreetingLoud/EditorPackage ../tests/packages/echo:Echo/EditorPackage ../packages/agents-api:AgentsApi ../packages/acp:Acp/EditorPackage ../packages/shell-api:ShellApi ../packages/ex-api:ExApi ../packages/buffers-api:BuffersApi ../packages/ex:Ex/EditorPackage ../packages/frame-commands-api:FrameCommandsApi ../packages/frame-commands:FrameCommands/EditorPackage ../packages/evil-api:EvilApi ../packages/menu:Menu/EditorPackage ../packages/window-commands-api:WindowCommandsApi ../packages/window-commands:WindowCommands/EditorPackage ../packages/tab-commands-api:TabCommandsApi ../packages/tab-commands:TabCommands/EditorPackage ../packages/restore:Restore/EditorPackage ../packages/package-set:PackageSet/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/at-point-api:AtPointApi ../packages/evil:Evil/EditorPackage ../packages/themes-api:ThemesApi ../packages/themes:Themes/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/compile-api:CompileApi ../packages/project-api:ProjectApi ../packages/vc-api:VcApi ../packages/workspace:Workspace/EditorPackage ../packages/project-search-api:ProjectSearchApi ../packages/project-search:ProjectSearch/EditorPackage ../packages/working-set-api:WorkingSetApi ../packages/working-set:WorkingSet/EditorPackage ../packages/shell:Shell/EditorPackage ../packages/version-control:VersionControl/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage ../docs/packages/word-count:WordCount/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the fixture set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr: an option it does not know, and two
   # files, `demo x` among them. (A word that is no mode is a file to open,

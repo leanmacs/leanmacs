@@ -44,6 +44,17 @@
 # also the lakefile a user's
 # package set starts from.
 #
+# Two first-party packages live here and are deliberately not required:
+# agents (agents-api/, the interface, and acp/, its implementation over the
+# Agent Client Protocol's Rust SDK). They are opt-in (owner decision,
+# 2026-11-26): `acp` holds a crate, and requiring it here would make this
+# set's Rust archive one generated from that crate, which the app's bundle,
+# shipping the core's prebuilt archive and no Cargo, cannot build. A user
+# who wants them adds both to their own set and builds `acp`'s crate with
+# their own Cargo, which the package-set build asks for (`cargoRequired`).
+# The fixture set (tests/packages/) requires them, so every package step
+# covers them.
+#
 # After changing a `require`, run in lean/:
 #   lake -d ../packages update --keep-toolchain
 # and commit lake-manifest.json, here and in every set that requires this

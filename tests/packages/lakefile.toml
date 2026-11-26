@@ -42,6 +42,21 @@ path = "greeting-api"
 name = "echo"
 path = "echo"
 
+# `agents-api` is the interface package of agents (packages/agents-api/), and
+# `acp` its implementation over the Agent Client Protocol's Rust SDK
+# (packages/acp/), whose crate the package-set build links into this set's
+# editor through the one Rust archive it generates from the set. Both are
+# opt-in first-party packages, which the default set leaves out because
+# `acp`'s crate needs the user's own Cargo (packages/lakefile.toml's
+# header): this set requires them so that every package step covers them.
+[[require]]
+name = "agents-api"
+path = "../../packages/agents-api"
+
+[[require]]
+name = "acp"
+path = "../../packages/acp"
+
 # The default set, and through it the core and the default packages
 # (packages/shipped-themes/, packages/compile/): the gate's package steps
 # reach those through this set.
