@@ -26,7 +26,9 @@ rest.
   and nothing is resumed.
 - **AC5**: a session from before a restart is resumed by `session/load`
   when it is first visited, with its history shown; a second visit loads
-  nothing, and the resumed session is live.
+  nothing, and the resumed session is live: working while its new
+  process's turn 1 is in flight, though turn 1 ended before the restart,
+  and stalled at the stall timeout.
 - **Supporting**: a load the agent refuses is recorded and tried again by
   the next visit; closing a list buffer drops it; `agent-list` refuses a
   buffer with no workspace; a stop with a request pending leaves the record
@@ -320,6 +322,28 @@ def resumeChecks (context : HostContext) (packages : Array Package) : List Check
                   (← replays fake) &&
                   (← onThread fake))
                 s!"before {before}; lines {lines}; store {store}; table {table}; requests {repr requests}; started {started.size}; again {repr again}; orders {repr orders}; turned {turned}" },
+    { name :=
+        "a session resumed after a restart, whose turn 1 ended before it, is working while its new process's turn 1 is in flight, and its activity is unknown at the stall timeout and not one millisecond before"
+      run := do
+        let model ← IO.mkRef files
+        unless ← beforeRestart context packages model false do
+          return false
+        withStateHost context packages Fake.resumable model fun session _ _ => do
+            restored session
+            unless ← exStepped session s!"{Acp.Conversation.visitName} 1" do
+              return false
+            settledAfter session
+            unless ← promptedWith session "work" do
+              return false
+            let working ← tableText session
+            advanced session (Acp.Table.stallTimeout - 1)
+            let before ← tableText session
+            advanced session 1
+            let stalled ← tableText session
+            let line := fun activity =>
+              s!"1|sess-0001|Example title|claude-code|/work/example|working|{activity}|-"
+            saw (working == line "Run the tests" && before == working && stalled == line "unknown")
+                s!"working {working}; before {before}; stalled {stalled}" },
     { name :=
         "a load the agent refuses is noted and recorded as the session's end, and the next visit tries it again in the same buffer"
       run := do

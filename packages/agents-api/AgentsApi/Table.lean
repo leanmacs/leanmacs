@@ -37,6 +37,11 @@ stop.
 - **A loaded history** is replayed with `replaying` set, from `.resumed`
   until the next prompt: it adds no work, since nothing of a dead
   process is in flight.
+- **Turn numbers belong to one process**: each session process numbers its
+  turns from 1, so a session opened or resumed (`.opened`, `.resumed`)
+  starts afresh (`AgentRecord.fresh`): the last ended turn, which keeps a
+  turn's end heard before its prompt's reply from leaving it in flight, is
+  forgotten with the rest of the old process.
 - **Across a restart** (`AgentRecord.afterRestart`, the codec's `keep`):
   what died with the agent's process is cleared, a session cut off while
   waiting or working is marked unread, and one with no ending says the
@@ -211,6 +216,11 @@ def quiet (record : AgentRecord) : AgentRecord :=
     pending := #[], awaiting := false, turn := none, work := #[], stalled := false
     replaying := false }
 
+/-- `record` as a new process of its session begins: `quiet`, and its turn
+numbering forgotten, since each process numbers its turns from 1. -/
+def fresh (record : AgentRecord) : AgentRecord :=
+  { record.quiet with lastEnded := 0 }
+
 /-- `record` after its session's event `event`. -/
 def heardEvent (record : AgentRecord) (event : Event) : AgentRecord :=
   let record :=
@@ -246,10 +256,10 @@ def apply (record : AgentRecord) : Change → AgentRecord
   | .sent none => { record with awaiting := false }
   | .answered ticket => { record with pending := record.pending.filter (· != ticket) }
   | .opened sessionId =>
-    { record with
+    { record.fresh with
       sessionId := some sessionId, ended := none }
   | .resumed sessionId =>
-    { record.quiet with
+    { record.fresh with
       sessionId := some sessionId, ended := none, replaying := true }
   | .resuming =>
     { record with

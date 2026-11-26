@@ -6,7 +6,8 @@ import AgentsApiTest.Check
 
 `tableChecks`: the reducer's attention and activity over a table of events
 (AC1 of acp-agents phase 7), an agent idle in the conversation with work
-in flight among them; the list's order; the minted id; the display name;
+in flight among them, and a session opened or resumed again, whose new
+process numbers its turns from 1; the list's order; the minted id; the display name;
 a record kept across a restart; and the table's tree, read back through
 the store's codec and refused when it is not one. The test driver's root,
 `AgentsApiTest/Model.lean`, runs them.
@@ -123,7 +124,18 @@ def rows : List Row :=
       attention := .finished, activity := .items #[]
       holds := (·.ended == some "the editor restarted") },
     { name := "v: i across a restart", record := (after r0 rowI).afterRestart, attention := .idle
-      activity := .items #[] }]
+      activity := .items #[] },
+    { name := "x: h across a restart, resumed and prompted: the new process's turn 1 is in flight"
+      record := after (after r0 rowH).afterRestart ([.resumed "sess-0001"] ++ rowC)
+      attention := .working, activity := .items #[] },
+    { name := "y: h, a session opened again and prompted: the new process's turn 1 is in flight"
+      record := after (after r0 rowI) ([.opened "sess-0002"] ++ rowC), attention := .working
+      activity := .items #[] },
+    { name := "z: x, its turn's end before the prompt's reply"
+      record :=
+        after (after r0 rowH).afterRestart
+          [.resumed "sess-0001", .prompted, .event (.turnEnded 1 "end_turn"), .sent (some 1)]
+      attention := .finished, activity := .items #[] }]
 
 /-- Two records of the table, `claude-code` 1 and 2. -/
 def twoRecords : Array AgentRecord :=

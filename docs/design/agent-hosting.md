@@ -454,6 +454,11 @@ stopped). Identity is the minted `id`, the provider's `sessionId`, and
   or a prompt only; a focus-based read is rdm:task/global-attention-system's.
 - **A replayed history** (`replaying`, from `.resumed` to the next prompt)
   adds no work: nothing of a dead process is in flight.
+- **Turn numbers belong to one process**: the crate numbers a connection's
+  turns from 1, so `.opened` and `.resumed` start the record afresh
+  (`AgentRecord.fresh`), its last ended turn forgotten; otherwise a resumed
+  session's turn 1 would read as ended and the agent as idle while it
+  works.
 - **Across a restart** (`afterRestart`, the codec's keep, applied as the
   index is written) a record loses what died with its process (tickets,
   prompt, turn, work, stall, replay, generation), is marked unread when it
