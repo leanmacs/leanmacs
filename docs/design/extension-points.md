@@ -245,7 +245,10 @@ extension points is:
   which `acp` registers and config replaces with a view of that name
   ([agent-hosting.md](agent-hosting.md), "Sessions and the conversation,
   as built"); its `queued` field lists a pending permission request as the
-  queue of a project's requests shows it. `agents-api`'s
+  queue of a project's requests shows it, and its `listed` field a session
+  of the agent table as a project's agents list shows it
+  ([agent-hosting.md](agent-hosting.md), "The agent table and resume, as
+  built"). `agents-api`'s
   `AgentsApi.PermissionPolicy` is a third (`PermissionPolicy.named`, which
   falls back to the policy that asks, and the pure choice
   `PermissionPolicy.choose`): what answers a permission request, chosen by

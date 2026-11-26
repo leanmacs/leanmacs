@@ -87,8 +87,10 @@ later work (rdm:task/packages-load-native-libraries-at-run-time).
   input piped and each stream bounded at `AgentsApi.lineBound`) with the
   session's directory and MCP servers, and answers the session (`Opened`:
   the service's number for it, the agent's session id, the mode and the
-  modes); `next` waits for the session's next events (`Batch`); `send`
-  hands it an order from any job (`Sent`). `acp` registers the service
+  modes); `load` (phase 7) does the same for a session the agent holds in
+  its own store, named by its id, whose history the agent replays as its
+  first events (`AgentsApi.Job.load`); `next` waits for the session's next
+  events (`Batch`); `send` hands it an order from any job (`Sent`). `acp` registers the service
   through `Package.services`, as echo does; consumers import
   `agents-api` alone, and nothing imports `acp`.
 - **A session is one long-lived job** that opens it and loops on `next`;
@@ -99,7 +101,8 @@ later work (rdm:task/packages-load-native-libraries-at-run-time).
   with its turn, and the turn's end is an event, so an answer to a
   permission request goes out while the prompt is pending.
 - **The plain events** (`AgentsApi/Event.lean`): a chunk of the reply
-  with its message id; a tool call, whole, its updates merged (the fields
+  with its message id; a chunk of the user's message with its id (phase
+  7: what a load replays); a tool call, whole, its updates merged (the fields
   present change the held call, and content and locations replace the
   held ones, so a diff is replaced, never appended); a permission request
   parked under a ticket in its turn, with the agent's options; a ticket
@@ -151,9 +154,12 @@ later work (rdm:task/packages-load-native-libraries-at-run-time).
   that cancel, and holds its last events. The conversation's pause between
   takes (below) makes this the usual way `agent-stop` and a closed buffer
   end a session; what is held is at most one pause's events, freed at the
-  process's exit (rdm task `acp-session-cancelled-between-nexts-keeps-tail`,
-  which needs a release request of the service, with phase 7's session
-  lifecycle).
+  process's exit (rdm task `acp-session-cancelled-between-nexts-keeps-tail`).
+  Phase 7 left it open: fixing it is a release request of the service, with
+  a contract property, the fake, the crate, the binding and a job on every
+  stop path, which none of that phase's criteria needed, and the leak is
+  bounded. Its one lifecycle change in the crate frees the queued history
+  of a load whose open was refused, which would otherwise leak every time.
 - **The protocol's rules are proved** on a pure model in `agents-api`'s
   test library (`AgentsApiTest/Protocol.lean`,
   `AgentsApiTest/Protocol/Theorems.lean`): every response answers exactly
@@ -220,8 +226,9 @@ service alone: its setup (`Acp.setup`) registers what follows.
   per take, and is all the docs promise. Each order goes out from a job of
   its own (`agent-send`), whose reply its command applies.
 - **The conversation's state is a store** (`Acp.Conversation.store`, in
-  the unscoped store, so it survives a reload of config; a restart is
-  phase 7's), and the buffer's text is regenerated from it after each
+  the unscoped store, so it survives a reload of config; a restart drops
+  it on purpose, and a resumed session's items come back from the agent,
+  "The agent table and resume, as built" below), and the buffer's text is regenerated from it after each
   change (`Acp/Conversation/State.lean`, `Render.lean`): a chunk joins the
   message of its id, a tool call replaces the item of its id whole, so the
   pre-run diff of the edit's own strings is replaced by the whole file's,
@@ -308,8 +315,9 @@ does everything that acts.
   of every conversation of the project that has not ended, by
   conversation number and then by place, so oldest session first and
   then oldest request. A strict arrival order across sessions would need
-  a stamp on each request in the conversation store; phase 7 moves the
-  records into the project's store and may revisit it. Its text is
+  a stamp on each request in the conversation store; phase 7 kept this
+  order, since pending requests die with the agent's process and never
+  cross a restart. Its text is
   `permissions of <project>`, `<k> pending` or `nothing pending`, then
   each request as the view's `queued` field lists it: by default
   `? <agent> in <root>, conversation <n>, ticket <t>: <title>`, the raw
@@ -381,9 +389,12 @@ does everything that acts.
   which is what the user is shown when asked. The file is the user's,
   under their state directory, with the file service's default
   permissions. It grows without bound for now (rdm task for rotation).
-- **An ended session's pending tickets** leave the queue and are audited
-  `closed`; its conversation buffer still labels them pending, since
-  `PermissionState` has no `closed`: cosmetic, left to phase 7.
+- **An ended session's pending tickets** leave the queue, are audited
+  `closed` once, and are labelled `(closed)` in its conversation buffer
+  (`PermissionState.closed`, phase 7). The session's own end in a batch is
+  applied without closing them, so the batch's audit still reads them
+  pending and writes the one `closed` record; the command settles them
+  after (`Conversation.closePending`).
 - **Tests**: the theorem and `policyChecks` in `agents-api`; the
   decisions, the queue and the records' golden lines in `acp-test`
   (`AcpTest/Acp/Permissions/`); and on the stepped host over
@@ -402,6 +413,117 @@ does everything that acts.
   conversation no view shows is read from `acp`'s store by the check's
   `test-probe-conversation`, so two conversations of one header are told
   apart.
+
+### The agent table and resume, as built (acp-agents phase 7)
+
+The agent table (below) in `agents-api` and `acp`. Two stores, joined by
+the agent's id:
+
+- **The agent table** is the durable record, one a project, in the
+  project's store: `AgentsApi.Table.store`, the cell `agents-table`
+  (`packages/agents-api/AgentsApi/Table.lean`), declared in the interface
+  as `shell-api` declares `shell-history`, so both front ends can write it
+  and rdm:task/global-attention-system can read it without importing
+  `acp`. `acp` registers its codec (`Table.keep`), so it is kept across a
+  restart. A record holds identity, workspace, attention and activity,
+  never a transcript.
+- **The conversation store** stays unscoped (phase 5): the live view of a
+  session running in this process. A restart drops it on purpose: keeping
+  items would be a copy of the transcript. A resumed session's items come
+  back from the agent through `session/load`.
+- **The id the editor mints is the conversation's number**: `agent-start`
+  mints one past the largest id of any project's table and any held
+  conversation (`Acp.Table.mint`), so a kept id is never reused, and a
+  resumed conversation takes its record's id back.
+
+**The reducer** (`AgentRecord.apply`, `Table.apply`) is pure, over a
+`TableEvent`, a mandatory agent id and a `Change`: one of the session's
+typed events, or a step of the client's (prompted, the prompt's reply, an
+answer taken, opened, resumed, resuming, seen, the watchdog's verdict,
+stopped). Identity is the minted `id`, the provider's `sessionId`, and
+`AgentRecord.name`, the title's first line cut at 60 characters, or
+`<agent> <id>`.
+
+- **Attention** reads only the pending tickets, the prompt on its way, the
+  turn in flight and the unread mark: `waiting`, else `working`, else
+  `finished` (unread), else `idle`. **Activity** is the tool calls neither
+  completed nor failed, or `unknown` once stalled. Activity never feeds
+  attention: `attention_ignores_activity` and `stalled_keeps_attention` are
+  proved (`AgentsApiTest/AgentsApi/Table/Theorems.lean`).
+- **Unread** is set by a turn's or the session's end and cleared by a visit
+  or a prompt only; a focus-based read is rdm:task/global-attention-system's.
+- **A replayed history** (`replaying`, from `.resumed` to the next prompt)
+  adds no work: nothing of a dead process is in flight.
+- **Across a restart** (`afterRestart`, the codec's keep, applied as the
+  index is written) a record loses what died with its process (tickets,
+  prompt, turn, work, stall, replay, generation), is marked unread when it
+  was waiting or working, and says `the editor restarted` when it had no
+  ending.
+- **A visit that resumes** forgets the ending (`.resuming`), so a load the
+  agent refuses is recorded as the session's end: `the session did not
+  resume: <words>`.
+
+**The stall watchdog** (`Acp/Table.lean`): while an agent works and has not
+stalled, one job, `agent-stall`, keyed `agent-stall <id>`, waits on the job
+clock until `Acp.Table.stallTimeout` (120 000 ms) after the prompt or after
+the session's last batch, which the session job stamps with the job
+clock's time. It is armed once, not again for each batch, so a stream of
+batches starts no jobs and costs no turns; at its deadline its command
+arms it again for the last batch's timeout if one came since, and
+otherwise hands the reducer `.stalled` at the record's generation (`heard`,
+the count of events heard), which the reducer ignores when stale or when
+the agent no longer works. The timeout is a constant: making it config's
+is later work.
+
+**The agents list**: `agent-list` shows the focused buffer's project's
+sessions in one read-only buffer, `*agents: <project>*`, in the mode
+`agent-list`, ordered by attention (waiting, finished and unread, working,
+idle), then id (`Acp/Table/List.lean`). Each row is the view's `listed`
+field (`ConversationView.listed`), by default
+`<id> <name>: <attention>, <activity> — <agent> in <root>`, then
+`, session <id>`, and `, not running; ended: <reason>` when no session of
+its id runs. Its text is derived on every redraw: after each table change
+and each conversation update.
+
+**Resume: `session/load`, never `session/resume`.** The phase asks for the
+history to be shown; `session/resume` returns none, so showing history
+after it would need the editor's own copy of the transcript. `session/load`
+has the agent replay its own store as `session/update` notifications
+before it answers, so the editor keeps only the session id. Both are stable
+in schema 1.21.2, so no `unstable_*` feature is on. An agent that does not
+advertise `loadSession` is refused (`the agent does not offer
+session/load`), with no fallback. A load sends nothing else: no
+`session/new`, `session/set_mode` or `session/set_config_option`, and no
+`CLAUDE_CONFIG_DIR`; its `cwd` is the record's workspace root and its MCP
+servers the registration's. The crate posts the history, a user's chunks
+among them (`Event.userChunk`), before `opened`; the conversation shows a
+user's chunk only while replaying, as a prompt.
+
+**Visiting** is `agent-visit [id]`, from the list's row (localleader `o`)
+or by id: the core has no buffer-visit hook, and a conversation buffer is
+not restored. It shows the conversation of that id when one holds a
+buffer; otherwise, when the record has a session id, it makes a
+conversation of the record's id and resumes the session in it, loaded once
+on the first visit; a load the agent refused is retried by the next visit
+in its buffer; a record that never opened is refused
+(`Acp/Table/Visit.lean`). Nothing loads a session at a restore or when the
+list is shown.
+
+**Tests**: AC1's table of events, the order, the name, the restart's keep
+and the tree in `agents-api-test` (`AgentsApiTest/AgentsApi/Table.lean`),
+and the two theorems; the list, the visit and the replayed user's message
+in `acp-test`; and on the stepped host (`AcpTest/Linked/Acp/Table.lean`):
+the stall on the fake clock, not one millisecond before; the list's order
+and a visit's reorder; the table read back after a restart over the
+journal's recording fake, two hosts in turn
+(`AcpTest/Linked/Support/Restart.lean`); a session loaded on its first
+visit with its history shown, once; a refused load retried. The contract
+holds the fake and the crate to a load and a refused load. Through the
+CLI, `packages/acp/tests/headless/table/` and `table-restore/` run on the
+fixture set's editor with a scripted agent (`tools/wiring-runs.sh`,
+`case_acp_table_restore`): the record written by a real journal and index
+before an abort, read back by the next process, and resumed through the
+real crate.
 
 ### Upgrading the SDK
 
@@ -423,6 +545,11 @@ of the schema for what that recording lacks (a cancel,
   they hold: a renamed or newly required field, an unknown field or
   method refused (`name`, `_meta`, the auth notifications), a changed id
   or outcome encoding, or a change in what our client sends.
+- **`load.jsonl`** (phase 7) holds a `session/load` of `sess-0001`: the
+  history the agent replays as `session/update` notifications before its
+  answer (a user's chunk, a reply chunk, a completed tool call and the
+  title), which the client posts before `opened`. The spike never ran a
+  load, so its shapes are the schema's, not a recording's.
 - **What they do not catch**: a change in what the adapter sends. They are
   frozen at the adapter's shapes of 0.110.0 and, being hand-written, can be
   wrong where their author misread a shape. A new update kind, a renamed
@@ -631,6 +758,9 @@ buffer name, so it could not change.
 Activity never feeds attention. An agent can be idle in the conversation
 while a background task runs, and the list should say so.
 
+As built, in `agents-api` and `acp`: "The agent table and resume, as built
+(acp-agents phase 7)", above.
+
 **Ingress is typed.** Every update is an event with a mandatory agent id,
 whether it came from ACP, from a hook callback on the local listener, or
 from a terminal escape sequence. `edmacs` took updates through shell
@@ -677,7 +807,8 @@ phase 6)", above.
   independently of window layout. After a restart, sessions are listed and
   resumed lazily on first visit, using the agent's own session store rather
   than a copy of its transcript. "Restore agents" and "restore window
-  layout" are separate features.
+  layout" are separate features. As built: "The agent table and resume, as
+  built (acp-agents phase 7)", above.
 - **One worktree, one branch, one agent per task** is the pattern nearly
   every orchestration tool uses. Worktree lifecycle is Lean, over git:
   the version-control interface's `addWorktree` and `removeWorktree`
@@ -704,8 +835,8 @@ multi-agent dashboard raised awareness and throughput but not confidence in
 the output (read through a secondary summary only). So the agents list and
 notifications are necessary and cheap, and they are not where the value is.
 
-- The agents list orders by attention (rdm:roadmap/acp-agents builds it,
-  phase 7).
+- The agents list orders by attention (built in rdm:roadmap/acp-agents
+  phase 7: "The agent table and resume, as built", above).
 - A notification fires when an agent starts waiting or finishes, by rules
   in Lean. This is rdm:task/global-attention-system's, not
   rdm:roadmap/acp-agents'; the agent table keeps attention as data for it

@@ -2444,6 +2444,33 @@ promises more than that, per take. Pinned on the stepped host
 (`packages/acp/AcpTest/Linked/Acp/Conversation.lean`, AC3: a thousand
 events in ten pieces, both ways, one memory-queue event and one scene).
 
+**The stall watchdog: one keyed job armed once, judged by a generation**
+(acp-agents phase 7; `packages/acp/Acp/Table.lean`). A working agent
+silent past `Acp.Table.stallTimeout` is of unknown activity. Its watchdog
+is one job, `agent-stall`, keyed `agent-stall <id>`, that waits on the job
+clock (`waitUntil`; the fake clock on a stepped host) until a deadline:
+the timeout after the prompt, or after the last batch, whose time the
+session job stamps on its post from the job clock (`now`). It is armed
+once while the agent works, not again for each batch: restarting a keyed
+job for each batch would cancel one job a batch, each cancel a turn of
+the loop, and the conversation's one-scene-a-batch property above would
+not hold. At its deadline its command arms it again for the last batch's
+timeout if one came since, and otherwise hands the pure reducer
+`.stalled` at the record's generation (`heard`), which the reducer ignores
+when stale or when the agent no longer works; an agent that stops working
+has its watchdog cancelled by its key. Pinned on the stepped host by
+advancing the fake clock to one millisecond under each deadline and then
+to it (`AcpTest/Linked/Acp/Table.lean`, AC2).
+
+**A load's history is queued before its open completes** (acp-agents phase
+7; `packages/acp/rust/src/session.rs`). The agent replays a loaded
+session's history as notifications before it answers `session/load`; the
+crate posts them, merged, before `Opened`, and the service holds the
+events of a session still opening, so the session job's first `next`
+after the open takes the whole history in one batch. An open refused
+because its session ended first marks the session abandoned, so its held
+history is freed rather than kept for a `next` that cannot come.
+
 **The permission audit log's writer** (acp-agents phase 6;
 `packages/acp/Acp/Permissions.lean`). Every permission request and its
 answer are appended to `<state>/agents/permissions.log` through the job
