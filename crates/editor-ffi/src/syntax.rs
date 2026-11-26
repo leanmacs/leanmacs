@@ -529,6 +529,13 @@ impl Syntaxes {
         self.syntax.grammars()
     }
 
+    /// The worker's handle, its thread started if it was not: what a
+    /// grammar registration is queued on ([`crate::grammars`]). `None` when
+    /// the thread cannot be started.
+    pub fn handle(&self) -> Option<Handle<TreeSitter>> {
+        self.worker()
+    }
+
     /// The worker's handle, its thread started if it was not.
     fn worker(&self) -> Option<Handle<TreeSitter>> {
         let mut worker = lock(&self.worker);

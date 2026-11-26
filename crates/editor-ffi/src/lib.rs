@@ -207,8 +207,9 @@
 //! A service is work the library does for a Lean job that takes time: a
 //! timer ([`timers`]), a load or a save of a file ([`files`]), a
 //! command run to its end ([`processes`]), a watch on a file or a
-//! directory ([`watches`]), a line diff of two snapshots ([`diffs`]), and a
-//! search of the files under a directory ([`grep`]).
+//! directory ([`watches`]), a line diff of two snapshots ([`diffs`]), a
+//! search of the files under a directory ([`grep`]), and the registration of
+//! a grammar from a native library ([`grammars`]).
 //! A job that waits must not hold a thread, so a request to
 //! a service is never a blocking call. Every service follows these rules:
 //!
@@ -403,6 +404,20 @@
 //! and of `transaction.rs` for applying a script. On the
 //! Lean side: `contract-test`'s diff properties, which run the real engine
 //! through the service on real files.
+//!
+//! The grammar registrations ([`grammars`]) are a service over the syntax
+//! worker's queue rather than a thread of their own: the registry of
+//! grammars is the syntax service's state, held by its worker, so a
+//! registration is answered on the worker's thread before its next round
+//! (`editor_syntax::worker`, "Registrations"), and completed from the syntax
+//! service's source ([`syntax::SERVICE`]). A start takes a library's path,
+//! a symbol and a policy tag ([`grammars::editor_ffi_grammars_start`]); the
+//! answer is taken by its id ([`grammars::editor_ffi_grammars_take`]), a
+//! status and, when registered, the name. Tests: the unit tests of
+//! `grammars.rs`, on `editor-syntax`'s fake with a table over a stepped
+//! worker, and `tests/grammars.rs` through C on the process's service; on
+//! the Lean side, `ffi-test`'s registration check and `contract-test`'s
+//! grammar properties.
 //!
 //! ## The syntax service
 //!
@@ -613,6 +628,7 @@ pub mod events;
 pub mod excerpts;
 pub mod files;
 pub mod fuzzy;
+pub mod grammars;
 pub mod grep;
 pub mod interrupt;
 pub mod inverse;
