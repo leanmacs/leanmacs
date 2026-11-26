@@ -4,6 +4,7 @@ import AcpTest.Acp.Conversation.Diff
 import AcpTest.Acp.Conversation.Render
 import AcpTest.Acp.Conversation.State
 import AcpTest.Acp.Permissions.Audit
+import AcpTest.Acp.Permissions.Outbox
 import AcpTest.Acp.Permissions.Policy
 import AcpTest.Acp.Permissions.Queue
 import AcpTest.Acp.Service
@@ -35,7 +36,9 @@ test modules and runs their checks:
 - `queueChecks`: the queue of a project's pending permission requests, its
   order, its text and its map of rows (`Acp/Permissions/Queue.lean`);
 - `auditChecks`: the audit log's records, each a golden line, escaped and
-  read back, in event order (`Acp/Permissions/Audit.lean`).
+  read back, in event order (`Acp/Permissions/Audit.lean`);
+- `outboxChecks`: the audit log's outbox, one write at a time, each
+  dropping exactly the lines it held (`Acp/Permissions/Outbox.lean`).
 
 The service over the real crate, with `agents-api`'s contract, is the
 linked test's (`AcpTest/Linked.lean`).
@@ -48,7 +51,8 @@ def AcpTest.checks : List AcpTest.Check :=
     AcpTest.claudeCodeChecks ++
     AcpTest.permissionPolicyChecks ++
     AcpTest.queueChecks ++
-    AcpTest.auditChecks
+    AcpTest.auditChecks ++
+    AcpTest.outboxChecks
 
 /-- Runs the checks and prints each that failed; the exit status is 1 when
 one did. -/
