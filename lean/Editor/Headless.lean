@@ -619,9 +619,13 @@ echo area (`Running.said`). No script directive sends them.
 `run` drives a host through a script, one directive a line: `reload`,
 `run <name>`, `spawn <name>`, `show`, `scene` and `agree` are requests, and
 `settle`, `settle <milliseconds>`, `join [<seconds>]`, `idle`,
-`journal`, `journalled`, `indexed [<seconds>]`, `restarted [<seconds>]`,
-`key <logical> <physical> <modifiers>`, `commit <text>` and
-`resize <width> <height>` are the driver's own. A `settle <milliseconds>`
+`journal`, `journalled`, `indexed [<seconds>]`, `installed`,
+`restarted [<seconds>]`, `key <logical> <physical> <modifiers>`,
+`commit <text>` and `resize <width> <height>` are the driver's own. An
+`installed` settles, then fails the run (`Failure.notInstalled`) unless
+the last reload that finished installed its config
+(`Progress.installed`): for a script that must not go on, or exit 0, on a
+rejected config, as a benchmark's. A `settle <milliseconds>`
 waits as `settle` does, for that many milliseconds in place of the run's
 patience, for a reload known to be slow; a `join`, `indexed` or
 `restarted` with seconds waits that many seconds in place of it, for a
@@ -711,9 +715,10 @@ status is 0 when the script ran to its end, or a command quit the editor
 before it, and
 1 when it could not, and then it says why on stderr: the script cannot be
 read, a wait ran out (after 30 seconds) with a reload or a job still
-running, the editor thread did not answer, or the run gave up on a loop
-that did not end. A rejected reload is something
-to print, not a failure, and so is a job that fails. A command line it does
+running, the editor thread did not answer, an `installed` found the config
+not installed, or the run gave up on a loop that did not end. A rejected
+reload is otherwise something to print, not a failure, and so is a job
+that fails. A command line it does
 not take is status 2, with its usage on stderr: two paths outside a bundle
 among them, which say first that there is no toolchain.
 
@@ -1323,6 +1328,9 @@ structure Running (β σ : Type) (scheme : InputScheme) where
   reloadTask : Option (Task (Except IO.Error Unit)) := none
   /-- How many markers the loop has reached. -/
   markers : Nat := 0
+  /-- Whether the last reload that finished installed its config, none
+  before one has (`Progress.installed`). -/
+  installed : Option Bool := none
   /-- Whether the driver has ended the loop. -/
   stopped : Bool := false
   /-- What the host has to say in the echo area once the frame is made: a
@@ -1454,6 +1462,7 @@ def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ
   for effect in effects do
     match effect with
     | .report report =>
+      running := { running with installed := some report.installed }
       for line in reportLines report do
         collaborators.emit line
       if let some text := report.echo then
@@ -2452,6 +2461,9 @@ structure Progress where
   /-- The plan of the restart the loop ended for, set once it has ended
   ("Restarting", in the module docs). -/
   handOver : Option Restart.Plan := none
+  /-- Whether the last reload that finished installed its config, none
+  before one has: what a script's `installed` reads. -/
+  installed : Option Bool := none
 
 /-- What the editor thread holds as its loop starts: the config state its
 packages make (`Config.State.ofPackages`: each of `collaborators.packages`
@@ -2495,7 +2507,8 @@ def Running.turn {β σ : Type} {scheme : InputScheme} (collaborators : Collabor
 
 /-- How far the loop has got, as it tells its driver after each event: how
 many markers it has reached, whether a reload is running, how many jobs
-are, and the title bar the installed config chose. -/
+are, the title bar the installed config chose, and whether the last reload
+that finished installed its config. -/
 def Running.progress {β σ : Type} {scheme : InputScheme} (running : Running β σ scheme) :
     Progress :=
   { markers := running.markers, reloading := running.config.running,
@@ -2509,7 +2522,8 @@ def Running.progress {β σ : Type} {scheme : InputScheme} (running : Running β
       (running.jobs.table.entries.filter fun entry =>
           entry.name != Restore.writeJob && entry.name != Restore.saveJob &&
             !running.spawned.contains entry.id).size
-    handOver := running.handOver }
+    handOver := running.handOver
+    installed := running.installed }
 
 /-- The loop's end, the editor thread's and a stepped host's alike: nothing
 will deal with a result any more, so every job is cancelled, and every pause
@@ -3388,6 +3402,11 @@ inductive Directive where
   patience with none (`restarted <seconds>`, for a restart a package-set
   build starts). -/
   | restarted (seconds : Option Nat := none)
+  /-- Settle as `settle` does, then fail the run (`Failure.notInstalled`)
+  unless the last reload that finished installed its config: a rejected
+  reload, or none finished, ends the script here with status 1, where it
+  would otherwise be something to print. The driver's own. -/
+  | installed
   deriving DecidableEq, Repr
 
 /-- The name a directive gives after its keyword, which is the first
@@ -3523,32 +3542,36 @@ def directive? (line : String) : Except String (Option Directive) :=
                                   else
                                     if line == "abort" then .ok (some .abort)
                                     else
-                                      if line == "restarted" || line.startsWith "restarted " then
-                                        match named line 9 with
-                                        | none => .ok (some (.restarted none))
-                                        | some text =>
-                                          match text.toNat? with
-                                          | some seconds => .ok (some (.restarted (some seconds)))
-                                          | none =>
-                                            .error
-                                              s!"`{line}` is not a restarted: expected restarted [<seconds>], one number"
+                                      if line == "installed" then .ok (some .installed)
                                       else
-                                        if line == "idle" then .ok (some .idle)
-                                        else
-                                          if line.startsWith "idle " then
-                                            .error
-                                              s!"`{line}` is not an idle: expected idle, with nothing after it: it waits until the host and the render loop are at rest, never for a time"
-                                          else
-                                            if line == "advance" || line.startsWith "advance " then
-                                              match (named line 7).bind String.toNat? with
-                                              | some milliseconds =>
-                                                .ok (some (.advance milliseconds))
-                                              | none =>
-                                                .error
-                                                  s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
-                                            else
+                                        if line == "restarted" || line.startsWith "restarted " then
+                                          match named line 9 with
+                                          | none => .ok (some (.restarted none))
+                                          | some text =>
+                                            match text.toNat? with
+                                            | some seconds => .ok (some (.restarted (some seconds)))
+                                            | none =>
                                               .error
-                                                s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, published, agree, settle, settle <milliseconds>, join [<seconds>], idle, advance <milliseconds>, journal, journalled, indexed [<seconds>], abort, restarted [<seconds>], key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
+                                                s!"`{line}` is not a restarted: expected restarted [<seconds>], one number"
+                                        else
+                                          if line == "idle" then .ok (some .idle)
+                                          else
+                                            if line.startsWith "idle " then
+                                              .error
+                                                s!"`{line}` is not an idle: expected idle, with nothing after it: it waits until the host and the render loop are at rest, never for a time"
+                                            else
+                                              if
+                                                  line == "advance" ||
+                                                    line.startsWith "advance " then
+                                                match (named line 7).bind String.toNat? with
+                                                | some milliseconds =>
+                                                  .ok (some (.advance milliseconds))
+                                                | none =>
+                                                  .error
+                                                    s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
+                                              else
+                                                .error
+                                                  s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, published, agree, settle, settle <milliseconds>, join [<seconds>], idle, advance <milliseconds>, journal, journalled, indexed [<seconds>], installed, abort, restarted [<seconds>], key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -3613,6 +3636,10 @@ inductive Failure where
   /-- The `restarted` on `line` found the loop not ended for a restart within
   the patience. -/
   | notRestarted (line : Nat)
+  /-- The `installed` on `line` settled and found that the last reload that
+  finished did not install its config: it was rejected, or none had
+  finished. -/
+  | notInstalled (line : Nat)
   /-- The loop had not ended `grace` milliseconds after the hang was said,
   itself `guard` milliseconds after the run stopped it: the headless mode
   gave up on it (`runFrom`'s `grace`). -/
@@ -3651,6 +3678,8 @@ def Failure.describe (patience : Nat) : Failure → String
   | .noClock line => s!"the advance on line {line}: {advanceNeedsClock}"
   | .notRestarted line =>
     s!"the restarted on line {line} of the script found no restart within {patience} ms: the loop did not end with the session handed over"
+  | .notInstalled line =>
+    s!"the installed on line {line} of the script found the config not installed: the last reload was rejected, or none had finished"
   | .hung guard grace =>
     s!"the editor loop had not ended {grace} ms after the hang was said ({guard} ms after the script stopped it); giving up"
   | .waited milliseconds failure => failure.describe milliseconds
@@ -3940,6 +3969,11 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
               pure none
           unless drained == some true do
             return (some (Failure.ownedBy own (.unanswered (some line.number))), none)
+        pure wait
+      | .installed =>
+        let wait ← await line.number
+        if wait == .settled && (← driven.progress).installed != some true then
+          return (some (.notInstalled line.number), none)
         pure wait
       | .abort =>
         -- The headless mode's ends the process (`abortProcess`); one that

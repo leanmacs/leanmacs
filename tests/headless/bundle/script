@@ -1,9 +1,11 @@
 # A config that imports `Lean`, which the editor's base does not hold. The
-# gate runs it stepped, as every fixture of tests/headless; the benchmarks
-# (tools/module-bench.sh, tools/bundle-bench.sh) run it from a staged
-# bundle, with no directory argument, an empty environment and a working
-# directory outside the bundle, so the config in `config/` is elaborated on
-# the modules the bundle holds. What it prints must be exactly `expected`.
+# gate runs it stepped, as every fixture of tests/headless, and holds what
+# it prints to `expected`. The benchmarks (tools/module-bench.sh,
+# tools/bundle-bench.sh) run it from a staged bundle, with no directory
+# argument, an empty environment and a working directory outside the
+# bundle, so the config in `config/` is elaborated on the modules the
+# bundle holds; they read nothing it prints, only its exit status, which
+# `installed` makes 1 when the config did not install.
 
 # This settle waits up to 90 s, three times the default 30 s: a cold,
 # interpreted elaboration of a config that imports `Lean`, which from a
@@ -12,6 +14,7 @@
 # 90000 ms.
 reload
 settle 90000
+installed
 
 # `squares` is config's: it runs interpreted, calling compiled code of
 # `Init` and of `Editor`. Text 0 is the scratch buffer's.

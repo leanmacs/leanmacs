@@ -42,10 +42,11 @@
 # and bytes are printed too. The app's own figures are
 # `mise run bundle-bench`'s.
 #
-# Bytes are apparent sizes, summed from `stat -f %z`; MB are 10^6 bytes. It
-# asserts one thing: each headless run it times installed its config (a
-# rejected reload exits 0, and would be timed as if it were a start-up).
-# Every temporary directory is removed by a trap. It is macOS only, as the
+# Bytes are apparent sizes, summed from `stat -f %z`; MB are 10^6 bytes.
+# Each headless run it times runs a script whose `installed` fails the run
+# when its config did not install, so a rejected reload, which would be
+# timed as if it were a start-up, stops the bench by its exit status
+# (`timed` passes it on). Every temporary directory is removed by a trap. It is macOS only, as the
 # app bundle is.
 #
 # `$1` is the Lean package's directory, where the built executables are.
@@ -114,12 +115,18 @@ largest() {
 }
 
 # Runs `$@` under `/usr/bin/time -l` and prints its stdout, then a line
-# `time <real seconds> <maximum resident set size in bytes>`.
+# `time <real seconds> <maximum resident set size in bytes>`; or, when it
+# fails, its stderr on stderr, and returns its status.
 timed() {
   local err=$work/time.err
   local out
-  out=$(/usr/bin/time -l "$@" 2>"$err")
+  local status=0
+  out=$(/usr/bin/time -l "$@" 2>"$err") || status=$?
   printf '%s\n' "$out"
+  if [ "$status" -ne 0 ]; then
+    cat "$err" >&2
+    return "$status"
+  fi
   awk '/ real / { real = $1 } /maximum resident set size/ { rss = $1 } END { print "time", real, rss }' "$err"
 }
 
@@ -233,7 +240,7 @@ for set in "Editor" "Editor Lean"; do
         printf '%s\n' "$lines" | awk '/^time / { print $3 }' >>"$work/rss"
       done
       rss=$(largest <"$work/rss")
-      echo "the default set's bundle: its headless mode on tests/headless/$fixture, closure, kinds $needed, env -i, 5 runs: median real $(median <"$work/real") s; largest maximum resident set $(mb "$rss") MB"
+      echo "the default set's bundle: its headless mode on tests/$fixture, closure, kinds $needed, env -i, 5 runs: median real $(median <"$work/real") s; largest maximum resident set $(mb "$rss") MB"
     done
   fi
   rm -rf "$stage"

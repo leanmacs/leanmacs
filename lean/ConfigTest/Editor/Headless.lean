@@ -1163,7 +1163,7 @@ def jobChecks (context : Context) : List Check :=
           scriptedIndexed #[.working, .settled] { indexing := true, background := 0 } none
         saw (answer == .working && asked == #["indexed"]) s!"answer={repr answer} asked={asked}" },
     { name :=
-        "spawn and join are directives of a script, join, restarted and indexed with an optional patience in seconds, a spawn with no name and a patience that is no number are refused, and a join that ran out is described with its line"
+        "spawn, join and installed are directives of a script, join, restarted and indexed with an optional patience in seconds, a spawn with no name, an installed with anything after it and a patience that is no number are refused, the error message of a line that is no directive lists installed, and a join that ran out is described with its line"
       run :=
         let refusal (text : String) : String :=
           match Headless.script text with
@@ -1179,6 +1179,10 @@ def jobChecks (context : Context) : List Check :=
               some #[⟨1, .join (some 300)⟩, ⟨2, .restarted none⟩, ⟨3, .restarted (some 300)⟩] &&
             (Headless.script "indexed\nindexed 300\n").toOption ==
               some #[⟨1, .indexed none⟩, ⟨2, .indexed (some 300)⟩] &&
+            (Headless.script "reload\n installed \n").toOption ==
+              some #[⟨1, .request .reload⟩, ⟨2, .installed⟩] &&
+            (refusal "installed now\n").startsWith "line 1: " &&
+            ((refusal "wait\n").splitOn " installed,").length == 2 &&
             (refusal "indexed soon\n").startsWith "line 1: " &&
             (refusal "join soon\n").startsWith "line 1: " &&
             (refusal "restarted x\n").startsWith "line 1: " &&
@@ -1651,7 +1655,7 @@ wait 2" with
         let others :=
           [Headless.Failure.reloading line, .reloading none, .working line, .working none,
                 .unanswered line, .unanswered none, .stalled 3 5, .noClock 3, .notRestarted 3,
-                .waited 90000 (.unanswered none)].map
+                .notInstalled 3, .waited 90000 (.unanswered none)].map
             (Headless.Failure.describe 30000)
         saw
           (!others.contains hung && (hung.splitOn "30000 ms").length == 2 &&

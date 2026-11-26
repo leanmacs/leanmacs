@@ -156,8 +156,10 @@ show:
   once, on its wake-up; `journalled` has the journal fake's orders worked,
   `indexed` moves the clock past the write's delay and leaves the index in
   the file fake's model, and `restarted` returns the hand-over's plan, or
-  fails at once with none; `abort` calls the run's `onAbort`; and a command
-  that quits stops the script;
+  fails at once with none; `installed` goes on once the last reload
+  installed its config, and fails at once as not installed, naming its
+  line, after a rejected reload or with none finished; `abort` calls the
+  run's `onAbort`; and a command that quits stops the script;
 - `fixtureRunChecks`: the headless fixture harness's stepped runs
   (`Editor/Test/Fixture/Stepped.lean`), on fixtures written into a
   temporary directory the check owns: a fixture whose output is its

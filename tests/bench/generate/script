@@ -6,8 +6,11 @@
 # (crates/editor-release-std/tests/dmg_mount.rs).
 
 # The config directory's generated files are created before the root is
-# elaborated, and the config loads.
+# elaborated, and the config loads. `installed` fails the run, with status
+# 1, if it did not: a benchmark must not time an editor that elaborated
+# nothing.
 reload
 settle
+installed
 
 run loaded

@@ -116,7 +116,10 @@ mise run module-bench
 
 This measures, on macOS, what each import set config may use costs an app
 bundle (`tools/module-bench.sh`). It is a measurement, not a check, so it
-is not part of the gate, and it asserts nothing. For `Editor` and for
+is not part of the gate, and it asserts nothing of its own: a run it times
+that fails stops it, by its exit status, and each headless script it times
+ends its reload with `installed`, which fails the run when the config did
+not install. For `Editor` and for
 `Editor Lean` it prints the modules the
 import reads (`config-test bench-modules <sysroot> <olean dir> <module>…`)
 and the bytes of each file kind, of whole top-level directories and of those
@@ -150,8 +153,10 @@ mise run app && mise run dmg && mise run bundle-bench
 ```
 
 `tools/bundle-bench.sh`, macOS on arm64 only, measures the built
-`Leanmacs.app` and this build's disk image, and asserts nothing: the
-bundle's bytes and files by part
+`Leanmacs.app` and this build's disk image, and asserts nothing of its
+own: a run or build that fails stops it, by its exit status, and each
+headless script it times fails, by its `installed`, when the config did
+not install. It prints the bundle's bytes and files by part
 (the toolchain, the core and the default packages, the editor and the
 launcher, the Rust archive, the link stubs, the whole); the image's bytes
 and its share of GitHub's 2 GiB release-asset limit; the median real time

@@ -481,6 +481,33 @@ def steppedRunChecks (context : Context) : List Check :=
               output.any (·.startsWith "reload 1: installed"))
             s!"failure={repr failure} said={said} blocked={blocked} output={output}" },
     { name :=
+        "installed over the fakes settles and goes on once the last reload installed its config; after a rejected reload, or before any reload has finished, it fails at once as not installed, naming its line, with no hang said, and the script stops there"
+      run := do
+        let ran (files : List (String × String)) (script : Array Headless.Line) :
+          IO (Option Headless.Failure × Array String × Array String) := do
+          let stage ← Stage.new context context.elaborator (memorySource files)
+          let stage ← stage.stepped
+          let ((failure, _), said) ← runOnFakes stage script
+          return (failure, said, ← stage.output.get)
+        let broken := [(Config.rootModule, "def broken : Nat := \"not a number\"\n")]
+        let (installed, installedSaid, installedOutput) ←
+          ran emptyRoot #[⟨1, .request .reload⟩, ⟨2, .installed⟩, ⟨3, .request .show⟩]
+        let (rejected, rejectedSaid, rejectedOutput) ←
+          ran broken #[⟨1, .request .reload⟩, ⟨2, .installed⟩, ⟨3, .request .show⟩]
+        let (unloaded, unloadedSaid, _) ← ran emptyRoot #[⟨1, .installed⟩]
+        saw
+            (installed.isNone && installedSaid.isEmpty &&
+              installedOutput.any (·.startsWith "reload 1: installed") &&
+              installedOutput.any (·.startsWith "commands:") &&
+              rejected == some (.notInstalled 2) &&
+              rejectedSaid.isEmpty &&
+              rejectedOutput.contains "reload 1: rejected" &&
+              !rejectedOutput.any (·.startsWith "commands:") &&
+              unloaded == some (.notInstalled 1) &&
+              unloadedSaid.isEmpty &&
+              (((Headless.Failure.notInstalled 2).describe 200).splitOn "line 2").length == 2)
+            s!"installed={repr installed} {installedSaid} {installedOutput}; rejected={repr rejected} {rejectedSaid} {rejectedOutput}; unloaded={repr unloaded} {unloadedSaid}" },
+    { name :=
         "journalled over the fakes, after typing into a file, has every order of the journal fake worked by the next line, its drain resolved on the check's own thread"
       run :=
         IO.FS.withTempDir fun directory => do

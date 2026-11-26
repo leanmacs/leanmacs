@@ -6,7 +6,8 @@
 #   tools/bundle-bench.sh <app> <dmg>
 #
 # Opt-in, macOS on arm64 only, after `mise run app` and `mise run dmg`. It
-# asserts nothing but that each run it times did what it times. It prints:
+# asserts nothing of its own: a run it times or a build it runs that fails
+# stops it, by its exit status. It prints:
 #
 # 1. the bundle's bytes and files, by part: the toolchain
 #    (`Contents/Resources/lean/toolchain`), the core and the default
@@ -19,7 +20,8 @@
 #    temporary directory, on `tests/bench/generate` (a config of
 #    `Editor` alone) and on `tests/headless/bundle` (a config that imports
 #    `Lean`): the median real time of 5 and the largest maximum resident
-#    set (`/usr/bin/time -l`);
+#    set (`/usr/bin/time -l`); each script's `installed` fails its run
+#    when the config did not install;
 # 4. the time of the unchanged default set's user build from the bundle
 #    (`lake -d <config> build :editorInstall` on the generated lakefile):
 #    the first, which elaborates the core's lakefile, and a second, into
@@ -95,7 +97,11 @@ for fixture in bench/generate headless/bundle; do
     rm -rf "$work/config"
     cp -R "$repo/tests/$fixture/config" "$work/config"
     (cd "$work/elsewhere" && /usr/bin/time -l env -i "$launcher" headless "$work/config" "$repo/tests/$fixture/script") \
-      >"$work/out" 2>"$work/time"
+      >"$work/out" 2>"$work/time" || {
+      cat "$work/time" >&2
+      echo "bundle-bench: the headless run on tests/$fixture failed" >&2
+      exit 1
+    }
     awk '/ real / { print $1 }' "$work/time" >>"$work/real"
     awk '/maximum resident set size/ { print $1 }' "$work/time" >>"$work/rss"
   done
