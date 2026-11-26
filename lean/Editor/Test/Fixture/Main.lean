@@ -2,6 +2,7 @@ import Editor.InputScheme
 import Editor.ModuleLookup
 import Editor.Test.Fixture.CommandLine
 import Editor.Test.Fixture.Stepped
+import Editor.Test.Fixture.Support
 
 /-!
 # The headless fixture harness: its edge
@@ -9,7 +10,9 @@ import Editor.Test.Fixture.Stepped
 `fixture-test`'s `main`, which a package set's generated root calls
 (`EditorSetFixtures`, written by the `editorFixtures` facet in
 `lean/lakefile.lean`) with the set's packages, the input schemes they
-supply and the config base, as the editor's root calls `Editor.Main.run`.
+supply, the config base, and the fixture supports of the set's packages
+(`Editor/Test/Fixture/Support.lean`), as the editor's root calls
+`Editor.Main.run` with all but the last.
 It reads the command line (`Editor/Test/Fixture/CommandLine.lean`), wires
 the real pieces at the edge, and runs:
 
@@ -21,6 +24,9 @@ the real pieces at the edge, and runs:
   editor finds its own;
 - the config files' module data in a temporary directory, removed at the
   end;
+- the setups, the core's then the supports', and the supports' package
+  fakes (`Support.merge`): a script two declare a setup of fails the run,
+  saying so, before any fixture runs;
 - `real-thread [--site <prefix>]`, before any of that, the real-thread set's
   listing (`RealThread.listed`), which wires nothing;
 - the report on stdout, and the exit status: 0 when everything held, 1
@@ -33,10 +39,11 @@ namespace Editor.Test.Fixture.Main
 open Editor
 
 /-- The harness, for the set's `packages`, the input `schemes` they supply
-(the last is run, `SchemePackage.chosen?`) and the config `base`, over the
-command line `arguments` (the module docs). -/
+(the last is run, `SchemePackage.chosen?`), the config `base` and the set's
+fixture `supports`, in the set's order, over the command line `arguments`
+(the module docs). -/
 def run (packages : Array Package) (schemes : Array SchemePackage) (base : Array Lean.Name)
-    (arguments : List String) : IO UInt32 := do
+    (supports : Array Support) (arguments : List String) : IO UInt32 := do
   if let some site := readListing arguments then
     for line in RealThread.listed site do
       IO.println line
@@ -54,6 +61,13 @@ def run (packages : Array Package) (schemes : Array SchemePackage) (base : Array
     |
     IO.eprintln s!"fixture-test: {SchemePackage.noneInstalled}"
     return 1
+  let (setups, fakes) ←
+    match Support.merge supports with
+    | .ok merged =>
+      pure merged
+    | .error reason =>
+      IO.eprintln s!"fixture-test: {reason}"
+      return 1
   let appPath := (← IO.appPath).toString
   let readFile (path : System.FilePath) : IO (Option String) := do
     try
@@ -72,7 +86,7 @@ def run (packages : Array Package) (schemes : Array SchemePackage) (base : Array
   let files ← Config.Elaborate.ModuleFiles.temporary
   let harness : Harness chosen.scheme :=
     { packages, base, sysroot := invocation.sysroot, oleans := directories.oleans, repository
-      latest := ← IO.mkRef none, files }
+      latest := ← IO.mkRef none, files, setups, fakes }
   let tree := realTree repository
   -- A root named from the working directory, as the gate names them, is
   -- made absolute, so it is read from the repository's root.

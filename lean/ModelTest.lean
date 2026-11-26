@@ -135,6 +135,7 @@ import ModelTest.Editor.Test.Fixture.CommandLine
 import ModelTest.Editor.Test.Fixture.Discover
 import ModelTest.Editor.Test.Fixture.RealThread
 import ModelTest.Editor.Test.Fixture.Setup
+import ModelTest.Editor.Test.Fixture.Support
 import ModelTest.Editor.Test.Jobs
 import ModelTest.Editor.Text
 import ModelTest.Editor.Text.Contract
@@ -789,8 +790,9 @@ The job system is tested here with no Rust library:
   with none; another round when the count is 0 but moved or a wait is due;
   and otherwise a block on the count's next change, or the hang at the
   guard. A host that keeps no count is never idle. Each is a pure verdict;
-- `fixtureDiscoverChecks`, `fixtureSetupChecks`, `realThreadSetChecks` and
-  `fixtureCommandLineChecks`: the headless fixture harness's pure parts
+- `fixtureDiscoverChecks`, `fixtureSetupChecks`, `supportChecks`,
+  `realThreadSetChecks` and `fixtureCommandLineChecks`: the headless
+  fixture harness's pure parts
   (`Editor/Test/Fixture/`, `docs/dev-practices/headless-mode.md`, "How the
   gate runs a fixture"): discovery over a tree written by hand (a script
   and an `<x>-script` at a root and one directory down, its expected file
@@ -799,7 +801,9 @@ The job system is tested here with no Rust library:
   placeholders, substitution and scrubbing, the model a setup makes, the
   after-checks over it, the harness's refusals and the lines compared as
   the shell's diff sees them, a runner entry's CLI output among them,
-  against its stepped run and its expected file; the real-thread set well formed and its
+  against its stepped run and its expected file; a package's fixture
+  support merged after the core's setups, its fakes gathered, and a script
+  two declare a setup of refused; the real-thread set well formed and its
   check of the data biting, its four runner entries, and every entry not
   stepped a real effect; and the harness's command line;
 - `checkGroupChecks` (`ModelTest/Editor/RealHost.lean`): a root's check set
@@ -1437,6 +1441,7 @@ def checks : List Check :=
     restVerdictChecks ++
     fixtureDiscoverChecks ++
     fixtureSetupChecks ++
+    supportChecks ++
     realThreadSetChecks ++
     checkGroupChecks ++
     fixtureCommandLineChecks ++
