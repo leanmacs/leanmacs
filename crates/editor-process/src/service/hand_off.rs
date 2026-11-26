@@ -43,7 +43,9 @@
 //! everything (`exit_recorded`), and the waiter's notify is what ends a
 //! wait for the end, its reap held; and a job's cancel of its queued write
 //! wakes a consumer's write held waiting for the slot by a hook under the
-//! stream's lock (`before_write_wait`). Seen to bite once by hand, on
+//! stream's lock (`before_write_wait`); and a cancel and a shutdown reach a
+//! consumer whose write the writer holds for good, every kill held, so
+//! that nothing but the abandon answers it. Seen to bite once by hand, on
 //! 2026-11-25: with the notify taken out of `StreamState::abandon`, the
 //! cancel's and the shutdown's checks fail as hangs; with the waiter's
 //! taken out, the check of the wait for the end does.
@@ -538,6 +540,55 @@ mod tests {
         assert!(flushed(&service, &completed));
     }
 
+    // Seen to bite by hand, on 2026-11-25: with the writer's refusal
+    // answered as `Ok`, the second write's check fails; with the writer no
+    // longer marking the input closed, the third is answered in the fake's
+    // words, not the service's own.
+    #[test]
+    fn a_consumers_write_after_the_child_closed_its_input_is_the_writers_refusal_and_then_refused_at_once()
+     {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .hold(Hold::UntilKilled)
+                .steps([Step::EchoLine(Stream::Out), Step::CloseInput])),
+        )]);
+        let (service, completed) = service(&fake);
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            lines_with(Input::Pipe, ROOMY),
+        );
+        let handed = service.hand_off(1).expect("handed");
+
+        let first = handed.write(b"a\n".to_vec());
+        // Its echo is pulled: it has closed its input, in the same step.
+        let echoed = handed.pull().map(|delivery| delivery.out);
+        let second = handed.write(b"b\n".to_vec());
+        let third = handed.write(b"c\n".to_vec());
+
+        assert_eq!(first, Ok(()));
+        assert_eq!(echoed, Some(lines(&["a"])));
+        let words = |written: &Result<(), Refusal>| match written {
+            Err(refusal) if refusal.kind == RefusalKind::InputClosed => refusal.detail.clone(),
+            other => panic!("refused as input closed, not {other:?}"),
+        };
+        assert!(
+            words(&second).contains("the fake's child has closed it"),
+            "the writer's refusal, in the platform's words"
+        );
+        assert!(
+            words(&third).ends_with("it is closed"),
+            "refused at once, never reaching the writer"
+        );
+        let child = fake.record().spawned[0].0;
+        assert_eq!(fake.record().children[&child].received, b"a\n");
+        assert!(service.cancel(1));
+        assert!(flushed(&service, &completed));
+    }
+
     #[test]
     fn a_child_handed_off_is_held_at_its_bound_while_nothing_pulls_and_pulls_deliver_every_line() {
         let script = numbered(2000);
@@ -737,12 +788,12 @@ mod tests {
         })
     }
 
+    /// Where a consumer's write answers.
+    type Wrote = Receiver<Result<(), Refusal>>;
+
     /// A consumer's write of `bytes` to `handed` on a thread of its own,
     /// its answer on the receiver.
-    fn writing(
-        handed: &Handed<FakeProcesses>,
-        bytes: &[u8],
-    ) -> (Receiver<Result<(), Refusal>>, Consumer) {
+    fn writing(handed: &Handed<FakeProcesses>, bytes: &[u8]) -> (Wrote, Consumer) {
         let (answer, answered) = mpsc::channel();
         let (handed, bytes) = (handed.clone(), bytes.to_vec());
         let consumer = thread::spawn(move || {
@@ -753,10 +804,7 @@ mod tests {
 
     /// The consumer's write's answer, waited for on the receiver, its
     /// thread joined once it has answered.
-    fn written(
-        answered: &Receiver<Result<(), Refusal>>,
-        consumer: Consumer,
-    ) -> Option<Result<(), Refusal>> {
+    fn written(answered: &Wrote, consumer: Consumer) -> Option<Result<(), Refusal>> {
         let answer = editor_wait::recv(answered, DEADLINE).ok();
         if answer.is_some() {
             consumer.answered();
@@ -826,6 +874,83 @@ mod tests {
         assert_eq!(fake.record().children[&child].received, b"aaaacc");
         assert!(service.cancel(1));
         assert!(flushed(&service, &completed));
+    }
+
+    /// A child that never reads its input, whose input pipe holds one byte:
+    /// a write of more is held in the writer for good.
+    fn never_reads() -> Script {
+        Script::ends(Exit::Code(0))
+            .hold(Hold::UntilKilled)
+            .pipe_capacity(1)
+    }
+
+    /// The service over a child that never reads, opened as `1` and handed
+    /// off, with a consumer's write of three bytes held in the writer and
+    /// every kill held: so the writer stays held after a cancel or a
+    /// shutdown, and only the abandon can answer the consumer.
+    fn a_write_held_for_good(
+        fake: &FakeProcesses,
+    ) -> (Service<FakeProcesses>, Receiver<u64>, Wrote, Consumer) {
+        let (service, completed) = service(fake);
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            lines_with(Input::Pipe, ROOMY),
+        );
+        let handed = service.hand_off(1).expect("handed");
+        let (answered, consumer) = writing(&handed, b"xyz");
+        // The writer took the write, so the consumer let go of the lock to
+        // wait for its reply.
+        assert!(fake.until(DEADLINE, |record| record.writes_blocked == 1));
+        fake.hold_kills();
+        (service, completed, answered, consumer)
+    }
+
+    /// Whether `written` is a refusal as input closed.
+    fn input_closed(written: Option<Result<(), Refusal>>) -> bool {
+        matches!(written, Some(Err(refusal)) if refusal.kind == RefusalKind::InputClosed)
+    }
+
+    // Seen to bite by hand, on 2026-11-25: with `Handed::write` no longer
+    // answering an abandoned stream, both fail as hangs.
+    #[test]
+    fn a_cancel_while_the_consumer_is_blocked_in_a_write_refuses_it_as_input_closed() {
+        let fake = FakeProcesses::scripted([(command("x"), Ok(never_reads()))]);
+        let (service, completed, answered, consumer) = a_write_held_for_good(&fake);
+
+        let refused = thread::scope(|scope| {
+            // The cancel abandons the stream, then parks in its held kill.
+            let cancelling = scope.spawn(|| service.cancel(1));
+            let refused = written(&answered, consumer);
+            fake.release_kills();
+            assert!(cancelling.join().expect("the cancel returns"));
+            refused
+        });
+
+        assert!(input_closed(refused));
+        assert!(flushed(&service, &completed), "and reaped");
+    }
+
+    #[test]
+    fn a_shutdown_while_the_consumer_is_blocked_in_a_write_refuses_it_as_input_closed() {
+        let fake = FakeProcesses::scripted([(command("x"), Ok(never_reads()))]);
+        let (service, _completed, answered, consumer) = a_write_held_for_good(&fake);
+        let child = fake.record().spawned[0].0;
+
+        let refused = thread::scope(|scope| {
+            // Shutdown abandons the stream, then parks in its held kill.
+            let shutting = scope.spawn(|| service.shutdown());
+            let refused = written(&answered, consumer);
+            fake.release_kills();
+            shutting.join().expect("shutdown returns");
+            refused
+        });
+
+        assert!(input_closed(refused));
+        assert_eq!(fake.record().reaped, [child], "every child reaped");
+        assert_eq!(service.pending(), 0);
     }
 
     #[test]
