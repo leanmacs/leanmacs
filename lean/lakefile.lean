@@ -961,12 +961,24 @@ module it imports at runtime.
 `schemes` are the entry modules that supply an input scheme (`SetEntry.scheme`),
 in the order they register: `run` is handed the `scheme` of each, as an
 array, and runs the last (`Editor/Main.lean`, "The input scheme"). With
-none the array is empty, and the editor refuses to start. -/
-def rootSource (entries schemes base : Array Name) (setName pin : String) : String :=
+none the array is empty, and the editor refuses to start.
+
+`shipping` are the entry modules whose Lake package ships grammars
+(`SetEntry.grammars`), each with its Lake package's name: such an entry's
+packages are listed as `(Editor.Package.shipping "<lake>" <M>.packages)`,
+so each is tagged with the Lake package whose staged grammars directory its
+grammar declarations are relative to (`Editor/Package.lean`). With none,
+the root's text is as it was before grammars could be shipped. -/
+def rootSource (entries schemes base : Array Name) (setName pin : String)
+    (shipping : Array (Name × String) := #[]) : String :=
   let imports := entries.foldl (fun text name => text ++ s!"import {name}\n") ""
+  let listed (name : Name) : String :=
+    match shipping.find? (·.1 == name) with
+    | some (_, lake) => s!"(Editor.Package.shipping {lake.quote} {name}.packages)"
+    | none => s!"{name}.packages"
   let lists :=
     if entries.isEmpty then "#[]"
-    else " ++ ".intercalate (entries.map fun name => s!"{name}.packages").toList
+    else " ++ ".intercalate (entries.map listed).toList
   let supplied := ", ".intercalate (schemes.map fun name => s!"{name}.scheme").toList
   let names := ", ".intercalate (base.map fun name => s!"`{name}").toList
   s!"import Editor
@@ -1017,6 +1029,15 @@ quoted, so the generated config's lakefile names the set and its
       #[`Editor, `A.EditorPackage, `B.EditorPackage] "s" "p\n")
     "Editor.Main.run (A.EditorPackage.packages ++ B.EditorPackage.packages) #[B.EditorPackage.scheme] #[`Editor, `A.EditorPackage, `B.EditorPackage] { setName := \"s\", pin := \"p\\n\" } args"
 
+/- Guards: an entry module whose Lake package ships grammars has its packages
+tagged with that Lake package (`Editor.Package.shipping`), in order among the
+others, and the others are listed as before. -/
+#guard
+  holdsText
+    (rootSource #[`A.EditorPackage, `IniGrammar.EditorPackage] #[] #[`Editor] "s" "p\n"
+      #[(`IniGrammar.EditorPackage, "ini-grammar")])
+    "Editor.Main.run (A.EditorPackage.packages ++ (Editor.Package.shipping \"ini-grammar\" IniGrammar.EditorPackage.packages)) #[]"
+
 /-- The name of the root module the package-set build generates. No library
 declares it. -/
 def setRootName : Name :=
@@ -1033,6 +1054,19 @@ names `<P>.EditorPackage.scheme`, as a missing `packages` does. -/
 def schemeKeyword : String :=
   "editor-input-scheme"
 
+/-- The keyword a Lake package declares in its lakefile when it ships
+grammars (`keywords = ["editor-grammars"]`): their files are under its
+`grammars/` directory, and its entry module's packages declare them
+relative to it (`docs/design/packages.md`, "A package's grammars"). Lake is
+asked for the keyword, so the build learns which packages ship grammars
+without reading any source: the `editor` facet stages each such package's
+`grammars/` (`stageGrammars`), the install copies it (`editorInstall`) and
+the bundle lists it (`editorShipped`). A package that declares it with no
+entry module, or with no `grammars/` directory, fails the set's build with
+a message naming it (`setEntries`). -/
+def grammarsKeyword : String :=
+  "editor-grammars"
+
 /-- An entry module of a set. -/
 structure SetEntry where
   /-- Whether its Lake package is this one, the core. -/
@@ -1041,6 +1075,10 @@ structure SetEntry where
   module : Name
   /-- Whether its Lake package supplies an input scheme (`schemeKeyword`). -/
   scheme : Bool
+  /-- Whether its Lake package ships grammars (`grammarsKeyword`). -/
+  grammars : Bool := false
+  /-- Its Lake package's name, as its lakefile gives it. -/
+  lake : String := ""
 
 /-- The entry modules of the set `pkg`, in the order they register
 (`setPackages`, `entryModule?`), each with whether its Lake package is this
@@ -1048,19 +1086,32 @@ one, the core, and whether it supplies an input scheme (`schemeKeyword`).
 The core has no entry module, so none of them is the core's; `core` is
 kept so that a core with one would still stay out of the base (`setBase`).
 A package that declares the scheme keyword and has no entry module is an
-error that names it: there is nowhere for its scheme to be declared. -/
+error that names it: there is nowhere for its scheme to be declared. So is
+one that declares the grammars keyword (`grammarsKeyword`) with no entry
+module, or with no `grammars/` directory. Each entry also says whether its
+Lake package ships grammars, and that package's name. -/
 def setEntries (pkg : Package) : FetchM (Array SetEntry) := do
   let ws ← getWorkspace
   let mut entries : Array SetEntry := #[]
   for dep in setPackages ws pkg do
     let scheme := dep.keywords.contains schemeKeyword
+    let grammars := dep.keywords.contains grammarsKeyword
+    let lake := dep.baseName.toString (escape := false)
+    if grammars && !(← (dep.dir / "grammars").isDir) then
+      error
+          s!"the package {lake} declares the keyword {grammarsKeyword} and has no grammars directory {dep.dir / "grammars"}: a package that ships grammars keeps their files there"
     match ← entryModule? dep with
     | some mod =>
-      entries := entries.push { core := dep.keyName == __name__, module := mod.name, scheme }
+      entries :=
+        entries.push
+          { core := dep.keyName == __name__, module := mod.name, scheme, grammars, lake }
     | none =>
       if scheme then
         error
-            s!"the package {dep.baseName.toString (escape := false)} declares the keyword {schemeKeyword} and has no entry module {entryModuleName dep}: a package that supplies the input scheme declares `scheme` there"
+            s!"the package {lake} declares the keyword {schemeKeyword} and has no entry module {entryModuleName dep}: a package that supplies the input scheme declares `scheme` there"
+      if grammars then
+        error
+            s!"the package {lake} declares the keyword {grammarsKeyword} and has no entry module {entryModuleName dep}: a package that ships grammars declares them on its packages there"
   return entries
 
 /-- The config base of a set, from its entry modules (`setEntries`): the
@@ -1122,7 +1173,8 @@ def setRoot (pkg : Package) : FetchM Module := do
   let pin ← IO.FS.readFile (core.dir / "lean-toolchain")
   writeIfChanged root.leanFile
       (rootSource (entries.map (·.module)) ((entries.filter (·.scheme)).map (·.module))
-        (setBase entries) (pkg.baseName.toString (escape := false)) pin)
+        (setBase entries) (pkg.baseName.toString (escape := false)) pin
+        ((entries.filter (·.grammars)).map fun entry => (entry.module, entry.lake)))
   return root
 
 /-- The `.olean` directories of a set whose core is the package `core`, its
@@ -1224,6 +1276,79 @@ links. -/
 #guard coreDirRecordText "/r/lean" "/w" == "/r/lean\n"
 
 #guard coreDirRecordText "../lean" "/r/packages" == "/r/packages/../lean\n"
+
+/-- The text of the record `<executable>.grammars` (`writeGrammarsRecord`)
+for `entries`, each a Lake package's name and the directory its grammars
+directory is staged in: one line `<lake><TAB><directory>` each, in order
+(`Editor/ModuleLookup.lean`, "The grammars"); nothing for none. -/
+def grammarsRecordText (entries : Array (String × String)) : String :=
+  entries.foldl (fun text (lake, directory) => text ++ s!"{lake}\t{directory}\n") ""
+
+/-- The grammars record of an install (`editorInstall`) of a set whose Lake
+packages `lakes` ship grammars: one relative line `<lake><TAB>grammars/<lake>`
+each, in order, so the install's directory can be renamed into place. -/
+def installGrammarsRecord (lakes : Array String) : String :=
+  grammarsRecordText (lakes.map fun lake => (lake, s!"grammars/{lake}"))
+
+/-- Where a set's build stages the grammars directory of its Lake package
+`lake`, under the set's build directory: `grammars/<lake>`. -/
+def stagedGrammarsPlace (lake : String) : FilePath :=
+  "grammars" / lake
+
+/- Guards: the grammars records and places (`grammarsRecordText`,
+`installGrammarsRecord`, `stagedGrammarsPlace`): a line per Lake package
+that ships grammars, its name, a tab and its directory; none for none; an
+install's lines relative, under its own `grammars/`; and the staged place
+under the set's build directory named after the Lake package. -/
+#guard
+  grammarsRecordText #[("ini-grammar", "/s/.lake/build/grammars/ini-grammar")] ==
+    "ini-grammar\t/s/.lake/build/grammars/ini-grammar\n"
+
+#guard grammarsRecordText #[] == ""
+
+#guard installGrammarsRecord #["ini-grammar"] == "ini-grammar\tgrammars/ini-grammar\n"
+
+#guard stagedGrammarsPlace "ini-grammar" == ("grammars/ini-grammar" : FilePath)
+
+/-- Copies the directory `source` into `copy`, each file's bytes, every
+directory under it made, following links, so the copy holds the files a
+link names rather than a link that may dangle. -/
+partial def copyTree (source copy : FilePath) : IO Unit := do
+  IO.FS.createDirAll copy
+  for entry in ← source.readDir do
+    if ← entry.path.isDir then
+      copyTree entry.path (copy / entry.fileName)
+    else
+      IO.FS.writeBinFile (copy / entry.fileName) (← IO.FS.readBinFile entry.path)
+
+/-- The Lake packages of the set `pkg` that ship grammars (`grammarsKeyword`),
+in the order they register, each with its name and the directory the set's
+build stages its grammars directory in (`stagedGrammarsPlace` under the
+set's build directory), absolute. -/
+def stagedGrammars (pkg : Package) : FetchM (Array (Package × String × FilePath)) := do
+  let ws ← getWorkspace
+  IO.FS.createDirAll pkg.buildDir
+  let buildDir ← IO.FS.realPath pkg.buildDir
+  return (setPackages ws pkg).filterMap fun dep =>
+      if dep.keywords.contains grammarsKeyword then
+        let lake := dep.baseName.toString (escape := false)
+        some (dep, lake, buildDir / stagedGrammarsPlace lake)
+      else none
+
+/-- Stages the `grammars/` directory of each Lake package of the set `pkg`
+that ships grammars (`stagedGrammars`) under the set's build directory, a
+fresh copy each build (`copyTree`), and writes beside `executable` the record
+`<executable>.grammars` naming each staged directory, absolute
+(`grammarsRecordText`; `Editor/ModuleLookup.lean`, "The grammars"), only
+when its text would change: an empty record for a set that ships none. -/
+def stageGrammars (pkg : Package) (executable : FilePath) : FetchM Unit := do
+  let staged ← stagedGrammars pkg
+  for (dep, _, directory) in staged do
+    if ← directory.pathExists then
+      IO.FS.removeDirAll directory
+    copyTree (dep.dir / "grammars") directory
+  writeIfChanged (executable.toString ++ ".grammars")
+      (grammarsRecordText (staged.map fun (_, lake, directory) => (lake, directory.toString)))
 
 /-- The variables a rebuild of a set must run with as the link did, and
 which the record `<executable>.build` holds (`buildRecordText`): the C
@@ -1337,7 +1462,11 @@ each in its own package's build directory, and links it as the editor is
 linked (`linkAsEditor`). Beside the executable it records where the
 `.olean` files of the set's packages are (`writeModuleRecord`) and where
 the set itself is (`writeSetRecord`) and where the core it links is
-(`writeCoreDirRecord`), which an editor run directly reads,
+(`writeCoreDirRecord`), which an editor run directly reads; it stages the
+`grammars/` directory of each package that ships grammars under the set's
+build directory and records where in `<executable>.grammars`
+(`stageGrammars`), which the editor resolves those packages' grammar
+declarations against;
 and two records a user's set build reads (`docs/design/packages.md`, "User
 package sets"): `<executable>.core`, the core's identity (`coreIdentity`),
 one line, and `<executable>.build`, the environment the link ran with
@@ -1354,6 +1483,7 @@ package_facet editor pkg : FilePath := do
   writeModuleRecord pkg executable
   writeSetRecord pkg executable
   writeCoreDirRecord executable
+  stageGrammars pkg executable
   writeIfChanged (executable.toString ++ ".build") (← buildRecordText)
   let identity ←
     (← coreIdentity pkg).mapM fun identity =>
@@ -1404,7 +1534,12 @@ the set's editor (`editor`), then fills `<dir>`, which must not exist yet:
   (its `transImports`), from the directory each was built in;
 - `editor.oleans`, the one relative line `lib/lean`
   (`Editor/ModuleLookup.lean`, "The record"), so `<dir>` can be renamed
-  into place afterwards.
+  into place afterwards;
+- `grammars/<lake>/`, a copy of each grammars directory the set's build
+  staged (`stagedGrammars`), and `editor.grammars`, one relative line for
+  each (`installGrammarsRecord`; `Editor/ModuleLookup.lean`, "The
+  grammars"), so the installed editor finds its packages' grammars beside
+  it, for the reason the `.olean` files are copied.
 
 The modules are copied, not referenced, so a later build that rewrites a
 package's `.olean` files leaves this editor's modules matching its linked
@@ -1414,6 +1549,7 @@ package_facet editorInstall pkg : FilePath := do
   let exeJob ← fetch <| pkg.facet `editor
   let root ← setRoot pkg
   let importsJob ← root.transImports.fetch
+  let grammars ← stagedGrammars pkg
   (exeJob.zipWith Prod.mk importsJob).mapM fun (exe, imports) => do
       let named ← IO.getEnv installDirVar
       let present ←
@@ -1443,6 +1579,10 @@ package_facet editorInstall pkg : FilePath := do
               IO.FS.createDirAll parent
             IO.FS.writeBinFile copy (← IO.FS.readBinFile source)
       IO.FS.writeFile (dir / "editor.oleans") installOleansRecord
+      for (_, lake, staged) in grammars do
+        copyTree staged (dir / "grammars" / lake)
+      IO.FS.writeFile (dir / "editor.grammars")
+          (installGrammarsRecord (grammars.map fun (_, lake, _) => lake))
       if let some (cmd, args) := installSigning Platform.isOSX (dir / "editor") then
         proc (quiet := true) { cmd, args }
       return dir
@@ -1806,6 +1946,23 @@ def shippedOleansLines (directories : Array FilePath)
       | throw s!"{directory} is not under its package's directory {dir}"
     return s!"oleans\tlean/{place}/{relative}"
 
+/-- The lines `editorShipped` lists for the grammars directory of the Lake
+package `lake` whose directory is `dir`, at `place`: the directory, copied
+whole, to `<place>/grammars`, and the line
+`grammars<TAB><lake><TAB><place>/grammars`, which the `stage-bundle`
+binary writes into the bundle's record `editor.grammars`
+(`Editor/ModuleLookup.lean`, "The grammars"). -/
+def shippedGrammarsLines (lake : String) (dir : FilePath) (place : String) : Array String :=
+  #[s!"file\t{dir / "grammars"}\t{place}/grammars", s!"grammars\t{lake}\t{place}/grammars"]
+
+/- Guards: the grammars lines (`shippedGrammarsLines`): the package's own
+`grammars/` copied to its place's `grammars`, and the record's line naming
+the Lake package and that place. -/
+#guard
+  shippedGrammarsLines "ini-grammar" "/r/tests/grammar-set/ini-grammar" "set/ini-grammar" ==
+    #["file\t/r/tests/grammar-set/ini-grammar/grammars\tset/ini-grammar/grammars",
+      "grammars\tini-grammar\tset/ini-grammar/grammars"]
+
 /- Guards: the lines `editorShipped` lists. A package's file goes to its
 place under the package's (`shippedFileLine`), its `lean-toolchain` among
 them, listed by the file it resolves to (`listsResolved`), so the bundle
@@ -1845,6 +2002,11 @@ bundle's `Contents/Resources/lean`, and one line `oleans<TAB><place>` for
 each `.olean` directory of the set (`moduleDirectories`), in order, its
 place relative to `Contents/Resources`, which the bundle's record
 `editor.oleans` holds (`Editor/ModuleLookup.lean`, "The bundle's record").
+For each package that ships grammars (`grammarsKeyword`), its `grammars/`
+directory, copied whole to its place's `grammars`, and one line
+`grammars<TAB><lake><TAB><place>` (`shippedGrammarsLines`), which the
+bundle's record `editor.grammars` holds (`Editor/ModuleLookup.lean`, "The
+grammars").
 
 The core goes to `lean`, the set to `set` and each package under the set's
 directory to the same place under `set` (`shippedPlace`), so the set's and
@@ -1918,6 +2080,11 @@ package_facet editorShipped pkg : Array String := do
             let some listed := shippedFileLine dep.dir file source place
               | error s!"{file} is not under its package's directory {dep.dir}"
             lines := lines.push listed
+        if dep.keywords.contains grammarsKeyword then
+          lines :=
+            lines ++
+              shippedGrammarsLines (dep.baseName.toString (escape := false))
+                (← IO.FS.realPath dep.dir) place
       let gluePlace := placeOf core
       for file in
         [core.dir / "ffi" / "glue.c", core.buildDir / "ffi" / "glue.o",
