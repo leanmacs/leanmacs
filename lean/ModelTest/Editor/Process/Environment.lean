@@ -780,6 +780,24 @@ def environmentLayerChecks : List Check :=
               once.processes.started.push (layeredStarted "/p/d" baseAndSecond) &&
             twice.reported == once.reported) },
     { name :=
+        "a directory source whose lookup exits 0 with output its parser refuses is skipped: the child gets the base's and the other source's variables, and the echo area says what that source's output must be, in its own words"
+      run :=
+        let baseAndSecond :=
+          #[("A", "base"), ("B", "base"), ("C", "second"), ("D", "own"), ("E", "own")]
+        let model :=
+          layeredModel
+            #[baseScript,
+              { command := fakeLookup "first" "/p/d" baseVariables, reply := printed "no pair\n" },
+              printing (fakeLookup "second" "/p/d" baseVariables) secondVariables,
+              { command := layeredStarted "/p/d" baseAndSecond, reply := printed "built" }]
+        let once := after (runsOn (layeredChild "/p/d")) model
+        pure
+          (once.processes.started ==
+              #[fakeLookup "login" "/" #[], fakeLookup "first" "/p/d" baseVariables,
+                fakeLookup "second" "/p/d" baseVariables, layeredStarted "/p/d" baseAndSecond] &&
+            once.reported ==
+              #["environment: /p/d: first's output is not NAME=value lines: the line no pair is not NAME=value; its children start without first's variables"]) },
+    { name :=
         "a base whose lookup exits non-zero is said once in a run: children in two directories get the directory sources' variables over the editor's environment, and after a reload it is said again"
       run :=
         let firstAndSecond := #[("B", "first"), ("C", "second"), ("D", "own"), ("E", "own")]
