@@ -5,7 +5,7 @@ import Editor.Package
 # The fixture package `hello-init`
 
 A package installed into a user's set by `:package-install`
-(tools/user-sets-test.sh): its `initialize` sets `helloInitText`, and its
+(tools/bundle-bench.sh times that build): its `initialize` sets `helloInitText`, and its
 command `hello-init` says `hello-init: <that text>`, so the command's
 answer shows both that the package is linked and that its `initialize`
 ran. A config file that imports `HelloInit` loads only in an editor that

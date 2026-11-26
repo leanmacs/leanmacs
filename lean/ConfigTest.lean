@@ -559,7 +559,7 @@ same check on a config package it writes.
 `bench-soak-modules` are the benchmark (`ConfigTest.Bench`; `mise run config-bench`), which the gate
 never runs.
 `bench-modules` lists the modules an import set reads, for
-`mise run module-bench` and the gate's `bundle-test`.
+`mise run module-bench`.
 `bench-jobs` is the job benchmark (`ConfigTest.Bench.jobs`;
 `mise run job-bench`), which the gate never runs either, and so is
 `bench-prompt`, the prompt benchmark (`ConfigTest.Bench.prompt`;

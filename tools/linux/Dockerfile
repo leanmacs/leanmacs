@@ -20,10 +20,7 @@ FROM debian@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b
 # library, which the fixture package `echo`'s crate links by name
 # (tests/packages/echo/rust/src/zlib.rs; `-lz` reaches the link through the
 # Rust archive's system libraries, docs/design/packages.md, "Rust in a
-# package"). The `ubuntu-24.04` runner image already carries it. And
-# procps, for `ps`, with which the bundle's and the package sets' checks
-# find what they started that is still running (tools/leftovers.sh); the
-# slim image has none, and the runner image carries it too.
+# package"). The `ubuntu-24.04` runner image already carries it.
 #
 # The second line is for `linux-window` alone: a display that needs no
 # screen (Xvfb), a way to type into it (xdotool), and the libraries the
@@ -38,7 +35,7 @@ FROM debian@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b
 # runs the same with them there.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates curl git build-essential zstd pkg-config pipx python3-venv zlib1g-dev procps \
+        ca-certificates curl git build-essential zstd pkg-config pipx python3-venv zlib1g-dev \
         xvfb xdotool libx11-6 libx11-xcb1 libxcursor1 libxi6 libxrandr2 \
         libxkbcommon0 libxkbcommon-x11-0 libxcb1 \
         mesa-vulkan-drivers libvulkan1 \

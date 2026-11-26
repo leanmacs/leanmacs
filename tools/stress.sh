@@ -22,19 +22,17 @@
 #                  test runs once (tools/package-set.sh --wiring run)
 #   cli-wiring     the real-thread entries at ffi-test, through the CLI
 #                  (tools/wiring-runs.sh run <prepared> fixtures)
-#   bundle-wiring  the entries at bundle-test, over a staged bundle
-#                  (tools/bundle-test.sh headless <prepared>/bundle)
 #   rust           cargo test --workspace --locked (opt-in)
 #   gate-ffi       mise run ffi-test, whole (opt-in, slow)
 #   probe          the shell command in STRESS_PROBE: a stand-in suite, for
 #                  tools/stress-probe.sh alone (opt-in)
 #
-# With no suite named it runs the six wiring suites: the wiring set, read
+# With no suite named it runs the five wiring suites: the wiring set, read
 # from code (the roots' check sets, which linter.wiringSet holds complete,
 # FfiTest.windowScenarios and the real-thread set's entries), with no list
 # here. Before the hogs start, a prepare stage stages what the chosen
 # suites build before their runs, once (tools/wiring-runs.sh prepare,
-# tools/bundle-test.sh stage, and for `probe` the command in
+# and for `probe` the command in
 # STRESS_PROBE_STAGE, a stand-in for what is staged, if it is set), into a
 # temporary directory of its own, never under the logs, which the loop
 # removes when it ends, however it ends.
@@ -70,7 +68,7 @@
 set -eu
 
 usage() {
-  echo "usage: tools/stress.sh <rounds> [config-wiring|ffi-wiring|contract|linked-wiring|cli-wiring|bundle-wiring|rust|gate-ffi ...]" >&2
+  echo "usage: tools/stress.sh <rounds> [config-wiring|ffi-wiring|contract|linked-wiring|cli-wiring|rust|gate-ffi ...]" >&2
   exit 2
 }
 
@@ -88,10 +86,10 @@ rounds=$1
 shift
 case "$rounds" in '' | *[!0-9]*) usage ;; esac
 [ "$rounds" -ge 1 ] || usage
-suites=${*:-config-wiring ffi-wiring contract linked-wiring cli-wiring bundle-wiring}
+suites=${*:-config-wiring ffi-wiring contract linked-wiring cli-wiring}
 for suite in $suites; do
   case "$suite" in
-    config-wiring | ffi-wiring | contract | linked-wiring | cli-wiring | bundle-wiring | rust | gate-ffi | probe) ;;
+    config-wiring | ffi-wiring | contract | linked-wiring | cli-wiring | rust | gate-ffi | probe) ;;
     *) usage ;;
   esac
 done
@@ -154,11 +152,10 @@ trap stop EXIT
 trap 'stop; exit 130' INT
 trap 'stop; exit 143' TERM
 
-# What the prepare stage stages (about 4 GB: the bundle and the greeting's
-# install), which a bounded run (`--run`) reads: a fresh temporary
-# directory of its own, never under $out, the logs stress.yml uploads, and
-# removed by `stop` when the loop ends, however it ends
-# (tools/stress-probe.sh).
+# What the prepare stage stages (the greeting's install), which a bounded
+# run (`--run`) reads: a fresh temporary directory of its own, never under
+# $out, the logs stress.yml uploads, and removed by `stop` when the loop
+# ends, however it ends (tools/stress-probe.sh).
 if [ -z "$single" ]; then
   prepared=$(mktemp -d "${TMPDIR:-/tmp}/stress-prepared.XXXXXXXX")
   STRESS_PREPARED=$prepared
@@ -189,8 +186,6 @@ run_suite() {
     (cd "$root/lean" && low sh ../tools/package-set.sh --wiring run ../tests/packages "$prefix" .lake/build/lib/lean) >"$log" 2>&1 ;;
   cli-wiring)
     (cd "$root/lean" && low sh ../tools/wiring-runs.sh run "$prepared/runs" fixtures) >"$log" 2>&1 ;;
-  bundle-wiring)
-    (cd "$root/lean" && low sh ../tools/bundle-test.sh headless "$prepared/bundle") >"$log" 2>&1 ;;
   rust)
     (cd "$root" && low cargo test --workspace --locked) >"$log" 2>&1 ;;
   gate-ffi)
@@ -207,9 +202,6 @@ run_suite() {
 prepare() {
   if chosen ffi-wiring || chosen cli-wiring; then
     (cd "$root/lean" && sh ../tools/wiring-runs.sh prepare "$prepared/runs")
-  fi
-  if chosen bundle-wiring; then
-    (cd "$root/lean" && sh ../tools/bundle-test.sh stage "$prepared/bundle")
   fi
   if chosen probe && [ -n "${STRESS_PROBE_STAGE:-}" ]; then
     sh -c "$STRESS_PROBE_STAGE"

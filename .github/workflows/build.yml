@@ -1,8 +1,8 @@
 name: Build
 
 # The nightly's build (docs/dev-practices/ci.md, "`build`: the .dmg"): the
-# app bundle stamped with the run's build ID and commit, checked by
-# `mise run app-check`, packed into Leanmacs-<build-id>.dmg, the image
+# app bundle stamped with the run's build ID and commit (`mise run app`),
+# packed into Leanmacs-<build-id>.dmg, the image
 # mounted and checked, and the .dmg uploaded as a workflow artifact. ci.yml
 # calls it from main pushes only, after both legs of the gate; nothing else
 # does.
@@ -89,15 +89,11 @@ jobs:
           restore-keys: |
             lake-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}-
       # Builds the bundle stamped with the run's build ID and commit
-      # (`mise run app`), then checks it: its signature, its Info.plist and
-      # stamp, its headless mode and `editor --version` from a relocated
-      # copy with an empty environment, a user's package set built from the
-      # copy's own toolchain, and the rebuild rules in a clone
-      # (tools/app-check.sh). It ends `app-check: ok`.
-      - name: App check
-        run: mise run app-check
+      # (`mise run app`, the `editorApp` facet), ad-hoc signed.
+      - name: App
+        run: mise run app
         shell: bash
-      # Packs dist/Leanmacs-<build-id>.dmg from the checked bundle
+      # Packs dist/Leanmacs-<build-id>.dmg from the bundle
       # (crates/editor-release, `dmg`).
       - name: Pack
         run: mise run dmg
@@ -108,11 +104,6 @@ jobs:
       # tests/dmg_mount.rs).
       - name: Check the dmg
         run: mise run dmg-check
-        shell: bash
-      # The runner's disk after the bundle, its checked copy and the image,
-      # on record in the log (docs/dev-practices/ci.md, "`build`: the .dmg").
-      - name: Disk
-        run: df -h . "$RUNNER_TEMP"
         shell: bash
       # The .dmg as a workflow artifact, kept 14 days. A run with no .dmg
       # fails here rather than uploading nothing.

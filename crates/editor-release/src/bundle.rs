@@ -1,6 +1,6 @@
 //! The app bundle's layout: what `stage-bundle` copies into a directory
 //! laid out as the app bundle will be, for the `editorApp` facet (`mise run
-//! app`), the gate's `bundle-test` and `mise run module-bench`
+//! app`) and `mise run module-bench`
 //! (`docs/design/lean-runtime.md`, "Build"; `docs/dev-practices/
 //! headless-mode.md`, "From an app bundle").
 //!

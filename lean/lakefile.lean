@@ -2067,8 +2067,9 @@ def appIdentifier : String :=
 
 /-- The lowest macOS the bundle has been run on; lower it only after running
 it there. The window was run by hand on 27.2 (2026-11-15). The owner chose
-26.0 on 2026-11-17: CI's `mise run app-check` runs the shipped bundle's
-headless mode on the `macos-26` runner on every main build, and the owner
+26.0 on 2026-11-17: CI's build job builds and checks the shipped image
+(`mise run dmg-check`, its `editor --version`) on the `macos-26` runner
+on every main build, and the owner
 checks once that the nightly opens its window on a macOS 26 Mac
 (docs/dev-practices/ci.md, "Deployment target"). It must equal
 `MACOSX_DEPLOYMENT_TARGET` in mise.toml. -/
@@ -2091,7 +2092,7 @@ dot-separated runs of ASCII digits, the form `CFBundleShortVersionString`
 takes. Anything else, a second line, whitespace or
 an empty file among it, is an error naming the file and what it holds, so a
 malformed version fails the build instead of making a bundle LaunchServices
-misreads (`mise run app-check`, step 10). -/
+misreads. -/
 def parseAppVersion (contents : String) : Except String String :=
   let line := if contents.endsWith "\n" then (contents.dropEnd 1).toString else contents
   let parts := line.splitOn "."
@@ -2120,7 +2121,7 @@ variable and what it holds, so a build without its stamp fails instead of
 making a bundle that names no build. Only the shape is checked here, which
 keeps the plist well-formed; whether the digits name a valid time is
 `editor-release`'s to check, and `leanmacs-release` checks it before it
-sets the variable (`mise run app-check`, step 14). -/
+sets the variable. -/
 def parseAppStamp (buildId commit : Option String) : Except String (String × String) := do
   let hint := "`mise run app` sets both from HEAD, and CI from its run"
   let shown : Option String → String
@@ -2154,8 +2155,7 @@ def parseAppStamp (buildId commit : Option String) : Except String (String × St
 `/usr/bin/sips -g pixelWidth -g pixelHeight -g format` prints for it: a
 line `  <key>: <value>` for each. Anything else is an error naming the file
 and what `sips` read, so artwork of another size or format fails the build
-instead of being stretched into a blurred icon (`mise run app-check`,
-step 12). -/
+instead of being stretched into a blurred icon. -/
 def checkAppArtwork (sipsOutput : String) : Except String Unit :=
   let field (key : String) : String :=
     let pre := s!"  {key}: "
@@ -2269,8 +2269,7 @@ def appInfoPlist (version build commit : String) : String :=
 
 /-- The images of the icon's `.iconset`, each with its size in pixels: the
 ten standard ones, 16, 32, 128, 256 and 512 points at 1× and 2×.
-`editorApp` makes each from the artwork (`appIconFile`) with `sips`, and
-`mise run app-check` finds exactly these in the built icon. -/
+`editorApp` makes each from the artwork (`appIconFile`) with `sips`. -/
 def appIconSizes : List (String × Nat) :=
   [("icon_16x16.png", 16), ("icon_16x16@2x.png", 32), ("icon_32x32.png", 32),
     ("icon_32x32@2x.png", 64), ("icon_128x128.png", 128), ("icon_128x128@2x.png", 256),
@@ -2294,8 +2293,7 @@ def versionAtMost : List Nat → List Nat → Bool
 `deploymentTargetVar`, run on the bundle's `LSMinimumSystemVersion`,
 `minimum`: the target must be set, a version, and no later than it;
 anything else is an error naming the variable, so a bundle whose
-binaries need a later macOS than it claims is never built (`mise run
-app-check`, step 5). -/
+binaries need a later macOS than it claims is never built. -/
 def deploymentTargetFits (linked : Option String) (minimum : String) : Except String Unit := do
   let parse (text : String) : Option (List Nat) := (text.splitOn ".").mapM String.toNat?
   let some given := linked
@@ -2509,8 +2507,8 @@ the whole toolchain Lake runs on, which is the pinned one, the core and
 each default package with their sources and build output, the set's
 lakefile, the Rust archive and the link stubs, with the records
 `editor.core`, `editor.oleans` and `editor.build`, laid out by
-the `stage-bundle` binary (`stageBundle`) from what `editorShipped` lists, as
-`bundle-test` lays them out; `Contents/Info.plist`
+the `stage-bundle` binary (`stageBundle`) from what `editorShipped` lists;
+`Contents/Info.plist`
 (`appInfoPlist`), with the version from `app/version` (`appVersionFile`,
 `parseAppVersion`, which fails the build on a malformed line) and the build
 ID and the commit from `LEANMACS_BUILD_ID` and `LEANMACS_COMMIT`
@@ -2541,7 +2539,7 @@ made would leave the old bundle standing. A rebuild assembles and signs the
 bundle in `Leanmacs.app.staging` and only then renames it into place, since
 Lake keeps the old trace when a build fails: a rebuild that fails or is
 interrupted leaves the old bundle, never a half-built one the old trace
-would take as up to date (`mise run app-check`, step 7). -/
+would take as up to date. -/
 package_facet editorApp pkg : FilePath := do
   requireArm64Mac
   -- Before anything is linked: the binaries' minimum macOS must be no later

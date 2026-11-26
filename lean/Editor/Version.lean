@@ -52,9 +52,8 @@ inductive Build where
   deriving DecidableEq, Repr
 
 /-- The keys of the version, the build ID, the commit and the core's tag.
-They must be the ones lakefile `appInfoPlist` writes; `mise run app-check`
-(step 5b) runs `editor --version` on the real plist, which shows they
-are. -/
+They must be the ones lakefile `appInfoPlist` writes; `mise run dmg-check`
+runs `editor --version` on the real plist, which shows they are. -/
 def plistKeys : String × String × String × String :=
   ("CFBundleShortVersionString", "CFBundleVersion", "LeanmacsCommit", "LeanmacsCoreTag")
 

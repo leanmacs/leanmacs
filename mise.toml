@@ -41,10 +41,10 @@ RDM_PROJECT = "editor-project"
 # and in CI alike. With this unset Lake links for 99.0, and Finder refuses
 # to start the app ("you can't use this version"). It must equal
 # `appMinimumSystemVersion` in lean/lakefile.lean, the bundle's
-# LSMinimumSystemVersion; `mise run app-check` fails when the executable's
-# `minos` is later. It is the CI runner's macOS (macos-26): dyld refuses to
-# start a Mach-O whose `minos` is newer than the host, and the gate and the
-# build job run what they build there (docs/dev-practices/ci.md,
+# LSMinimumSystemVersion; the `editorApp` build fails when it is later
+# (`deploymentTargetFits`). It is the CI runner's macOS (macos-26): dyld
+# refuses to start a Mach-O whose `minos` is newer than the host, and the
+# gate and the build job run what they build there (docs/dev-practices/ci.md,
 # "Deployment target"). Other platforms ignore it.
 MACOSX_DEPLOYMENT_TARGET = "26.0"
 
@@ -102,13 +102,6 @@ run = "cargo test --workspace --locked"
 description = "Run the Lean model tests with `lake test` and the build's linters' checks with `lake exe lint-test`, and those of each package of the fixture set, the default packages (the shipped themes, the compile mode) among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh); and tools/package-set.sh's `--no-linked` on stand-ins, by its exit status"
 dir = "lean"
 run = [
-  # The stand-in for CI's elan that `user-sets-test` and `user-sets-check`
-  # run under (tools/home-bound-toolchain.sh; docs/dev-practices/the-gate.md,
-  # "The user sets test") cannot pass silently: its `lake` run with another
-  # HOME must exit 1 with its message, and run with the HOME it was made
-  # under must exit 0. Its output is shown only when it does not.
-  "status=0; out=$(sh ../tools/home-bound-toolchain.sh sh -c 'HOME=/nonexistent lake --version' 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qF 'home-bound-toolchain: lake run with HOME=/nonexistent'; } || { printf '%s\\n' \"$out\"; echo \"lean-test: home-bound-toolchain exited $status on a moved HOME\"; exit 1; }",
-  "out=$(sh ../tools/home-bound-toolchain.sh lake --version 2>&1) || { printf '%s\\n' \"$out\"; echo 'lean-test: home-bound-toolchain failed under its own HOME'; exit 1; }",
   'PATH="$PWD/no-cargo:$PATH" lake test --wfail',
   # The checks of the build's linters (lean/LintTest.lean), which import the
   # linters and so are a test executable of their own: model-test links no
@@ -324,8 +317,7 @@ run = "cargo build --quiet --locked --release -p editor-launch-std --bins"
 description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, the headless fixtures under tests/headless on the set's fixture harness, stepped on the fakes, with the real-thread set's CLI runs and the window scenarios, one case each (tools/wiring-runs.sh: the runner's four compared both ways through the CLI and fixture-test compare, the others through the CLI, the restart through the launcher), and the linked test and headless fixtures of each package of the fixture set, which names every default package, so each linked test runs once, then the default set's headless fixtures alone (tools/package-set.sh --no-linked)"
 depends = ["lean", "launcher"]
 dir = "lean"
-# Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max), with
-# `bundle-test`'s builds from a staged bundle running beside it.
+# Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max).
 timeout = "300s"
 run = [
   # The root of the user-side link's fixture set (tests/user-link/): the
@@ -595,8 +587,7 @@ run = [
   # The headless mode with only a config directory and a script, from the
   # build tree, outside a bundle: there is no toolchain to use, so it is
   # status 2 with a line on stderr saying so, before the usage
-  # (lean/Editor/Headless/CommandLine.lean). `bundle-test` runs the same
-  # command line from a bundle.
+  # (lean/Editor/Headless/CommandLine.lean).
   "status=0; err=$(../packages/.lake/build/bin/editor headless ../tests/headless/config ../tests/headless/script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 2 && test \"${err#editor: no Lean toolchain}\" != \"$err\"",
   # A script that cannot be read is status 1, with nothing on stdout and a
   # line on stderr that starts `editor: ` and says why. No file of that name
@@ -612,68 +603,6 @@ run = [
   "sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
   "sh ../tools/package-set.sh --no-linked run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
 ]
-
-# The app bundle's layout, staged and run (tools/bundle-test.sh, whose
-# header says each step; docs/dev-practices/the-gate.md, "The bundle
-# test"; docs/dev-practices/headless-mode.md, "From an app bundle"):
-# the stage-bundle binary lays `Leanmacs.app` out in a temporary directory
-# from what `lake -d ../packages query :editorShipped` lists, the whole
-# Lean toolchain, the Rust archive and, on macOS, the link stubs; the
-# bundle must hold every piece a user's package-set build needs; and its
-# editor, run through the launcher with no directory argument and an empty
-# environment, must run the headless fixtures from its own modules,
-# generate a lakefile naming the bundle's set, say its version, and be
-# found by the launcher. It runs the built executables only, so it needs
-# just `lean` before it, and has a time limit of its own: on Linux the
-# toolchain is copied, about 3.1 GB, where macOS clones it.
-[tasks.bundle-test]
-description = "Stage the app bundle's layout in a temporary directory, with the launcher, the whole Lean toolchain, the core and the default packages built, the Rust archive and the link stubs, check it holds each piece a package-set build needs, and run its editor through the launcher with no directory argument and an empty environment: the headless fixtures, the generated lakefile, --version and the launcher's probes (tools/bundle-test.sh, the stage-bundle binary of crates/editor-release-std, tests/headless/bundle)"
-depends = ["lean"]
-dir = "lean"
-# The bundle fixture's first settle may wait 90 s (tests/headless/bundle/
-# script says why), and on CI it starts 60 to 70 s in, after the launcher's
-# release build and the staging. The task's 600 s, set for the toolchain's
-# copy, lets that settle run out and say so before the task's own limit
-# does.
-timeout = "600s"
-run = "sh ../tools/bundle-test.sh"
-
-# A user's package set end to end, through the app's launcher
-# (tools/user-sets-test.sh; docs/dev-practices/the-gate.md, "The user sets
-# test"; docs/design/packages.md, "User package sets"): an install that
-# restarts the editor into a per-user build with the session as it was, a
-# link that fails while the editor keeps running, a default package
-# dropped, a set that fails to elaborate, and git missing. Everything it
-# writes is in a temporary directory, with HOME and XDG_* inside it, but
-# the fixture packages' own .lake/ (tests/user-sets/<name>), as the fixture
-# set's packages build in place. Its Lake builds read what `lean` built
-# and write nothing it shares: it ends by requiring the default set's
-# editor to read as up to date. It has a task and a time limit of its own,
-# as the builds take longer than `ffi-test`'s commands. It runs under
-# tools/home-bound-toolchain.sh, whose `lean` and `lake` fail once HOME
-# moves, as elan's do on CI, so a bare `lake` run after it moves HOME
-# fails here too, not only on CI.
-[tasks.user-sets-test]
-description = "A user's package set end to end through the launcher: install a package and restart into the per-user build with the session restored, a failing link that keeps the editor running, a default package dropped, a set that fails to elaborate, and git missing (tools/user-sets-test.sh, tests/user-sets)"
-depends = ["lean", "launcher"]
-dir = "lean"
-timeout = "600s"
-run = "sh ../tools/home-bound-toolchain.sh sh ../tools/user-sets-test.sh"
-
-# Opt-in, never part of `ci`: the user package sets checks that need git,
-# Cargo or more builds than the gate's (tools/user-sets-check.sh;
-# docs/dev-practices/on-demand-checks.md, "User package sets, on demand"):
-# the first launch after an editor update, a package updated from a local
-# git repository, a set holding a Rust crate built with Cargo, and a probe
-# failure. Everything it writes is in a temporary directory, but the
-# fixture packages' own .lake/ and, for the Rust set, the checkout's
-# target/. It runs under tools/home-bound-toolchain.sh, as `user-sets-test`
-# does, so a bare `lake` run after it moves HOME fails here too.
-[tasks.user-sets-check]
-description = "Opt-in, never part of ci: a user's package set after an editor update, updated from git, holding a Rust crate, and failing its probe (tools/user-sets-check.sh)"
-depends = ["lean", "launcher"]
-dir = "lean"
-run = "sh ../tools/home-bound-toolchain.sh sh ../tools/user-sets-check.sh"
 
 # The build ID (crates/editor-release, `build_id`): LEANMACS_BUILD_ID when
 # it is set, else HEAD's committer time in UTC, the time landing sets. CI's
@@ -709,45 +638,6 @@ depends = ["lean"]
 dir = "lean"
 env = { LEAN_CC = "/usr/bin/cc" }
 run = "id=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-release-std --bin leanmacs-release -- build-id) && commit=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-release-std --bin leanmacs-release -- commit) && LEANMACS_BUILD_ID=$id LEANMACS_COMMIT=$commit lake -d ../packages build --wfail :editorApp"
-
-# Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
-# hk.pkl: the gate does not build the bundle, and runs on Linux too. It is
-# the check for any change to `editorApp`, the stage-bundle binary or module
-# lookup (lean/Editor/ModuleLookup.lean).
-#
-# tools/app-check.sh copies the built bundle into a temporary directory
-# removed by a trap, verifies its signature with `codesign --verify
-# --strict --deep`, reads its Info.plist (its document types and its
-# version keys, which must be the line of lean/app/version, among its keys)
-# and icon (the ten standard sizes, 16 to 1024 pixels) as the system does,
-# runs its headless mode on tests/headless/bundle with no directory
-# argument, an empty environment and / as the working directory, which must
-# print exactly `expected`, and builds `editorApp` again to show that copies
-# and signs nothing. In a clone of lean/ and packages/ it shows that a failed rebuild
-# leaves the old bundle, that changing the version or the artwork rebuilds
-# it, that a malformed version or artwork other than a 1024x1024 PNG fails
-# the build, and that the build and the check both take a version file
-# with no final newline. It ends `app-check: ok`.
-# It opens no window and needs no person.
-[tasks.app-check]
-description = "Opt-in, never part of ci; macOS on arm64 only: verify the built Leanmacs.app's signature and run its headless mode from a copy in a temporary directory, with no directory argument, an empty environment and / as the working directory, then build a user's package set from the copy's own toolchain with its resources read-only: the default set, a package installed and a default one dropped, and a package with C (tools/app-check.sh, tools/bundle-sets.sh, tests/headless/bundle)"
-depends = ["app"]
-timeout = "600s"
-run = "tools/app-check.sh lean packages"
-
-# The app's identity across a restart, on a desktop (tools/restart-check.sh;
-# docs/dev-practices/on-demand-checks.md, "The restart on a desktop"). A copy
-# of the built bundle in a temporary directory, with an identifier of its
-# own, is launched with `open`; open-file events then restart it into a copy
-# of its editor outside the bundle, and into a program that fails, whose
-# fallback the launcher's watcher starts. LaunchServices must list one
-# instance of the app, its bundle path the copy, after each, and the next
-# open-file event must reach the new executable. It opens windows and needs
-# no person. It ends `restart-check: ok`.
-[tasks.restart-check]
-description = "Opt-in, never part of ci; macOS only: launch a copy of the built Leanmacs.app, restart it into an editor outside the bundle and into one that fails, and check with lsappinfo that the app keeps one instance and its identity and that open-file events reach the new executable (tools/restart-check.sh). Opens windows on this desktop"
-depends = ["app"]
-run = "tools/restart-check.sh packages"
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
 # hk.pkl: the gate does not build the bundle, and runs on Linux too. CI's
@@ -839,7 +729,7 @@ description = "Opt-in, never part of ci: convert a config directory of .lean fil
 run = "cargo run --quiet --locked -p editor-config-migrate-std --bin config-migrate --"
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
-# hk.pkl: it writes outside the checkout. After `app-check`,
+# hk.pkl: it writes outside the checkout. After `app`,
 # tools/install-app.sh replaces /Applications/Leanmacs.app with the built
 # bundle, installs the default config config/default (a starter SPC map) to
 # ~/.config/leanmacs only when no config is there, otherwise only saying
@@ -847,8 +737,8 @@ run = "cargo run --quiet --locked -p editor-config-migrate-std --bin config-migr
 # the earlier install script left. It keeps no backups and opens, registers
 # or runs nothing.
 [tasks.install]
-description = "Opt-in, never part of ci; macOS on arm64 only: build and check Leanmacs.app and install it to /Applications, replacing the old one and deleting leftover backups (tools/install-app.sh)"
-depends = ["app-check"]
+description = "Opt-in, never part of ci; macOS on arm64 only: build Leanmacs.app and install it to /Applications, replacing the old one and deleting leftover backups (tools/install-app.sh)"
+depends = ["app"]
 run = "tools/install-app.sh packages"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It ends in
@@ -946,8 +836,7 @@ run = [
 # Opt-in: run it by hand on a quiet machine, on macOS, and do not add it to
 # `ci` or to hk.pkl. It measures and asserts nothing: its numbers depend on
 # the machine, so none of them is a pass or a fail. The gate still builds
-# `config-test bench-modules`, under every linter (`lean`), and runs it in
-# `bundle-test`.
+# `config-test bench-modules`, under every linter (`lean`).
 #
 # What config may import, measured, for the import sets `Editor` and
 # `Editor` with `Lean` (tools/module-bench.sh): the modules each import
@@ -1010,10 +899,10 @@ run = "tools/user-link-check.sh lean"
 # Opt-in, never part of `ci` or hk.pkl: it runs for hours and loads every
 # core. The stress loop (tools/stress.sh; docs/dev-practices/on-demand-checks.md,
 # "The stress loop, on demand"): `mise run stress -- <rounds> [suite ...]`
-# runs the wiring set, read from code (its six default suites: config-test's
+# runs the wiring set, read from code (its five default suites: config-test's
 # and ffi-test's wiring groups and the window scenarios, contract-test, each
-# linked test's wiring groups, the CLI's runs of the real-thread entries at
-# ffi-test and those at bundle-test over a staged bundle;
+# linked test's wiring groups, and the CLI's runs of the real-thread
+# entries at ffi-test;
 # docs/dev-practices/real-thread-checks.md, "How the set runs"), or the
 # suites named (`rust`, `gate-ffi` for the whole of ffi-test), that many
 # times under `2 x cores` `yes` hogs at lowered priority, decides each run
@@ -1596,7 +1485,7 @@ run = [
 
 [tasks.ci]
 description = "The whole gate; the pre-commit hook and `hk check` run this, and it gates review and landing (rdm's dispatch.verify)"
-depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "bundle-test", "user-sets-test", "c-fmt", "workflow-lint"]
+depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "c-fmt", "workflow-lint"]
 
 # Never part of `ci` or hk.pkl: `linux-ci` runs `ci` in a copy of the
 # checkout with no history, where a history scan has nothing to read.

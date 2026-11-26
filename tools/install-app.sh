@@ -2,8 +2,8 @@
 # Install the built app: `mise run install`
 # (docs/dev-practices/on-demand-checks.md, "Installing the app").
 #
-# `mise run app-check` runs first (the task depends on it), so the bundle is
-# built and checked. This script then:
+# `mise run app` runs first (the task depends on it), so the bundle is
+# built. This script then:
 #
 # 1. refuses unless this is macOS on arm64, as the bundle is;
 # 2. replaces `$apps/Leanmacs.app` with the built bundle (`ditto`) and

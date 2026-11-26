@@ -155,8 +155,8 @@ jobs:
         shell: bash
         run: set -euo pipefail; id=$(mise run build-id); echo "id=$id" >> "$GITHUB_OUTPUT"
 
-  # The nightly's .dmg (.github/workflows/build.yml): the stamped bundle,
-  # `mise run app-check`, the .dmg packed and checked, and uploaded as a
+  # The nightly's .dmg (.github/workflows/build.yml): the stamped bundle
+  # (`mise run app`), the .dmg packed and checked, and uploaded as a
   # workflow artifact. Main pushes only, after both legs of the gate, so
   # only a commit the gate passed is packed. `concurrency` never cancels a
   # main run in progress, so a build is never cut off halfway. It does not

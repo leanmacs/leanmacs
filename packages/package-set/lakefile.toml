@@ -24,9 +24,9 @@
 #   links with the system compiler, which this executable has no flags for.
 # - `PackageSetTest` holds the test modules.
 #
-# It has no headless fixture of its own: the user-sets test
-# (tools/user-sets-test.sh) runs its commands end to end, on an editor
-# built from the default set.
+# It has no headless fixture of its own: its commands start real builds
+# and restarts, and its decisions are its model tests'
+# (`PackageSetTest`, `ModelTest.packageSetBuildChecks`).
 #
 # Every Lean linter is on and a warning fails the build, as in the core,
 # and the build's own linters, the wait linters, are loaded as a Lean plugin

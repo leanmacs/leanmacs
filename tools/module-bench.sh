@@ -21,7 +21,7 @@
 #    load, and the largest maximum resident set size.
 #
 # And once, after the set `Editor`, the bundle as it is shipped: five runs
-# of a staged bundle's headless mode, with `env -i`, as `bundle-test` runs
+# of a staged bundle's headless mode, with `env -i`, as the app runs
 # it, on each of two configs: `tests/headless/generate`, whose root imports
 # `Editor` alone, so the editor elaborates it on the base it starts with;
 # and `tests/headless/bundle`, whose root imports `Lean`, so the base grows

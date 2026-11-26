@@ -1,6 +1,7 @@
-# A fixture package of a user's package set, for tools/user-sets-test.sh
-# and tools/user-sets-check.sh (docs/design/packages.md, "User package
-# sets"): see HelloInit.lean for what it shows. It is built in place, into its own
+# A fixture package of a user's package set, which tools/bundle-bench.sh
+# installs into a set built from the bundle to time that build
+# (docs/design/packages.md, "User package sets"): see HelloInit.lean for
+# what it shows. It is built in place, into its own
 # .lake/, as the fixture set's packages are.
 name = "hello-init"
 
