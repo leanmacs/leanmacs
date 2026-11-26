@@ -2298,10 +2298,10 @@ def defaultBasePackage : Package :=
   { name := "pkg-base"
     setup := do
       Extension.add
-          ({ name := "pkg-base"
-             base := fun
-               | .headless => .inherited
-               | .window _ => .lookup (EnvironmentApiTest.fakeSource "pkg-base" "/pkg/bin") "/" } :
+          ({  name := "pkg-base"
+              base := fun
+                | .headless => .inherited
+                | .window _ => .lookup (EnvironmentApiTest.fakeSource "pkg-base" "/pkg/bin") "/" } :
             EnvironmentApi.BaseSource)
       environmentBase "pkg-base" }
 
