@@ -1,0 +1,22 @@
+# The host of lean-deny, the checker of the structure rules (`mise run
+# lean-deny`; .agents/rules/structure.md, docs/dev-practices/the-gate.md,
+# "The structure check"). It holds no Lean source: it is a Lake package whose
+# one `require` is `lean-deny`, so the checker is built here and run over any
+# workspace (`lean-deny check --workspace <dir>`) without the core, the default
+# package set or a set that requires it depending on a git repository
+# (docs/design/packages.md, "Manifests: a set's build fetches nothing").
+#
+# `packagesDir` keeps the clone and its build output under
+# `lean/.lake/packages`, which CI caches with the rest of `lean/.lake`, beside
+# lean-fmt's.
+#
+# lean-deny has no release tag yet, so `rev` pins a commit. To bump it, change
+# `rev` and run `lake -d ../tools/lean-deny update --keep-toolchain` in
+# `lean/` to rewrite `lake-manifest.json`.
+name = "lean-deny-host"
+packagesDir = "../../lean/.lake/packages"
+
+[[require]]
+name = "lean-deny"
+git = "https://github.com/leanmacs/lean-deny"
+rev = "037dfa046b8f2b77714288ae1af9734cb719ee31"

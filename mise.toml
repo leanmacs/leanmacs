@@ -117,8 +117,8 @@ run = [
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
 #
 # It waits for `lean-test` only so that two Lake builds never run in lean/ at
-# once: the Lake tasks run in one chain, `lean-test`, `lean`, then `lean-fmt`
-# and `ffi-test`.
+# once: the Lake tasks run in one chain, `lean-test`, `lean`, then
+# `lean-deny`, then `lean-fmt`, and `ffi-test`.
 [tasks.lean]
 description = "Build the Lean core and the test executables with Lake, which runs Cargo for the Rust static library, then the editor and the headless fixture harness from the default package set (packages/), the fixture set with its packages and its harness (tests/packages/) and the editor from the core alone (tests/empty-set/); every linter is on and a warning fails the build (lean/lakefile.lean)"
 depends = ["lean-test"]
@@ -159,6 +159,32 @@ run = [
   "lake -d ../tests/empty-set build --wfail :editor",
 ]
 
+# lean-deny checks the structure rules (.agents/rules/structure.md) over
+# Lake's resolved module graph (docs/dev-practices/the-gate.md, "The
+# structure check"). Like lean-fmt, it is the Lake dependency of a host of
+# its own (tools/lean-deny/lakefile.toml), so the core and the default set
+# fetch no git repository; `lake -d ../tools/lean-deny exe` builds and runs
+# it from the host, with no LEAN_CC, as for lean-fmt. Each line passes by its
+# exit status alone: 0 when every rule holds, 1 on a violation, 2 on a bad
+# policy or workspace.
+#
+# - packages/lean-deny.toml, over the default set (packages/, which requires
+#   the core): Core imports, Host imports, What a package may import, Three
+#   layers, Leave-out, Module map (it reads docs/design/packages.md) and
+#   Lint plugins. It reads the two roots that `lean`'s package-set build
+#   writes under packages/.lake/build/root/, and lean-deny never runs Lake to
+#   write them, so this task waits for `lean`.
+# - lean/lean-deny.core.toml, over the core alone (lean/): the core imports
+#   rules the core answers by itself.
+[tasks.lean-deny]
+description = "Check the structure rules with lean-deny, over the default package set and over the core (packages/lean-deny.toml, lean/lean-deny.core.toml)"
+depends = ["lean"]
+dir = "lean"
+run = [
+  "lake -d ../tools/lean-deny exe lean-deny check --workspace ../packages --config ../packages/lean-deny.toml",
+  "lake -d ../tools/lean-deny exe lean-deny check --workspace . --config lean-deny.core.toml",
+]
+
 # lean-fmt is the Lake dependency of a package of its own, its host
 # (tools/lean-fmt/lakefile.toml), pinned to the tag named after the Lean
 # toolchain: the core requires no git repository, so a package set that
@@ -168,10 +194,11 @@ run = [
 # and `--root .` names the package it is run over, the core; the last line
 # of each task runs it over each package of the fixture set, each of which
 # holds the link to the pin the formatter requires of a root. Both tasks wait
-# for `lean`, so two Lake builds never run in lean/ at once.
+# for `lean`, and `lean-fmt` for `lean-deny` too, so two Lake builds never
+# run in lean/ at once.
 [tasks.lean-fmt]
 description = "Check Lean formatting and lean-fmt's lints, over the core and each package of the fixture set; changes nothing"
-depends = ["lean"]
+depends = ["lean", "lean-deny"]
 dir = "lean"
 run = [
   "lake -d ../tools/lean-fmt exe lean-fmt format --check --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root .",
@@ -1211,7 +1238,7 @@ run = [
 
 [tasks.ci]
 description = "The whole gate; the pre-commit hook and `hk check` run this, and it gates review and landing (rdm's dispatch.verify)"
-depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "window-scenarios", "c-fmt", "workflow-lint"]
+depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-deny", "lean-fmt", "ffi-test", "window-scenarios", "c-fmt", "workflow-lint"]
 
 # Never part of `ci` or hk.pkl: `linux-ci` runs `ci` in a copy of the
 # checkout with no history, where a history scan has nothing to read.

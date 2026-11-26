@@ -1,6 +1,7 @@
 /target
 # Lake's build output and fetched packages, in any Lake package: the core
-# (lean/), the formatter's host (tools/lean-fmt/), the package sets and the
+# (lean/), the formatter's and lean-deny's hosts (tools/lean-fmt/,
+# tools/lean-deny/), the package sets and the
 # packages (packages/, tests/packages/).
 .lake/
 /research_notes
