@@ -10,8 +10,12 @@ It plays `agents-api`'s canonical scenario (`AgentsApiTest/Contract.lean`)
 in raw JSON-RPC lines, the same exchange the fake's script plays
 (`AgentsApiTest.Fake.canonical`):
 
-- it answers `initialize` and `session/new` (the session `sess-0001`, in
-  the mode `mode-ask` of `mode-ask` and `mode-auto`);
+- it answers `initialize`, which it accepts only with the client
+  capabilities the crate sends, matched as text: `fs` with
+  `readTextFile` and `writeTextFile` false, `terminal` false and
+  `auth.terminal` false, and nothing else; and then `session/new` (the
+  session `sess-0001`, in the mode `mode-ask` of `mode-ask` and
+  `mode-auto`);
 - the prompt `ask` gives a chunk, the tool call `call-edit-1` and the
   permission request `0` for it;
 - the answer `allow` to it gives the call completed and the permission
@@ -22,12 +26,18 @@ in raw JSON-RPC lines, the same exchange the fake's script plays
 
 It reads each line with `read -r`, finds what it is with `case` patterns,
 and takes a request's id with parameter expansion. The first line it does
-not expect, a `session/set_mode` or an `fs` request among them, makes it
-exit 3, and so does the end of its input before the scenario's: so its exit
-status is its verdict on the client, and a wrong client fails a check by
-the child's exit (`ended exited 3`). Its parsing depends on the SDK
-writing a request's top-level `"id"` before its `params`, as it does: an
-SDK that stopped would fail the checks loudly, by that exit.
+not expect makes it exit 3, and so does the end of its input before the
+scenario's: so its exit status is its verdict on the client, and a wrong
+client fails a check by the child's exit (`ended exited 3`). Lines it does
+not expect include an `initialize` that offers `fs` or `terminal` (or any
+capability other than the ones above), a `session/set_mode` or any other
+request out of the scenario's order, and a second answer to a permission
+request. It never sends an `fs/*` or `terminal/*` request, which go from
+agent to client, so it checks only what the client offers, not how a
+client would answer one. Its parsing depends on the SDK writing a
+request's top-level `"id"` before its `params`, and the client
+capabilities' fields in the order above, as it does: an SDK that changed
+either would fail the checks loudly, by that exit.
 
 Not a Rust binary, which the Lean linked test would need a Cargo build
 product of another gate task for; nor Python, which a Mac without the
@@ -41,7 +51,7 @@ def script : String :=
   r#"expect() { IFS= read -r line || exit 3; case $line in $1) ;; *) exit 3 ;; esac; }
 id_of() { id=${line#*\"id\":\"}; id=${id%%\"*}; }
 say() { printf '%s\n' "$1"; }
-expect '*"method":"initialize"*'
+expect '*"method":"initialize"*"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false,"auth":{"terminal":false}}*'
 id_of
 say '{"jsonrpc":"2.0","id":"'"$id"'","result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}}'
 expect '*"method":"session/new"*'

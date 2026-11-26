@@ -32,7 +32,8 @@ a real child of the core's process service that the crate takes over.
   scripted agent exits by itself once it has answered the cancelled
   prompt, and exits 0 only if every line it read was the one it expected,
   so that last event is its own verdict that the client sent exactly the
-  expected orders, with no `session/set_mode` and no `fs`. A fourth job's
+  expected lines in order: an `initialize` offering no `fs` and no
+  `terminal`, and no `session/set_mode`. A fourth job's
   answer to ticket 2 after the cancel is refused. The trace of the orders
   and events replays on the protocol's model, and the runner's trace of
   every job here on the job protocol's model, its package waits as service
