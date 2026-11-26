@@ -25,6 +25,9 @@ build.
   exactly when the trace is a run.
 - `checker_agrees`: the decidable checker the model tests search with
   (`State.violation?`) finds nothing in a reachable state.
+- `JobState.serve_keeps_unit` and `JobState.wake_waiting_keeps_unit`: a
+  service wait, a package's among them, keeps its job's unit: neither the
+  `serve` that records it nor the `wake` that ends it moves the count.
 
 The proofs go through one inductive invariant (`Inv`): the count is the
 number of jobs that hold a unit, every job not cancelled has recorded the
@@ -186,6 +189,36 @@ theorem JobState.good_reachable {job : JobState} (good : job.good = true) :
   rcases job with ⟨status, cancelled, recorded⟩
   cases status <;> cases cancelled <;> cases recorded <;>
     simp_all [JobState.good, JobState.reachable, Status.onThread]
+
+/-! ## A service wait keeps its job's unit
+
+A wait on a service that ends it by itself, a package's among them
+(`JobRequest.package`, `Editor/Job/Runner.lean`), is a `service` wait: the
+job records it with `serve` and its end is a `wake` of a `waiting` job.
+Neither moves the count, so a job keeps its unit for the whole wait, and a
+host is not idle while a package's service has the job's request. -/
+
+/-- A job's `serve`, the step that records a service wait, never moves the
+count. -/
+theorem JobState.serve_keeps_unit {job after : JobState} {move : Move} {index : Nat}
+    (stepped : job.step (.serve index) = some (after, move)) : move = .keep := by
+  rcases job with ⟨status, cancelled, recorded⟩
+  cases status <;> simp only [JobState.step, JobState.enter] at stepped <;> repeat' split at stepped
+  all_goals try simp only [Option.some.injEq, Prod.mk.injEq, reduceCtorEq] at stepped
+  all_goals simp_all
+
+/-- The end of the service wait a job is in, a `wake` of a `waiting` job,
+never moves the count. -/
+theorem JobState.wake_waiting_keeps_unit {job after : JobState} {move : Move} {wait : Nat}
+    {completion : Completion} (waiting : job.status = .waiting wait)
+    (stepped : job.step (.wake wait completion) = some (after, move)) : move = .keep := by
+  rcases job with ⟨status, cancelled, recorded⟩
+  subst waiting
+  simp only [JobState.step, JobState.wake] at stepped
+  split at stepped
+  · simp only [Option.some.injEq, Prod.mk.injEq] at stepped
+    exact stepped.2.symm
+  · simp at stepped
 
 /-! ## Lists -/
 
@@ -623,5 +656,17 @@ info: 'Editor.Job.Protocol.checker_agrees' depends on axioms: [propext, Classica
 -/
 #guard_msgs in
 #print axioms checker_agrees
+
+/--
+info: 'Editor.Job.Protocol.JobState.serve_keeps_unit' depends on axioms: [propext]
+-/
+#guard_msgs in
+#print axioms JobState.serve_keeps_unit
+
+/--
+info: 'Editor.Job.Protocol.JobState.wake_waiting_keeps_unit' depends on axioms: [propext]
+-/
+#guard_msgs in
+#print axioms JobState.wake_waiting_keeps_unit
 
 end Editor.Job.Protocol

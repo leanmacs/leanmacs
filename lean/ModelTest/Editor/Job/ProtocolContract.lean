@@ -1,5 +1,6 @@
 import Editor.Job.ProtocolContract
 import ModelTest.Check
+import ModelTest.Support.Packages
 import ModelTest.Support.Protocol
 
 /-!
@@ -16,6 +17,13 @@ protocol before the runner-park fix (`PreFix`,
 `ModelTest/Support/Protocol.lean`), scripted the same way. The root module
 `ModelTest` runs them, after the checks that count pool threads: a hold
 occupies a pool thread.
+
+A package's service wait is one more service wait (`packageRecordedChecks`):
+a job's package request that completes, and one cancelled in its package
+wait, each run stepped on the check's thread over the fake package service
+(`PackageStepped`, `ModelTest/Support/Packages.lean`), record a trace that
+asks a `service` wait and replays on the model to a state that breaks no
+invariant.
 -/
 
 namespace ModelTest
@@ -75,11 +83,55 @@ def parkCheck (subject : ParkSubject) (holds : Bool := true) : Check :=
         throw (IO.userError s!"saw {repr observed}")
       return true }
 
+/-- Whether `trace` replays on the model to a state that breaks no
+invariant, and asks a `service` wait: or what it came to, thrown. -/
+def replaysServiceWait (trace : Array Transition) : IO Bool := do
+  match replay trace with
+  | .ok state =>
+    unless state.violation?.isNone && trace.any (· matches .ask _ _ .service) do
+      throw
+          (IO.userError
+            s!"the trace {repr trace} broke {repr state.violation?} or asked no service wait")
+    return true
+  | .error refusal =>
+    throw (IO.userError s!"{refusal.text}; the trace was {repr trace}")
+
+/-- The checks of a package's service wait as a protocol run: one that
+completes, and one cancelled in it. -/
+def packageRecordedChecks : List Check :=
+  [{  name :=
+        "the stepped fake package service: a job's package wait that completes records a service wait, and its trace replays on the model"
+      run := do
+        let stepped ← PackageStepped.new countSpec
+        let ended ←
+          stepped.run do
+              return (← PackageService.ask (countAfter 1)) matches .ok _
+        unless ended == .finished true do
+          throw (IO.userError s!"the job ended {repr ended}")
+        replaysServiceWait (← stepped.recorder.trace) },
+    { name :=
+        "the stepped fake package service: a job cancelled in its package wait records a service wait withdrawn, and its trace replays on the model"
+      run := do
+        let stepped ← PackageStepped.new countSpec
+        stepped.fake.holdCompletions
+        let handle ←
+          stepped.spawn do
+              return (← PackageService.ask (countAfter 1)) matches .ok _
+        stepped.toWaits
+        handle.cancel
+        let ended ← stepped.toEnd handle
+        stepped.fake.letGo
+        let trace ← stepped.recorder.trace
+        unless ended == .cancelled && trace.any (· matches .wake _ .cancelled) do
+          throw (IO.userError s!"the job ended {repr ended}, the trace {repr trace}")
+        replaysServiceWait trace }]
+
 /-- The checks of the runner's protocol contract on the fakes and the
 models. -/
 def protocolContractChecks : List Check :=
   recordedRuns.map recordedCheck ++
     [parkCheck (ParkSubject.ofRig "the fakes" ProtocolRig.fakes), parkCheck modelPark,
-      parkCheck preFixPark (holds := false)]
+      parkCheck preFixPark (holds := false)] ++
+    packageRecordedChecks
 
 end ModelTest
