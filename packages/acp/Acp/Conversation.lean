@@ -218,7 +218,7 @@ def endedCommand (number : Nat) (how : String) : EditorM Unit := do
   if let some conversation← conversation? number then
     closeTickets conversation (Permissions.endedReason how)
   update number fun conversation =>
-      { conversation with
+      { conversation.closePending with
             ended := conversation.ended.orElse fun _ => some how, turn := none }.noted
         s!"session ended: {how}"
 
@@ -324,6 +324,9 @@ def eventsCommand (call : Call) : EditorM Unit := do
   for (request, answer) in decided do
     if let some option := answer then
       discard <| sendOrder answerName conversation (.answer request.ticket option.id) .policy
+  -- Closed once audited: `recordsOf` read them pending.
+  if (endingOf batch).isSome then
+    update number (·.closePending)
 
 /-! ## The user's commands -/
 
@@ -520,7 +523,7 @@ def stopCommand (call : Call) : EditorM Unit := do
   cancelJob (sessionKey conversation.number)
   closeTickets conversation "session stopped"
   update conversation.number fun conversation =>
-      { conversation with
+      { conversation.closePending with
             ended := conversation.ended.orElse fun _ => some "stopped", turn := none
             awaiting := false }.noted
         "session stopped"

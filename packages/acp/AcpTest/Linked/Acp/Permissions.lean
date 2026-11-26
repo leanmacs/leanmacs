@@ -27,6 +27,9 @@ are told apart.
   but appends, after the directory's make, names it. A stop typed between
   the batch of the session's end and the job's end, the host's queue
   ordered so (`closedOnceChecks`), closes the request once.
+- **Closed tickets** (`closedOnceChecks`): a batch that ends the session
+  with a request pending writes exactly one `closed` record, and the
+  conversation then shows the request `(closed)`; so does `agent-stop`.
 - **The writer** (`writerChecks`): a record made while a write is in
   flight, the file fake holding its completions, waits for it and goes in
   the next write; a refused append loses no record, and is said once; and
@@ -295,7 +298,35 @@ def closedOnceChecks (context : HostContext) (packages : Array Package) : List C
           settledAfter session
           let held ← logHeld fakes
           saw (queued == 2 && held == logText [askedLine, decidedLine "ask", exitedClosedLine])
-              s!"queued {queued}; held {repr held}" }]
+              s!"queued {queued}; held {repr held}" },
+    { name :=
+        "D7: a batch that ends the session with a request pending writes exactly one closed record, and the conversation then shows the request (closed)"
+      run :=
+        withConversation context packages Fake.permissionRequest (state := some stateDirectory)
+          fun session fake fakes => do
+          unless ← started session do
+            return false
+          unless ← prompted session do
+            return false
+          fake.agentSends 1 [.exit 0]
+          settledAfter session
+          let held ← logHeld fakes
+          let lines ← conversationLines session
+          let closed := lines.filter (·.endsWith "(closed)")
+          saw (held == logText [askedLine, decidedLine "ask", exitedClosedLine] && closed.size == 1)
+              s!"held {repr held}; lines {lines}" },
+    { name := "D7: agent-stop with a request pending shows the request (closed) in the conversation"
+      run :=
+        withConversation context packages Fake.permissionRequest fun session _ _ => do
+          unless ← started session do
+            return false
+          unless ← prompted session do
+            return false
+          unless ← exStepped session Acp.Conversation.stopName do
+            return false
+          settledAfter session
+          let lines ← conversationLines session
+          saw ((lines.filter (·.endsWith "(closed)")).size == 1) s!"{lines}" }]
 
 /-- Changes the file fake's model by `change`, as a check sets up or clears
 what the log's path holds. -/

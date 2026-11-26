@@ -83,6 +83,30 @@ def stateChecks : List Check :=
               settled.turn.isNone)
             s!"pending first {pendingFirst}, states {repr states}" },
     { name :=
+        "closing a conversation's tickets turns every pending one closed, final, and leaves answered and withdrawn ones; the session's end alone closes none, so the audit still sees them pending"
+      run := do
+        let asked :=
+          (example1.prompted "p").sent 1 |>.applyBatch
+            {
+              events :=
+                #[.permission 1 (some 1) Contract.call Contract.options,
+                  .permission 2 (some 1) Contract.second Contract.options,
+                  .permission 3 (some 1) Contract.second Contract.options, .withdrawn 3] }
+        let answered := asked.answered 1 Contract.allow
+        let ended := answered.apply (.ended (.exited 0))
+        let closed := ended.closePending
+        let states :=
+          closed.items.filterMap fun item =>
+            match item with
+            | .permission ticket _ _ _ state => some (ticket, state)
+            | _ => none
+        let again := (closed.answered 2 Contract.allow).apply (.withdrawn 2)
+        saw
+            (ended.pending == #[2] && closed.pending.isEmpty &&
+              states == #[(1, .answered Contract.allow), (2, .closed), (3, .withdrawn)] &&
+              again.items == closed.items)
+            s!"{repr states}" },
+    { name :=
         "the session's open gives its number, id, mode and modes; its end is kept and clears the turn; a tool call's fold toggles"
       run := do
         let opened :=

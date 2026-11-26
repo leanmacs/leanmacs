@@ -22,10 +22,12 @@ each thing that happens to it changes it, pure (`docs/design/agent-hosting.md`,
   (`Conversation.sent`); an answer that the service took marks its ticket
   answered (`Conversation.answered`); a note is added for a refusal or the
   session's end (`Conversation.noted`).
-- **A ticket's state** changes in exactly two ways: `withdrawn`, from the
-  service's `.withdrawn` event, and `answered`, once acp's own answer to it
-  was taken. Both are final, and the end of a turn marks no ticket, so an
-  answered ticket is never relabelled. `Conversation.pending` is the tickets
+- **A ticket's state** changes in exactly three ways: `withdrawn`, from
+  the service's `.withdrawn` event; `answered`, once acp's own answer to it
+  was taken; and `closed`, once its conversation ended with it pending
+  (`Conversation.closePending`). All three are final, and the end of a turn
+  marks no ticket, so an answered ticket is never relabelled.
+  `Conversation.pending` is the tickets
   still pending.
 
 A conversation is kept in an unscoped store (`Acp.Conversation.store`,
@@ -235,6 +237,14 @@ def pending (conversation : Conversation) : Array Nat :=
     match item with
     | .permission ticket _ _ _ .pending => some ticket
     | _ => none
+
+/-- `conversation` with every ticket still pending settled `closed`: its
+session ended, was stopped or its buffer closed, so the protocol's close
+answered them. The session's own end (`apply (.ended _)`) does not close
+them, so the batch that holds it is audited with them pending
+(`Permissions.recordsOf`); whoever handles the end closes them after. -/
+def closePending (conversation : Conversation) : Conversation :=
+  conversation.pending.foldl (fun held ticket => held.settle ticket .closed) conversation
 
 /-- The permission request `ticket`, if the conversation holds it: its
 call, its options and where it stands. -/
