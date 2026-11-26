@@ -9,7 +9,8 @@ import Editor.Test.Fixture.Stepped
 `fixture-test`'s `main`, which a package set's generated root calls
 (`EditorSetFixtures`, written by the `editorFixtures` facet in
 `lean/lakefile.lean`) with the set's packages, the input schemes they
-supply and the config base, as the editor's root calls `Editor.Main.run`.
+supply, the config base and the fixture setups its Lake packages declare
+(`<P>Test.FixtureSetups`), as the editor's root calls `Editor.Main.run`.
 It reads the command line (`Editor/Test/Fixture/CommandLine.lean`), wires
 the real pieces at the edge, and runs:
 
@@ -33,10 +34,11 @@ namespace Editor.Test.Fixture.Main
 open Editor
 
 /-- The harness, for the set's `packages`, the input `schemes` they supply
-(the last is run, `SchemePackage.chosen?`) and the config `base`, over the
-command line `arguments` (the module docs). -/
+(the last is run, `SchemePackage.chosen?`), the config `base` and the
+fixture `setups` the set's Lake packages declare, after the core's own
+(`Setup.core`), over the command line `arguments` (the module docs). -/
 def run (packages : Array Package) (schemes : Array SchemePackage) (base : Array Lean.Name)
-    (arguments : List String) : IO UInt32 := do
+    (setups : Array (String × Setup)) (arguments : List String) : IO UInt32 := do
   if let some site := readListing arguments then
     for line in RealThread.listed site do
       IO.println line
@@ -72,7 +74,7 @@ def run (packages : Array Package) (schemes : Array SchemePackage) (base : Array
   let files ← Config.Elaborate.ModuleFiles.temporary
   let harness : Harness chosen.scheme :=
     { packages, base, sysroot := invocation.sysroot, oleans := directories.oleans, repository
-      latest := ← IO.mkRef none, files }
+      latest := ← IO.mkRef none, files, setups := Setup.core ++ setups }
   let tree := realTree repository
   -- A root named from the working directory, as the gate names them, is
   -- made absolute, so it is read from the repository's root.

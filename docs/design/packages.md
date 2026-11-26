@@ -688,7 +688,15 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   `expected`, run stepped by the fixture harness built from the set
   (`fixture-test`, the `editorFixtures` facet;
   [headless-mode.md](../dev-practices/headless-mode.md), "How the gate
-  runs a fixture"), but those the real-thread set leaves to the CLI.
+  runs a fixture"), but those the real-thread set leaves to the CLI;
+- **the module `<P>Test.FixtureSetups`**, when the package has one,
+  declares `setups`, the fixture setups of the fixtures whose stepped runs
+  reach the package's processes, built from the package's own command
+  lines. The package-set build imports it into the set's fixture harness
+  and hands its `setups` to the harness after the core's
+  (`fixturesRootSource`), so the core's harness never repeats a package's
+  command line. The workspace package's holds the setup of
+  `tests/headless/default-config`, whose finder runs its fallback lister.
 
 | Step | Per package | In task |
 |---|---|---|

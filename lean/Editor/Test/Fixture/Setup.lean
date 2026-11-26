@@ -15,7 +15,11 @@ batch of entries, which a fixture's job lines count; the process fake's
 model scripts nothing; and nothing of the output is scrubbed.
 
 A fixture whose script names a file has a **setup** (`Setup.core`, keyed by
-the script's path from the repository's root). It declares:
+the script's path from the repository's root). A fixture whose run reaches
+a package's processes has one its Lake package declares
+(`<P>Test.FixtureSetups`), which the package-set build hands the harness
+after the core's (`Editor/Test/Fixture/Main.lean`), so a package's command
+lines stay its own. It declares:
 
 - the model directory the script's `@DIR@` stands for (`directory`), and
   what `@FILE@` stands for (`file`);
@@ -27,7 +31,8 @@ the script's path from the repository's root). It declares:
 - scripted process answers (`processes`) and another working directory;
 - another config directory, from the repository's root, in place of the
   one discovery found (`config`), as the default config's fixture runs
-  against the shipped `config/default`.
+  against the shipped `config/default` (its setup is the workspace
+  package's, `WorkspaceTest.FixtureSetups`).
 
 The harness refuses (`refusal?`), naming the fixture: a script that holds a
 placeholder (`@FILE@`, `@DIR@` or any other `@…@`) it has no setup for; a
@@ -141,25 +146,9 @@ def gitOutside (directory : String) : ProcessModel :=
                 stderr :=
                   "fatal: not a git repository (or any of the parent directories): .git\n".toUTF8 } }] }
 
-/-- What the workspace finder's default source runs in the empty
-directory `directory`, answered as the real ones answer there: the
-fallback lister, `find`, lists nothing, and the filter, `fzf --filter`
-with NUL-separated records, answers none, exiting 1, as fzf and its
-stand-in (`tests/completion/filter`) do. -/
-def emptyListing (directory : String) : ProcessModel :=
-  {
-    scripts :=
-      #[{ command :=
-            { program := "find"
-              arguments := #[".", "-type", "f", "-not", "-path", "*/.git/*", "-print0"]
-              directory }
-          reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } },
-        { command :=
-            { program := "fzf", arguments := #["--read0", "--print0", "--filter", ""], directory }
-          reply := .ok { exit := .code 1, stdout := .empty, stderr := .empty } }] }
-
 /-- The setups of the core's fixtures, keyed by their scripts' paths from the
-repository's root. A fixture not here takes `Setup.default`. -/
+repository's root. A fixture neither here nor among its set's packages'
+setups takes `Setup.default`. -/
 def Setup.core : Array (String × Setup) :=
   #[("tests/headless/column/script",
       .oneFile "tests/headless/column/lines.txt" "lines.txt"
@@ -178,9 +167,6 @@ def Setup.core : Array (String × Setup) :=
       .oneFile "tests/headless/ex/note.txt" "note.txt"
         #[.fileEquals s!"{fixtureDirectory}/note.txt" "tests/headless/ex/note-expected",
           .noLineStartsWith "commands:"]),
-    ("tests/headless/default-config/script",
-      { config := some "config/default", directory := some "/d", workingDirectory := "/d/cwd"
-        workingEntries := #[], processes := emptyListing "/d/cwd" }),
     ("tests/headless/working-set-reopen/script",
       { Setup.tree "tests/headless/working-set-reopen/tree" "/tmp/working-set.stepped0" with
         processes := gitOutside "/tmp/working-set.stepped0/tree" }),

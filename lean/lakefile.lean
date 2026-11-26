@@ -1509,21 +1509,64 @@ takes the closure of. It reads no source and builds nothing. -/
 package_facet editorBase pkg : Array String := do
   return Job.pure ((setBase (← setEntries pkg)).map (·.toString))
 
+/-- The name of the fixture setups module of the Lake package whose base
+name is `baseName`: `<P>Test.FixtureSetups`, `<P>` the name in upper camel
+case, a module of its test library, as its linked test is
+(`linkedTestModule?`). It declares `setups : Array (String ×
+Editor.Test.Fixture.Setup)`, the setups of the fixtures whose runs reach
+the package's processes, which the core cannot name
+(`Editor/Test/Fixture/Setup.lean`). -/
+def fixtureSetupsModuleName (baseName : Name) : Name :=
+  match toUpperCamelCase baseName with
+  | .str namespace_ base => .str (.str namespace_ (base ++ "Test")) "FixtureSetups"
+  | other => other ++ `FixtureSetups
+
+/-- The fixture setups module of `pkg` (`fixtureSetupsModuleName`), when a
+library of `pkg` holds it and its source file exists. Lake is asked, and no
+source is read. -/
+def fixtureSetupsModule? (pkg : Package) : IO (Option Module) := do
+  match pkg.findModule? (fixtureSetupsModuleName pkg.baseName) with
+  | some mod =>
+    if ← mod.leanFile.pathExists then
+      return some mod
+    else
+      return none
+  | none =>
+    return none
+
+/-- The fixture setups modules of the set `pkg`, in the order its packages
+register (`setPackages`). -/
+def setFixtureSetups (pkg : Package) : FetchM (Array Name) := do
+  let ws ← getWorkspace
+  let mut found := #[]
+  for dep in setPackages ws pkg do
+    match ← fixtureSetupsModule? dep with
+    | some mod =>
+      found := found.push mod.name
+    | none =>
+      pure ()
+  return found
+
 /-- The text of a set's fixture harness's root module, for the entry
 modules `entries` in the order they register, the entry modules `schemes`
-that supply an input scheme and the config base `base`, as `rootSource`
+that supply an input scheme, the config base `base` and the packages'
+fixture setups modules `setups` (`setFixtureSetups`), as `rootSource`
 writes the editor's: it imports the core's base, `Editor`, for the link,
-then the harness's edge, then each entry module; and its `main` is one call
-of `Editor.Test.Fixture.Main.run` with the entry modules' `packages`
-appended in that order, their `scheme`s, and the base as an array of
-names. -/
-def fixturesRootSource (entries schemes base : Array Name) : String :=
-  let imports := entries.foldl (fun text name => text ++ s!"import {name}\n") ""
+then the harness's edge, then each entry module, then each fixture setups
+module; and its `main` is one call of `Editor.Test.Fixture.Main.run` with
+the entry modules' `packages` appended in that order, their `scheme`s, the
+base as an array of names, and the setups modules' `setups` appended in
+order. -/
+def fixturesRootSource (entries schemes base setups : Array Name) : String :=
+  let imports := (entries ++ setups).foldl (fun text name => text ++ s!"import {name}\n") ""
   let lists :=
     if entries.isEmpty then "#[]"
     else " ++ ".intercalate (entries.map fun name => s!"{name}.packages").toList
   let supplied := ", ".intercalate (schemes.map fun name => s!"{name}.scheme").toList
   let names := ", ".intercalate (base.map fun name => s!"`{name}").toList
+  let setupLists :=
+    if setups.isEmpty then "#[]"
+    else " ++ ".intercalate (setups.map fun name => s!"{name}.setups").toList
   s!"import Editor
 import Editor.Test.Fixture.Main
 {imports}
@@ -1538,10 +1581,35 @@ edit it: the build writes it again.
 /-- The set's headless fixture harness (`Editor/Test/Fixture/Main.lean`),
 with the packages of the set's Lake packages, the input schemes they
 supply and the modules config is elaborated on, as the set's editor has
-them. -/
+them, and the fixture setups the set's Lake packages declare. -/
 def main (args : List String) : IO UInt32 :=
-  Editor.Test.Fixture.Main.run ({lists}) #[{supplied}] #[{names}] args
+  Editor.Test.Fixture.Main.run ({lists}) #[{supplied}] #[{names}] ({setupLists}) args
 "
+
+/- Guards: the fixture harness's root (`fixturesRootSource`). With no
+package's fixture setups it hands the harness none, and the core's alone
+are its; with two it imports them after the entry modules, in order, and
+appends their `setups` in that order. A package's fixture setups module is
+`<P>Test.FixtureSetups`, `<P>` its name in upper camel case. -/
+#guard
+  holdsText (fixturesRootSource #[] #[] #[`Editor] #[])
+    "Editor.Test.Fixture.Main.run (#[]) #[] #[`Editor] (#[]) args"
+
+#guard
+  holdsText
+    (fixturesRootSource #[`A.EditorPackage] #[] #[`Editor, `A.EditorPackage]
+      #[`ATest.FixtureSetups, `BTest.FixtureSetups])
+    "import A.EditorPackage\nimport ATest.FixtureSetups\nimport BTest.FixtureSetups\n"
+
+#guard
+  holdsText
+    (fixturesRootSource #[`A.EditorPackage] #[] #[`Editor, `A.EditorPackage]
+      #[`ATest.FixtureSetups, `BTest.FixtureSetups])
+    "Editor.Test.Fixture.Main.run (A.EditorPackage.packages) #[] #[`Editor, `A.EditorPackage] (ATest.FixtureSetups.setups ++ BTest.FixtureSetups.setups) args"
+
+#guard fixtureSetupsModuleName `workspace == `WorkspaceTest.FixtureSetups
+
+#guard fixtureSetupsModuleName `«project-search» == `ProjectSearchTest.FixtureSetups
 
 /-- The name of the root module of a set's fixture harness. No library
 declares it. -/
@@ -1558,7 +1626,7 @@ def fixturesRoot (pkg : Package) : FetchM Module := do
   let root : Module := { lib := generatedLib pkg `EditorSetFixtures, name := fixturesRootName }
   writeIfChanged root.leanFile
       (fixturesRootSource (entries.map (·.module)) ((entries.filter (·.scheme)).map (·.module))
-        (setBase entries))
+        (setBase entries) (← setFixtureSetups pkg))
   return root
 
 /-- The headless fixture harness of a package set:
