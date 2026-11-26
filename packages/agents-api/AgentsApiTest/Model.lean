@@ -1,5 +1,6 @@
 import AgentsApiTest.AgentsApi
 import AgentsApiTest.AgentsApi.Arguments
+import AgentsApiTest.AgentsApi.Policy
 import AgentsApiTest.AgentsApi.View
 import AgentsApiTest.AgentsApiTest.Contract
 import AgentsApiTest.AgentsApiTest.Fake
@@ -26,6 +27,11 @@ imports the test modules and runs their checks:
   malformed list read as none;
 - `viewChecks`: the extension point `ConversationView`
   (`AgentsApi/View.lean`), a choice by name;
+- `policyChecks`: the extension point `PermissionPolicy`
+  (`AgentsApi/Policy.lean`): the default asks, a decision by kind or by id
+  chooses an offered option or asks, and the point is a choice by name.
+  The theorems that no policy answers with an option the request did not
+  offer are built, not run (`AgentsApiTest/AgentsApi/Policy/Theorems.lean`);
 - `fakeChecks`: the fake of the service (`AgentsApiTest/Fake.lean`) at the
   runner's port: what each request answers and when a `next` completes;
 - `contractBiteChecks`: three flawed fakes, each refused by the contract on
@@ -38,6 +44,7 @@ imports the test modules and runs their checks:
 def AgentsApiTest.checks : List AgentsApiTest.Check :=
   AgentsApiTest.protocolChecks ++ AgentsApiTest.agentsApiChecks ++ AgentsApiTest.argumentsChecks ++
     AgentsApiTest.viewChecks ++
+    AgentsApiTest.policyChecks ++
     AgentsApiTest.fakeChecks ++
     AgentsApiTest.contractBiteChecks
 

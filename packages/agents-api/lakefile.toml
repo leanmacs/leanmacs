@@ -3,13 +3,16 @@
 # with a coding agent produces, the orders a client gives it, the agent
 # registration point `AgentsApi.Agent`, and the package service `agents`
 # through which a running job opens a session, waits for its events and
-# sends it orders, with the typed wrappers a job asks it through. Its test
-# library publishes the protocol's rules as a pure model with their
+# sends it orders, with the typed wrappers a job asks it through; and the
+# permission policy point `AgentsApi.PermissionPolicy`, whose default asks.
+# Its test library publishes the protocol's rules as a pure model with their
 # theorems (`AgentsApiTest/Protocol.lean`,
-# `AgentsApiTest/Protocol/Theorems.lean`), the fake of the service built on
-# that model (`AgentsApiTest/Fake.lean`) and the contract every
-# implementation is held to (`AgentsApiTest/Contract.lean`). It registers no
-# behaviour: the package `acp` (packages/acp/) implements the service.
+# `AgentsApiTest/Protocol/Theorems.lean`), the theorem that no policy
+# invents an answer (`AgentsApiTest/AgentsApi/Policy/Theorems.lean`), the
+# fake of the service built on that model (`AgentsApiTest/Fake.lean`) and
+# the contract every implementation is held to
+# (`AgentsApiTest/Contract.lean`). It registers no behaviour: the package
+# `acp` (packages/acp/) implements the service.
 #
 # It is an interface package: it declares the keyword `editor-interface`
 # below, so another package may import its modules, and the three-layer
