@@ -142,7 +142,13 @@ later work (rdm:task/packages-load-native-libraries-at-run-time).
   crate puts `ended how` last in the final batch, and a later `next` is
   refused; when the session job is cancelled, the runner withdraws its
   `next` first, the crate posts nothing, and the job's own outcome,
-  `cancelled`, is the end the editor sees.
+  `cancelled`, is the end the editor sees. An `open` withdrawn before its
+  reply is taken leaves a session no job knows the number of, so the
+  crate drops its link, which ends the session once it is open, and frees
+  its state at that end rather than holding its events for a `next` that
+  cannot come. A session whose job is cancelled with no request of it in
+  flight, between two `next`s, is not yet freed: the crate never hears of
+  that cancel, and holds its last events.
 - **The protocol's rules are proved** on a pure model in `agents-api`'s
   test library (`AgentsApiTest/Protocol.lean`,
   `AgentsApiTest/Protocol/Theorems.lean`): every response answers exactly

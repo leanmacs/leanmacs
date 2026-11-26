@@ -32,7 +32,9 @@
 //! - **An answer** goes straight to the parked request from the caller's
 //!   thread ([`session::Link::answer`]), and completes at once.
 //! - **A session's state is freed** once its last event is taken, or once
-//!   it has ended after the `next` of its job was withdrawn.
+//!   it has ended after its job withdrew a `next` of it or its `open`. A
+//!   withdrawn `open` ends the session too, as no job knows its number:
+//!   its link is dropped ([`Acp::cancel`]).
 //!
 //! The logic is here and in the modules below, over two ports: the
 //! [`Completer`] and the [`Connector`], which starts a session on a child.
@@ -178,7 +180,8 @@ struct Held {
     opening: Option<u64>,
     /// Whether its last event has been posted.
     ended: bool,
-    /// Whether a `next` of it was withdrawn: its job has gone.
+    /// Whether its job has gone: a `next` of it was withdrawn, or its `open`
+    /// was, so that no job knows its number.
     abandoned: bool,
 }
 
@@ -424,8 +427,15 @@ impl<C: Completer + Send + Sync + 'static, K: Connector> Acp<C, K> {
         let outbox: Outbox = Arc::new(move |output| shared.posted(number, output));
         match self.connector.connect(child, setup, outbox) {
             Ok(link) => {
-                if let Some(held) = self.shared.state().sessions.get_mut(&number) {
-                    held.link = Some(link);
+                let mut state = self.shared.state();
+                match state.sessions.get_mut(&number) {
+                    // Withdrawn while the connector ran: dropped, as the
+                    // cancel drops a link it finds, and the session ends.
+                    Some(held) if !held.abandoned => held.link = Some(link),
+                    _ => {
+                        drop(state);
+                        drop(link);
+                    }
                 }
                 true
             }
@@ -564,13 +574,18 @@ impl<C: Completer + Send + Sync + 'static, K: Connector> Acp<C, K> {
 
     /// Withdraws the request `id`, and says whether it was in use: it is
     /// reported to nobody if it was not yet. A `next` withdrawn leaves its
-    /// session's events for the next one. A flush that waited only for it
-    /// is reported.
+    /// session's events for the next one. An `open` withdrawn, before it
+    /// completes or once it is ready and not taken, ends its session: no
+    /// job knows the session's number, so no order or `next` can reach it,
+    /// and its link is dropped, which ends the session once it is open (or
+    /// at once, if its child ends first); its state is freed at that end. A
+    /// flush that waited only for it is reported.
     pub fn cancel(&self, id: u64) -> bool {
-        let (cancelled, ready) = {
+        let (cancelled, ready, link) = {
             let mut state = self.shared.state();
             match state.requests.remove(&id) {
                 Some(request) => {
+                    let mut link: Option<Link> = None;
                     if let Some(held) = state.sessions.get_mut(&request.session) {
                         if held.waiting == Some(id) {
                             held.waiting = None;
@@ -578,16 +593,23 @@ impl<C: Completer + Send + Sync + 'static, K: Connector> Acp<C, K> {
                         if held.opening == Some(id) {
                             held.opening = None;
                         }
-                        if request.kind == Kind::Next {
-                            held.abandoned = true;
+                        match request.kind {
+                            Kind::Next => held.abandoned = true,
+                            Kind::Open => {
+                                held.abandoned = true;
+                                link = held.link.take();
+                            }
+                            Kind::Send => {}
                         }
                     }
                     state.free_if_done(request.session);
-                    (true, state.settled(id))
+                    (true, state.settled(id), link)
                 }
-                None => (false, Vec::new()),
+                None => (false, Vec::new(), None),
             }
         };
+        // Dropped outside the lock: the session it ends posts through it.
+        drop(link);
         for flush in ready {
             self.shared.completer.complete(flush);
         }

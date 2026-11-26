@@ -7,7 +7,7 @@
 
 use std::cell::RefCell;
 use std::io;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use editor_service::RecordingCompleter;
@@ -351,4 +351,113 @@ fn a_session_whose_job_withdrew_its_next_is_freed_once_it_ends() {
         "nothing completes for the withdrawn job"
     );
     assert_eq!(rig.acp.sessions(), 0);
+}
+
+#[test]
+fn an_open_withdrawn_before_it_completes_ends_its_session_once_open_and_frees_it() {
+    let mut rig = Rig::new();
+    assert!(rig.acp.open(1, 7, setup()));
+    let initialize = rig.lines(1).remove(0);
+    // The job's cancel: its open withdrawn before the agent answered.
+    assert!(rig.acp.cancel(1));
+    rig.answer(1, &initialize, json!({"protocolVersion": 1}));
+    let new = rig.lines(1).remove(0);
+    rig.answer(1, &new, json!({"sessionId": "sess-0001"}));
+    rig.chunk(1, "nobody reads this");
+    assert!(
+        rig.reported().is_empty(),
+        "nothing completes for the withdrawn open"
+    );
+    assert_eq!(
+        rig.acp.sessions(),
+        0,
+        "no job knows its number, so it ends and is freed"
+    );
+}
+
+#[test]
+fn an_open_withdrawn_once_ready_and_never_taken_ends_its_session_and_frees_it() {
+    let mut rig = Rig::new();
+    assert!(rig.acp.open(1, 7, setup()));
+    let initialize = rig.lines(1).remove(0);
+    rig.answer(1, &initialize, json!({"protocolVersion": 1}));
+    let new = rig.lines(1).remove(0);
+    rig.answer(1, &new, json!({"sessionId": "sess-0001"}));
+    assert_eq!(rig.reported(), [1]);
+    assert!(rig.acp.cancel(1), "ready, not yet taken");
+    assert!(rig.reported().is_empty());
+    assert_eq!(rig.acp.sessions(), 0);
+    assert_eq!(rig.acp.take(1), None, "withdrawn, so never taken");
+}
+
+#[test]
+fn an_open_withdrawn_whose_child_ends_before_it_opens_frees_its_session() {
+    let mut rig = Rig::new();
+    assert!(rig.acp.open(1, 7, setup()));
+    assert!(rig.acp.cancel(1));
+    rig.end(1, Ending::Signalled(9));
+    assert!(rig.reported().is_empty());
+    assert_eq!(rig.acp.sessions(), 0);
+}
+
+/// A connector that starts its session as [`Stepped`] does and then, before
+/// it returns, withdraws the open `id` through the service: a cancel from
+/// another job's thread landing while the connector runs.
+struct Withdrawing {
+    /// What starts the session.
+    stepped: Stepped,
+    /// The service, once it is made.
+    acp: RefCell<Weak<Acp<&'static RecordingCompleter, Withdrawing>>>,
+    /// The open it withdraws.
+    id: u64,
+}
+
+impl Connector for Withdrawing {
+    fn connect(&self, child: u64, setup: Setup, outbox: Outbox) -> Result<Link, String> {
+        let link = self.stepped.connect(child, setup, outbox)?;
+        let acp = self.acp.borrow().upgrade().expect("the service is made");
+        assert!(acp.cancel(self.id), "withdrawn while the connector runs");
+        Ok(link)
+    }
+}
+
+#[test]
+fn an_open_withdrawn_while_its_connector_runs_ends_its_session_once_open_and_frees_it() {
+    let mut pool = LocalPool::new();
+    let agents: Rc<RefCell<Vec<AgentSide>>> = Rc::default();
+    let completer: &'static RecordingCompleter = Box::leak(Box::new(RecordingCompleter::new()));
+    let acp = Rc::new(Acp::new(
+        completer,
+        Withdrawing {
+            stepped: Stepped {
+                spawner: pool.spawner(),
+                agents: Rc::clone(&agents),
+            },
+            acp: RefCell::new(Weak::new()),
+            id: 1,
+        },
+    ));
+    *acp.connector.acp.borrow_mut() = Rc::downgrade(&acp);
+    assert!(acp.open(1, 7, setup()));
+    let mut agent = agents.borrow_mut().remove(0);
+    let mut read = |pool: &mut LocalPool| {
+        pool.run_until_stalled();
+        let line = agent.written.try_recv().expect("the client wrote");
+        serde_json::from_str::<Value>(&line).expect("the client writes JSON")
+    };
+    let initialize = read(&mut pool);
+    let answer = |request: &Value, result: Value| {
+        agent
+            .lines
+            .unbounded_send(Ok(
+                json!({"jsonrpc": "2.0", "id": request["id"], "result": result}).to_string(),
+            ))
+            .expect("the session reads");
+    };
+    answer(&initialize, json!({"protocolVersion": 1}));
+    let new = read(&mut pool);
+    answer(&new, json!({"sessionId": "sess-0001"}));
+    pool.run_until_stalled();
+    assert!(completer.take().is_empty(), "nothing completes for it");
+    assert_eq!(acp.sessions(), 0, "it ended once open, and was freed");
 }
