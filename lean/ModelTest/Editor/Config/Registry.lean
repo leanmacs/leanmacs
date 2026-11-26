@@ -1043,7 +1043,20 @@ def registryChecks : List Check :=
             ((Package.registered counting).jobs.map fun job =>
                 (job.over.map (·.1), job.reported)) ==
               #[(some (TypeName.typeName Counted), true)] &&
-            (state.registry.findJob? "count-values").map (·.owner.name) == some "counting") }]
+            (state.registry.findJob? "count-values").map (·.owner.name) == some "counting") },
+    { name :=
+        "an owned table holds each owner's items over the owners' before it, in the order the owners first appear: the latest owner's first, in its order, then the earlier owners' items it does not name"
+      run :=
+        let package : Config.Owner := { name := "package" }
+        let entries : Array (Config.Owner × String × Nat) :=
+          #[(package, "a", 1), (package, "b", 2), (.config, "b", 3), (package, "c", 4),
+            (.config, "d", 5)]
+        pure
+          (Config.Registry.ownedTable entries (·.1) (·.2) (·.1) ==
+              [("b", 3), ("d", 5), ("a", 1), ("c", 4)] &&
+            Config.Registry.ownedTable (#[] : Array (Config.Owner × String × Nat)) (·.1) (·.2)
+                (·.1) ==
+              []) }]
 
 /-- The invocation of the command `filling name` fills `role` with. -/
 def filled (name : String) (role : Role) : Invocation :=

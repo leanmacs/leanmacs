@@ -152,10 +152,11 @@ def problem? (grammar : Language.Grammar) : Option String :=
     if !(System.FilePath.mk grammar.source.library).isAbsolute then some grammar.relativeLibrary
     else if !grammar.queries.isAbsolute then some grammar.relativeQueries else none
 
-/-- The table of `later`'s declarations over `earlier`'s: `later`'s, in
-order, then `earlier`'s that no declaration of `later` names, in order. -/
+/-- The table of `later`'s declarations over `earlier`'s, by name
+(`Language.overBy`): `later`'s, in order, then `earlier`'s that no
+declaration of `later` names, in order. -/
 def over (later earlier : List Language.Grammar) : List Language.Grammar :=
-  later ++ earlier.filter fun grammar => !later.any (·.name == grammar.name)
+  Language.overBy (·.name) later earlier
 
 /-- The query files read from a declared grammar's directory, each with the
 kind it fills. -/

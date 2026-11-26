@@ -229,8 +229,9 @@ A language (`Editor/Language.lean`) is held by owner like a theme, in a
 the default package `languages`, `packages/languages/`); `setup` registers more with
 `defineLanguage` (`Editor/Setup.lean`). The table a path's language is
 chosen from (`languageTable`) is each owner's entries over the earlier
-owners' (`Language.over`): config's first, in the order it defined them,
-then the packages' it did not replace by name. So config's entry of a
+owners' by name (`ownedTable`, with `Language.overBy`): config's first, in
+the order it defined them, then the packages' it did not replace by name.
+So config's entry of a
 shipped name is used in that one's place until a reload drops it, and the
 loop is told the table (`registered`).
 
@@ -240,7 +241,7 @@ no file name can be meant by (`Language.problems`), is refused.
 A grammar declaration (`Editor/Language/Grammar.lean`) is held by owner the
 same way, in a `GrammarEntry`, replaced as a set (`replaceGrammars`); the
 table (`grammarTable`) is each owner's declarations over the earlier
-owners' by name (`Language.Grammar.over`). Only config declares
+owners' by name, by the same rule (`ownedTable`). Only config declares
 (`defineGrammar`), and a later phase's packages add entries with no new
 mechanism. The loop is told the table (`registered`), and each install
 registers the whole of it (`Editor/Config/Reload.lean`). A `setup` that
@@ -1200,19 +1201,30 @@ def replaceLanguages (registry : Registry) (owner : Owner) (languages : Array La
       registry.languages.filter (·.owner != owner) ++
         languages.map fun language => { owner, language } }
 
-/-- The language table, in precedence order (`Language.forPath`): each
-owner's entries, in order, over the owners' before it (`Language.over`),
-so the latest owner's come first and a name it registers replaces an
-earlier owner's entry of that name whole. -/
-def languageTable (registry : Registry) : List Language :=
+/-- The table of the items of `entries`, each entry's `owner` and `item`:
+each owner's items, in order, over the owners' before it, the owners taken
+in the order they first appear, by `name` (`Language.overBy`). So the
+latest owner's items come first, and a name it gives replaces an earlier
+owner's item of that name whole. The precedence rule of the language and
+grammar tables. -/
+def ownedTable {ε α : Type} (entries : Array ε) (owner : ε → Owner) (item : ε → α)
+    (name : α → String) : List α :=
   let owners :=
-    registry.languages.foldl
-      (fun owners entry => if owners.contains entry.owner then owners else owners.push entry.owner)
+    entries.foldl
+      (fun owners entry =>
+        if owners.contains (owner entry) then owners else owners.push (owner entry))
       #[]
   owners.foldl
-    (fun table owner =>
-      Language.over ((registry.languages.filter (·.owner == owner)).map (·.language)).toList table)
+    (fun table each =>
+      Language.overBy name ((entries.filter (owner · == each)).map item).toList table)
     []
+
+/-- The language table, in precedence order (`Language.forPath`): each
+owner's entries over the owners' before it (`ownedTable`), so the latest
+owner's come first and a name it registers replaces an earlier owner's
+entry of that name whole. -/
+def languageTable (registry : Registry) : List Language :=
+  ownedTable registry.languages (·.owner) (·.language) (·.name)
 
 /-- `registry` with every grammar entry of `owner` removed and `grammars`
 added as its grammar entries, in their order. -/
@@ -1223,19 +1235,11 @@ def replaceGrammars (registry : Registry) (owner : Owner) (grammars : Array Lang
       registry.grammars.filter (·.owner != owner) ++
         grammars.map fun grammar => { owner, grammar } }
 
-/-- The grammar table: each owner's declarations, in order, over the
-owners' before it (`Language.Grammar.over`), so a name a later owner
-declares replaces an earlier owner's declaration of it. -/
+/-- The grammar table: each owner's declarations over the owners' before
+it (`ownedTable`), so a name a later owner declares replaces an earlier
+owner's declaration of it. -/
 def grammarTable (registry : Registry) : List Language.Grammar :=
-  let owners :=
-    registry.grammars.foldl
-      (fun owners entry => if owners.contains entry.owner then owners else owners.push entry.owner)
-      #[]
-  owners.foldl
-    (fun table owner =>
-      Language.Grammar.over ((registry.grammars.filter (·.owner == owner)).map (·.grammar)).toList
-        table)
-    []
+  ownedTable registry.grammars (·.owner) (·.grammar) (·.name)
 
 /-- The mode called `name`: the latest entry of that name. -/
 def mode? (registry : Registry) (name : String) : Option Mode :=

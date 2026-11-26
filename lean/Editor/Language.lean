@@ -204,11 +204,18 @@ registers (the default package `languages`, `packages/languages/`):
 def modes : Array Mode :=
   #[codeMode]
 
-/-- The table of `later`'s entries over `earlier`'s: `later`'s, in order,
-then `earlier`'s that no entry of `later` names, in order. A later owner's
-entry of a name replaces an earlier owner's whole entry. -/
+/-- The table of `later`'s items over `earlier`'s, each named by `name`:
+`later`'s, in order, then `earlier`'s that no item of `later` names, in
+order. A later owner's item of a name replaces an earlier owner's whole
+item. The rule of the language table (`over`) and of the grammar table
+(`Language.Grammar.over`). -/
+def overBy {α : Type} (name : α → String) (later earlier : List α) : List α :=
+  later ++ earlier.filter fun item => !later.any (name · == name item)
+
+/-- The table of `later`'s entries over `earlier`'s, by name (`overBy`): a
+later owner's entry of a name replaces an earlier owner's whole entry. -/
 def over (later earlier : List Language) : List Language :=
-  later ++ earlier.filter fun language => !later.any (·.name == language.name)
+  overBy (·.name) later earlier
 
 /-- Whether `pattern` is a `.name` pattern equal to `base`. -/
 def Pattern.namesFile (pattern : Pattern) (base : String) : Bool :=

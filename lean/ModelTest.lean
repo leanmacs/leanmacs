@@ -970,7 +970,10 @@ The config session's decisions are tested here too, with no elaborator:
   none registered the core's own, owned by `compiled`; and a job
   registered over an extension point (`Extension.workJob`), kept with its
   point and its owner, whose own work fails saying how it is started and
-  whose work `workWith` makes from the values handed it;
+  whose work `workWith` makes from the values handed it; and the
+  precedence of an owned table (`ownedTable`), which the language and
+  grammar tables share: each owner's items over the owners' before it, by
+  name;
 - `registryHintChecks`: a binding's description on the registry's keymap,
   and its prefix names, by owner, expanded against the leaders in force,
   and two names a scheme's leaders make one prefix, which are refused;
