@@ -39,7 +39,9 @@
 # package compile-api/, which it, workspace/ and project-api/ require),
 # completion at point
 # (at-point/, with at-point-api/), the languages (languages/), then mise as
-# a child's directory environment source (mise/). They register in that order. The core's Lake package
+# a child's directory environment source (mise/), then the login shell as
+# the base of a child's environment in the window mode (login-shell/). They
+# register in that order. The core's Lake package
 # registers no package and has no entry module, since the ex line, the
 # last feature it held, moved out (features-as-packages phase 8). This is
 # also the lakefile a user's
@@ -313,3 +315,19 @@ path = "languages"
 [[require]]
 name = "mise"
 path = "mise"
+
+# The login shell as the base of a child's environment: a default package
+# (process-environment-sources phase 3). It registers a value at the core
+# interface library environment-api's base-source extension point, named
+# login-shell, which in the window mode runs the user's shell as a login
+# shell in the home directory and reads the environment it prints, and
+# chooses it as the default base (`environmentBase`), which config's
+# `environmentBase` overrides; its setting, `LoginShell.timeLimit`, takes
+# the lookup's time limit. The headless mode looks nothing up. Leaving it
+# out means launchd's environment as the base. It registers last, after
+# mise, so no earlier package's order moves, and registers no command. That
+# this set registers it and chooses its base is the standing fixture
+# tests/headless/environment-sources's.
+[[require]]
+name = "login-shell"
+path = "login-shell"

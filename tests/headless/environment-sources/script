@@ -4,12 +4,16 @@
 # it prints must be exactly `expected`. It touches no file and starts no
 # child.
 #
-# The default set registers the mise package's directory source, and nothing
-# else of a child's environment: `layers` says the one source, named mise,
-# at the first of mise's usual places under the home directory `/u`
-# (`Mise.candidates`), skipped with none, in the window mode, and none in the
-# headless mode. A set that drops mise, from its lakefile's requires or its
-# entry modules, says `none` for both.
+# The default set registers the login-shell package's base and chooses it,
+# and the mise package's directory source: `layers` says, in the window mode,
+# the base login-shell, looked up in the home directory `/u` with the shell
+# its probes find, else /bin/zsh (`LoginShell.program`), and the one
+# directory source, named mise, at the first of mise's usual places under
+# `/u` (`Mise.candidates`), skipped with none; in the headless mode, the
+# base inherited (login-shell is chosen, but looks nothing up there) and no
+# directory source. A set that drops mise, from its lakefile's requires or
+# its entry modules, says `none` for the directory sources in both modes; one
+# that drops login-shell says `base inherited` in both.
 reload
 settle
 run layers

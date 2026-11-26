@@ -2237,15 +2237,17 @@ def watchReloadChecks (context : Context) : List Check :=
   [reloadInstallsWatchesNewCheck context, rejectedReloadLeavesOldCheck context]
 
 /-- Runs `check` against a host started on a fresh temporary directory
-holding `files`, with the real elaborator, whose jobs share the environments
+holding `files`, with the real elaborator and `packages`, whose jobs share the environments
 over a reference the check is handed, which reports as the executable's
 host does (`Headless.reportedEnvironments`), and stops the host. The
 directory is removed. -/
 def withEnvironments (context : Context) (files : List (String × String))
-    (check : Session → IO.Ref Process.Environments → Job.Environments → IO Bool) : IO Bool :=
+    (check : Session → IO.Ref Process.Environments → Job.Environments → IO Bool)
+    (packages : Array Package := #[]) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeConfig directory files
-    let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+    let stage ←
+      Stage.new context context.elaborator (Config.Directory.source directory) { packages }
     let state ← IO.mkRef ({} : Process.Environments)
     -- The report goes to the queue the stepped host drains: the stage's.
     let environments :=
@@ -2289,6 +2291,20 @@ def seededEnvironments : Process.Environments :=
       { base := .lookup (EnvironmentApiTest.fakeSource "old" "/bin/old") "/"
         directories := #[EnvironmentApiTest.fakeSource "seed" "/bin/seed"] } }
 
+/-- A package that registers the base `pkg-base`, which looks nothing up in
+the headless mode and is a lookup at `/pkg/bin` in `/` in the window mode,
+and chooses it as its default base. -/
+def defaultBasePackage : Package :=
+  { name := "pkg-base"
+    setup := do
+      Extension.add
+          ({ name := "pkg-base"
+             base := fun
+               | .headless => .inherited
+               | .window _ => .lookup (EnvironmentApiTest.fakeSource "pkg-base" "/pkg/bin") "/" } :
+            EnvironmentApi.BaseSource)
+      environmentBase "pkg-base" }
+
 /-- The name of the base `sources` holds: `inherited`, or its source's. -/
 def baseNameOf (sources : Process.Sources) : String :=
   match sources.base with
@@ -2301,8 +2317,9 @@ reload that installs puts the layers the registry gives
 (`EnvironmentApi.ofRegistry`) in the state every job shares and drops every
 entry, the base's included; a rejected one changes neither; a config that
 chooses a base no source answers to is rejected, with a diagnostic that lists
-the bases, and the base is kept; and a message the environments report is the
-echo of the next scene. -/
+the bases, and the base is kept; a package's default base is installed in
+the host's mode, and config's `inherited` overrides it; and a message the
+environments report is the echo of the next scene. -/
 def environmentHostChecks (context : Context) : List Check :=
   [{  name :=
         "an installed reload whose config registers a directory source puts that source in the host's environments and drops every entry, the base's included; a rejected reload changes neither"
@@ -2350,6 +2367,20 @@ def environmentHostChecks (context : Context) : List Check :=
               lines.contains "reload 2: installed, 1 files, 0 commands" &&
               kept == "old" &&
               chosen == "b" },
+    { name :=
+        "a package's default base, given per mode, is installed per mode: its lookup on a window-mode host, inherited on a headless-mode one, and inherited on the window-mode host once config chooses inherited"
+      run := do
+        let installs (host : Process.Host) (config expected : String) : IO Bool :=
+          withEnvironments context [("init.lean", config)] (packages := #[defaultBasePackage])
+            fun session state _ => do
+            state.set { host }
+            session.ask [.reload]
+            return baseNameOf (← state.get).sources == expected
+        let nothing := "def setup : SetupM Unit := pure ()"
+        let optedOut := "def setup : SetupM Unit := environmentBase \"inherited\""
+        return (← installs (.window (some "/u")) nothing "pkg-base") &&
+            (← installs .headless nothing Process.inheritedName) &&
+            (← installs (.window (some "/u")) optedOut Process.inheritedName) },
     { name := "a failed lookup the host's environments record is the echo of the next scene"
       run :=
         withEnvironments context [] fun session _ environments => do
