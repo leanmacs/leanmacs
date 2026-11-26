@@ -266,19 +266,57 @@ def processEnvironmentChecks : List Check :=
             renewed == some message &&
             found.isNone) },
     { name :=
-        "install takes config's setting as sources and drops every resolved program and every entry, and keeps the mode and the limit"
+        "install of registered layers takes each directory source in the state's mode: one that gives none in the headless mode and a source in the window mode is left out of a headless state and installed on a window state"
+      run :=
+        let windowOnly : Process.Host → Option Process.Source
+          | .headless => none
+          | .window _ => some (fakeSource "first" "/bin/first")
+        let registered : Process.Registered := { directories := #[windowOnly] }
+        let headless := ({} : Process.Environments).install registered
+        let window := ({ host := .window (some "/u") } : Process.Environments).install registered
+        pure
+          (shapeOf headless.sources == (true, #[]) &&
+            shapeOf window.sources == (true, #[("first", .at "/bin/first", #[])])) },
+    { name :=
+        "install with no base (a name nobody registered) keeps the base the state had, and with one installs it"
+      run :=
+        let state : Process.Environments :=
+          { sources := { base := .lookup (fakeSource "old" "/bin/old") "/" } }
+        let kept := state.install { base := none }
+        let chosen :=
+          state.install { base := some fun _ => .lookup (fakeSource "new" "/bin/new") "/n" }
+        pure
+          ((match kept.sources.base with
+            | .lookup source directory => source.name == "old" && directory == "/"
+            | .inherited => false) &&
+            match chosen.sources.base with
+            | .lookup source directory => source.name == "new" && directory == "/n"
+            | .inherited => false) },
+    { name :=
+        "install drops every entry, the base's included, and every resolved program, and keeps the mode and the limit"
       run :=
         let host : Process.Host := .window (some "/u")
         let state : Process.Environments :=
-          { host, limit := 7, sources := (Process.Setting.mise none).sources host
-            programs := #[("mise", some "/m")]
-            entries := #[(.directory "/p" "mise", failedEntry (.signalled 9))] }
-        let ((), after, said) := state.handle (.install .inherited)
+          { host, limit := 7
+            sources :=
+              { base := .lookup (fakeSource "login" "/bin/login") "/"
+                directories := #[fakeSource "first" "/bin/first"] }
+            programs := #[("first", some "/m")]
+            entries :=
+              #[(.base "login", failedEntry (.signalled 9)),
+                (.directory "/p" "first", failedEntry (.signalled 9))] }
+        let after := state.install { base := none, directories := #[fun _ => none] }
         pure
-          (shapeOf after.sources == (true, #[]) && after.host == host && after.limit == 7 &&
-            after.programs.isEmpty &&
+          (after.host == host && after.limit == 7 && after.programs.isEmpty &&
             after.entries.isEmpty &&
-            said.isNone) },
+            after.sources.directories.isEmpty) },
+    { name := "the default registered layers install the inherited base and no directory source"
+      run :=
+        let state : Process.Environments :=
+          { sources :=
+              { base := .lookup (fakeSource "login" "/bin/login") "/"
+                directories := #[fakeSource "first" "/bin/first"] } }
+        pure (shapeOf (state.install {}).sources == (true, #[])) },
     { name := "the policy is the sources, what each resolved to and the limit"
       run :=
         let state : Process.Environments :=
@@ -441,7 +479,7 @@ def environmentLookupChecks : List Check :=
         let once := after (runsOn lakeBuild) model
         let gone := { once with files := withoutFile once.files "/opt/homebrew/bin/mise" }
         let second := after (runsOn inE) gone
-        let installed := { second with environments := second.environments.install .auto }
+        let installed := { second with environments := second.environments.install Process.Setting.auto.registered }
         let third := after (runsOn lakeBuild) installed
         pure
           (second.processes.started ==
@@ -538,7 +576,7 @@ def environmentLookupChecks : List Check :=
         let inD := after (runsOn lakeBuild) model
         let inE := after (runsOn (movedTo lakeBuild "/p/e")) inD
         let installed :=
-          { inE with environments := inE.environments.install (.mise (some "/opt/mise")) }
+          { inE with environments := inE.environments.install (Process.Setting.mise (some "/opt/mise")).registered }
         let again := after (runsOn lakeBuild) installed
         pure
           (inE.processes.started ==
@@ -852,6 +890,26 @@ def environmentLayerChecks : List Check :=
         pure
           (once.processes.started == #[fakeLookup "login" "/" #[]] ++ layeredStarts "/p/d" &&
             twice.processes.started ==
-              once.processes.started ++ #[firstLookup, fakeLookup "second" "/p/d" below, child]) }]
+              once.processes.started ++ #[firstLookup, fakeLookup "second" "/p/d" below, child]) },
+    { name :=
+        "a directory source to be reported when its executable is at none of its candidates says it is not at them once for each directory, runs no lookup, and starts the child as it would have"
+      run :=
+        let candidates : Array System.FilePath := #["/no/a", "/no/b"]
+        let source := { fakeSource "first" "/no/a" with program := .firstOf candidates .report }
+        let model :=
+          layeredModel
+            #[{ command := layeredChild "/p/d", reply := printed "built" },
+              { command := layeredChild "/p/e", reply := printed "built" }]
+            (sources := { directories := #[source] })
+        let once := after (runsOn (layeredChild "/p/d")) model
+        let twice := after (runsOn (layeredChild "/p/d")) once
+        let other := after (runsOn (layeredChild "/p/e")) twice
+        let missing := Process.Failure.missing candidates
+        pure
+          (other.processes.started ==
+              #[layeredChild "/p/d", layeredChild "/p/d", layeredChild "/p/e"] &&
+            other.reported ==
+              #[Process.failureMessage (.directory "/p/d" "first") missing,
+                Process.failureMessage (.directory "/p/e" "first") missing]) }]
 
 end ModelTest

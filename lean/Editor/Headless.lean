@@ -1458,7 +1458,7 @@ def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ
   -- A reload that installs is config's setting of a child's environment,
   -- and drops every directory's cached one.
   if Config.installed effects then
-    collaborators.services.environments.ask (.install (config.registry.environment.getD .auto))
+    collaborators.services.environments.install (config.registry.environment.getD .auto).registered
   let mut running := { running with config }
   for effect in effects do
     match effect with

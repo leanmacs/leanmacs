@@ -438,6 +438,30 @@ structure Sources where
   /-- The directory sources, each set over the ones before it. -/
   directories : Array Source := #[]
 
+/-- The name of the base built into the core, launchd's (`Base.inherited`):
+the base a host installs when no base is chosen, and the one a choice by
+this name gives when no package registers a base of it. -/
+def inheritedName : String :=
+  "inherited"
+
+/-- The layers as the registry gives them, before the host's mode picks
+(`EnvironmentApi.ofRegistry`): the base for each mode, and each directory
+source for each mode. A host installs them at every reload that installs
+(`Environments.install`). -/
+structure Registered where
+  /-- The base for each mode; `none` keeps the base installed before, which
+  is what a name no registered base answers to comes to. -/
+  base : Option (Host → Base) := some fun _ => .inherited
+  /-- The directory sources, in order; one that gives `none` in a mode is
+  left out there. -/
+  directories : Array (Host → Option Source) := #[]
+
+/-- The layers `registered` gives in the mode `host`, with `kept` as the base
+when it names none. -/
+def Registered.sources (registered : Registered) (host : Host) (kept : Base) : Sources :=
+  { base := (registered.base.map (· host)).getD kept
+    directories := registered.directories.filterMap (· host) }
+
 /-- Which lookup an entry belongs to: the cache's key, and what a failure is
 said once for. -/
 inductive Slot where
@@ -499,9 +523,6 @@ inductive EnvironmentRequest where
   | cached (slot : Process.Slot)
   /-- Keep `entry` as the entry of `slot`. -/
   | record (slot : Process.Slot) (entry : Process.Entry)
-  /-- Take `setting` as config's setting, and drop every resolved program
-  and every entry: what a reload that installs does. -/
-  | install (setting : Process.Setting)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each environment request. -/
@@ -510,7 +531,6 @@ def EnvironmentRequest.Reply : EnvironmentRequest → Type
   | .resolved .. => Unit
   | .cached _ => Option Process.Entry
   | .record .. => Unit
-  | .install _ => Unit
 
 namespace Process.Environments
 
@@ -524,6 +544,13 @@ def installSources (state : Environments) (sources : Sources) : Environments :=
 /-- The entry of `slot`, if there is one. -/
 def entry? (state : Environments) (slot : Slot) : Option Entry :=
   (state.entries.find? (·.1 == slot)).map (·.2)
+
+/-- The state after a reload that installs `registered`: its layers in the
+state's mode, the base it had kept when `registered` names none
+(`Registered.sources`), with no resolved program and no entry, the base's
+included (`installSources`). -/
+def install (state : Environments) (registered : Registered) : Environments :=
+  state.installSources (registered.sources state.host state.sources.base)
 
 end Process.Environments
 
@@ -560,10 +587,10 @@ def Setting.sources : Setting → Host → Sources
   | .mise none, host => { directories := #[miseSource (.firstOf host.candidates .report)] }
   | .mise (some path), _ => { directories := #[miseSource (.at path)] }
 
-/-- The state after a reload has installed `setting`: its layers in the
-state's mode (`installSources`). -/
-def Environments.install (state : Environments) (setting : Setting) : Environments :=
-  state.installSources (setting.sources state.host)
+/-- The layers of `setting` as registered layers (interim). -/
+def Setting.registered (setting : Setting) : Registered :=
+  { directories := #[fun host => (setting.sources host).directories[0]?] }
+
 
 end Process
 
@@ -592,7 +619,6 @@ def handle (state : Environments) :
         if state.entry? slot == some entry then none else some (failureMessage slot failure)
       | .variables _ => none
     ((), { state with entries := (state.entries.filter (·.1 != slot)).push (slot, entry) }, said)
-  | .install setting => ((), state.install setting, none)
 
 end Process.Environments
 
