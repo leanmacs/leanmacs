@@ -956,21 +956,18 @@ run = "tools/user-link-check.sh lean"
 # and ffi-test's wiring groups and the window scenarios, contract-test, each
 # linked test's wiring groups, the CLI's runs of the real-thread entries at
 # ffi-test and those at bundle-test over a staged bundle;
-# docs/dev-practices/real-thread-checks.md, "How stress runs the set"), or
-# the suites named (`rust`, `gate-ffi` for the whole of ffi-test), that many
-# times under `2 x cores` `yes` hogs at lowered priority, checks each
-# round's coverage of the wiring set, and prints each suite's passes and
-# coverage's. Run it after `mise run ci` has built everything.
-# `tools/stress-probe.sh` runs first, in about a second: it interrupts and
-# terminates the loop mid-round, on a stand-in suite, and proves that the
-# loop then leaves neither the suite's run nor its guard running; that a
-# run past the limit is killed with its group and fails as a hang; that a
-# run with a hang line fails though it exits 0; that a round which
-# misses an item of the wiring set fails its coverage; that a listing
-# that fails ends the loop before its first round; and that what the loop
-# stages is gone when it ends, and never under its logs.
+# docs/dev-practices/real-thread-checks.md, "How the set runs"), or the
+# suites named (`rust`, `gate-ffi` for the whole of ffi-test), that many
+# times under `2 x cores` `yes` hogs at lowered priority, decides each run
+# by its exit status, and prints each suite's passes. Run it after `mise
+# run ci` has built everything. `tools/stress-probe.sh` runs first, in
+# about a second: it interrupts and terminates the loop mid-round, on a
+# stand-in suite, and proves that the loop then leaves neither the suite's
+# run nor its guard running; that a run past the limit is killed with its
+# group and fails the loop; and that what the loop stages is gone when it
+# ends, and never under its logs.
 [tasks.stress]
-description = "Opt-in, never part of ci: run the wiring set over and over under a CPU load of twice the cores, check each round ran every item of it once, and print each suite's passes and coverage's (tools/stress.sh), after the probe that an interrupted loop leaves nothing running, that a run past its limit or with a hang line fails, that a round missing an item fails its coverage, and that a failed listing ends the loop before its first round (tools/stress-probe.sh). Run after `mise run ci`"
+description = "Opt-in, never part of ci: run the wiring set over and over under a CPU load of twice the cores, each run decided by its exit status, and print each suite's passes (tools/stress.sh), after the probe that an interrupted loop leaves nothing running, that a run past its limit fails, and that what the loop staged is gone when it ends (tools/stress-probe.sh). Run after `mise run ci`"
 run = [
   "sh tools/stress-probe.sh",
   "sh tools/stress.sh",
