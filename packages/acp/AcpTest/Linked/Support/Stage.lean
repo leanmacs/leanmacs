@@ -129,7 +129,7 @@ conversation that no view shows and tells two conversations of one header
 apart; `test-show-conversation <n>`, which shows the buffer of the conversation
 `n` in the focused view; `test-read-only`, which says whether the focused
 buffer is read-only; `test-store`, which says the number of every conversation in the
-store; and `test-to-reachable`, which gives the focused buffer a workspace
+store and of every queue buffer in acp's queue store; and `test-to-reachable`, which gives the focused buffer a workspace
 where commands cannot run. -/
 def probePackage : Package :=
   { name := "acp-test"
@@ -171,7 +171,8 @@ def probePackage : Package :=
           message
               s!"probe: pending {conversation.pending.toList}, turn {conversation.turn}, read-only {readOnly}"
       commandWith storeName fun _ => do
-          message s!"store: {((← Acp.Conversation.conversations).map (·.number)).toList}"
+          message
+              s!"store: {((← Acp.Conversation.conversations).map (·.number)).toList}, queues {(← Acp.Permissions.queueBuffers).toList}"
       commandWith toReachable fun call => do
           discard <| Workspace.register reachable "git@example.invalid:o/r.git"
           Workspace.setBufferWorkspace call.target.window.buffer reachable }

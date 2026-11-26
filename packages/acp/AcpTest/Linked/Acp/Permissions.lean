@@ -325,9 +325,11 @@ def supportingChecks (context : HostContext) (packages : Array Package) : List C
           unless ← exStepped session Acp.Conversation.queueName do
             return false
           let before ← queueLines session
+          let held ← storeProbe session
           session.ask [.run BuffersApi.closeName]
           session.step
           let closed ← queueLines session
+          let dropped ← storeProbe session
           unless ← exStepped session s!"{showConversation} 1" do
             return false
           unless ← prompted session do
@@ -335,9 +337,12 @@ def supportingChecks (context : HostContext) (packages : Array Package) : List C
           let after ← queueLines session
           let text ← conversationText session 1
           saw
-              (before[1]? == some "nothing pending" && closed.isEmpty && after.isEmpty &&
+              (before[1]? == some "nothing pending" && !says held "queues []" &&
+                says dropped "queues []" &&
+                closed.isEmpty &&
+                after.isEmpty &&
                 text.contains pendingRow)
-              s!"before {before}; closed {closed}; after {after}; text {text}" }]
+              s!"before {before}; held {held}; dropped {dropped}; closed {closed}; after {after}; text {text}" }]
 
 /-- The checks of the queue, the policy and the audit log through the
 stepped host, over `packages`, the packages the root hands in
