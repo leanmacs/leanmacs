@@ -63,11 +63,12 @@ inductive WiringSet where
 
 /-- A group of a test root's checks, over the root's context `κ` and its
 check type `α`: what the root's check set (`checks : List (CheckGroup κ α)`)
-is made of, and how the stress loop and the gate select the wiring set from
-code (`docs/dev-practices/real-thread-checks.md`, "How stress runs the
-set"). The lists of a module of the wiring set sit in `wired` groups,
-tagged with that module's name and its declaration; every other list sits
-in a `plain` group. The build's `linter.wiringSet` (`lean/Lint/Wiring.lean`)
+is made of, and how a root selects the wiring set from code for its
+wiring mode, which the stress loop runs
+(`docs/dev-practices/real-thread-checks.md`, "How the set runs"). The
+lists of a module of the wiring set sit in `wired` groups, tagged with
+that module's name and its declaration; every other list sits in a
+`plain` group. The build's `linter.wiringSet` (`lean/Lint/Wiring.lean`)
 holds the tags true and complete. Plain data, so this module still imports
 nothing. -/
 inductive CheckGroup (κ α : Type) where
@@ -106,8 +107,7 @@ def mergeInto {κ α : Type} (merged : List (String × (κ → List α))) (modul
 
 /-- The wiring set's modules of `groups`, each once, in the order its first
 group comes, with its checks: the `wired` groups whose set is `.wiring` or
-`.contract`. A module's groups are one entry, its checks in their order, so
-a run prints one line for each module of the wiring set it ran. -/
+`.contract`. A module's groups are one entry, its checks in their order. -/
 def wiring {κ α : Type} (groups : List (CheckGroup κ α)) : List (String × (κ → List α)) :=
   groups.foldl (init := []) fun merged group =>
     match group with
@@ -118,15 +118,6 @@ def wiring {κ α : Type} (groups : List (CheckGroup κ α)) : List (String × (
 It needs no context, so a listing builds no host. -/
 def modules {κ α : Type} (groups : List (CheckGroup κ α)) : List String :=
   (wiring groups).map (·.1)
-
-/-- The line a run prints for each module of the wiring set it ran, as
-`wiring` gives them, over `context`: `wiring-set: ran <root> <module> <n>
-checks`, which the gate's once-check and the stress loop's coverage check
-read (`tools/wiring-ledger.sh`). -/
-def ranLines {κ α : Type} (root : String) (modules : List (String × (κ → List α))) (context : κ) :
-    List String :=
-  modules.map fun (module, checks) =>
-    s!"wiring-set: ran {root} {module} {(checks context).length} checks"
 
 /-- Which checks of a root's check set a run runs: every one, a normal run
 (`all`), or the wiring set's modules' alone (`wiring`), the root's

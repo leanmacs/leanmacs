@@ -69,12 +69,10 @@ the executable. The hosts load no config, so the elaborator is told to
 import `Editor` alone, found in the core's `.olean` directory.
 
 Its checks are a check set (`CompileTest.Linked.checks`, `Editor.CheckGroup`,
-`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+`docs/dev-practices/real-thread-checks.md`, "How the set runs"):
 the lists of its modules of the wiring set in groups of their module, which
-the build's `linter.wiringSet` holds true and complete. A run prints, after
-its count, `wiring-set: ran compile <module> <n> checks` for each module of
-the wiring set it ran, which the gate's once-check reads
-(`tools/wiring-ledger.sh`). With `--wiring` after the two directories it
+the build's `linter.wiringSet` holds true and complete. With `--wiring`
+after the two directories it
 runs those groups alone, the stress loop's `linked-wiring` suite
 (`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
 modules, one a line, building nothing.
@@ -129,8 +127,8 @@ def CompileTest.Linked.checks :
     .plain fun (_, _, fixtures) => CompileTest.projectRunChecks fixtures]
 
 /-- Runs the checks `mode` selects from the check set
-(`Editor.CheckGroup.select`) and says which failed, or how many passed, then a line for each module of the
-wiring set the run ran (`Editor.CheckGroup.ranLines`). The context of the
+(`Editor.CheckGroup.select`) and says which failed, or how many passed.
+The context of the
 hosts is made with `HostContext.run`, as the other linked roots make
 theirs, and the real services the other checks run over are started here
 (`Services.start`), since no host makes the process's table of waits any
@@ -149,10 +147,6 @@ private def CompileTest.Linked.runSelected (sysroot oleans : String)
           IO.eprintln s!"FAILED: {name}"
         if failed.isEmpty then
           IO.println s!"compile linked test: {checks.length} {mode.what} passed"
-        for line in
-          Editor.CheckGroup.ranLines "compile" (Editor.CheckGroup.wiring CompileTest.Linked.checks)
-            (context, services.jobs, fixtures) do
-          IO.println line
         return failed
   (← IO.getStdout).flush
   Editor.Test.Linked.shutdown

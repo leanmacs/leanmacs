@@ -271,15 +271,10 @@ holding the package's `.olean` files, or several joined with `:`
 (`oleanDirs`). With `timings`, it writes there, as each ends, the wall time of the base's
 import and of each check (`timingLine`), a line each, flushed as written, so
 a run that is killed keeps the lines of what had ended: what a guard is
-sized from (`Editor.Test.Linked.hangGuard`). After the checks it prints,
-for each module of the wiring set `wiring` names, the line
-`wiring-set: ran config-test <module> <n> checks`
-(`Editor.CheckGroup.ranLines`), which the gate's once-check and the stress
-loop's coverage read (`tools/wiring-ledger.sh`). -/
+sized from (`Editor.Test.Linked.hangGuard`). -/
 def run (checks : Context → List Check) (sysroot oleanDir : String)
     (syntaxFixtures defaultConfig : System.FilePath) (packages : Array Package)
-    (timings : Option System.FilePath := none)
-    (wiring : List (String × (Context → List Check)) := []) : IO UInt8 := do
+    (timings : Option System.FilePath := none) : IO UInt8 := do
   let timed ←
     match timings with
     | some file =>
@@ -315,8 +310,6 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
       let failed ← timedFailures checks clock timed
       for name in failed do
         IO.eprintln s!"FAILED: {name}"
-      for line in CheckGroup.ranLines "config-test" wiring context do
-        IO.println line
       unless failed.isEmpty do
         return 1
       IO.println s!"config-test: {checks.length} checks passed"

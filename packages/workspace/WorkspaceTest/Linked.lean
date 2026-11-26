@@ -55,12 +55,10 @@ imports the base's modules from their `.olean` files at runtime, and each
 must already be linked into the executable.
 
 Its checks are a check set (`WorkspaceTest.Linked.checks`, `Editor.CheckGroup`,
-`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+`docs/dev-practices/real-thread-checks.md`, "How the set runs"):
 the lists of its modules of the wiring set in groups of their module, which
-the build's `linter.wiringSet` holds true and complete. A run prints, after
-its count, `wiring-set: ran workspace <module> <n> checks` for each module of
-the wiring set it ran, which the gate's once-check reads
-(`tools/wiring-ledger.sh`). With `--wiring` after the two directories it
+the build's `linter.wiringSet` holds true and complete. With `--wiring`
+after the two directories it
 runs those groups alone, the stress loop's `linked-wiring` suite
 (`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
 modules, one a line, building nothing.
@@ -101,8 +99,7 @@ def WorkspaceTest.Linked.checks :
 
 /-- Runs the checks `mode` selects from the check set
 (`Editor.CheckGroup.select`) over the real services, started here, and says
-which failed, or how many passed; then a line for each module of the wiring
-set the run ran (`Editor.CheckGroup.ranLines`). -/
+which failed, or how many passed. -/
 private def WorkspaceTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : IO UInt32 := do
   let workspaces ← IO.FS.realPath workspaceFixtures
   let completion ← IO.FS.realPath completionFixtures
@@ -114,10 +111,6 @@ private def WorkspaceTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : I
     IO.eprintln s!"FAILED: {name}"
   if failed.isEmpty then
     IO.println s!"workspace linked test: {checks.length} {mode.what} passed"
-  for line in
-    Editor.CheckGroup.ranLines "workspace" (Editor.CheckGroup.wiring WorkspaceTest.Linked.checks)
-      context do
-    IO.println line
   (← IO.getStdout).flush
   Editor.Test.Linked.shutdown
   IO.Process.exit (if failed.isEmpty then 0 else 1)

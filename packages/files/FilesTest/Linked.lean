@@ -54,12 +54,9 @@ at runtime, and each must already be linked into the executable. The
 config the hosts load names no declaration of this package.
 
 Its checks are a check set (`FilesTest.Linked.checks`, `Editor.CheckGroup`,
-`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+`docs/dev-practices/real-thread-checks.md`, "How the set runs"):
 the wiring set's lists in groups of their module, which the build's
-`linter.wiringSet` holds true and complete. A run prints, after its count,
-`wiring-set: ran files <module> <n> checks` for each module of the wiring
-set it ran, which the gate's once-check reads (`tools/wiring-ledger.sh`).
-With `--wiring` after the two directories it runs those groups alone, the
+`linter.wiringSet` holds true and complete. With `--wiring` after the two directories it runs those groups alone, the
 stress loop's `linked-wiring` suite (`tools/package-set.sh run --wiring`),
 and `wiring-modules` prints their modules, one a line, building no host.
 
@@ -102,8 +99,7 @@ def FilesTest.Linked.checks :
 
 /-- Runs the checks `mode` selects from the check set
 (`Editor.CheckGroup.select`), over the harness's context, and says which
-failed, or how many passed; then a line for each module of the wiring set
-the run ran (`Editor.CheckGroup.ranLines`). -/
+failed, or how many passed. -/
 private def FilesTest.Linked.runSelected (sysroot oleans : String) (mode : Editor.CheckGroup.Mode) :
     IO UInt32 := do
   let failed ←
@@ -114,10 +110,6 @@ private def FilesTest.Linked.runSelected (sysroot oleans : String) (mode : Edito
           IO.eprintln s!"FAILED: {name}"
         if failed.isEmpty then
           IO.println s!"files linked test: {checks.length} {mode.what} passed"
-        for line in
-          Editor.CheckGroup.ranLines "files" (Editor.CheckGroup.wiring FilesTest.Linked.checks)
-            context do
-          IO.println line
         return failed
   (← IO.getStdout).flush
   Editor.Test.Linked.shutdown

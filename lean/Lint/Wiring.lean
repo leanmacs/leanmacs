@@ -6,9 +6,9 @@ import Lint.Marks
 `linter.wiringSet`: a test root's checks of the wiring set are selected from
 code, by the root's check set (`checks : List (Editor.CheckGroup κ α)`,
 `Editor/RealHost.lean`), and this linter holds that selection true and
-complete, so the gate's once-check and the stress loop's coverage
-(`docs/dev-practices/real-thread-checks.md`, "How stress runs the set")
-read a list no one keeps by hand. A module of the wiring set is one that
+complete, so a root's normal run and its wiring mode, which the stress
+loop runs (`docs/dev-practices/real-thread-checks.md`, "How the set
+runs"), select from a list no one keeps by hand. A module of the wiring set is one that
 declares `.wiring` or `.contract` (`wiringSet.<module>`, read as
 `Lint/Marks.lean` reads it); a check of a root's check type `α` is a
 constant whose type, after its binders, is `α` or `List α`.
@@ -46,8 +46,7 @@ In a test module (`isTestModule`), it refuses, naming the constant:
   `Editor.CheckGroup.Mode.ofArguments?` or `Editor.CheckGroup.Mode.read?`,
   which read `--wiring`, or `Editor.CheckGroup.Mode.ofSubcommand?`, which
   reads ffi-test's subcommand `wiring`. A reference to the wiring groups
-  alone (`Editor.CheckGroup.wiring`, which the count lines of
-  `Editor.CheckGroup.ranLines` take) is no wiring mode, and the mode
+  alone (`Editor.CheckGroup.wiring`) is no wiring mode, and the mode
   `Editor.CheckGroup.Mode.wiring` named is no reading of it: a root that
   reads `--wiring` itself, and runs the wiring groups or selects by the
   mode it maps it to, is refused.

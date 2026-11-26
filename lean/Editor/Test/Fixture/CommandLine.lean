@@ -9,15 +9,18 @@ repository's root, and what to do:
 - `run <root>...`: discover the fixtures of each root and run each stepped,
   but those the real-thread set leaves to the CLI;
 - `compared`: print the runner entries of the real-thread set, one a line,
-  as `<script>\t<config>\t<expected>`, for `tools/fixture-compare.sh`;
+  as `<script>\t<config>\t<expected>`, for `case_compare` in
+  `tools/wiring-runs.sh`, which runs each through the CLI;
 - `compare <script> <file>`: run the fixture of `script` stepped and compare
-  it with the CLI's output in `file`, both ways, and with its expected file.
+  it with the CLI's output in `file`, both ways, and with its expected file,
+  exiting 1 on a difference; `case_compare` hands it each CLI run.
 
 `real-thread [--site <prefix>]`, alone on the command line, needs no
 toolchain: it prints the real-thread set's entries, all or those whose site
-begins with `prefix`, as `<script>\t<site>` (`RealThread.listed`), for the
-gate's once-check and the stress loop (`tools/wiring-runs.sh`,
-`tools/bundle-test.sh`, `tools/wiring-ledger.sh`).
+begins with `prefix`, as `<script>\t<site>` (`RealThread.listed`), for
+reviewers holding each entry to its run in `tools/wiring-runs.sh` or
+`tools/bundle-test.sh` (`.agents/rules/structure.md`, "The wiring set's
+runs").
 
 Pure: model-test pins it (`ModelTest/Editor/Test/Fixture/CommandLine.lean`).
 -/

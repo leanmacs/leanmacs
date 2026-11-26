@@ -1,4 +1,0 @@
-config-test ConfigTest.Editor.Job.Real
-contract-test ContractTest
-tests/headless/dispatch/script at ffi-test
-window-host at ffi-test

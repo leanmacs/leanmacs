@@ -79,39 +79,8 @@ env = { RUSTDOCFLAGS = "-D rustdoc::broken_intra_doc_links" }
 run = "cargo doc --workspace --no-deps --document-private-items --locked"
 
 [tasks.test]
-description = "Rust unit, integration and doc tests, and the decision of which crates the pre-commit hook's Rust step runs over (tools/rust-targets.sh)"
-run = [
-  "cargo test --workspace --locked",
-  # What the pre-commit hook's Rust step runs for a staged change
-  # (tools/rust-targets.sh; docs/dev-practices/the-gate.md, "The pre-commit
-  # hook"), decided over a crate graph written by hand
-  # (tests/rust-targets/graph, its crates under /repo): for each case under
-  # tests/rust-targets/cases/, the decision for the staged paths `paths`
-  # must be exactly `expected`: a crate and every crate that depends on it,
-  # the whole workspace for any other path the step reads, or nothing.
-  "for case in leaf depended prefix nested outer crate-manifest crate-clippy package-crate lock root-manifest mise rust-outside tooling fixtures workspace-wins docs-only two-crates; do c=tests/rust-targets/cases/$case; out=$(sh tools/rust-targets.sh --lines tests/rust-targets/graph --root /repo $(cat \"$c/paths\")) || { echo \"test: rust-targets failed on the case $case\"; exit 1; }; { if [ -n \"$out\" ]; then printf '%s\\n' \"$out\"; fi; } | diff \"$c/expected\" - || { echo \"test: rust-targets decided otherwise on the case $case\"; exit 1; }; done",
-  # And it cannot pass by deciding over nothing: a graph of lines not of
-  # three fields, with a dependency that is no line, or holding no line,
-  # is exit 2 with the message beside it (tests/rust-targets/bad/), and so
-  # is a command line with no path. Their output is shown only when it is
-  # not that.
-  "for bad in two-fields unknown-dep empty; do b=tests/rust-targets/bad/$bad; status=0; out=$(sh tools/rust-targets.sh --lines \"$b/graph\" --root /repo crates/b/src/lib.rs 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF \"$(cat \"$b/message\")\"; } || { printf '%s\\n' \"$out\"; echo \"test: rust-targets exited $status on tests/rust-targets/bad/$bad\"; exit 1; }; done",
-  "status=0; out=$(sh tools/rust-targets.sh --lines tests/rust-targets/graph --root /repo 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'no path'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  # What the hook's Rust step then runs (tools/rust-hook.sh), with
-  # `--dry-run`, which prints each command instead of running it, over the
-  # same graph: for a crate no crate depends on, a crate others depend on,
-  # the workspace and docs alone, the decision and the commands must be
-  # exactly the case's `hook-expected`.
-  "for case in leaf depended lock docs-only; do c=tests/rust-targets/cases/$case; out=$(sh tools/rust-hook.sh --dry-run --lines tests/rust-targets/graph --root /repo $(cat \"$c/paths\")) && printf '%s\\n' \"$out\" | diff \"$c/hook-expected\" - || { echo \"test: rust-hook would run otherwise on the case $case\"; exit 1; }; done",
-  # Then on Cargo's real graph: every crate of the workspace is one the
-  # hook targets, a file in its directory reaching that crate, not the
-  # workspace and not nothing; and a change to `editor-service` reaches it
-  # and the crates that depend on it, `editor-ffi` and the fixture
-  # package's `echo-service`, and no other. A crate whose directory were
-  # outside the repository would fail here rather than be skipped.
-  "n=0; f=$(mktemp) && trap 'rm -f \"$f\"' EXIT && sh tools/rust-targets.sh --print-graph > \"$f\" && root=$(git rev-parse --show-toplevel) && tab=$(printf '\\t') && while IFS=$tab read -r name dir deps; do out=$(sh tools/rust-targets.sh --lines \"$f\" --root \"$root\" \"${dir#\"$root\"/}/src/lib.rs\") && printf '%s\\n' \"$out\" | grep -qxF \"crate $name\" || { printf '%s\\n' \"$out\"; echo \"test: a file in the directory of $name does not reach $name\"; exit 1; }; n=$((n + 1)); done < \"$f\" && test \"$n\" -gt 0 || { echo \"test: the hook targets $n crates of the workspace\"; exit 1; }",
-  "test \"$(sh tools/rust-targets.sh crates/editor-service/src/lib.rs | sort | tr '\\n' ' ')\" = 'crate echo-service crate editor-ffi crate editor-service ' || { sh tools/rust-targets.sh crates/editor-service/src/lib.rs; echo 'test: rust-targets did not reach editor-service and its dependents alone'; exit 1; }",
-]
+description = "Rust unit, integration and doc tests"
+run = "cargo test --workspace --locked"
 
 # The model tests: editor logic run in Lean alone, against hand-written fakes
 # and the pure models of the editor's ports (lean/ModelTest.lean and
@@ -132,7 +101,7 @@ run = [
 # jobs wait from read it as Lean's runtime does (`Pool.expected`): they pass
 # under a bare `lake test` whatever the variable says.
 [tasks.lean-test]
-description = "Run the Lean model tests with `lake test` and the build's linters' checks with `lake exe lint-test`, and those of each package of the fixture set, the default packages (the shipped themes, the compile mode) among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
+description = "Run the Lean model tests with `lake test` and the build's linters' checks with `lake exe lint-test`, and those of each package of the fixture set, the default packages (the shipped themes, the compile mode) among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh); and tools/package-set.sh's `--no-linked` on stand-ins, by its exit status"
 dir = "lean"
 run = [
   # The stand-in for CI's elan that `user-sets-test` and `user-sets-check`
@@ -142,55 +111,6 @@ run = [
   # under must exit 0. Its output is shown only when it does not.
   "status=0; out=$(sh ../tools/home-bound-toolchain.sh sh -c 'HOME=/nonexistent lake --version' 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qF 'home-bound-toolchain: lake run with HOME=/nonexistent'; } || { printf '%s\\n' \"$out\"; echo \"lean-test: home-bound-toolchain exited $status on a moved HOME\"; exit 1; }",
   "out=$(sh ../tools/home-bound-toolchain.sh lake --version 2>&1) || { printf '%s\\n' \"$out\"; echo 'lean-test: home-bound-toolchain failed under its own HOME'; exit 1; }",
-  # The decision both pre-commit hooks share (tools/graph-targets.sh;
-  # docs/dev-practices/the-gate.md, "The pre-commit hook"): which nodes of
-  # a graph the staged paths reach, over a graph written by hand
-  # (tests/graph-targets/graph, its nodes under /repo). For each case
-  # under tests/graph-targets/cases/, the decision must be exactly
-  # `expected`: a path in a node's directory reaches that node and, when
-  # the node propagates, every node that requires it, directly or through
-  # any other; any other path reaches the fallback. And it cannot pass by
-  # deciding over nothing: each graph under tests/graph-targets/bad/ is
-  # exit 2 with the message beside it. The adapters' own cases below
-  # (tests/hook-targets/, and tests/rust-targets/ in `test`) hold their
-  # graphs and relevance rules to it.
-  "for case in propagates stops through prefix nested fallback fallback-wins union order; do c=../tests/graph-targets/cases/$case; out=$(sh ../tools/graph-targets.sh --lines ../tests/graph-targets/graph --root /repo --fallback all --label node $(cat \"$c/paths\")) || { echo \"lean-test: graph-targets failed on the case $case\"; exit 1; }; { if [ -n \"$out\" ]; then printf '%s\\n' \"$out\"; fi; } | diff \"$c/expected\" - || { echo \"lean-test: graph-targets decided otherwise on the case $case\"; exit 1; }; done",
-  "for bad in three-fields bad-propagates unknown-require empty; do b=../tests/graph-targets/bad/$bad; status=0; out=$(sh ../tools/graph-targets.sh --lines \"$b/graph\" --root /repo --fallback all --label node a/mid/X 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF \"$(cat \"$b/message\")\"; } || { printf '%s\\n' \"$out\"; echo \"lean-test: graph-targets exited $status on tests/graph-targets/bad/$bad\"; exit 1; }; done",
-  "status=0; out=$(sh ../tools/graph-targets.sh --lines ../tests/graph-targets/graph --root /repo --fallback all --label node 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'no path'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  # What the pre-commit hook runs for a staged change (tools/hook-targets.sh;
-  # docs/dev-practices/the-gate.md, "The pre-commit hook"), decided over a
-  # package graph written by hand (tests/hook-targets/graph, its packages
-  # under /repo): for each case under tests/hook-targets/cases/, the
-  # decision for the staged paths `paths` must be exactly `expected`: a
-  # package's own checks, those of an interface package and every package
-  # that requires it, directly or not, the core's for any other
-  # Lean-relevant path, or nothing for a change no Lean step reads. Lake is
-  # not asked and nothing is built.
-  "for case in impl-only interface order prefix nested core core-wins docs-only set-files set-manifest core-fixture tooling rust-outside rust-inside new-package two-packages docs-package; do c=../tests/hook-targets/cases/$case; out=$(sh ../tools/hook-targets.sh --lines ../tests/hook-targets/graph --root /repo $(cat \"$c/paths\")) || { echo \"lean-test: hook-targets failed on the case $case\"; exit 1; }; { if [ -n \"$out\" ]; then printf '%s\\n' \"$out\"; fi; } | diff \"$c/expected\" - || { echo \"lean-test: hook-targets decided otherwise on the case $case\"; exit 1; }; done",
-  # And it cannot pass by deciding over nothing: a graph of lines not of
-  # four fields, with a layer it does not know, requiring a package that is
-  # no line, or holding no line, is exit 2 with the message beside it
-  # (tests/hook-targets/bad/), and so is a command line with no path or an
-  # option it does not take. Their output is shown only when it is not that.
-  "for bad in three-fields bad-layer unknown-require empty; do b=../tests/hook-targets/bad/$bad; status=0; out=$(sh ../tools/hook-targets.sh --lines \"$b/graph\" --root /repo tests/packages/impl-a/ImplA.lean 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF \"$(cat \"$b/message\")\"; } || { printf '%s\\n' \"$out\"; echo \"lean-test: hook-targets exited $status on tests/hook-targets/bad/$bad\"; exit 1; }; done",
-  "status=0; out=$(sh ../tools/hook-targets.sh --lines ../tests/hook-targets/graph --root /repo 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'no path'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  "status=0; out=$(sh ../tools/hook-targets.sh --graph ../tests/hook-targets/graph lean/X.lean 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage:'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  # What the hook's Lean step then runs (tools/lean-hook.sh), with
-  # `--dry-run`, which prints each command instead of running it, over the
-  # same graph: for one implementation package, an interface package, the
-  # core and docs alone, the decision and the commands must be exactly the
-  # case's `hook-expected`. And what a package-targeted commit runs
-  # (tools/lean-packages.sh, the `lean-packages` task): for `compile`, a
-  # default package, and `greeting`, a fixture package, exactly
-  # tests/hook-targets/lean-packages/compile-expected, whose last two
-  # commands build the default set's editor and its fixture harness and
-  # run `compile` over it;
-  # for `greeting` alone, exactly greeting-expected, which never names the
-  # default set. It asks Lake for the default set's packages and builds
-  # nothing. With no name it is exit 2.
-  "for case in impl-only interface core docs-only; do out=$(cd .. && sh tools/lean-hook.sh --dry-run --lines tests/hook-targets/graph --root /repo $(cat \"tests/hook-targets/cases/$case/paths\")) && printf '%s\\n' \"$out\" | diff \"../tests/hook-targets/cases/$case/hook-expected\" - || { echo \"lean-test: lean-hook would run otherwise on the case $case\"; exit 1; }; done",
-  "for names in 'compile greeting' greeting; do out=$(sh ../tools/lean-packages.sh --dry-run $names) && printf '%s\\n' \"$out\" | diff \"../tests/hook-targets/lean-packages/${names%% *}-expected\" - || { echo \"lean-test: lean-packages would run otherwise for $names\"; exit 1; }; done",
-  "status=0; out=$(sh ../tools/lean-packages.sh --dry-run 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'names no package'; } || { printf '%s\\n' \"$out\"; exit 1; }",
   'PATH="$PWD/no-cargo:$PATH" lake test --wfail',
   # The checks of the build's linters (lean/LintTest.lean), which import the
   # linters and so are a test executable of their own: model-test links no
@@ -225,13 +145,58 @@ run = [
   # tests/empty-set requires the core alone, so it holds no package and the
   # step must exit 2, saying so. Its output is shown only when it does not.
   "status=0; out=$(sh ../tools/package-set.sh test ../tests/empty-set 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -q 'names no package of the set'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  # With `--only`, a step runs over the named packages of the set alone,
-  # as the pre-commit hook asks for (tools/lean-hook.sh): told `greeting`,
-  # the test step tests `greeting` and no other package. A name that is no
-  # package of the set is exit 2, naming it, so a misspelt name cannot pass
-  # by running over nothing. Their output is shown only when it is not that.
-  "out=$(PATH=\"$PWD/no-cargo:$PATH\" sh ../tools/package-set.sh --only greeting test ../tests/packages 2>&1) && test \"$(printf '%s\\n' \"$out\" | grep '^package-set: test ')\" = \"package-set: test greeting ($(cd ../tests/packages/greeting && pwd))\" || { printf '%s\\n' \"$out\"; echo 'lean-test: package-set --only greeting did not test greeting alone'; exit 1; }",
-  "status=0; out=$(sh ../tools/package-set.sh --only greeting --only nosuch test ../tests/packages 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'nosuch is no package of the set'; } || { printf '%s\\n' \"$out\"; exit 1; }",
+  # `run --no-linked` (tools/package-set.sh), which ffi-test gives the
+  # default set so that no linked test runs twice, shown on stand-ins in a
+  # temporary directory by exit status alone; it builds nothing and needs no
+  # build. A stand-in `lake`, first on the PATH, names for the set `fails`
+  # one package, `p`, whose linked test is a stand-in that exits 3 and which
+  # has one headless fixture, run by a stand-in harness that passes and
+  # prints the count line `run` requires; for the set `only`, one package,
+  # `q`, with that linked test and no fixture; and passes any other command.
+  # - `run fails` must exit 3: the linked test ran, and its status is the
+  #   step's.
+  # - `--no-linked run fails` must exit 0: the linked test was skipped and
+  #   the fixture ran. Were the skip broken, it would exit 3, as the gate's
+  #   `--no-linked run ../packages` would run each default linked test a
+  #   second time.
+  # - `--no-linked run only` must exit 2: with its linked test skipped, the
+  #   set holds nothing to run (3 were the skip broken, 0 were the empty run
+  #   not refused).
+  # - `--no-linked test fails` must exit 2, a usage error (0 were it taken,
+  #   as the stand-in passes the test), and so must `--wiring --no-linked
+  #   run fails`, though that one would exit 2 as an empty run as well.
+  '''
+dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && dir=$(cd "$dir" && pwd -P) || exit 1
+mkdir -p "$dir/bin" "$dir/oleans" "$dir/fails/.lake/build/bin" "$dir/only" "$dir/p/tests/headless/one/config" "$dir/q" || exit 1
+: >"$dir/p/tests/headless/one/script" && : >"$dir/p/tests/headless/one/expected" || exit 1
+printf '#!/bin/sh\nexit 3\n' >"$dir/linked" || exit 1
+printf '#!/bin/sh\necho "fixture-test: ran 1 fixtures stepped under the stand-in, 0 left to the CLI"\n' >"$dir/fails/.lake/build/bin/fixture-test" || exit 1
+cat >"$dir/bin/lake" <<LAKE || exit 1
+#!/bin/sh
+[ "\$3" = query ] || exit 0
+case \$2 in
+  "$dir/fails") printf 'p\t%s\tPTest.Linked\t%s\n' "$dir/p" "$dir/linked" ;;
+  "$dir/only") printf 'q\t%s\tQTest.Linked\t%s\n' "$dir/q" "$dir/linked" ;;
+  *) exit 2 ;;
+esac
+LAKE
+chmod +x "$dir/bin/lake" "$dir/linked" "$dir/fails/.lake/build/bin/fixture-test" || exit 1
+check() {
+  want=$1
+  shift
+  status=0
+  PATH="$dir/bin:$PATH" sh ../tools/package-set.sh "$@" || status=$?
+  test "$status" -eq "$want" || {
+    echo "lean-test: tools/package-set.sh $* exited $status, not $want" >&2
+    exit 1
+  }
+}
+check 3 run "$dir/fails" "$dir" "$dir/oleans"
+check 0 --no-linked run "$dir/fails" "$dir" "$dir/oleans"
+check 2 --no-linked run "$dir/only" "$dir" "$dir/oleans"
+check 2 --no-linked test "$dir/fails"
+check 2 --wiring --no-linked run "$dir/fails" "$dir" "$dir/oleans"
+''',
 ]
 
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
@@ -318,19 +283,6 @@ run = [
   "sh ../tools/package-set.sh format ../tests/packages",
 ]
 
-# The Lean checks of some packages alone: what the pre-commit hook runs for
-# a staged change that reaches only those packages (tools/lean-hook.sh,
-# which sets LEAN_HOOK_PACKAGES to their names, separated by spaces, from
-# tools/hook-targets.sh; docs/dev-practices/the-gate.md, "The pre-commit
-# hook"). What it runs, and in what order, is tools/lean-packages.sh's,
-# whose `--dry-run` `lean-test` pins. Never part of `ci`: the gate runs
-# every package's checks and the core's, and a commit's targeting never
-# stands in for it.
-[tasks.lean-packages]
-description = "The Lean checks of the packages named in LEAN_HOOK_PACKAGES alone, over the fixture set and, for default packages, the default set: what pre-commit runs for a change that reaches only those packages (tools/lean-hook.sh, tools/lean-packages.sh); never part of ci"
-dir = "lean"
-run = 'sh ../tools/lean-packages.sh ${LEAN_HOOK_PACKAGES:-}'
-
 # Tracked files only, so Lake's fetched packages and build output are never
 # looked at. A new C file is checked once it is `git add`ed. Vendored C
 # (`vendor/`, vendor/README.md) is left out: it is upstream's generated code,
@@ -371,21 +323,13 @@ description = "Build the app's launcher and its test helper, release (crates/edi
 run = "cargo build --quiet --locked --release -p editor-launch-std --bins"
 
 [tasks.ffi-test]
-description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, the headless fixtures under tests/headless on the set's fixture harness, stepped on the fakes, with the real-thread set's CLI runs and the window scenarios, one case each (tools/wiring-runs.sh: the runner's four compared both ways through the CLI, tools/fixture-compare.sh, the others through the CLI, the restart through the launcher), and the linked test and headless fixtures of each package of the fixture set and of the default set, each linked test once (tools/package-set.sh --ledger); and last, that every item of the wiring set the code lists ran exactly once (tools/wiring-ledger.sh)"
+description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, the headless fixtures under tests/headless on the set's fixture harness, stepped on the fakes, with the real-thread set's CLI runs and the window scenarios, one case each (tools/wiring-runs.sh: the runner's four compared both ways through the CLI and fixture-test compare, the others through the CLI, the restart through the launcher), and the linked test and headless fixtures of each package of the fixture set, which names every default package, so each linked test runs once, then the default set's headless fixtures alone (tools/package-set.sh --no-linked)"
 depends = ["lean", "launcher"]
 dir = "lean"
 # Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max), with
 # `bundle-test`'s builds from a staged bundle running beside it.
 timeout = "300s"
 run = [
-  # The wiring set's ledger, under target/ (gitignored build output, which
-  # linux-ci keeps on its own volume): each step below that runs an
-  # executable or a case of the wiring set appends the `wiring-set: ran`
-  # lines it printed (tools/wiring-ledger.sh `note`), and the last step
-  # checks that each item the code lists ran exactly once (AGENTS.md has no
-  # such list: docs/dev-practices/real-thread-checks.md, "How stress runs
-  # the set"). Reset first, so the ledger is this run's.
-  "rm -rf ../target/gate && mkdir -p ../target/gate",
   # The root of the user-side link's fixture set (tests/user-link/): the
   # check that links an editor as a user's Mac would (`mise run
   # user-link-check`, opt-in) stages the root the package-set build
@@ -526,33 +470,10 @@ run = [
   # - tests/rust-bans/peer, whose package `bans-peer`'s crate depends on
   #   `bans-base`'s, holds its entries for the package crates.
   "for s in ffi peer; do dir=$(lake -d ../tests/rust-bans/$s query :editorRustCrate) || exit 1; status=0; out=$(cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" bans 2>&1) || status=$?; test \"$status\" -eq 2 || { printf '%s\\n' \"$out\"; echo \"ffi-test: cargo-deny exited $status over tests/rust-bans/$s, not 2, its status when the bans refuse a crate\"; exit 1; }; done",
-  # The package graph the pre-commit hook decides over
-  # (tools/hook-targets.sh; the facet `editorPackageGraph`;
-  # docs/dev-practices/the-gate.md, "The pre-commit hook"). On the fixture
-  # set, its names, layers and requires must be exactly
-  # tests/hook-targets/fixture-set-graph, in the set's order: `greeting-api`
-  # is the interface package, and `greeting-loud` requires `greeting` and
-  # `greeting-api`, the core not among them. One `lake query`, which builds
-  # nothing.
-  "lake -d ../tests/packages query :editorPackageGraph | cut -f1,2,4 | diff ../tests/hook-targets/fixture-set-graph - || { echo 'ffi-test: editorPackageGraph is not tests/hook-targets/fixture-set-graph'; exit 1; }",
-  # The decision over that graph as the hook asks for it, from Lake and
-  # git: a change to the interface package's module reaches it and the two
-  # packages that require it, and no other.
-  "out=$(sh ../tools/hook-targets.sh ../tests/packages tests/packages/greeting-api/GreetingApi.lean) && test \"$out\" = \"$(printf 'package greeting-api\\npackage greeting\\npackage greeting-loud')\" || { printf '%s\\n' \"$out\"; echo 'ffi-test: hook-targets did not reach greeting-api, greeting and greeting-loud alone'; exit 1; }",
-  # And every package of the set is one the hook targets: a file in its
-  # directory reaches that package, not the core and not nothing. A
-  # package whose directory were outside the repository, or outside the
-  # paths a Lean step reads, would fail here rather than be skipped by the
-  # hook. The graph is asked for once, then decided over with `--lines`;
-  # the count of packages is the count Lake names for the set
-  # (`editorPackages`), so a package added to a set changes no number
-  # here, and only tests/hook-targets/fixture-set-graph pins what the
-  # fixture set holds.
-  "n=0; f=$(mktemp) && trap 'rm -f \"$f\"' EXIT && lake -d ../tests/packages query :editorPackageGraph > \"$f\" && root=$(git rev-parse --show-toplevel) && tab=$(printf '\\t') && while IFS=$tab read -r name layer dir requires; do out=$(sh ../tools/hook-targets.sh --lines \"$f\" --root \"$root\" \"${dir#\"$root\"/}/lakefile.toml\") && printf '%s\\n' \"$out\" | grep -qxF \"package $name\" || { printf '%s\\n' \"$out\"; echo \"ffi-test: a file in the directory of $name does not reach $name\"; exit 1; }; n=$((n + 1)); done < \"$f\" && total=$(lake -d ../tests/packages query :editorPackages | wc -l | tr -d ' ') && test \"$n\" -gt 0 && test \"$n\" -eq \"$total\" || { echo \"ffi-test: the hook targets $n of the ${total:-?} packages Lake names for the fixture set\"; exit 1; }",
   # One of these checks measures the stack the entry point gives Lean's
   # threads, and LEAN_STACK_SIZE_KB overrides that size, so a variable in the
   # developer's shell must not reach it.
-  "env -u LEAN_STACK_SIZE_KB sh ../tools/wiring-ledger.sh note ../target/gate/wiring-ledger .lake/build/bin/ffi-test",
+  "env -u LEAN_STACK_SIZE_KB .lake/build/bin/ffi-test",
   # Arguments reach Lean's `main`, and its result is the exit status.
   "status=0; .lake/build/bin/ffi-test exit 7 || status=$?; test \"$status\" -eq 7",
   # Quit is for good and process-wide, so shutdown has processes of its own.
@@ -577,7 +498,7 @@ run = [
   # on those packages' own fixtures (packages/compile/tests/compile,
   # packages/workspace/tests/workspaces and tests/completion); the shell's
   # run on a rig over fakes, with no fixture.
-  "sh ../tools/wiring-ledger.sh note ../target/gate/wiring-ledger .lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion",
+  ".lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment; its third argument is the directory of the syntax
@@ -588,7 +509,7 @@ run = [
   # build`'s `linter.realHost` confines them to the wiring set's modules
   # (docs/dev-practices/real-thread-checks.md); every other host check runs
   # on a host stepped on its own thread.
-  "sh ../tools/wiring-ledger.sh note ../target/gate/wiring-ledger .lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default",
+  ".lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default",
   # The demonstration. With no arguments the editor is the window mode on
   # an empty buffer, which opens a window, so the gate never runs that.
   "../packages/.lake/build/bin/editor demo",
@@ -604,19 +525,11 @@ run = [
   "out=$(../packages/.lake/build/bin/fixture-test \"$(lean --print-prefix)\" .lake/build/lib/lean --repo .. run ../tests/headless) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; { test \"$(printf '%s\\n' \"$out\" | grep -c ': stepped, as expected$')\" -eq 29 && printf '%s\\n' \"$out\" | grep -qxF 'fixture-test: ran 29 fixtures stepped under tests/headless, 19 left to the CLI'; } || { echo 'ffi-test: the fixture harness did not run the 29 fixtures of tests/headless stepped'; exit 1; }",
   # The CLI's runs over a real loop thread and the window scenarios, the
   # wiring set's (tools/wiring-runs.sh, which holds the lines that were
-  # here, one case each, with their comments): first its cases held to the
-  # code's lists both ways (`fixture-test real-thread --site ffi-test` and
-  # `ffi-test wiring-scenarios`), and the check seen to bite on its
-  # fixtures (tests/wiring-runs); its run seen to fail a case on any step
-  # that fails, not only its last, on the fixture cases in place of its own
-  # (tests/wiring-runs/cases: it must exit 1 naming each case but
-  # `passes`, each key said); then what a case builds staged once, and
-  # every case run once, each saying `wiring-set: ran <key> at ffi-test`
-  # into the ledger.
-  "sh ../tools/wiring-runs.sh check",
-  "sh ../tools/wiring-runs.sh check ../tests/wiring-runs/same >/dev/null && for f in missing:'a case runs window-host-undrawn, which is no entry or scenario of the wiring set' extra:'tests/headless/elsewhere/script is of the wiring set, and no case runs it'; do status=0; out=$(sh ../tools/wiring-runs.sh check ../tests/wiring-runs/${f%%:*} 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF \"wiring-runs: ${f#*:}\"; } || { printf '%s\\n' \"$out\"; echo \"ffi-test: wiring-runs' check did not refuse tests/wiring-runs/${f%%:*}\"; exit 1; }; done",
-  "status=0; out=$(sh ../tools/wiring-runs.sh run --cases ../tests/wiring-runs/cases . 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF 'wiring-runs: failed: first_step middle_command bare_command last_step' && test \"$(printf '%s\\n' \"$out\" | grep -c '^wiring-set: ran fixture/')\" -eq 5; } || { printf '%s\\n' \"$out\"; echo \"ffi-test: wiring-runs' run did not fail each case of tests/wiring-runs/cases that has a failing step\"; exit 1; }",
-  "dir=$(mktemp -d) && trap 'chmod -R u+w \"$dir\" 2>/dev/null; rm -rf \"$dir\"' EXIT && sh ../tools/wiring-runs.sh prepare \"$dir\" && sh ../tools/wiring-ledger.sh note ../target/gate/wiring-ledger sh ../tools/wiring-runs.sh run \"$dir\"",
+  # here, one case each, with their comments): what a case builds staged
+  # once, then every case run once, each passing or failing by its status.
+  # That each entry at ffi-test and each scenario has its case is a
+  # reviewer rule (.agents/rules/structure.md, "The wiring set's runs").
+  "dir=$(mktemp -d) && trap 'chmod -R u+w \"$dir\" 2>/dev/null; rm -rf \"$dir\"' EXIT && sh ../tools/wiring-runs.sh prepare \"$dir\" && sh ../tools/wiring-runs.sh run \"$dir\"",
   # The old form (tests/config-migrate): a config directory of files in byte
   # order with no header is refused, with a diagnostic that names the files
   # and `mise run config-migrate`; a copy that tools/config-migrate.sh
@@ -684,49 +597,15 @@ run = [
   # line on stderr that starts `editor: ` and says why. No file of that name
   # is checked in.
   "status=0; err=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/no-such-script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 1 && test \"${err#editor: }\" != \"$err\"",
-  # The linked tests and headless fixtures of the fixture set, then of the
-  # default set (tools/package-set.sh), with one ledger of linked tests
-  # between them (`--ledger`): the fixture set requires the default set,
-  # and both name the same executable for each default package's linked
-  # test, so the first run runs every linked test and the second runs
-  # none again, each saying it already ran in this gate, while each set's
-  # headless fixtures run on its own editor. Each linked test's
-  # `wiring-set: ran` lines go into the ledger.
-  "l=$(mktemp) && trap 'rm -f \"$l\"' EXIT && out=$(sh ../tools/package-set.sh --ledger \"$l\" run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; { printf '%s\\n' \"$out\" | grep '^wiring-set: ran ' >>../target/gate/wiring-ledger || true; }; for line in 'package-set: linked test ExTest.Linked of ex' 'ex linked test: 8 checks passed' 'package-set: linked test EvilTest.Linked of evil' 'evil linked test: 12 checks passed' 'package-set: linked test ThemesTest.Linked of themes' 'themes linked test: 3 checks passed' 'package-set: linked test FilesTest.Linked of files' 'files linked test: 23 checks passed' 'package-set: linked test WorkspaceTest.Linked of workspace' 'workspace linked test: 19 checks passed' 'package-set: linked test ProjectSearchTest.Linked of project-search' 'project-search linked test: 1 checks passed' 'package-set: linked test WorkingSetTest.Linked of working-set' 'working-set linked test: 1 checks passed' 'package-set: linked test ShellTest.Linked of shell' 'shell linked test: 2 checks passed' 'package-set: linked test VersionControlTest.Linked of version-control' \"version-control linked test: 12 checks passed, the contract's 66 properties in 8 lanes\" 'package-set: linked test GreetingTest.Linked of greeting' 'greeting linked test: the Rust library holds \"hello from the greeting package!\"' 'greeting linked test: config bound a key to greeting-hello and the config session ran it' 'package-set: headless fixture hello of greeting' 'package-set: headless fixture reply of greeting-loud' 'package-set: linked test EchoTest.Linked of echo' \"echo linked test: the contract's 7 properties hold on the Rust-backed binding, each request completed through the completion queue\" 'package-set: linked test CompletionTest.Linked of completion' 'completion linked test: 6 checks passed' 'package-set: headless fixture completion-choices of completion' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes' \"shipped-themes linked test: solarized-dark, solarized-light and fairy-floss match their reference images; in each the paper, the cursor and the text carry the palette's colours; the picture of solarized-light is not the reference of solarized-dark\" 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile' 'compile linked test: 8 checks passed' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture candidates of minibuffer' 'package-set: headless fixture prompt of minibuffer' 'package-set: headless fixture command-prompt of execute-command' 'package-set: headless fixture binding-search of binding-search' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture at-point of at-point' 'package-set: headless fixture at-point-tuned of at-point' 'package-set: headless fixture as-config of word-count' 'package-set: headless fixture count of word-count' 'package-set: headless fixture from-config of word-count' 'package-set: ran 14 linked tests (0 already ran) and 20 headless fixtures over 48 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps did not print: $line\"; exit 1; }; done; out=$(sh ../tools/package-set.sh --ledger \"$l\" run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; { printf '%s\\n' \"$out\" | grep '^wiring-set: ran ' >>../target/gate/wiring-ledger || true; }; for line in 'package-set: linked test ExTest.Linked of ex already ran in this gate' 'package-set: linked test EvilTest.Linked of evil already ran in this gate' 'package-set: linked test ThemesTest.Linked of themes already ran in this gate' 'package-set: linked test FilesTest.Linked of files already ran in this gate' 'package-set: linked test WorkspaceTest.Linked of workspace already ran in this gate' 'package-set: linked test ProjectSearchTest.Linked of project-search already ran in this gate' 'package-set: linked test WorkingSetTest.Linked of working-set already ran in this gate' 'package-set: linked test ShellTest.Linked of shell already ran in this gate' 'package-set: linked test VersionControlTest.Linked of version-control already ran in this gate' 'package-set: linked test CompletionTest.Linked of completion already ran in this gate' 'package-set: headless fixture completion-choices of completion' 'package-set: linked test ShippedThemesTest.Linked of shipped-themes already ran in this gate' 'package-set: headless fixture load-theme of shipped-themes' 'package-set: headless fixture package-names of shipped-themes' 'package-set: headless fixture shipped-themes of shipped-themes' 'package-set: headless fixture themes of shipped-themes' 'package-set: linked test CompileTest.Linked of compile already ran in this gate' 'package-set: headless fixture config of compile' 'package-set: headless fixture ex-names of compile' 'package-set: headless fixture mode-line of mode-line' 'package-set: headless fixture candidates of minibuffer' 'package-set: headless fixture prompt of minibuffer' 'package-set: headless fixture command-prompt of execute-command' 'package-set: headless fixture binding-search of binding-search' 'package-set: headless fixture shipped-formats of compile' 'package-set: headless fixture at-point of at-point' 'package-set: headless fixture at-point-tuned of at-point' 'package-set: ran 0 linked tests (12 already ran) and 15 headless fixtures over 43 packages'; do printf '%s\\n' \"$out\" | grep -qxF \"$line\" || { echo \"ffi-test: the package steps over the default set did not print: $line\"; exit 1; }; done",
-  # The ledger of `package-set.sh run`: a second run of greeting's linked
-  # test with the same ledger says it already ran and does not start it, as
-  # the absence of its `greeting linked test:` lines shows.
-  "l=$(mktemp) && trap 'rm -f \"$l\"' EXIT && sh ../tools/package-set.sh --only greeting --ledger \"$l\" run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean >/dev/null && out=$(sh ../tools/package-set.sh --only greeting --ledger \"$l\" run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean) && printf '%s\\n' \"$out\" | grep -qxF 'package-set: linked test GreetingTest.Linked of greeting already ran in this gate' && ! printf '%s\\n' \"$out\" | grep -q '^greeting linked test:' || { printf '%s\\n' \"$out\"; echo 'ffi-test: a second run with the same ledger ran the greeting linked test again'; exit 1; }",
-  # With `--only`, `run` runs over the named packages alone, and still
-  # refuses to run nothing: the interface package `greeting-api` has no
-  # linked test and no headless fixture, so `--only greeting-api` is exit
-  # 2, unless the caller says with `--allow-empty-run` that running nothing
-  # is what it means, as the pre-commit hook does for a change to an
-  # interface package; the gate never says it. Their output is shown only
-  # when it is not that.
-  "status=0; out=$(sh ../tools/package-set.sh --only greeting-api run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'nothing to run'; } || { printf '%s\\n' \"$out\"; exit 1; }",
-  "out=$(sh ../tools/package-set.sh --only greeting-api --allow-empty-run run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean 2>&1) && printf '%s\\n' \"$out\" | grep -qxF 'package-set: ran 0 linked tests and 0 headless fixtures over 1 package' || { printf '%s\\n' \"$out\"; exit 1; }",
-  # `run --wiring`, the stress loop's `linked-wiring`, on stand-ins, so the
-  # gate holds the branch though it runs no real root's wiring mode
-  # (tools/package-set-probe.sh, under a second): a linked test that
-  # holds a module of the wiring set is handed `--wiring` and its lines
-  # passed through, one that holds none is skipped, saying so, no headless
-  # fixture runs, and a linked test that does not answer `wiring-modules`
-  # fails the step.
-  "sh ../tools/package-set-probe.sh",
-  # The wiring set's ledger checked, last: its check refuses a repeat, a
-  # gap and an item no list names on its fixtures (tests/wiring-ledger),
-  # and its listings fail, naming the command, when one of them fails, and
-  # lose no key when none does, on stand-in listings
-  # (tools/wiring-ledger-probe.sh, under a second); and then every item the
-  # code lists (tools/wiring-ledger.sh
-  # `expected`: config-test's, ffi-test's and each linked test's
-  # `wiring-modules`, contract-test's root, the real-thread entries at
-  # ffi-test and ffi-test's scenarios) must have run exactly once in this
-  # run (AC2 of host-tests-on-fakes phase 7).
-  "sh ../tools/wiring-ledger.sh check ../tests/wiring-ledger/once ../tests/wiring-ledger/expected >/dev/null && for f in twice:'ran twice: window-host at ffi-test' missing:'did not run: contract-test ContractTest' extra:'ran and not expected: ffi-test FfiTest.Elsewhere'; do status=0; out=$(sh ../tools/wiring-ledger.sh check ../tests/wiring-ledger/${f%%:*} ../tests/wiring-ledger/expected 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF \"wiring-ledger: ${f#*:}\"; } || { printf '%s\\n' \"$out\"; echo \"ffi-test: the wiring ledger's check did not refuse tests/wiring-ledger/${f%%:*}\"; exit 1; }; done",
-  "sh ../tools/wiring-ledger-probe.sh",
-  "sh ../tools/wiring-ledger.sh expected >../target/gate/wiring-expected && sh ../tools/wiring-ledger.sh check ../target/gate/wiring-ledger ../target/gate/wiring-expected",
+  # The linked tests and headless fixtures of the fixture set, then the
+  # headless fixtures of the default set (tools/package-set.sh). The
+  # fixture set requires the default set, so Lake names every default
+  # package for it too, and its `run` runs every linked test, each once,
+  # with each package's fixtures on the fixture set's harness. The default
+  # set's run is `--no-linked`, so its fixtures run on the shipped set's
+  # own harness and no linked test runs twice.
+  "sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
+  "sh ../tools/package-set.sh --no-linked run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
 ]
 
 # The app bundle's layout, staged and run (tools/bundle-test.sh, whose
@@ -1129,21 +1008,18 @@ run = "tools/user-link-check.sh lean"
 # and ffi-test's wiring groups and the window scenarios, contract-test, each
 # linked test's wiring groups, the CLI's runs of the real-thread entries at
 # ffi-test and those at bundle-test over a staged bundle;
-# docs/dev-practices/real-thread-checks.md, "How stress runs the set"), or
-# the suites named (`rust`, `gate-ffi` for the whole of ffi-test), that many
-# times under `2 x cores` `yes` hogs at lowered priority, checks each
-# round's coverage of the wiring set, and prints each suite's passes and
-# coverage's. Run it after `mise run ci` has built everything.
-# `tools/stress-probe.sh` runs first, in about a second: it interrupts and
-# terminates the loop mid-round, on a stand-in suite, and proves that the
-# loop then leaves neither the suite's run nor its guard running; that a
-# run past the limit is killed with its group and fails as a hang; that a
-# run with a hang line fails though it exits 0; that a round which
-# misses an item of the wiring set fails its coverage; that a listing
-# that fails ends the loop before its first round; and that what the loop
-# stages is gone when it ends, and never under its logs.
+# docs/dev-practices/real-thread-checks.md, "How the set runs"), or the
+# suites named (`rust`, `gate-ffi` for the whole of ffi-test), that many
+# times under `2 x cores` `yes` hogs at lowered priority, decides each run
+# by its exit status, and prints each suite's passes. Run it after `mise
+# run ci` has built everything. `tools/stress-probe.sh` runs first, in
+# about a second: it interrupts and terminates the loop mid-round, on a
+# stand-in suite, and proves that the loop then leaves neither the suite's
+# run nor its guard running; that a run past the limit is killed with its
+# group and fails the loop; and that what the loop stages is gone when it
+# ends, and never under its logs.
 [tasks.stress]
-description = "Opt-in, never part of ci: run the wiring set over and over under a CPU load of twice the cores, check each round ran every item of it once, and print each suite's passes and coverage's (tools/stress.sh), after the probe that an interrupted loop leaves nothing running, that a run past its limit or with a hang line fails, that a round missing an item fails its coverage, and that a failed listing ends the loop before its first round (tools/stress-probe.sh). Run after `mise run ci`"
+description = "Opt-in, never part of ci: run the wiring set over and over under a CPU load of twice the cores, each run decided by its exit status, and print each suite's passes (tools/stress.sh), after the probe that an interrupted loop leaves nothing running, that a run past its limit fails, and that what the loop staged is gone when it ends (tools/stress-probe.sh). Run after `mise run ci`"
 run = [
   "sh tools/stress-probe.sh",
   "sh tools/stress.sh",
@@ -1718,7 +1594,7 @@ run = [
 ]
 
 [tasks.ci]
-description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
+description = "The whole gate; the pre-commit hook and `hk check` run this, and it gates review and landing (rdm's dispatch.verify)"
 depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "bundle-test", "user-sets-test", "c-fmt", "workflow-lint"]
 
 # Never part of `ci` or hk.pkl: `linux-ci` runs `ci` in a copy of the

@@ -1084,8 +1084,8 @@ machine is passes on an idle laptop and fails on a loaded runner
 (AGENTS.md, "Deterministic concurrency in tests"). The stress loop
 (`tools/stress.sh <rounds> [suite ...]`) runs the wiring set, the checks
 and runs that wire a real thread or service
-([real-thread-checks.md](real-thread-checks.md), "How stress runs the
-set"), that many rounds under a load of `2 x cores` processes of
+([real-thread-checks.md](real-thread-checks.md), "How the set runs"),
+that many rounds under a load of `2 x cores` processes of
 `yes >/dev/null` (`sysctl -n hw.ncpu` on macOS, `nproc` on Linux;
 `STRESS_HOGS` overrides), each suite in the foreground under
 `taskpolicy -c utility` on macOS and `nice -n 5` on Linux, so the hogs win
@@ -1096,7 +1096,7 @@ the CPU ("The load on Linux", below, says why 5). The suites:
 | `config-wiring` | `config-test --wiring`, from `lean/`, with `--timings`: the groups of its check set's modules of the wiring set |
 | `ffi-wiring` | `ffi-test wiring`, then the window scenarios (`tools/wiring-runs.sh run <prepared> scenarios`) |
 | `contract` | `contract-test`, as the gate runs it |
-| `linked-wiring` | each linked test's wiring groups, `tools/package-set.sh --wiring --ledger <round's> run` over the fixture set and then the default set |
+| `linked-wiring` | each linked test's wiring groups, `tools/package-set.sh --wiring run` over the fixture set, which names every default package too, so each runs once |
 | `cli-wiring` | the real-thread entries at ffi-test through the CLI (`tools/wiring-runs.sh run <prepared> fixtures`) |
 | `bundle-wiring` | the entries at bundle-test over a staged bundle (`tools/bundle-test.sh headless <prepared>/bundle`) |
 | `rust` | `cargo test --workspace --locked` (opt-in) |
@@ -1115,29 +1115,20 @@ prepare stage stages, once, what the chosen suites build before their
 runs (`tools/wiring-runs.sh prepare`, the greeting entry's install;
 `tools/bundle-test.sh stage`, together about 4 GB) into a temporary
 directory of its own, never under `$STRESS_OUT`, which the trap removes
-when the loop ends, however it ends; and it writes `<out>/expected`, the
-items of the wiring set each chosen suite must run, from the same
-listings the gate's once-check reads (`tools/wiring-ledger.sh list`). A
-listing that fails ends the loop there, with status 2, before a hog or a
-round starts (the probe shows it), so a suite's items cannot go missing
-from both its expected items and its runs. After each
-round it checks the round's `wiring-set: ran` lines, from every suite's
-log, against those items (`tools/wiring-ledger.sh check`): a round where
-one is missing, doubled or not expected fails as the pseudo-suite
-`coverage`, its findings in `coverage-<round>.log`, so a wiring mode that
-runs nothing, a root skipped or an entry missed cannot pass as a full
-count. A run whose log holds `a hang:` fails, though it exits 0: a guard
-that runs out reports a hang, never a result. Each run's output goes to
+when the loop ends, however it ends. Each run passes when it exits 0 and
+fails when it does not; nothing reads its log to decide. A wiring mode
+that selected nothing, or a root a suite skipped, would pass the round:
+that coverage is held structurally (`linter.wiringSet`'s rule (d)) and by
+review, not by the loop. Each run's output goes to
 `$STRESS_OUT/<suite>-<round>.log` (a fresh temporary directory when it is
 unset). A config round also leaves `config-wiring-<round>.timings` there: the wall
 time in milliseconds of the base's import and of each check, a tab and its
 name, written as each ends (`config-test --timings`), which the hang guards
 are sized from. And what a check says on stderr is in the log after
 `config-test: during "<check>": `, so a hang line names the check it was
-said in. It prints `<suite>: <passed>/<rounds>` for each suite and for
-`coverage`, then each failing run with the `FAILED:` lines of the Lean
-checks, the failing Rust tests' names, its hang lines or the items its
-coverage missed, and exits 1 on any failure. Each suite's run is in a
+said in. It prints `<suite>: <passed>/<rounds>` for each suite, then, for
+people, each failing run with the `FAILED:` lines of the Lean checks, the
+failing Rust tests' names or its hang lines, and exits 1 on any failure. Each suite's run is in a
 process group of its own (`setsid` on Linux, the shell's job control on
 macOS), with a guard in another that kills the run's whole group if it has
 not ended within `STRESS_LIMIT` seconds (30 minutes), so a hang shows as a
@@ -1152,35 +1143,24 @@ there to be released once the loop has exited. Run against the trap that
 killed only the hogs, it failed on both signals. Then, with `STRESS_LIMIT=1`
 and a guard's `sleep` that returns once the suite has started, it runs a
 suite that hangs, with a child that hangs too, and fails unless the loop
-exits 1, the run's log has the guard's line `stress: a hang: probe had not
-ended within 1 s and was killed`, the loop prints `probe: 0/1`, and nothing
-of the run is left to be released. Run against a guard that killed only the
-run's leader, it failed with the suite's run and its child still there; and
-against a guard slowed between its kill and its line, it found the loop
-ending the guard before the line was written, which the guard now prevents
-by ignoring TERM once its sleep has returned. Then a suite that exits 0
-with a hang line in its log must give `probe: 0/1`; against a loop that
-judged a run by its exit status alone it gave `probe: 1/1`. And a suite
-that runs nothing of the wiring set, against an expected item
-(`STRESS_PROBE_EXPECTED`), must give `coverage: 0/1`, with the item listed
-as not run, while the same suite saying the item once gives
-`coverage: 1/1`. Last, a probe suite whose expected items cannot be read
-(`STRESS_PROBE_EXPECTED` names no file) must end the loop in its prepare
-stage with status 2, naming the listing, its suite never run; against a
-prepare stage that piped each listing into its keys, the loop ran the
-round and passed its coverage over no item. And the INT, TERM and limit
-cases, and one that ends as a loop does with a suite that reads what was
-staged, each stage a stand-in tree (`STRESS_PROBE_STAGE`) and fail unless
-it is gone once the loop has exited and was never under `$STRESS_OUT`;
-against a loop that staged under its logs and never removed them, each
-failed.
+exits 1 and nothing of the run is left to be released. Run against a guard
+that killed only the run's leader, it failed with the suite's run and its
+child still there. The guard ignores TERM once its sleep has returned, so
+the run it kills ending first does not cut its hang line from the log,
+which people read. And the INT, TERM and limit cases, and one that ends as
+a loop does with a suite that reads what was staged (`cat`, so the suite
+fails by its own status when the tree is not there) and must exit 0, each
+stage a stand-in tree (`STRESS_PROBE_STAGE`) and fail unless it is gone
+once the loop has exited and was never under `$STRESS_OUT`; against a loop
+that staged under its logs and never removed them, each failed.
 
 `.github/workflows/stress.yml` runs the same loop on both of the gate's
 legs, macOS and ubuntu, five shards each, and names no suite, so it runs
-the script's default; its summary adds the counts up per leg and suite,
-`coverage` among them, and fails on any count short of the rounds or any
-hang line. Each shard uploads its summary and its logs alone, never what
-the loop staged. `tools/workflow-check.sh` holds it to that, and
+the script's default. Each shard's Stress step exits with the loop's
+status, and the shards run with fail-fast off, so the workflow fails when
+any shard's loop does; nothing adds up counts or reads the logs. Each
+shard uploads its summary and its logs alone, for people, never what the
+loop staged. `tools/workflow-check.sh` holds it to that, and
 `tools/workflow-lint-probe.sh` shows each rule biting. It runs on dispatch
 alone.
 

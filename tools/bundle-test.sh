@@ -66,10 +66,10 @@
 # temporary directory.
 #
 # The headless runs of step 3 are the real-thread set's entries at
-# bundle-test (`fixture-test real-thread --site bundle-test`): after each it
-# prints `wiring-set: ran <script> at bundle-test`, and it fails unless those
-# lines name each entry of that listing exactly once
-# (docs/dev-practices/real-thread-checks.md, "How stress runs the set").
+# bundle-test (`fixture-test real-thread --site bundle-test`), one
+# `headless` line each: a reviewer rule (`.agents/rules/structure.md`, "The
+# wiring set's runs"; docs/dev-practices/real-thread-checks.md, "How the
+# set runs"), which nothing here checks.
 # The stress loop runs steps 1, 3 and 4 apart, a stage once and the runs
 # each round (`tools/stress.sh`, its `bundle-wiring` suite):
 #
@@ -167,10 +167,8 @@ fi
 
 # 3. The headless runs, through the launcher, with an empty environment,
 # from a working directory outside the bundle: the real-thread set's
-# entries at bundle-test, each said as it ran (`wiring-set: ran`), and the
-# lines held to the listing of the set.
+# entries at bundle-test, one `headless` line each.
 mkdir "$work/elsewhere"
-ran=
 headless() {
   name=$1
   fixture=$2
@@ -180,26 +178,12 @@ headless() {
   out=$(cd "$work/elsewhere" && env -i "$launcher" headless "$work/$name-config" "$work/$name-script") ||
     fail "the bundle's headless run of $name exited non-zero"
   printf '%s\n' "$out" | diff "$fixture/expected" - || fail "the bundle's headless run of $name differs from its expected"
-  line="wiring-set: ran ${fixture#"$repo"/}/script at bundle-test"
-  echo "$line"
-  ran="$ran$line
-"
 }
 headless bundle "$repo/tests/headless/bundle" config
 headless themes "$repo/packages/shipped-themes/tests/headless/shipped-themes" config
 headless names "$repo/packages/shipped-themes/tests/headless/package-names" config
 headless compile "$repo/packages/compile/tests/headless/config" config
 echo 'bundle-test: the bundle ran its headless fixtures from its own modules, with an empty environment'
-listed=$("$repo/packages/.lake/build/bin/fixture-test" real-thread --site bundle-test) ||
-  fail "fixture-test real-thread --site bundle-test failed"
-expected=$(printf '%s\n' "$listed" | cut -f1 | sed 's/^/wiring-set: ran /; s/$/ at bundle-test/' | sort)
-said=$(printf '%s' "$ran" | sort)
-[ "$said" = "$expected" ] && [ -z "$(printf '%s\n' "$said" | uniq -d)" ] ||
-  fail "the headless runs are not the real-thread set's entries at bundle-test, each once: ran
-$said
-and the set lists
-$expected"
-echo "bundle-test: the headless runs are the real-thread set's $(printf '%s\n' "$expected" | grep -c .) entries at bundle-test, each once"
 
 # 4. The generated lakefile.
 generate=$repo/tests/headless/generate

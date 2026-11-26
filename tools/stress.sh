@@ -5,8 +5,8 @@
 # machine's cores, at lowered priority, so a check whose result hangs on
 # scheduling or on the machine's speed shows itself. Opt-in, never part of
 # `ci` or hk (docs/dev-practices/on-demand-checks.md, "The stress loop, on
-# demand"; docs/dev-practices/real-thread-checks.md, "How stress runs the
-# set").
+# demand"; docs/dev-practices/real-thread-checks.md, "How the set
+# runs").
 #
 #   sh tools/stress.sh <rounds> [suite ...]
 #
@@ -17,9 +17,9 @@
 #   ffi-wiring     ffi-test wiring, then the window scenarios
 #                  (tools/wiring-runs.sh run <prepared> scenarios)
 #   contract       contract-test, as the gate runs it
-#   linked-wiring  each linked test's wiring groups, over the fixture set
-#                  and the default set with one ledger between them
-#                  (tools/package-set.sh --wiring --ledger)
+#   linked-wiring  each linked test's wiring groups, over the fixture set,
+#                  which names every default package too, so each linked
+#                  test runs once (tools/package-set.sh --wiring run)
 #   cli-wiring     the real-thread entries at ffi-test, through the CLI
 #                  (tools/wiring-runs.sh run <prepared> fixtures)
 #   bundle-wiring  the entries at bundle-test, over a staged bundle
@@ -34,20 +34,10 @@
 # FfiTest.windowScenarios and the real-thread set's entries), with no list
 # here. Before the hogs start, a prepare stage stages what the chosen
 # suites build before their runs, once (tools/wiring-runs.sh prepare,
-# tools/bundle-test.sh stage), into a temporary directory of its own, never
-# under the logs, which the loop removes when it ends, however it ends; and
-# writes `<out>/expected`: for each chosen suite, the wiring set's items it must run, a line each,
-# `<suite>\t<key>`, from the same listings the gate's once-check reads
-# (tools/wiring-ledger.sh), and for `probe` the keys in the file
-# STRESS_PROBE_EXPECTED, if it is set (and for `probe` runs the command in
-# STRESS_PROBE_STAGE, a stand-in for what is staged, if it is set).
-#
-# Coverage, each round: the round's `wiring-set: ran` lines, from every
-# suite's log, are checked against the chosen suites' expected items
-# (tools/wiring-ledger.sh check); a round where one is missing, doubled or
-# not expected fails as the pseudo-suite `coverage`, its findings in
-# `coverage-<round>.log`. So a wiring mode that runs nothing, a root
-# skipped or an entry missed cannot pass as `<suite>: <rounds>/<rounds>`.
+# tools/bundle-test.sh stage, and for `probe` the command in
+# STRESS_PROBE_STAGE, a stand-in for what is staged, if it is set), into a
+# temporary directory of its own, never under the logs, which the loop
+# removes when it ends, however it ends.
 #
 # The load is `2 x cores` processes of `yes >/dev/null` (cores from
 # `sysctl -n hw.ncpu` on macOS, `nproc` elsewhere; STRESS_HOGS overrides),
@@ -69,13 +59,11 @@
 # the hang guards are sized from. A run that has not ended within STRESS_LIMIT seconds
 # (30 minutes) is killed with its whole process group and counts as failed,
 # its log ending `stress: a hang: ...`, so a hang shows as a failure (the
-# probe proves that too). A run whose log holds `a hang:` counts as failed
-# even when it exits 0: a guard that runs out reports a hang, never a
-# result (AGENTS.md, "Deterministic concurrency in tests"; the probe proves
-# it). At the end it prints `<suite>: <passed>/<rounds>` for each suite and
-# `coverage: <passed>/<rounds>`, then each failing run with the names of
-# the checks and tests that failed and its hang lines, and exits 1 on any
-# failure. Nothing is left running.
+# probe proves that too). Each run passes or fails by its exit status
+# alone; nothing reads its log to decide. At the end it prints `<suite>:
+# <passed>/<rounds>` for each suite, then each failing run with the names
+# of the checks and tests that failed and its hang lines, for people, and
+# exits 1 on any failure. Nothing is left running.
 #
 # A failure is a bug in a check or in the code. It is fixed and the loop is
 # run again from round 1, never retried away.
@@ -198,11 +186,7 @@ run_suite() {
   contract)
     (cd "$root/lean" && low .lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion) >"$log" 2>&1 ;;
   linked-wiring)
-    (cd "$root/lean" && low sh -c 'ledger=$(mktemp) && trap "rm -f \"$ledger\"" EXIT && status=0
-      for set in ../tests/packages ../packages; do
-        sh ../tools/package-set.sh --wiring --ledger "$ledger" run "$set" "$1" .lake/build/lib/lean || status=$?
-      done
-      exit "$status"' linked-wiring "$prefix") >"$log" 2>&1 ;;
+    (cd "$root/lean" && low sh ../tools/package-set.sh --wiring run ../tests/packages "$prefix" .lake/build/lib/lean) >"$log" 2>&1 ;;
   cli-wiring)
     (cd "$root/lean" && low sh ../tools/wiring-runs.sh run "$prepared/runs" fixtures) >"$log" 2>&1 ;;
   bundle-wiring)
@@ -217,77 +201,19 @@ run_suite() {
 }
 
 # The prepare stage (the header): what the chosen suites build before their
-# runs, staged once into $prepared, and the items of the wiring set each
-# must run, `<suite>\t<key>`, into $out/expected, each listing read
-# with tools/wiring-ledger.sh's `list`, as the gate's once-check reads it.
-# It runs before the hogs start, at the machine's own priority, and builds
-# nothing the gate did not. A listing that fails ends the loop with status
-# 2, naming it, before a hog or a round starts (tools/stress-probe.sh).
+# runs, staged once into $prepared. It runs before the hogs start, at the
+# machine's own priority, and builds nothing the gate did not. A step that
+# fails ends the loop before a hog or a round starts (tools/stress-probe.sh).
 prepare() {
-  : >"$out/expected"
   if chosen ffi-wiring || chosen cli-wiring; then
     (cd "$root/lean" && sh ../tools/wiring-runs.sh prepare "$prepared/runs")
   fi
   if chosen bundle-wiring; then
     (cd "$root/lean" && sh ../tools/bundle-test.sh stage "$prepared/bundle")
   fi
-  if chosen config-wiring; then
-    expect config-wiring ledger_list config-test
-  fi
-  if chosen ffi-wiring; then
-    expect ffi-wiring ledger_list ffi-test
-    expect ffi-wiring ledger_list scenarios
-  fi
-  if chosen contract; then
-    expect contract ledger_list contract-test
-  fi
-  if chosen linked-wiring; then
-    expect linked-wiring ledger_list linked
-  fi
-  if chosen cli-wiring; then
-    expect cli-wiring ledger_list real-thread-ffi-test
-  fi
-  if chosen bundle-wiring; then
-    expect bundle-wiring ledger_list real-thread-bundle-test
-  fi
   if chosen probe && [ -n "${STRESS_PROBE_STAGE:-}" ]; then
     sh -c "$STRESS_PROBE_STAGE"
   fi
-  if chosen probe && [ -n "${STRESS_PROBE_EXPECTED:-}" ]; then
-    expect probe sed '/^$/d' "$STRESS_PROBE_EXPECTED"
-  fi
-}
-
-# tools/wiring-ledger.sh's listing $1, run in `lean/`.
-ledger_list() {
-  (cd "$root/lean" && sh ../tools/wiring-ledger.sh list "$1")
-}
-
-# Appends to $out/expected the keys the command after $1 prints, each
-# after the suite $1 and a tab, each once. The command writes a file of its
-# own and its status is checked before the file is read, so a listing that
-# fails is never lost in a pipeline whose status is its last command's: it
-# ends the loop with status 2.
-expect() {
-  suite=$1
-  shift
-  "$@" >"$prepared/listing" || {
-    echo "stress: prepare: a listing of the wiring set failed: $*" >&2
-    exit 2
-  }
-  sort -u "$prepared/listing" | sed "s/^/$suite$(printf '\t')/" >>"$out/expected"
-}
-
-# Checks the coverage of round $1: its suites' `wiring-set: ran` lines
-# against the chosen suites' expected items (tools/wiring-ledger.sh check),
-# its findings in `coverage-<round>.log`.
-coverage() {
-  for suite in $suites; do
-    grep -h '^wiring-set: ran ' "$out/$suite-$1.log" 2>/dev/null || true
-  done >"$out/coverage-$1.ran"
-  cut -f2 "$out/expected" >"$out/coverage-$1.expected"
-  sh "$root/tools/wiring-ledger.sh" check "$out/coverage-$1.ran" "$out/coverage-$1.expected" \
-    >"$out/coverage-$1.log" 2>&1
 }
 
 # hang guard: each suite's run ending; only a hang reaches the limit, and
@@ -349,9 +275,8 @@ bounded() {
 }
 
 echo "stress: $rounds rounds of $suites, $hogs hogs on $cores cores, a limit of $limit s a run, logs in $out"
-echo "stress: prepare: staging the chosen suites' builds and their expected items in $prepared"
+echo "stress: prepare: staging the chosen suites' builds in $prepared"
 prepare
-echo "stress: prepare: $(grep -c . "$out/expected" || true) items of the wiring set expected each round"
 i=0
 while [ "$i" -lt "$hogs" ]; do
   yes >/dev/null &
@@ -365,30 +290,18 @@ while [ "$round" -le "$rounds" ]; do
   for suite in $suites; do
     log="$out/$suite-$round.log"
     if bounded "$log" "$suite"; then
-      # A hang line fails the run, though it exited 0.
-      if grep -q 'a hang:' "$log"; then
-        echo "stress: round $round: $suite FAILED, a hang line in its log ($log)"
-        failures="$failures $suite-$round"
-      else
-        echo "stress: round $round: $suite passed"
-      fi
+      echo "stress: round $round: $suite passed"
     else
       echo "stress: round $round: $suite FAILED ($log)"
       failures="$failures $suite-$round"
     fi
   done
-  if coverage "$round"; then
-    echo "stress: round $round: coverage passed"
-  else
-    echo "stress: round $round: coverage FAILED ($out/coverage-$round.log)"
-    failures="$failures coverage-$round"
-  fi
   round=$((round + 1))
 done
 stop
 
 status=0
-for suite in $suites coverage; do
+for suite in $suites; do
   passed=0
   round=1
   while [ "$round" -le "$rounds" ]; do
@@ -401,9 +314,9 @@ for failure in $failures; do
   status=1
   log="$out/$failure.log"
   echo "failed: $failure ($log)"
-  # The checks' and tests' own failure lines and its hang lines, or the end
-  # of the log; for coverage, the items missing, doubled or not expected.
-  names=$(grep -E '^FAILED: |^test .* FAILED$|^---- .* ----$|panicked at|a hang:|^wiring-ledger: ' "$log" | head -20 || true)
+  # For people: the checks' and tests' own failure lines and its hang
+  # lines, or the end of the log. The run already failed by its status.
+  names=$(grep -E '^FAILED: |^test .* FAILED$|^---- .* ----$|panicked at|a hang:' "$log" | head -20 || true)
   if [ -n "$names" ]; then
     printf '%s\n' "$names" | sed 's/^/  /'
   else

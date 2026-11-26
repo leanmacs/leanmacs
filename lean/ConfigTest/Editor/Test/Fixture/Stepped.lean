@@ -234,7 +234,7 @@ def fixtureRunChecks (context : Context) : List Check :=
           saw
               (same == 0 && other == 1 && unexpected == 1 &&
                 said.contains
-                  "fixture-compare: tests/a/script: the CLI over a real loop thread and the stepped run printed the same, and it is expected" &&
+                  "fixture-test: tests/a/script: the CLI over a real loop thread and the stepped run printed the same, and it is expected" &&
                 said.contains
                   "fixture-test: tests/a/script: the CLI over a real loop thread (<) and the stepped run (>) printed otherwise: < 1: run nothing-at-all: ok; < 2: more; > 1: run nothing-at-all: no such command" &&
                 said.contains

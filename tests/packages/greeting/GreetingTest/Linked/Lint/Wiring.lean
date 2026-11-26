@@ -15,12 +15,11 @@ refused nothing, nor one that reads it from its subcommands
 (`Editor.CheckGroup.Mode.ofSubcommand?`), as ffi-test's `wiring`; one that
 reaches the module's list outside the check set (c); one that runs the
 marked scenario itself (c); and, for (d), one with no wiring mode at all,
-one that prints the wiring set's lines (`Editor.CheckGroup.ranLines`) but
-reads `--wiring` and runs the wiring groups itself, never selecting by
-mode, one that reads `--wiring` itself and selects by the mode it maps it
-to, and one that reads the mode but never selects by it. Each bad `main`
-is wrapped
-in `#guard_msgs`, which expects the lint's error. The `main`s are in a
+one that reads `--wiring` and runs the wiring groups itself, never
+selecting by mode, one that reads `--wiring` itself and selects by the
+mode it maps it to, and one that reads the mode but never selects by it.
+Each bad `main` is wrapped in `#guard_msgs`, which expects the lint's
+error. The `main`s are in a
 namespace each, since the rules key on a declaration's last name
 component, and this module declares `.edge`, as a root does, so the
 real-host linter lets its `main`s reach the marked scenario. It is not
@@ -121,19 +120,13 @@ error: `GreetingTest.WiringFixture.ByHand.main` links the library and its import
 Note: This linter can be disabled with `set_option linter.wiringSet false`
 -/
 #guard_msgs in
-/-- A bad `main` (d): it prints the wiring set's lines, naming the check
-set's wiring groups (`Editor.CheckGroup.ranLines`), but reads `--wiring`
-and runs those groups itself, so nothing holds its mode to the others'. -/
-def ByHand.main (arguments : List String) : IO UInt32 := do
-  let status ←
-    match arguments with
-    | ["--wiring"] =>
-      runAll ((CheckGroup.wiring checks).flatMap (·.2 ()))
-    | _ =>
-      runAll (CheckGroup.all checks ())
-  for line in CheckGroup.ranLines "greeting" (CheckGroup.wiring checks) () do
-    IO.println line
-  return status
+/-- A bad `main` (d): it names the check set's wiring groups
+(`Editor.CheckGroup.wiring`), but reads `--wiring` and runs those groups
+itself, so nothing holds its mode to the others'. -/
+def ByHand.main (arguments : List String) : IO UInt32 :=
+  match arguments with
+  | ["--wiring"] => runAll ((CheckGroup.wiring checks).flatMap (·.2 ()))
+  | _ => runAll (CheckGroup.all checks ())
 
 /--
 error: `GreetingTest.WiringFixture.OwnReader.main` links the library and its imports reach `GreetingTest.Linked.Lint.Wiring.Wired`, a module of the wiring set, but it does not select its check set's checks by the shared wiring mode: read the mode with a shared reader (`Editor.CheckGroup.Mode.ofArguments?`, `Editor.CheckGroup.Mode.read?` or `Editor.CheckGroup.Mode.ofSubcommand?`) and run what `Editor.CheckGroup.select` selects by it from a check set

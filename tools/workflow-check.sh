@@ -135,9 +135,6 @@
 #                      that runs tools/stress.sh on its rounds alone,
 #                      naming no suite, so the loop runs the script's
 #                      default, the wiring set
-#   stress-summary     a `summary` job that needs exactly `stress` and adds
-#                      up the counts for each of ci.yml's legs (its env
-#                      LEGS)
 #   stress-upload      the `stress` job uploads, in exactly one
 #                      actions/upload-artifact, the shard's summary and its
 #                      logs alone (paths stress-out/summary.txt and
@@ -759,7 +756,7 @@ stress_rules() {
   fi
 
   # ---- stress-runner
-  # The shards on each of the gate's legs, ci.yml's, and the summary on one.
+  # The shards on each of the gate's legs, ci.yml's, and any other job on one.
   legs=$(yq -o=json -I=0 '.jobs.ci.strategy.matrix.os' "$ci_wf")
   if [ "$(q '.jobs.stress["runs-on"]')" != "\${{ matrix.os }}" ]; then
     fail stress-runner 'jobs.stress.runs-on must be ${{ matrix.os }}'
@@ -805,14 +802,6 @@ stress_rules() {
     fi
     ;;
   esac
-
-  # ---- stress-summary
-  if [ "$(q '[.jobs.summary.needs] | flatten')" != '["stress"]' ]; then
-    fail stress-summary 'jobs.summary.needs must be exactly stress'
-  fi
-  if [ "$(q '.jobs.summary.env.LEGS')" != "$(yq '.jobs.ci.strategy.matrix.os | join(" ")' "$ci_wf")" ]; then
-    fail stress-summary "jobs.summary.env.LEGS must be ci.yml's legs, $(yq '.jobs.ci.strategy.matrix.os | join(" ")' "$ci_wf")"
-  fi
 
   # ---- stress-upload
   # The logs, the loop's STRESS_OUT, and the summary the loop's output is

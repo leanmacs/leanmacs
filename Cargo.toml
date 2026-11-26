@@ -27,7 +27,7 @@ license = "GPL-3.0-or-later"
 
 # The lint levels every member takes (`[lints] workspace = true` in its
 # manifest; .agents/rules/structure.md, "Clippy's bans"), so they hold for
-# every run of clippy: the gate's, the pre-commit hook's over one crate, an
+# every run of clippy: the gate's (`mise run ci`, which the hooks run), an
 # editor's. The bans themselves are the root `clippy.toml`'s, which says
 # where a site may opt out: `disallowed_methods` and `disallowed_types`
 # are errors whether or not warnings are, and an opt-out is an

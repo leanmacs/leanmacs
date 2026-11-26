@@ -46,12 +46,10 @@ The real services are started here (`Editor.Test.Linked.Services.start`),
 with the process's one completion pump.
 
 Its checks are a check set (`VersionControlTest.Linked.checks`, `Editor.CheckGroup`,
-`docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
+`docs/dev-practices/real-thread-checks.md`, "How the set runs"):
 the lists of its modules of the wiring set in groups of their module, which
-the build's `linter.wiringSet` holds true and complete. A run prints, after
-its count, `wiring-set: ran version-control <module> <n> checks` for each module of
-the wiring set it ran, which the gate's once-check reads
-(`tools/wiring-ledger.sh`). With `--wiring` after the two directories it
+the build's `linter.wiringSet` holds true and complete. With `--wiring`
+after the two directories it
 runs those groups alone, the stress loop's `linked-wiring` suite
 (`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
 modules, one a line, building nothing.
@@ -75,8 +73,8 @@ def VersionControlTest.Linked.checks :
 
 /-- Runs the checks `mode` selects from the check set
 (`Editor.CheckGroup.select`) over the real services, started here, and says
-which failed, or how many passed, with the contract's properties and lanes; then a line for each
-module of the wiring set the run ran (`Editor.CheckGroup.ranLines`). -/
+which failed, or how many passed, with the contract's properties and
+lanes. -/
 private def VersionControlTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : IO UInt32 := do
   let services ← Editor.Test.Linked.Services.start
   let jobs := services.jobs
@@ -87,10 +85,6 @@ private def VersionControlTest.Linked.runSelected (mode : Editor.CheckGroup.Mode
   if failed.isEmpty then
     IO.println
         s!"version-control linked test: {checks.length} {mode.what} passed, the contract's {Editor.VersionControlContract.properties.length} properties in {VersionControlTest.Linked.versionControlLanes} lanes"
-  for line in
-    Editor.CheckGroup.ranLines "version-control"
-      (Editor.CheckGroup.wiring VersionControlTest.Linked.checks) jobs do
-    IO.println line
   (← IO.getStdout).flush
   Editor.Test.Linked.shutdown
   IO.Process.exit (if failed.isEmpty then 0 else 1)

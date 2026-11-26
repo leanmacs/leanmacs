@@ -18,7 +18,8 @@ and says why it is here (`Subject`):
 - `runner`: the subject is the script runner over a real loop thread
   itself. The fixture has no real effect, so it is run both ways: the CLI
   over a real loop thread, and the harness stepped, and the two outputs
-  are compared (`tools/fixture-compare.sh`, `fixture-test … compare`).
+  are compared (`case_compare` in `tools/wiring-runs.sh`, through
+  `fixture-test … compare`).
   A runner entry is always stepped too.
 - `realEffect what`: the subject is a real effect, `what`: a process exec'd,
   a directory written, a real state directory read by the next process, a
@@ -75,7 +76,7 @@ structure Entry where
 def runner (script covers : String) : Entry :=
   { script, covers,
     site :=
-      "ffi-test: tools/fixture-compare.sh (the CLI over a real loop thread, compared with the stepped run)"
+      "ffi-test: wiring-runs.sh compare (the CLI over a real loop thread, compared with the stepped run by fixture-test compare)"
     subject := .runner, stepped := true }
 
 /-- A real-effect entry of a fixture of `tests/headless` that runs only

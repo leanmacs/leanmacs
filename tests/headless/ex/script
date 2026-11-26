@@ -1,6 +1,7 @@
 # The script `mise run ffi-test` runs both ways, compared
-# (tools/fixture-compare.sh; docs/dev-practices/headless-mode.md, "How the
-# gate runs a fixture"), on the default set's editor over a real loop thread
+# (tools/wiring-runs.sh's case_compare, through `fixture-test … compare
+# <script> <file>`; docs/dev-practices/headless-mode.md, "How the gate runs
+# a fixture"), on the default set's editor over a real loop thread
 # and on its fixture harness stepped (`fixture-test`), against
 # the config in `../config/`, of which it loads nothing: there is no
 # `reload`. So every command and every ex name it runs is one the editor

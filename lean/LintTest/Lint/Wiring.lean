@@ -127,8 +127,7 @@ def lintWiringChecks : List Check :=
             Lint.selectsByMode isSet #[`Editor.CheckGroup.Mode.read?, Lint.selectName, set] &&
             Lint.selectsByMode isSet #[set, Lint.selectName, `Editor.CheckGroup.Mode.ofSubcommand?] &&
             !Lint.selectsByMode isSet #[set, Lint.selectName, `Editor.CheckGroup.Mode.wiring] &&
-            !Lint.selectsByMode isSet
-                #[set, `Editor.CheckGroup.wiring, `Editor.CheckGroup.ranLines, `Editor.CheckGroup.all] &&
+            !Lint.selectsByMode isSet #[set, `Editor.CheckGroup.wiring, `Editor.CheckGroup.all] &&
             !Lint.selectsByMode isSet #[set, `Editor.CheckGroup.Mode.ofArguments?] &&
             !Lint.selectsByMode isSet #[set, Lint.selectName] &&
             !Lint.selectsByMode isSet #[Lint.selectName, `Editor.CheckGroup.Mode.ofArguments?] }]

@@ -2308,9 +2308,10 @@ runs it through the CLI:
 - a **`runner`** entry's subject is the script runner over a real loop
   thread itself (the CLI's runner, [real-thread-checks.md](real-thread-checks.md)):
   it runs both ways, the CLI over a real loop thread and the harness
-  stepped, and `tools/fixture-compare.sh` requires the two outputs to be
-  the same and to be the expected file (`fixture-test … compared` lists
-  them, `fixture-test … compare <script> <cli output>` compares);
+  stepped, and `case_compare` in `tools/wiring-runs.sh` runs it through
+  the CLI and hands the output to `fixture-test … compare <script> <file>`,
+  which exits 1 unless the two outputs are the same and are the expected
+  file (`fixture-test … compared` lists them);
 - a **`realEffect`** entry's subject is a real effect, which it names: a
   process exec'd, a directory written, a real state directory read by the
   next process, records beside an installed executable, a grammar of the

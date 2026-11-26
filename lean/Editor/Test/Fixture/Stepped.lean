@@ -340,8 +340,9 @@ def locate (tree : Tree IO) (script : String) : IO (Except String Parts) := do
   return .error s!"{script} is no fixture discovery finds"
 
 /-- The runner entries of the set (`RealThread.compared`), each as
-`<script>\t<config>\t<expected>`, for `tools/fixture-compare.sh`. Exit 1
-when one is no fixture with an expected file. -/
+`<script>\t<config>\t<expected>`, for `case_compare` in
+`tools/wiring-runs.sh`. Exit 1 when one is no fixture with an expected
+file. -/
 def printCompared {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO) : IO UInt32 :=
   do
   let mut failed := false
@@ -359,7 +360,7 @@ def printCompared {scheme : InputScheme} (harness : Harness scheme) (tree : Tree
 
 /-- Runs the runner entry `script` stepped and compares it with the CLI's
 output read from `file` (`compared`): its line
-`fixture-compare: <script>: the CLI over a real loop thread and the stepped run printed the same, and it is expected`,
+`fixture-test: <script>: the CLI over a real loop thread and the stepped run printed the same, and it is expected`,
 or what is wrong, the error among it when the run throws (`caught`). -/
 def compare {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO)
     (script file : String) : IO UInt32 := do
@@ -392,7 +393,7 @@ def compare {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO)
         return ran.problems ++ compared cli ran.output expected
   if problems.isEmpty then
     harness.say
-        s!"fixture-compare: {script}: the CLI over a real loop thread and the stepped run printed the same, and it is expected"
+        s!"fixture-test: {script}: the CLI over a real loop thread and the stepped run printed the same, and it is expected"
     return 0
   for problem in problems do
     harness.say s!"fixture-test: {script}: {problem}"

@@ -611,12 +611,11 @@ def main (args : List String) : IO UInt32 := do
   | sysroot :: oleanDir :: syntaxFixtures :: defaultConfig :: rest =>
     match Editor.CheckGroup.Mode.read? ConfigTest.timings? rest with
     | some (mode, timings) =>
-      let wiring := Editor.CheckGroup.wiring ConfigTest.checks
       let selected := Editor.CheckGroup.select mode ConfigTest.checks
       IO.Process.exit
           (←
             ConfigTest.run selected sysroot oleanDir syntaxFixtures defaultConfig
-                ConfigTest.shippedPackages timings wiring)
+                ConfigTest.shippedPackages timings)
     | none =>
       ConfigTest.usage
   | _ =>

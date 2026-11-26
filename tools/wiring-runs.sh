@@ -2,78 +2,71 @@
 # The CLI's runs and the window scenarios of the wiring set, one case each,
 # called once by the gate (`mise run ffi-test`) and once a round by the
 # stress loop (`tools/stress.sh`, its `ffi-wiring` and `cli-wiring` suites)
-# (docs/dev-practices/real-thread-checks.md, "How stress runs the set"):
+# (docs/dev-practices/real-thread-checks.md, "How the set runs"):
 #
-#   tools/wiring-runs.sh list
-#   tools/wiring-runs.sh check [<list>]
 #   tools/wiring-runs.sh prepare <dir>
-#   tools/wiring-runs.sh run [--cases <file>] <dir> [fixtures|scenarios]
+#   tools/wiring-runs.sh run <dir> [fixtures|scenarios]
 #
 # Run it in `lean/`, after the gate's builds; it builds nothing but what
 # `prepare` stages. Each case runs a real-thread entry whose site is
 # ffi-test (`Editor.Test.Fixture.RealThread.entries`, the CLI over a real
-# loop thread), keyed by its script, or a window scenario of ffi-test
-# (`FfiTest.windowScenarios`), keyed by its subcommand; a case may cover
-# several entries that one run of the CLI covers, as the runner entries'
-# comparison does. Each case's commands are the gate's lines they were,
-# moved here as they were written, each in a shell of its own, with
-# errexit, as mise runs a task's line.
+# loop thread), named in the comment above it by its script, or a window
+# scenario of ffi-test (`FfiTest.windowScenarios`), named by its
+# subcommand; a case may cover several entries that one run of the CLI
+# covers, as the runner entries' comparison does. Each case's commands are
+# the gate's lines they were, moved here as they were written, each in a
+# shell of its own, with errexit, as mise runs a task's line. That each
+# entry and scenario at ffi-test has its case is a reviewer rule
+# (`.agents/rules/structure.md`, "The wiring set's runs"), which
+# `fixture-test real-thread --site ffi-test` and `ffi-test
+# wiring-scenarios` list for.
 #
-# - `list` prints each case's keys, one a line.
-# - `check` compares the keys with the code's lists, `fixture-test
-#   real-thread --site ffi-test` and `ffi-test wiring-scenarios` (or with
-#   the keys in the file `<list>`, one a line, for its fixtures,
-#   tests/wiring-runs/), and exits 1, naming it, on a key with no case or a
-#   case with no key: the cases are held to the code both ways.
 # - `prepare <dir>` stages into `<dir>` what a case builds before its run:
 #   the greeting entry's install of the fixture set (`:editorInstall`).
 #   Run once, before the runs, so a stress round builds nothing.
 # - `run <dir>` runs every case, or the group named, over what `prepare`
-#   staged in `<dir>`, and prints, after each, `wiring-set: ran <key> at
-#   ffi-test` for each key it covers, which the gate's once-check and the
-#   stress loop's coverage read (`tools/wiring-ledger.sh`). It runs every
-#   case though one fails, names each that failed, and exits 1 when one
-#   did. A case fails when any of its steps fails, not only its last: it
-#   runs with errexit, as a command of its own, never as a condition.
-#   With `--cases <file>` it runs the table and cases that the shell file
-#   defines in place of these: its fixture, tests/wiring-runs/cases,
-#   which ffi-test runs, holds a case for each step that can fail.
+#   staged in `<dir>`. It runs every case though one fails, names each
+#   that failed, and exits 1 when one did: each case passes or fails by
+#   its status alone. A case fails when any of its steps fails, not only
+#   its last: it runs with errexit, as a command of its own, never as a
+#   condition.
 set -eu
 
 usage() {
-  echo "usage: tools/wiring-runs.sh list | check [<list>] | prepare <dir> | run [--cases <file>] <dir> [fixtures|scenarios]" >&2
+  echo "usage: tools/wiring-runs.sh prepare <dir> | run <dir> [fixtures|scenarios]" >&2
   exit 2
 }
 
-# The cases: each one's group, its name (the function case_<name> runs it)
-# and the keys it covers, separated by tabs.
+# The cases: each one's group and its name (the function case_<name> runs
+# it), separated by a tab. The comment above each case names the entries or
+# the scenario it runs.
 table() {
   cat <<'TABLE'
-fixtures	compare	tests/headless/script tests/headless/keys-script tests/headless/scene-script tests/headless/ex/script
-fixtures	dispatch	tests/headless/dispatch/script
-fixtures	needs_rebuild	tests/headless/needs-rebuild/script
-fixtures	generate	tests/headless/generate/script
-fixtures	default_config	tests/headless/default-config/script
-fixtures	no_input_scheme	tests/headless/no-input-scheme/script
-fixtures	restore_abort	tests/headless/restore/abort-script tests/headless/restore/restore-script
-fixtures	restore_changed	tests/headless/restore/changed-script
-fixtures	restore_quit	tests/headless/restore/quit-script
-fixtures	restore_newer	tests/headless/restore/newer-script
-fixtures	restore_layout	tests/headless/restore/layout-script tests/headless/restore/layout-restore-script
-fixtures	restore_stores	tests/headless/restore/stores-script tests/headless/restore/stores-restore-script
-fixtures	restart	tests/headless/restart/script
-fixtures	restart_probe	tests/headless/restart/probe-script
-fixtures	restart_fallback	tests/headless/restart/fallback-script
-fixtures	open_file	tests/headless/open-file/script
-fixtures	milestone	tests/headless/milestone/script
-scenarios	window_host	window-host
-scenarios	window_host_config	window-host-config
-scenarios	window_host_restart	window-host-restart
-scenarios	window_host_base	window-host-base
-scenarios	window_host_generate	window-host-generate
-scenarios	window_host_direct	window-host-direct
-scenarios	window_host_undrawn	window-host-undrawn
-fixtures	greeting	tests/packages/greeting/tests/headless/hello/script
+fixtures	compare
+fixtures	dispatch
+fixtures	needs_rebuild
+fixtures	generate
+fixtures	default_config
+fixtures	no_input_scheme
+fixtures	restore_abort
+fixtures	restore_changed
+fixtures	restore_quit
+fixtures	restore_newer
+fixtures	restore_layout
+fixtures	restore_stores
+fixtures	restart
+fixtures	restart_probe
+fixtures	restart_fallback
+fixtures	open_file
+fixtures	milestone
+scenarios	window_host
+scenarios	window_host_config
+scenarios	window_host_restart
+scenarios	window_host_base
+scenarios	window_host_generate
+scenarios	window_host_direct
+scenarios	window_host_undrawn
+fixtures	greeting
 TABLE
 }
 
@@ -81,17 +74,55 @@ TABLE
 case_compare() {
   # The fixtures whose subject is the script runner over a real loop thread
   # (docs/dev-practices/real-thread-checks.md, "The CLI's runs in the
-  # gate"), the real-thread
-  # set's runner entries, run both ways and compared
-  # (tools/fixture-compare.sh): each through the CLI, `editor headless`,
-  # over a real loop thread, which must exit 0, and stepped by the harness,
-  # which requires the two outputs to be the same, saying the lines each
-  # alone has when they are not, and to be the fixture's expected file. The
-  # list is the harness's, from the module. Its four lines and its count
-  # line are required.
+  # gate"), the real-thread set's runner entries, run both ways and
+  # compared. The list is the harness's, from the module (`fixture-test …
+  # compared`, one `<script>\t<config>\t<expected>` a line). Each is run
+  # through the CLI, `editor headless`, over a real loop thread, which must
+  # exit 0, and its output handed to the harness (`fixture-test … compare
+  # <script> <file>`), which runs it stepped and exits 1, saying the lines
+  # each side alone has, when the two outputs differ or are not the
+  # fixture's expected file. The case passes or fails by those statuses
+  # alone; nothing reads what they print to decide. When one fails, what it
+  # printed is shown, with a line naming the command, its status and the
+  # script, for people reading the log. The CLI runs here, in shell, because
+  # Lean spawns no child process (docs/design/overview.md, "Rules of the
+  # boundary").
   (
     set -e
-    out=$(sh ../tools/fixture-compare.sh ../packages/.lake/build/bin/editor ../packages/.lake/build/bin/fixture-test "$(lean --print-prefix)" .lake/build/lib/lean "$(cd .. && pwd -P)") || { printf '%s\n' "$out"; exit 1; }; printf '%s\n' "$out"; for script in tests/headless/script tests/headless/keys-script tests/headless/scene-script tests/headless/ex/script; do printf '%s\n' "$out" | grep -qxF "fixture-compare: $script: the CLI over a real loop thread and the stepped run printed the same, and it is expected" || { echo "ffi-test: fixture-compare did not compare $script both ways"; exit 1; }; done; printf '%s\n' "$out" | grep -qxF 'fixture-compare: compared 4 fixtures both ways' || { echo 'ffi-test: fixture-compare did not compare four fixtures'; exit 1; }
+    editor=../packages/.lake/build/bin/editor
+    harness=../packages/.lake/build/bin/fixture-test
+    sysroot=$(lean --print-prefix)
+    oleans=.lake/build/lib/lean
+    repo=$(cd .. && pwd -P)
+    status=0
+    list=$("$harness" "$sysroot" "$oleans" --repo "$repo" compared) || status=$?
+    if [ "$status" -ne 0 ]; then
+      printf '%s\n' "$list"
+      echo "wiring-runs: compare: fixture-test … compared exited $status" >&2
+      exit 1
+    fi
+    out=$(mktemp)
+    trap 'rm -f "$out"' EXIT
+    # The list is read on a descriptor of its own, so that neither run can
+    # take it for its input.
+    while IFS=$tab read -r script config _ <&3; do
+      [ -n "$script" ] || continue
+      status=0
+      "$editor" headless "$sysroot" "$oleans" "$repo/$config" "$repo/$script" >"$out" || status=$?
+      if [ "$status" -ne 0 ]; then
+        cat "$out"
+        echo "wiring-runs: compare: the CLI exited $status on $script" >&2
+        exit 1
+      fi
+      status=0
+      "$harness" "$sysroot" "$oleans" --repo "$repo" compare "$script" "$out" || status=$?
+      if [ "$status" -ne 0 ]; then
+        echo "wiring-runs: compare: fixture-test … compare exited $status on $script" >&2
+        exit 1
+      fi
+    done 3<<LIST
+$list
+LIST
   )
 }
 
@@ -582,37 +613,6 @@ tab=$(printf '\t')
 command=$1
 shift
 case $command in
-  list)
-    [ "$#" -eq 0 ] || usage
-    table | cut -f3 | tr ' ' '\n'
-    ;;
-  check)
-    [ "$#" -le 1 ] || usage
-    work=$(mktemp -d)
-    trap 'rm -rf "$work"' EXIT
-    if [ "$#" -eq 1 ]; then
-      sort -u "$1" >"$work/listed"
-    else
-      ../packages/.lake/build/bin/fixture-test real-thread --site ffi-test >"$work/entries" &&
-        .lake/build/bin/ffi-test wiring-scenarios >"$work/scenarios" || {
-        echo "wiring-runs: a listing of the wiring set failed" >&2
-        exit 2
-      }
-      { cut -f1 "$work/entries"; cat "$work/scenarios"; } | sort -u >"$work/listed"
-    fi
-    sh "$0" list | sort -u >"$work/cases"
-    failed=
-    for key in $(comm -13 "$work/cases" "$work/listed"); do
-      echo "wiring-runs: $key is of the wiring set, and no case runs it" >&2
-      failed=1
-    done
-    for key in $(comm -23 "$work/cases" "$work/listed"); do
-      echo "wiring-runs: a case runs $key, which is no entry or scenario of the wiring set" >&2
-      failed=1
-    done
-    [ -z "$failed" ] || exit 1
-    echo "wiring-runs: the $(grep -c . "$work/cases") entries and scenarios of the wiring set at ffi-test each have their case"
-    ;;
   prepare)
     [ "$#" -eq 1 ] || usage
     prepared=$1
@@ -622,28 +622,19 @@ case $command in
     echo "wiring-runs: prepared $prepared"
     ;;
   run)
-    if [ "${1:-}" = --cases ]; then
-      [ "$#" -ge 2 ] || usage
-      cases=$2
-      # `.` looks a name with no slash up on PATH.
-      case $cases in */*) ;; *) cases=./$cases ;; esac
-      # shellcheck disable=SC1090
-      . "$cases"
-      shift 2
-    fi
     [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage
     prepared=$(cd "$1" && pwd -P)
     group=${2:-}
     case $group in '' | fixtures | scenarios) ;; *) usage ;; esac
     failures=
-    while IFS=$tab read -r case_group name keys <&3; do
+    while IFS=$tab read -r case_group name <&3; do
       [ -z "$group" ] || [ "$group" = "$case_group" ] || continue
       echo "wiring-runs: $name"
       # The case runs as a command of its own, in a subshell with errexit,
       # and its status is read after it: never as the condition of an `if`
       # or an operand of `||` or `&&`, where sh ignores errexit in all the
       # case runs, its steps' own `set -e` too, so that only its last
-      # step's status would count (tests/wiring-runs/cases).
+      # step's status would count.
       set +e
       (
         set -e
@@ -655,9 +646,6 @@ case $command in
         echo "wiring-runs: FAILED: $name" >&2
         failures="$failures $name"
       fi
-      for key in $keys; do
-        echo "wiring-set: ran $key at ffi-test"
-      done
     done 3<<CASES
 $(table)
 CASES

@@ -1,3 +1,0 @@
-rust-hook: crates c
-run: mise exec -- cargo clippy -p c --all-targets --locked -- -D warnings
-run: mise exec -- cargo test -p c --locked

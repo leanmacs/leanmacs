@@ -47,11 +47,6 @@ def checkGroupChecks : List Check :=
                   List (CheckGroup Unit String)) ==
                 [] },
     { name :=
-        "a run's lines name the root, each module of the wiring set once and the number of its checks"
-      run :=
-        return CheckGroup.ranLines "config-test" (CheckGroup.wiring sampleGroups) 1 ==
-            ["wiring-set: ran config-test W 3 checks", "wiring-set: ran config-test C 1 checks"] },
-    { name :=
         "a root's arguments after its directories name its mode: none a normal run, `--wiring` alone the wiring set's, and anything else no mode"
       run :=
         return CheckGroup.Mode.ofArguments? [] == some .all &&
