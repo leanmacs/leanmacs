@@ -40,7 +40,9 @@ def outputOf (command : Process.Command) : JobM String := do
 report into `said`. -/
 def withEnvironment (services : Job.Services) (setting : Process.Setting) (limit : Nat)
     (said : IO.Ref (Array String)) : IO Job.Services := do
-  let state ← IO.mkRef ({ setting, host := .headless, limit } : Process.Environments)
+  let state ←
+    IO.mkRef
+        ({ host := .headless, limit, sources := setting.sources .headless } : Process.Environments)
   return { services with
       environments := Job.sharedEnvironments state fun text => said.modify (·.push text) }
 
@@ -124,7 +126,8 @@ def miseSleepsPastLimitCheck (services : Job.Services) (fixtures : System.FilePa
               return ended - start >= 1000 && path == inherited
         let reaped ← Editor.Test.Linked.childrenReapedTo services before
         return outcome == .finished true &&
-            (← said.get) == #[Process.failureMessage directory (.timedOut 1000)] &&
+            (← said.get) ==
+              #[Process.failureMessage (.directory directory "mise") (.timedOut 1000)] &&
             reaped }
 
 /-- What the job port shows only over the real process service: the lookup

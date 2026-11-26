@@ -436,8 +436,8 @@ def setup : SetupM Unit := do
 ```
 
 A relative path is refused, and so is a second `processEnvironment` in one
-`setup`. A reload that installs takes the setting, and drops every
-directory's cached environment.
+`setup`. A reload that installs takes the setting, and drops every cached
+environment, the base's and each directory's.
 
 Config sets how long a `:!` or a filter may run before it is killed with
 `shellTimeLimit`, in milliseconds (`shellTimeLimit 5000`); with none it is

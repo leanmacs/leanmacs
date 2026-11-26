@@ -604,30 +604,33 @@ def runnerChecks : List Check :=
         let first ←
           rig.spawn
               (reporting fun _ => do
-                Process.askEnvironment (.record "/p/d" entry)
-                Process.askEnvironment (.record "/p/d" entry)
+                Process.askEnvironment (.record (.directory "/p/d" "mise") entry)
+                Process.askEnvironment (.record (.directory "/p/d" "mise") entry)
                 return true)
         let firstEnded ← first.endedAs (.finished #["true"])
         let second ←
           rig.spawn
               (reporting fun _ => do
-                let found : Option Process.Entry ← Process.askEnvironment (.cached "/p/d")
+                let found : Option Process.Entry ←
+                  Process.askEnvironment (.cached (.directory "/p/d" "mise"))
                 return found == some entry)
         let secondEnded ← second.endedAs (.finished #["true"])
         return firstEnded && secondEnded &&
-            (← said.get) == #[Process.failureMessage "/p/d" failure] &&
+            (← said.get) == #[Process.failureMessage (.directory "/p/d" "mise") failure] &&
             (← rig.services.completions.waiting) == 0 &&
             (← rig.clock.started).isEmpty },
     { name :=
-        "a runner given no environments answers the policy as inherited: auto in the headless mode"
+        "a runner given no environments answers the policy as inherited: auto in the headless mode, the inherited base and no directory source"
       run := do
         let rig ← Rig.new
         let job ←
           rig.spawn
               (reporting fun _ => do
                 let policy : Process.Policy ← Process.askEnvironment .policy
-                return policy ==
-                    { setting := .auto, host := .headless, resolved := none, limit := 5000 })
+                return policy.sources.base matches .inherited &&
+                    policy.sources.directories.isEmpty &&
+                    policy.programs.isEmpty &&
+                    policy.limit == 5000)
         job.endedAs (.finished #["true"]) },
     { name :=
         "a job cancelled in a wait after one post makes no second post: its host is handed the first alone, and it ends cancelled"

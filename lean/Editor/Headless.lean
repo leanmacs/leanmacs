@@ -262,11 +262,12 @@ as before, so reload and job completion work as they did.
   the executable makes for its mode in `shipped`
   (`reportedEnvironments`): `.headless` for the headless mode, `.window`
   with the home directory for the window mode. What it reports, a failed
-  lookup once for a directory, is posted under the Lean source id
-  `Collaborators.environment`, and said in the echo area for the next scene
-  (`Running.said`). A reload that installs asks it to `install` config's
-  setting, `auto` when config sets none, which drops every directory's
-  cached environment. Pinned by `ConfigTest.environmentHostChecks`.
+  lookup once for a directory and source (once per run for the base), is
+  posted under the Lean source id `Collaborators.environment`, and said in
+  the echo area for the next scene (`Running.said`). A reload that installs
+  asks it to `install` config's setting, `auto` when config sets none, which
+  installs that setting's layers and drops every cached environment, the
+  base's and each directory's. Pinned by `ConfigTest.environmentHostChecks`.
 - **The host is handed its display** (`Collaborators.display`), a maker
   over the table of snapshots the text binding publishes, and holds what it
   makes as a `Host.Display`: what answers the loop's requests, wrapped so

@@ -2263,42 +2263,58 @@ def environmentText (setting : String) : String :=
 def failedLookup : Process.Entry :=
   { stamps := #[], found := .failed (.exited 1 "not trusted") }
 
+/-- What a host's environments hold before a reload in the checks: an entry
+of a directory and source, and one of a base. -/
+def heldEntries : Array (Process.Slot × Process.Entry) :=
+  #[(.directory "/p/d" "mise", failedLookup), (.base "login", failedLookup)]
+
 /-- The checks of the host's environments (`Editor/Headless.lean`, "A
 child's environment"), over the headless host and the real elaborator: a
-reload that installs puts config's setting in the state every job shares and
-drops every entry, a rejected one changes neither, and a message the
-environments report is the echo of the next scene. -/
+reload that installs puts the layers of config's setting in the state every
+job shares and drops every entry, the base's included, a rejected one
+changes neither, and a message the environments report is the echo of the
+next scene. -/
 def environmentHostChecks (context : Context) : List Check :=
+  let window : Process.Host := .window (some "/u")
   [{  name :=
-        "an installed reload whose setup sets the process environment puts that setting in the host's environments and drops every entry; a rejected reload changes neither"
+        "an installed reload whose setup sets the process environment puts that setting's layers in the host's environments and drops every entry, the base's included; a rejected reload changes neither"
       run :=
         withEnvironments context [("init.lean", environmentText ".inherited")]
           fun session state _ => do
-          state.set { entries := #[("/p/d", failedLookup)] }
+          -- In the window mode, where auto would give the mise source.
+          state.set
+              { host := window, sources := (Process.Setting.mise none).sources window
+                entries := heldEntries }
           session.ask [.reload]
           let installed ← state.get
-          state.modify fun held => { held with entries := #[("/p/d", failedLookup)] }
+          state.modify fun held => { held with entries := heldEntries }
           session.write "init.lean" "def setup : SetupM Unit := oops"
           session.ask [.reload]
           let rejected ← state.get
-          return installed.setting == .inherited && installed.entries.isEmpty &&
-              rejected.setting == .inherited &&
-              rejected.entries == #[(("/p/d" : System.FilePath), failedLookup)] },
+          return installed.host == window && installed.sources.base matches .inherited &&
+              installed.sources.directories.isEmpty &&
+              installed.entries.isEmpty &&
+              rejected.sources.directories.isEmpty &&
+              rejected.entries == heldEntries },
     { name := "a config that does not set the process environment installs auto"
       run :=
         withEnvironments context [("init.lean", "def setup : SetupM Unit := pure ()")]
           fun session state _ => do
-          state.set { setting := .mise none }
+          state.set { host := window, sources := (Process.Setting.mise none).sources window }
           session.ask [.reload]
-          return (← state.get).setting == .auto },
+          let sources := (← state.get).sources
+          return sources.base matches .inherited &&
+              sources.directories.map (fun source => (source.name, source.program)) ==
+                #[("mise", .firstOf (Process.miseCandidates (some "/u")) .skip)] },
     { name := "a failed lookup the host's environments record is the echo of the next scene"
       run :=
         withEnvironments context [] fun session _ environments => do
           session.resize 160 96
           session.ask []
-          environments.ask (.record "/p/d" failedLookup)
+          environments.ask (.record (.directory "/p/d" "mise") failedLookup)
           let (echo, _) ← session.scene
-          return echo == (Process.failureMessage "/p/d" (.exited 1 "not trusted")).quote }]
+          return echo ==
+              (Process.failureMessage (.directory "/p/d" "mise") (.exited 1 "not trusted")).quote }]
 
 /-- The state directory of the restore checks, in the fake file service's
 model. -/
