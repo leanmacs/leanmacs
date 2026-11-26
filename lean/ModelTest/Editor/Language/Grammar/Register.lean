@@ -1,5 +1,6 @@
 import Editor.Api
 import Editor.Command.Model
+import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Reload
 import Editor.File.Model
@@ -11,6 +12,7 @@ import Editor.Language.Grammar.Answer
 import Editor.Language.Grammar.Register
 import Editor.Loop
 import Editor.Loop.Driver
+import Editor.Package
 import Editor.Setup
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Model
@@ -53,6 +55,36 @@ def shippedState : ModelState :=
       (({} : Config.Registry).replaceLanguages .compiled Language.shipped).replaceModes .compiled
         Language.modes }
 
+/-- `state` with each of `packages` registered, in order, before any config
+(`Config.State.register`), its grammars resolved against the directory
+`grammarDirectories` names for its Lake package; a refused package is
+skipped. -/
+def withPackages (state : ModelState) (packages : Array Package)
+    (grammarDirectories : List (String × System.FilePath)) : ModelState :=
+  packages.foldl (fun state package => (state.register package grammarDirectories).toOption.getD state)
+    state
+
+/-- The package `ini-grammar`, of the Lake package of that name, that
+declares the grammar `ini` for macOS on Apple silicon alone, relative to its
+grammars directory, and the language `ini` of `*.ini` naming it. -/
+def iniPackage : Package :=
+  { name := "ini-grammar"
+    setup :=
+      defineLanguage
+        { name := "ini", patterns := [.extension "ini"], syntaxTree := { grammar := "ini" } }
+    grammars :=
+      #[Language.Grammar.declarePerPlatform "ini"
+          [("darwin-aarch64", "darwin-aarch64/libtree-sitter-ini.so")] "queries"]
+    lakePackage := some "ini-grammar" }
+
+/-- Where the checks stage `ini-grammar`'s grammars directory. -/
+def iniStagedAt : List (String × System.FilePath) :=
+  [("ini-grammar", "/s/grammars/ini-grammar")]
+
+/-- The highlights query `ini-grammar` ships, other than config's. -/
+def packageHighlights : String :=
+  "(string) @string"
+
 /-- The reducer's state once a reload from `state` has installed a config
 whose `setup` is `setup`, with the generation and the grammars of the
 registration the install asked for; `none` when it asked for none. -/
@@ -77,8 +109,10 @@ directories `directories`. `none` when the install asked for no
 registration. -/
 def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
     (files : Array (String × String)) (directories : Array String := #[])
-    (platform : String := checkedPlatform) : Option TestDriver := do
-  let (state, generation, grammars) ← installOver shippedState setup
+    (platform : String := checkedPlatform) (packages : Array Package := #[])
+    (grammarDirectories : List (String × System.FilePath) := []) : Option TestDriver := do
+  let (state, generation, grammars) ←
+    installOver (withPackages shippedState packages grammarDirectories) setup
   let keys : Loop.Keys TestScheme.scheme := { registered := state.registry.registered }
   let model := { editorModel with syntaxTree := { compiled := #["json", "lean"] } }
   let fileModel :=
@@ -283,6 +317,68 @@ def grammarRegisterChecks : List Check :=
                 attachedGrammars refused == #["ini"] &&
                 highlighters refused == #[#["syntax.number"]]
           | _, _ => false },
+    { name :=
+        "a package's per-platform grammar ini, registered on a platform its declaration does not list, is answered with a refusal naming that platform, said in the echo area"
+      run :=
+        pure <|
+          match
+            installedWith (pure ())
+              #[("/s/grammars/ini-grammar/darwin-aarch64/libtree-sitter-ini.so",
+                  .exports #[("tree_sitter_ini", .grammar)])]
+              #[("/s/grammars/ini-grammar/queries/highlights.scm", packageHighlights)]
+              (platform := "linux-x86_64") (packages := #[iniPackage])
+              (grammarDirectories := iniStagedAt) with
+          | none => false
+          | some driver =>
+            let (answered, delivered) := driver.finish 1
+            delivered.isSome &&
+              answered.loop.state.echo ==
+                "grammar `ini`: the grammar's registration failed: it declares no library for the platform `linux-x86_64`, so its languages have no syntax tree" &&
+              answered.jobs.grammars.registered == #[] },
+    { name :=
+        "and an .ini buffer opened before or after the job's command opens with no syntax tree"
+      run :=
+        pure <|
+          match
+            installedWith (pure ())
+              #[("/s/grammars/ini-grammar/darwin-aarch64/libtree-sitter-ini.so",
+                  .exports #[("tree_sitter_ini", .grammar)])]
+              #[("/s/grammars/ini-grammar/queries/highlights.scm", packageHighlights)]
+              (platform := "linux-x86_64") (packages := #[iniPackage])
+              (grammarDirectories := iniStagedAt) with
+          | none => false
+          | some driver =>
+            let before := openedIn driver "/w/a.ini"
+            let (answered, _) := before.finish 1
+            let after := openedIn answered "/w/b.ini"
+            let buffers (driver : TestDriver) : Array String :=
+              driver.loop.state.buffers.filterMap (·.map (·.name))
+            attachedGrammars before == #[] && attachedGrammars answered == #[] &&
+              highlighters answered == #[] &&
+              attachedGrammars after == #[] &&
+              highlighters after == #[] &&
+              buffers after == #["scratch", "/w/a.ini", "/w/b.ini"] },
+    { name :=
+        "a config declaring ini over the package's ini registers config's library, and an .ini buffer is attached with ini and highlighted with config's queries, not the package's"
+      run :=
+        pure <|
+          let packageLibrary := "/s/grammars/ini-grammar/darwin-aarch64/libtree-sitter-ini.so"
+          let configLibrary := "/g/libtree-sitter-ini.so"
+          match
+            installedWith (defineGrammar "ini" configLibrary)
+              #[(packageLibrary, .exports #[("tree_sitter_ini", .grammar)]),
+                (configLibrary, .exports #[("tree_sitter_ini", .grammar)])]
+              #[("/s/grammars/ini-grammar/queries/highlights.scm", packageHighlights),
+                ("/g/queries/highlights.scm", declaredHighlights)]
+              (packages := #[iniPackage]) (grammarDirectories := iniStagedAt) with
+          | none => false
+          | some driver =>
+            let (answered, _) := driver.finish 1
+            let opened := openedIn answered "/w/a.ini"
+            (answered.jobs.grammars.sourceOf? "ini").map (·.library) == some configLibrary &&
+              attachedGrammars opened == #["ini"] &&
+              highlighters opened == #[#["syntax.number"]] &&
+              answered.loop.state.echo == "" },
     { name :=
         "registering a per-platform grammar on a platform it does not list answers a refusal naming that platform, asks the grammar service nothing, and says it in the echo with no syntax tree for its languages"
       run :=

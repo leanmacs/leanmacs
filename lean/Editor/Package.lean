@@ -44,6 +44,17 @@ is handed, and a test reads what a package registers with no host
   stays replaceable"). A test hands the runner a fake in their place
   (`Job.FakePackageService`), and reads nothing here.
 
+- **What grammars it ships** (`grammars`): declarations of the grammars
+  its Lake package ships under its `grammars/` directory, with paths
+  relative to that directory, and the Lake package they are under
+  (`lakePackage`), which the set's generated root sets through
+  `Package.shipping`: one Lake package may hold several packages, the
+  directory is staged per Lake package, and a package's name is not its
+  Lake package's. Resolved, refused and registered by
+  `Package.collected` (`Editor/Config/Packages.lean`, "A package's
+  grammars"); `docs/design/packages.md`, "A package's grammars", says how
+  the files reach every place an editor runs from.
+
 This module imports the setup port and the package-service port alone, so
 that a package's module needs nothing of the config session or the job
 runner.
@@ -65,5 +76,22 @@ structure Package where
   (`PackageService.ask`): wired into the job runner at the program's edge,
   never through `setup`. None by default. -/
   services : Array PackageService := #[]
+  /-- The grammars the package ships (`Language.Grammar`,
+  `Editor/Language/Grammar.lean`), each declared with its library paths and
+  its query directory relative to its Lake package's `grammars/` directory:
+  `Package.collected` resolves them against the directory where that
+  directory is staged beside the running editor. None by default. -/
+  grammars : Array Language.Grammar := #[]
+  /-- The Lake package whose `grammars/` directory `grammars`' paths are
+  under. The author never sets it: the set's generated root does
+  (`Package.shipping`), for the entry modules of a Lake package that carries
+  the keyword `editor-grammars`. -/
+  lakePackage : Option String := none
+
+/-- `packages`, each tagged as a package of the Lake package `lake`
+(`lakePackage`), and nothing else changed: what the set's generated root
+lists for the entry module of a Lake package that ships grammars. -/
+def Package.shipping (lake : String) (packages : Array Package) : Array Package :=
+  packages.map ({ · with lakePackage := some lake })
 
 end Editor

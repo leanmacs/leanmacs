@@ -1049,7 +1049,13 @@ The config session's decisions are tested here too, with no elaborator:
   listed, once, where the mode was first registered; and a host handed no
   package starts from a registry that holds nothing, no entry of any kind
   a package of every kind fills, which is what the core's Lake package
-  registers, having no entry module;
+  registers, having no entry module; a package's grammars, relative to
+  its Lake package's grammars directory, resolved under the staged
+  directory a host is handed, a path that leaves it refusing the package
+  with the path, grammars with no staged directory refusing it with the
+  keyword, config's declaration of a name over a package's, and the
+  tagging of an entry module's packages with their Lake package
+  (`Package.shipping`);
 - `extensionChecks`: extension points (`Editor/Extension.lean`), laid out
   as an interface package, two implementation packages and a consumer:
   values two packages register at a point come back typed, in

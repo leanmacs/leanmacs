@@ -9,6 +9,26 @@ What a host does with the packages it is handed (`Editor/Package.lean`):
 every package registered, in the order of the array, before any config.
 It is pure, so the model tests run it (`ModelTest.packageChecks`).
 
+## A package's grammars
+
+A package declares the grammars its Lake package ships on
+`Package.grammars`, with paths relative to that Lake package's `grammars/`
+directory (`Editor/Package.lean`). `collected` resolves them against the
+directory where that directory is staged beside the running editor, which
+the host is handed as a table of Lake packages' directories
+(`ofPackages`'s `grammarDirectories`, read from the `editor.grammars`
+record, `Editor/ModuleLookup.lean`), and appends them to what the
+package's `setup` collected, so they are owned by the package and
+registered as config's are, by the core's `register-grammars` job at each
+install. A path that is absolute or climbs out of the directory
+(`Language.Grammar.within?`) refuses the package with the path
+(`leavesGrammars`), and so does a package with grammars whose Lake package
+has no staged directory, or that no root tagged with a Lake package
+(`noGrammarsDirectory`). Packages register before config, and the grammar
+table puts config's declarations over every package's by name
+(`Registry.grammarTable`), so config overrides a package's grammar by
+name, and the one job registers each name once, from the winning owner.
+
 ## Owners
 
 A package's registrations belong to the owner named after it
@@ -105,6 +125,17 @@ operation, is refused. -/
 def setsConfigOnly (setting : String) : String :=
   s!"it sets `{setting}`, which only config may choose"
 
+/-- Why a package whose grammar `grammar`'s path `path` is absolute, or
+climbs out of its grammars directory, is refused. -/
+def leavesGrammars (grammar : String) (path : System.FilePath) : String :=
+  s!"its grammar `{grammar}`'s path `{path}` leaves its grammars directory"
+
+/-- Why a package that declares grammars is refused when no grammars
+directory of its Lake package is staged beside the editor, or it is tagged
+with no Lake package. -/
+def noGrammarsDirectory : String :=
+  "it declares grammars, and no grammars directory of its Lake package is staged beside this editor: a Lake package that ships grammars carries the keyword `editor-grammars`"
+
 end Package
 
 namespace Config
@@ -152,11 +183,31 @@ def nameProblem? (package : Package) : Option String :=
     if package.owner == .config || package.owner == .compiled then some (reservedName package.name)
     else none
 
-/-- What `package`'s `setup` registers, or the message `package` is refused
-with ("What is refused", in the module docs): for its name, for what its
-`setup` threw or what is wrong with what it registered, or for a setting
-only config may choose. The message names the package. -/
-def collected (package : Package) : Except String Config.Registrations := do
+/-- `package`'s grammars resolved against `directory?`, the directory its
+Lake package's grammars directory is staged in ("A package's grammars", in
+the module docs), or why the package is refused: no directory, a path that
+leaves it, or a problem of a resolved declaration. -/
+def grammarsUnder (package : Package) (directory? : Option System.FilePath) :
+    Except String (Array Language.Grammar) := do
+  if package.grammars.isEmpty then
+    return #[]
+  let some directory := directory? | throw noGrammarsDirectory
+  package.grammars.mapM fun grammar => do
+    match grammar.under directory with
+    | .error path =>
+      throw (leavesGrammars grammar.name path)
+    | .ok resolved =>
+      if let some problem := resolved.problem? then
+        throw problem
+      return resolved
+
+/-- What `package`'s `setup` registers, with its grammars resolved against
+`directory?` (`grammarsUnder`), or the message `package` is refused with
+("What is refused", in the module docs): for its name, for what its `setup`
+threw or what is wrong with what it registered, for a setting only config
+may choose, or for its grammars. The message names the package. -/
+def collected (package : Package) (directory? : Option System.FilePath := none) :
+    Except String Config.Registrations := do
   if let some problem := package.nameProblem? then
     throw problem
   match Config.Registrations.ofSetup package.setup with
@@ -165,13 +216,30 @@ def collected (package : Package) : Except String Config.Registrations := do
   | .ok collected =>
     if let some setting := collected.configOnly.head? then
       throw (refused package.name (setsConfigOnly setting))
-    return collected
+    match package.grammarsUnder directory? with
+    | .error reason =>
+      throw (refused package.name reason)
+    | .ok grammars =>
+      let collected := { collected with grammars := collected.grammars ++ grammars }
+      if let some problem := collected.problem? then
+        throw (refused package.name problem)
+      return collected
 
-/-- What `package` registers, as a host registers it: what its `setup`
-collects, or nothing when the package is refused (`collected`). A test reads
-a package's parts through it. -/
-def registered (package : Package) : Config.Registrations :=
-  package.collected.toOption.getD {}
+/-- What `package` registers, as a host registers it, its grammars resolved
+against `directory?`: what its `setup` collects, or nothing when the package
+is refused (`collected`). A test reads a package's parts through it. -/
+def registered (package : Package) (directory? : Option System.FilePath := none) :
+    Config.Registrations :=
+  (package.collected directory?).toOption.getD {}
+
+/-- The directory `package`'s Lake package's grammars directory is staged
+in, from `directories`, each a Lake package's name and its directory; none
+when the package is tagged with no Lake package or the table names none
+for it. -/
+def grammarsDirectory? (package : Package) (directories : List (String × System.FilePath)) :
+    Option System.FilePath := do
+  let lake ← package.lakePackage
+  return (← directories.find? (·.1 == lake)).2
 
 end Package
 
@@ -180,17 +248,19 @@ namespace Config.State
 variable {β σ : Type}
 
 /-- `state` with `package` registered: its owned registrations for its owner
-(`Registry.replaceOwned`), its style defaults after the ones there are, the
-cells of its stores, and its name among the packages registered. Or the
-message it is refused with, when its name is one already registered
-(`Package.namedTwice`) or the package is refused by itself
+(`Registry.replaceOwned`), its grammars among them, resolved against the
+directory `directories` names for its Lake package; its style defaults after
+the ones there are, the cells of its stores, and its name among the packages
+registered. Or the message it is refused with, when its name is one already
+registered (`Package.namedTwice`) or the package is refused by itself
 (`Package.collected`); `state` is then unchanged. -/
-def register (state : State β σ) (package : Package) : Except String (State β σ) := do
+def register (state : State β σ) (package : Package)
+    (directories : List (String × System.FilePath) := []) : Except String (State β σ) := do
   if let some problem := package.nameProblem? then
     throw problem
   if state.packages.contains package.name then
     throw (Package.namedTwice package.name)
-  let collected ← package.collected
+  let collected ← package.collected (package.grammarsDirectory? directories)
   let registry := state.registry.replaceOwned package.owner collected
   return { state with
       packages := state.packages.push package.name
@@ -200,13 +270,17 @@ def register (state : State β σ) (package : Package) : Except String (State β
       cellsRevision := state.cellsRevision + 1 }
 
 /-- The config state a host handed `packages` starts from: each registered
-in the array's order (`register`), from nothing, before any config; and the
-message of each package that was refused, in order. A refused package is
-skipped and the rest register. -/
-def ofPackages (packages : Array Package) : State β σ × Array String :=
+in the array's order (`register`), from nothing, before any config, its
+grammars resolved against the directory `grammarDirectories` names for its
+Lake package (each a Lake package's name and the directory its grammars
+directory is staged in, `ModuleLookup.grammarDirectories`); and the message
+of each package that was refused, in order. A refused package is skipped and
+the rest register. -/
+def ofPackages (packages : Array Package) (grammarDirectories : List (String × System.FilePath) := [])
+    : State β σ × Array String :=
   packages.foldl
     (fun (state, refused) package =>
-      match state.register package with
+      match state.register package grammarDirectories with
       | .ok state => (state, refused)
       | .error message => (state, refused.push message))
     ({}, #[])

@@ -98,6 +98,30 @@ def commanding (name : String) (commands : List (String × String)) : Package :=
 def packaged (packages : Array Package) : ModelState × Array String :=
   Config.State.ofPackages packages
 
+/-- The libraries the package `ini-grammar` declares for its grammar `ini`,
+by platform, relative to its grammars directory. -/
+def iniLibraries : List (String × System.FilePath) :=
+  [("darwin-aarch64", "darwin-aarch64/libtree-sitter-ini.dylib"),
+    ("linux-x86_64", "linux-x86_64/libtree-sitter-ini.so")]
+
+/-- A package called `name`, of the Lake package `ini-grammar`, that
+declares the grammar `ini` per platform with `libraries` and the query
+directory `queries`, both relative to its grammars directory, and the
+language `ini` of `*.ini` naming it. -/
+def shippingIni (name : String := "ini-grammar") (libraries := iniLibraries)
+    (queries : System.FilePath := "queries") : Package :=
+  { name
+    setup :=
+      defineLanguage
+        { name := "ini", patterns := [.extension "ini"], syntaxTree := { grammar := "ini" } }
+    grammars := #[Language.Grammar.declarePerPlatform "ini" libraries queries]
+    lakePackage := some "ini-grammar" }
+
+/-- The directory the checks' set stages `ini-grammar`'s grammars directory
+in. -/
+def iniStaged : System.FilePath :=
+  "/s/.lake/build/grammars/ini-grammar"
+
 /-- Whether `state` holds what the package `everyKind name` registered: an
 entry of every kind for its owner, its three commands among them, its style
 default, and the cell of its store. -/
@@ -313,6 +337,76 @@ def packageChecks : List Check :=
               (once.cells.find? counting.owner "counter").map (·.value) == some (.nat 5) &&
               stored once "counter" == none &&
               (runs once "bump").map (·.2.texts.contents) == some #["was 5"] },
+    { name :=
+        "a package of the Lake package ini-grammar declaring the grammar ini per platform relative to its grammars directory, handed the staged directory /s/.lake/build/grammars/ini-grammar, registers ini under its owner with each platform's library and the query directory under that directory, and its source on darwin-aarch64 is /s/.lake/build/grammars/ini-grammar/darwin-aarch64/libtree-sitter-ini.dylib"
+      run :=
+        let (state, refused) :=
+          (Config.State.ofPackages #[shippingIni] [("ini-grammar", iniStaged)] :
+            ModelState × Array String)
+        let table := state.registry.grammarTable
+        pure
+          (refused.isEmpty &&
+            state.registry.grammars.map (fun entry => (entry.owner.name, entry.grammar.name)) ==
+              #[("ini-grammar", "ini")] &&
+            table ==
+              [Language.Grammar.declarePerPlatform "ini"
+                  [("darwin-aarch64",
+                      "/s/.lake/build/grammars/ini-grammar/darwin-aarch64/libtree-sitter-ini.dylib"),
+                    ("linux-x86_64",
+                      "/s/.lake/build/grammars/ini-grammar/linux-x86_64/libtree-sitter-ini.so")]
+                  "/s/.lake/build/grammars/ini-grammar/queries"] &&
+            (table.head?.bind (·.sourceOn "darwin-aarch64")).map (·.library) ==
+              some "/s/.lake/build/grammars/ini-grammar/darwin-aarch64/libtree-sitter-ini.dylib" &&
+            state.registry.languageTable.any (·.name == "ini")) },
+    { name :=
+        "a package whose grammar path is ../outside.dylib, or absolute, or whose query directory leaves its grammars directory, is refused with a message naming the package and that path, and the packages after it register"
+      run :=
+        let climbing := shippingIni "climbing" [("darwin-aarch64", "../outside.dylib")]
+        let absolute := shippingIni "absolute" [("darwin-aarch64", "/abs/libini.dylib")]
+        let queries := shippingIni "queries" (queries := "a/../../queries")
+        let (state, refused) :=
+          (Config.State.ofPackages #[climbing, absolute, queries, commanding "after" [("a", "a")]]
+              [("ini-grammar", iniStaged)] :
+            ModelState × Array String)
+        pure
+          (refused ==
+              #["the package `climbing` is refused: its grammar `ini`'s path `../outside.dylib` leaves its grammars directory",
+                "the package `absolute` is refused: its grammar `ini`'s path `/abs/libini.dylib` leaves its grammars directory",
+                "the package `queries` is refused: its grammar `ini`'s path `a/../../queries` leaves its grammars directory"] &&
+            state.packages == #["after"] &&
+            state.registry.grammars.isEmpty) },
+    { name :=
+        "a package that declares grammars with no staged directory of its Lake package, or with no Lake package tagged, is refused with a message naming it and the keyword"
+      run :=
+        let untagged := { shippingIni "untagged" with lakePackage := none }
+        let (_, refused) :=
+          (Config.State.ofPackages #[shippingIni "unstaged", untagged] [("other", iniStaged)] :
+            ModelState × Array String)
+        pure
+          (refused ==
+            #["the package `unstaged` is refused: it declares grammars, and no grammars directory of its Lake package is staged beside this editor: a Lake package that ships grammars carries the keyword `editor-grammars`",
+              "the package `untagged` is refused: it declares grammars, and no grammars directory of its Lake package is staged beside this editor: a Lake package that ships grammars carries the keyword `editor-grammars`"]) },
+    { name :=
+        "after the package's ini registers, an installed config declaring the grammar ini with its own library puts config's declaration in the grammar table in the package's place, and the install's registerGrammars effect carries config's ini alone"
+      run :=
+        let (state, _) :=
+          (Config.State.ofPackages #[shippingIni] [("ini-grammar", iniStaged)] :
+            ModelState × Array String)
+        let (installed, effects) :=
+          reduceFrom state
+            [.requested, .finished (accepted ["a"] (defineGrammar "ini" "/mine/libini.so"))]
+        pure
+          (installed.registry.grammarTable == [Language.Grammar.declare "ini" "/mine/libini.so"] &&
+            effects.contains (.registerGrammars 1 #["ini"]) &&
+            installed.registry.grammars.any (·.owner.name == "ini-grammar")) },
+    { name := "Package.shipping tags every package of the array with the Lake package and changes nothing else"
+      run :=
+        let packages := #[{ shippingIni with lakePackage := none }, commanding "other" []]
+        let shipped := Package.shipping "ini-grammar" packages
+        pure
+          (shipped.map (·.lakePackage) == #[some "ini-grammar", some "ini-grammar"] &&
+            shipped.map (·.name) == packages.map (·.name) &&
+            shipped.map (·.grammars) == packages.map (·.grammars)) },
     { name :=
         "a host handed no package starts from a registry that holds no command, binding, mode, ex name, job, source, menu or extension value: no entry of any of the nineteen kinds a package of every kind fills, no menu bar, no theme, no store's cell, no package's name, and nothing refused"
       run :=
