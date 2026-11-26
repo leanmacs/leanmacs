@@ -1,6 +1,7 @@
 import Editor.Command.Append
 import Editor.Config.LakePackage
 import Editor.Executable
+import Editor.Executable.Refusal
 import Editor.Headless
 import Editor.Package
 import Editor.RealHost
@@ -121,7 +122,10 @@ session is handed over, with that line as its reason
 that will not start. `demo`, `--version` and `window-check` run no scheme
 and are not refused. Which modes are refused is pure
 (`Executable.Mode.needsScheme`, pinned by `ModelTest.executableModeChecks`);
-the choice and the text by `ModelTest.schemePackageChecks`; and the gate
+the choice and the text by `ModelTest.schemePackageChecks`; the refusal
+they make together, the line or none for each mode, by
+`Executable.schemeRefusal?` (`Editor/Executable/Refusal.lean`, pinned by
+`ModelTest.executableRefusalChecks`); and the gate
 runs the empty set's editor, which has no scheme once evil is a package
 (`mise run ffi-test`).
 
@@ -182,8 +186,9 @@ purpose: it must act on every mode.
 
 A mode that runs an input scheme (`Executable.Mode.needsScheme`: the
 headless mode, the window mode and the probe) is refused when `schemes` is
-empty: `editor: ` and `SchemePackage.noneInstalled` on stderr, and status
-1, before the mode reads its command line ("The input scheme", in the
+empty: the line `Executable.schemeRefusal?` gives, `editor: ` and
+`SchemePackage.noneInstalled`, on stderr, and status 1, before the mode
+reads its command line ("The input scheme", in the
 module docs). Otherwise the hosts run the scheme chosen of `schemes`
 (`SchemePackage.chosen?`).
 
@@ -204,14 +209,12 @@ toolchain file ("The generated files", in the module docs). -/
 def run (packages : Array Package) (schemes : Array SchemePackage) (base : Array Lean.Name)
     (origin : Config.LakePackage.Origin) (args : List String) : IO UInt32 := do
   let mode := Editor.Executable.mode args
-  let refused : IO UInt32 := do
-    IO.eprintln s!"editor: {SchemePackage.noneInstalled}"
-    return 1
-  let chosen := SchemePackage.chosen? schemes
   -- Before the mode reads the rest of its command line, so that a usage
   -- error does not hide it.
-  if mode.needsScheme && chosen.isNone then
-    return ← refused
+  if let some line := Editor.Executable.schemeRefusal? mode schemes then
+    IO.eprintln line
+    return 1
+  let chosen := SchemePackage.chosen? schemes
   match mode with
   | .demo =>
     demo
@@ -238,13 +241,14 @@ def run (packages : Array Package) (schemes : Array SchemePackage) (base : Array
         pure ()
     pure 0
   | .headless launch rest =>
-    let some supplied := chosen | refused
+    -- `schemeRefusal?` refused this mode above when no scheme is chosen.
+    let some supplied := chosen | return 1
     let launch := { launch with running := some (← IO.appPath) }
     Editor.Headless.main supplied.scheme packages base origin launch rest
   | .windowCheck options =>
     Editor.WindowCheck.main options
   | .window launch arguments =>
-    let some supplied := chosen | refused
+    let some supplied := chosen | return 1
     let launch := { launch with running := some (← IO.appPath) }
     Editor.Window.main supplied.scheme packages base origin launch arguments
 

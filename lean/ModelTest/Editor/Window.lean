@@ -403,6 +403,20 @@ def windowStartChecks : List Check :=
               (state.buffer? ⟨0⟩).map (·.name) == some "scratch" &&
               state.findFile path == some ⟨1⟩ &&
               (showing opened state.frame.focused).map (·.id) == some ⟨1⟩ &&
-              (showing opened state.frame.focused).bind (·.text) == some FileCases.noteText }]
+              (showing opened state.frame.focused).bind (·.text) == some FileCases.noteText },
+    { name :=
+        "the window mode started on a file and closed with no edit stops, asks for no save, and leaves the file's bytes as they were"
+      run :=
+        pure <|
+          let path := inFiles "note.txt"
+          match ((parsed [path.toString]).map (·.starts (.skip none) #[])).bind started with
+          | none => false
+          | some loading =>
+            let (opened, _) := loading.finish 1
+            let (left, _) := fedTo opened [.closeRequested]
+            (showing opened).bind (·.text) == some FileCases.noteText && left.stopped &&
+              left.startedJobs.isEmpty &&
+              (bytesOf loading path).isSome &&
+              bytesOf left path == bytesOf loading path }]
 
 end ModelTest

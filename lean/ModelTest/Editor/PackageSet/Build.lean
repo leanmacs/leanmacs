@@ -603,6 +603,64 @@ def packageSetBuildChecks : List Check :=
                 (done.handOver.map (·.handover.candidates.toList.head?)) ==
                   some (some (System.FilePath.mk "/d/editors/c0/1/editor"))) },
     { name :=
+        "a build that succeeds with no state directory ends the buffer finished, hands nothing over, and says the new editor starts at the next launch"
+      run :=
+        let facts := lakefileWith #[hello]
+        match orderFor facts with
+        | none => pure false
+        | some order =>
+          let resolve :=
+            streaming
+              (lakeCommand order
+                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
+              #[]
+          let (scripts, streams) := succeeding order
+          match buildDriver (runningWith facts) scripts (streams.push resolve) with
+          | none => pure false
+          | some driver =>
+            let stateless :=
+              { driver with
+                loop :=
+                  { driver.loop with state := { driver.loop.state with stateDirectory := none } } }
+            let done := built stateless order
+            pure
+              ((bufferLines done).back?.map (·.startsWith "Package build finished after") ==
+                  some true &&
+                done.loop.state.echo ==
+                  "packages: built /d/editors/c0/1/editor; it starts at the next launch" &&
+                done.handOver.isNone) },
+    { name :=
+        "a lake query :editorRustCrates that exits 1 posts what it said on stderr to the build's buffer, ends the build failed naming the query and its status, and runs neither Cargo nor lake build"
+      run :=
+        let facts := lakefileWith #[hello]
+        match orderFor facts with
+        | none => pure false
+        | some order =>
+          let resolve :=
+            streaming
+              (lakeCommand order
+                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
+              #[]
+          let query := lakeCommand order #["query", ":editorRustCrates"]
+          let refusal := "error: the crate /elsewhere/rust is outside the editor's workspace"
+          let (scripts, streams) := succeeding order
+          let scripts :=
+            (scripts.filter (·.command != query)).push
+              { command := query
+                reply :=
+                  .ok { exit := .code 1, stdout := .empty, stderr := (refusal ++ "\n").toUTF8 } }
+          match buildDriver (runningWith facts) scripts (streams.push resolve) with
+          | none => pure false
+          | some driver =>
+            let done := built driver order
+            let how := "lake query :editorRustCrates exited with status 1"
+            let cargo := tool order "cargo"
+            pure
+              ((bufferLines done).contains refusal && failedWith done how &&
+                done.loop.state.echo == s!"packages: {how}; this editor keeps running" &&
+                !(startedRuns done).contains (cargo.program, cargo.arguments) &&
+                !(startedRuns done).any (·.2.contains ":editorInstall")) },
+    { name :=
         "pruning keeps the version before the new one and the running editor's core, and removes older versions, other cores and staging directories"
       run :=
         pure

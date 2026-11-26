@@ -37,7 +37,8 @@ is pure, so `model-test` pins it (`ModelTest.executableModeChecks`), and
 `Mode.needsScheme` says which modes run an input scheme: the headless
 mode, the window mode and the probe. `Editor.Main.run` refuses those when
 its package set supplies no scheme (`Editor/InputScheme.lean`, "The scheme
-a package supplies").
+a package supplies"), with the line `Executable.schemeRefusal?` gives
+(`Editor/Executable/Refusal.lean`).
 
 It imports only the launch flags' leaf module, and `Editor` does not import
 it, so it adds nothing to what config is elaborated on.

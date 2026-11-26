@@ -2394,7 +2394,8 @@ for `ex-api`, whose contract names `shell-api`'s `shell-command`, and
   - the hosts and the executable's modules (`Editor.Main`,
     `Editor.Headless`, `Editor.Headless.CommandLine`, `Editor.Window`,
     `Editor.Window.Real`, `Editor.WindowCheck`, `Editor.WindowCheck.Real`,
-    `Editor.Executable`, `Editor.Version`, `Editor.ModuleLookup`), with
+    `Editor.Executable`, `Editor.Executable.Refusal`, `Editor.Version`,
+    `Editor.ModuleLookup`), with
     what a host is made of and driven by: the editor queue as a port
     (`Editor.Headless.Queue`), the host stepped on its caller's thread
     (`Editor.Headless.Stepped`), a driver's wait, judged
@@ -2769,7 +2770,7 @@ package, names a module of evil or of the themes:
 | Addition | What it is | Who uses it |
 |---|---|---|
 | `SchemePackage`, `SchemePackage.chosen?`, `SchemePackage.noneInstalled` (`lean/Editor/InputScheme.lean`) | The scheme a package supplies, as a name and an `InputScheme`; the one an editor runs of those its set supplies, the last; and the refusal's text | a scheme package's entry module (`scheme`); `Editor.Main.run`; "Input schemes", below |
-| `Executable.Mode.needsScheme` (`lean/Editor/Executable.lean`), and `Editor.Main.run`'s `schemes` | Which modes run a scheme (headless, window, probe), and the schemes the generated root hands `run` | the executable's entry; `ModelTest.executableModeChecks`, `schemePackageChecks` |
+| `Executable.Mode.needsScheme` (`lean/Editor/Executable.lean`), `Executable.schemeRefusal?` (`lean/Editor/Executable/Refusal.lean`), and `Editor.Main.run`'s `schemes` | Which modes run a scheme (headless, window, probe); the refusal they make together with no scheme, the line `editor: ` and `SchemePackage.noneInstalled` or none, which `Editor.Main.run` asks before the mode reads its command line; and the schemes the generated root hands `run` | the executable's entry; `ModelTest.executableModeChecks`, `ModelTest.executableRefusalChecks`, `schemePackageChecks` |
 | The hosts' scheme argument: `Headless.shippedOver`, `.shipped`, `.main`, `Window.host`, `.main` take `(scheme : InputScheme)` first | A host is typed by the scheme it is handed and names none | `Editor.Main.run`; every linked root and the linked kit |
 | `InputScheme.cursorFaces`, with the contract's `SchemeContract.cursorFacesReported` and `SchemeContract.failsOnly` (`lean/Editor/InputScheme/Contract.lean`) | The faces a scheme draws a cursor in, other than `cursor`, held to its reports; and a contract run that says which properties alone fail | the theme completeness check; evil's `vimContractChecks` |
 | `Face.Entry.cursor`, `Face.cursorNames` (`lean/Editor/Face/Vocabulary.lean`) | The vocabulary marks its cursor faces | `Themes.problems`' default; the shipped palettes' tests; evil's `vimDefaultChecks` |
@@ -3236,7 +3237,7 @@ and the core's Lake package registers no `Package`.
 | Modules | Count | Class | A package may import it |
 |---|---|---|---|
 | The core's root: `Editor.Core` | 1 | core | no |
-| The hosts and the executable's modules, with what a host is made of and driven by: the editor queue as a port, the session journal as a port, a host stepped on its caller's thread, a driver's wait judged, and a host's activity count, which the tests' event waits are written on (`docs/design/concurrency.md`, "Stepped hosts in tests", "The idle signal"): `Editor.Executable`, `Editor.Headless`, `Editor.Headless.CommandLine`, `Editor.Headless.Journal`, `Editor.Headless.Queue`, `Editor.Headless.Stepped`, `Editor.Headless.Wait`, `Editor.Job.Activity`, `Editor.Main`, `Editor.ModuleLookup`, `Editor.Version`, `Editor.Window`, `Editor.Window.Real`, `Editor.WindowCheck`, `Editor.WindowCheck.Real` | 15 | core | no |
+| The hosts and the executable's modules, with what a host is made of and driven by: the editor queue as a port, the session journal as a port, a host stepped on its caller's thread, a driver's wait judged, and a host's activity count, which the tests' event waits are written on (`docs/design/concurrency.md`, "Stepped hosts in tests", "The idle signal"): `Editor.Executable`, `Editor.Executable.Refusal`, `Editor.Headless`, `Editor.Headless.CommandLine`, `Editor.Headless.Journal`, `Editor.Headless.Queue`, `Editor.Headless.Stepped`, `Editor.Headless.Wait`, `Editor.Job.Activity`, `Editor.Main`, `Editor.ModuleLookup`, `Editor.Version`, `Editor.Window`, `Editor.Window.Real`, `Editor.WindowCheck`, `Editor.WindowCheck.Real` | 16 | core | no |
 | The loop and its dispatch: `Editor.Command.Dispatch`, `Editor.Event.Queue`, `Editor.Loop`, `Editor.State.Outbox` | 4 | core | no |
 | The models of the ports: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Config.Elaborator.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Grep.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `Editor.SyntaxTree.Model.Json`, `Editor.SyntaxTree.Model.Query`, `Editor.Text.Model`, `Editor.Watch.Model` | 16 | core | in tests |
 | The contracts and cases: `Editor.Api.Cases`, `Editor.Clipboard.Contract`, `Editor.Completion.AtPointContract`, `Editor.Completion.Contract`, `Editor.Completion.DisplayContract`, `Editor.Completion.StyleContract`, `Editor.Config.Elaborator.Contract`, `Editor.Display.Contract`, `Editor.File.Cases`, `Editor.Fuzzy.Contract`, `Editor.Headless.Journal.Contract`, `Editor.Headless.Queue.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.Job.FlushContract`, `Editor.Job.HandleContract`, `Editor.Job.ProtocolContract`, `Editor.Job.PumpContract`, `Editor.Job.SchedulerContract`, `Editor.SyntaxTree.Contract`, `Editor.SyntaxTree.DeliveryContract`, `Editor.Text.Contract`, `Editor.UndoTree.Cases`, `Editor.Watch.Contract` | 24 | core | in tests |
@@ -3443,8 +3444,9 @@ that opens and takes no input.
 - **The refusal.** With no scheme supplied, the headless mode, the window
   mode and `--probe` print `editor: no input scheme is installed: no
   package of this editor's package set supplies one` on stderr and exit 1
-  (`Executable.Mode.needsScheme`, `lean/Editor/Main.lean`, "The input
-  scheme"). The probe refuses so that the build of such a set fails at its
+  (`Executable.Mode.needsScheme`; the line or none for each mode is
+  `Executable.schemeRefusal?`, `lean/Editor/Executable/Refusal.lean`;
+  `lean/Editor/Main.lean`, "The input scheme"). The probe refuses so that the build of such a set fails at its
   probe and publishes nothing ("The build, as a job", step 6), and a
   `:restart` into such an editor is given up before the session is handed
   over (`lean/Editor/Restore/Restart.lean`).

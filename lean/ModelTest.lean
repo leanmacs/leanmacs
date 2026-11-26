@@ -45,6 +45,7 @@ import ModelTest.Editor.DisplayRules
 import ModelTest.Editor.Ex.Line
 import ModelTest.Editor.ExcerptView
 import ModelTest.Editor.Executable
+import ModelTest.Editor.Executable.Refusal
 import ModelTest.Editor.Extension
 import ModelTest.Editor.Face
 import ModelTest.Editor.Face.Vocabulary
@@ -1090,6 +1091,12 @@ need no model and no fake of a collaborator:
   is chosen of two, and a scheme written by hand in the test, supplied as a
   scheme package, drives the loop with a command a package written there
   registers;
+- `executableRefusalChecks`: the executable's scheme refusal
+  (`Executable.schemeRefusal?`, `Editor/Executable/Refusal.lean`): with no
+  scheme the headless mode, the window mode and the probe are refused with
+  `editor: ` and the sentence that none is installed, the demonstration,
+  the version and the keyboard check are not, and with one scheme no mode
+  is;
 - `schemeHintChecks`: what a scheme says can follow a pending prefix
   (`InputScheme.continuations`): nothing from a scheme that says nothing,
   the test scheme's list, and a continuation as a key hint;
@@ -1450,6 +1457,7 @@ def checks : List Check :=
     packageSetBuildChecks ++
     headlessCommandLineChecks ++
     executableModeChecks ++
+    executableRefusalChecks ++
     versionChecks ++
     windowOptionChecks ++
     windowStartChecks ++
