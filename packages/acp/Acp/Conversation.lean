@@ -151,12 +151,6 @@ def store : Store (Array Conversation) :=
       | .list items => items.toArray.mapM Conversation.decode
       | _ => none }
 
-/-- Why a session's request was not answered, in words. -/
-def describeRefusal : Refusal → String
-  | .child error => error.describe
-  | .service (.refused reason) => s!"refused: {reason}"
-  | .service (.noSuchService name) => s!"no service {name}"
-
 /-! ## The conversations and their buffers -/
 
 /-- Every conversation, oldest first. -/
@@ -261,13 +255,13 @@ def sessionWork (agents : Array Agent) (arguments : List Argument) : Work := fun
     | return endedCommand number s!"no agent named {name}"
   match ← AgentsApi.Job.open agent root with
   | .error refusal =>
-    return endedCommand number s!"the session did not open: {describeRefusal refusal}"
+    return endedCommand number s!"the session did not open: {refusal.describe}"
   | .ok opened =>
     post { command := openedName, arguments := .nat number :: opened.toArguments }
     for _ in [0:takeLimit] do
       match ← AgentsApi.Job.next opened.session with
       | .error refusal =>
-        return endedCommand number (describeRefusal refusal)
+        return endedCommand number refusal.describe
       | .ok batch =>
         post { command := eventsName, arguments := .nat number :: batch.toArguments }
         if let some how := endingOf batch then
@@ -285,10 +279,10 @@ def sentCommand (number : Nat) (order : Order) (reply : Except Refusal Sent) : E
       | some turn => conversation.sent turn
       | none => { conversation with awaiting := false }
     | .prompt _, .error refusal =>
-      { conversation with awaiting := false }.noted s!"{promptName}: {describeRefusal refusal}"
+      { conversation with awaiting := false }.noted s!"{promptName}: {refusal.describe}"
     | .answer ticket optionId, .ok _ => conversation.answered ticket optionId
-    | .answer _ _, .error refusal => conversation.noted s!"{answerName}: {describeRefusal refusal}"
-    | .cancel, .error refusal => conversation.noted s!"{cancelName}: {describeRefusal refusal}"
+    | .answer _ _, .error refusal => conversation.noted s!"{answerName}: {refusal.describe}"
+    | .cancel, .error refusal => conversation.noted s!"{cancelName}: {refusal.describe}"
     | _, _ => conversation
 
 /-- `agent-send`: hands its session its order and finishes with the reply. -/

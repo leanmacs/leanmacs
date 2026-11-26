@@ -99,6 +99,14 @@ inductive Refusal where
   | service (error : Editor.PackageError)
   deriving DecidableEq, Repr, Inhabited
 
+/-- Why a session's request was not answered, in words: a child's start by
+the process error's own words, a service's refusal with its reason, and a
+missing service by its name. -/
+def Refusal.describe : Refusal → String
+  | .child error => error.describe
+  | .service (.refused reason) => s!"refused: {reason}"
+  | .service (.noSuchService name) => s!"no service {name}"
+
 namespace Request
 
 /-- An MCP server as arguments: its name, its command, the count of its

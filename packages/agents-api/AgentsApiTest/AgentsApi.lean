@@ -6,9 +6,9 @@ import Editor.Config.Packages
 # Model tests: `AgentsApi.lean`
 
 `agentsApiChecks`: the service's request vocabulary read back as it was
-written, a malformed request refused, and the agent registration point a
-choice by name. The test driver's root, `AgentsApiTest/Model.lean`, runs
-them.
+written, a malformed request refused, the agent registration point a
+choice by name, and a refusal's words (`Refusal.describe`). The test
+driver's root, `AgentsApiTest/Model.lean`, runs them.
 -/
 
 namespace AgentsApiTest
@@ -84,6 +84,14 @@ def agentsApiChecks : List Check :=
                   environment := { set := #[("A", "1")] }
                   directory := "/work/example" } &&
               lineBound == 16777216)
-            s!"{repr command}" }]
+            s!"{repr command}" },
+    { name :=
+        "a refusal is said in words: a child's start by the process error's own words, a service's refusal with its reason, and a missing service by its name"
+      run := do
+        let child : ProcessError := .notFound "claude-agent-acp"
+        let said :=
+          [Refusal.describe (.child child), Refusal.describe (.service (.refused "no events")),
+            Refusal.describe (.service (.noSuchService "agents"))]
+        saw (said == [child.describe, "refused: no events", "no service agents"]) s!"{said}" }]
 
 end AgentsApiTest

@@ -19,8 +19,8 @@ imports the test modules and runs their checks:
   (`AgentsApiTest/Protocol/Theorems.lean`);
 - `agentsApiChecks`: the interface library (`AgentsApi.lean`): the service's
   request vocabulary read back as it was written and a malformed request
-  refused, the agent registration point a choice by name, and an agent's
-  command;
+  refused, the agent registration point a choice by name, an agent's
+  command, and a refusal's words;
 - `argumentsChecks`: a session's values as command arguments
   (`AgentsApi/Arguments.lean`), each read back as it was written, and a
   malformed list read as none;
