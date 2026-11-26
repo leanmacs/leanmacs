@@ -10,7 +10,8 @@ once: what `open`, `next` and `send` answer, when a `next` completes, a
 cancel's withdrawals, a withdrawn `next`, and when it holds nothing; a
 fresh fake's independent state, the agent's own sends into a parked
 `next`, a cancel that leaves the `cancellable` session open, and the
-`permissionRequest` agent's parked request and its answer. The test
+`permissionRequest` agent's parked request and its answer; a load and a
+refused load; and the agent table's script's four prompts. The test
 driver's root, `AgentsApiTest/Model.lean`, runs them.
 -/
 
@@ -233,6 +234,79 @@ def fakeChecks : List Check :=
         saw
             (!busy && idle && log.all (·.2.2 == thread) &&
               last == some (.send 1 (.prompt Contract.promptText), []))
-            s!"busy {!busy}, idle {idle}, log {log.size}" }]
+            s!"busy {!busy}, idle {idle}, log {log.size}" },
+    { name :=
+        "a load of a session the script holds opens a session answered with that id, whose first next is its history; a load of another is refused, and both are logged"
+      run := do
+        let fake ← Fake.new Fake.resumable
+        let completions ← Editor.Job.Completions.new
+        let service := fake.service completions
+        let loaded ← answered service completions (.load 0 Contract.cwd #[] "sess-0001")
+        let opened :=
+          match loaded with
+          | some (.ok reply) =>
+            (reply.get? Opened).map fun opened => (opened.session, opened.sessionId)
+          | _ => none
+        let events ← eventsNow service completions
+        let other ← answered service completions (.load 0 Contract.cwd #[] "sess-0002")
+        let words :=
+          match other with
+          | some (.error (.refused words)) => words
+          | _ => ""
+        let log := (← fake.log).map (·.1)
+        saw
+            (opened == some (1, "sess-0001") && events == some Fake.resumedHistory &&
+              words == "the agent has no session sess-0002" &&
+              log ==
+                #[.load 0 Contract.cwd #[] "sess-0001", .next 1,
+                  .load 0 Contract.cwd #[] "sess-0002"])
+            s!"opened {opened}, events {repr events}, words {words}, log {repr log}" },
+    { name :=
+        "the table's script: work leaves a tool call in flight and its turn open, ask parks a request, bg ends its turn with a call in flight, and anything else is the conversation's turn; each session has its own id"
+      run := do
+        let fake ← Fake.new Fake.table
+        let completions ← Editor.Job.Completions.new
+        let service := fake.service completions
+        let ids ←
+          [1, 2, 3, 4].mapM fun _ => do
+              match ← answered service completions (.open 0 Contract.cwd #[]) with
+              | some (.ok reply) =>
+                return (reply.get? Opened).map (·.sessionId)
+              | _ =>
+                return none
+        let take (session : Nat) (text : String) : IO (Option (Array Event)) := do
+          discard <| answered service completions (.send session (.prompt text))
+          match ← answered service completions (.next session) with
+          | some (.ok reply) =>
+            return (reply.get? Batch).map (·.events)
+          | _ =>
+            return none
+        let work ← take 1 "work"
+        let ask ← take 2 "ask"
+        let bg ← take 3 "bg"
+        let done ← take 4 "done"
+        let answer ← answered service completions (.send 2 (.answer 1 "allow-once"))
+        let afterAnswer ←
+          match ← answered service completions (.next 2) with
+          | some (.ok reply) =>
+            pure ((reply.get? Batch).map (·.events))
+          | _ =>
+            pure none
+        saw
+            (ids == [some "sess-0001", some "sess-0002", some "sess-0003", some "sess-0004"] &&
+              work == some #[.chunk (some "msg-w") "Working.", .toolCall Fake.bashRunning] &&
+              ask ==
+                some
+                  #[.toolCall Fake.editPending,
+                    .permission 1 (some 1) Fake.editAsked Fake.adapterOptions] &&
+              bg ==
+                some
+                  #[.chunk (some "msg-1") "Started.", .toolCall Fake.bashRunning,
+                    .turnEnded 1 "end_turn"] &&
+              (done.map (·.back?)) == some (some (.turnEnded 1 "end_turn")) &&
+              (done.map (·.contains (.title "Example title"))) == some true &&
+              sentFor answer none &&
+              afterAnswer == some #[.toolCall Fake.editCompleted, .turnEnded 1 "end_turn"])
+            s!"ids {ids}, work {repr work}, ask {repr ask}, bg {repr bg}, done {repr done}, after {repr afterAnswer}" }]
 
 end AgentsApiTest

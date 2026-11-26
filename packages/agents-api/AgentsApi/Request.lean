@@ -18,6 +18,11 @@ can pass for one.
   session's working directory and MCP servers. It is answered once the
   agent has a session: the implementation's number for it (which `next` and
   `send` name), the agent's session id, and the modes the agent reported.
+- **`load`** hands the service a streaming child as `open` does, and the
+  agent's id of a session it holds in its own store: the agent replays the
+  session's history as its first events, and the request is answered as
+  `open` is, with that session id, once the agent has loaded it. An agent
+  that offers no load, or holds no such session, refuses it.
 - **`next`** waits for the session's next events, a batch of at least one.
   It is a long poll: a flush of the service does not wait for it. A second
   `next` of a session while one is pending is refused at its start, and one
@@ -89,6 +94,9 @@ inductive Request where
   | next (session : Nat)
   /-- Hand the session an order. -/
   | send (session : Nat) (order : Order)
+  /-- Hand over the streaming child `child`, the session `sessionId` to load
+  from the agent's own store and run in `cwd` with `servers`. -/
+  | load (child : Nat) (cwd : String) (servers : Array McpServer) (sessionId : String)
   deriving DecidableEq, Repr, Inhabited
 
 /-- Why a session's request was not answered. -/
@@ -135,6 +143,11 @@ def toPackage : Request → Editor.PackageRequest
   | .send session order =>
     { service := serviceName, operation := "send",
       arguments := .nat session :: orderArguments order }
+  | .load child cwd servers sessionId =>
+    { service := serviceName, operation := "load"
+      arguments :=
+        [.nat child, .str cwd, .str sessionId, .nat servers.size] ++
+          servers.toList.flatMap serverArguments }
 
 /-- `count` strings off the front of `arguments`, and the rest. -/
 def strings : Nat → List Editor.Argument → Option (Array String × List Editor.Argument)
@@ -192,6 +205,8 @@ def ofPackage? (request : Editor.PackageRequest) : Option Request :=
     | "next", [.nat session] => some (.next session)
     | "send", .nat session :: order => do
       return .send session (← order? order)
+    | "load", .nat child :: .str cwd :: .str sessionId :: .nat count :: rest => do
+      return .load child cwd (← servers? count rest) sessionId
     | _, _ => none
 
 end Request

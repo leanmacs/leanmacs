@@ -62,6 +62,12 @@ open and order started before has completed or been withdrawn. -/
 @[extern "acp_glue_flush"]
 opaque flush (request : UInt64) : IO Unit
 
+/-- Loads the session `sessionId` from the agent's own store on the
+streaming child `child`, taken over as `open` takes one, in `cwd`, with the
+MCP servers `servers` lists: the agent replays its history first. -/
+@[extern "acp_glue_load"]
+opaque load (request child : UInt64) (cwd servers sessionId : @& String) : IO Bool
+
 /-- The crate's C functions as the binding. -/
 def real : Binding where
   «open» := «open»
@@ -73,6 +79,7 @@ def real : Binding where
   take := take
   withdraw := withdraw
   flush := flush
+  load := load
 
 /-- The crate's service as the job runner's package service, which the
 package registers. -/

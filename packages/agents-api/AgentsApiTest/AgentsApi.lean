@@ -25,7 +25,8 @@ def servers : Array McpServer :=
 /-- Every request the vocabulary has, with each order. -/
 def requests : List Request :=
   [.open 7 "/work/example" servers, .open 8 "/" #[], .next 3, .send 3 (.prompt "Read notes.txt."),
-    .send 3 .cancel, .send 3 (.setMode "mode-ask"), .send 3 (.answer 2 "allow-once")]
+    .send 3 .cancel, .send 3 (.setMode "mode-ask"), .send 3 (.answer 2 "allow-once"),
+    .load 9 "/work/example" servers "sess-0001", .load 9 "/" #[] ""]
 
 /-- A package named `name` that registers each of `agents`. -/
 def registering (name : String) (agents : List Agent) : Package :=
@@ -40,7 +41,7 @@ def registeredAgents (packages : Array Package) : Array Agent :=
 /-- The checks of `AgentsApi.lean`. -/
 def agentsApiChecks : List Check :=
   [{  name :=
-        "every request of the service agents, open with its MCP servers, next and send with each order, is read back as it was written"
+        "every request of the service agents, open and load with their MCP servers, next and send with each order, is read back as it was written"
       run := do
         let back := requests.map fun request => Request.ofPackage? request.toPackage
         saw (back == requests.map some) s!"{repr back}" },
@@ -55,6 +56,10 @@ def agentsApiChecks : List Check :=
             { service := serviceName, operation := "next", arguments := [] },
             { service := serviceName, operation := "next", arguments := [.str "3"] },
             { service := serviceName, operation := "send", arguments := [.nat 3, .str "shout"] },
+            { service := serviceName, operation := "load",
+              arguments := [.nat 9, .str "/w", .str "sess-0001"] },
+            { service := serviceName, operation := "load",
+              arguments := [.nat 9, .str "/w", .nat 0, .str "sess-0001"] },
             { service := serviceName, operation := "send",
               arguments := [.nat 3, .str "answer", .nat 1] }]
         let read := malformed.map Request.ofPackage?

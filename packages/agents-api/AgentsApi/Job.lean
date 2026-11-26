@@ -6,7 +6,7 @@ import Editor.PackageService
 /-!
 # A session, as a running job reaches it
 
-The typed wrappers through which a job opens a session, waits for its
+The typed wrappers through which a job opens or loads a session, waits for its
 events and sends it orders, over the service `agents`
 (`AgentsApi/Request.lean`) and the job port (`PackageService.askAs`).
 
@@ -29,6 +29,20 @@ def «open» (agent : Agent) (cwd : String) : Editor.JobM (Except Refusal Opened
     return (←
             Editor.PackageService.askAs Opened
                 (Request.open child.number cwd agent.mcpServers).toPackage).mapError
+        .service
+
+/-- Opens `agent`'s command in `cwd` as `open` does, and hands it to the
+service to load the session `sessionId` from the agent's own store: the
+session, whose first events replay its history, or why there is none. -/
+def load (agent : Agent) (cwd : String) (sessionId : String) :
+    Editor.JobM (Except Refusal Opened) := do
+  match ← Editor.Process.start (agent.command cwd) { input := true, bound := lineBound } with
+  | .error refusal =>
+    return .error (.child refusal)
+  | .ok child =>
+    return (←
+            Editor.PackageService.askAs Opened
+                (Request.load child.number cwd agent.mcpServers sessionId).toPackage).mapError
         .service
 
 /-- Waits for the next events of `session`: a batch of at least one, or why

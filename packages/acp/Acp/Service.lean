@@ -39,6 +39,10 @@ structure Binding where
   withdraw : (request : UInt64) → IO Bool
   /-- Completes a request once every open and order before it has been. -/
   flush : (request : UInt64) → IO Unit
+  /-- Loads a session from the agent's own store on the streaming child, in
+  a directory, with the MCP servers as `Codec.serversText` writes them, the
+  agent's id of the session last: whether it started. -/
+  load : (request child : UInt64) → (cwd servers sessionId : String) → IO Bool
 
 /-- `action`'s value, or `otherwise` when it throws: the runner's port is
 `BaseIO`, and the binding's is `IO`. -/
@@ -58,6 +62,8 @@ def started (binding : Binding) (id : UInt64) : AgentsApi.Request → IO Bool
   | .send session (.setMode mode) => binding.setMode id session.toUInt64 mode
   | .send session (.answer ticket option) =>
     binding.answer id session.toUInt64 ticket.toUInt64 option
+  | .load child cwd servers sessionId =>
+    binding.load id child.toUInt64 cwd (Codec.serversText servers) sessionId
 
 /-- The service `agents` over `binding`: a request of `agents-api`'s
 vocabulary is handed to the binding, and its reply read back as

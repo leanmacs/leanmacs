@@ -32,6 +32,8 @@ def goldenCall : ToolCall :=
 def goldenEvents : List (String × Event) :=
   [("chunk\tmessage=msg-1\ttext=Done.", .chunk (some "msg-1") "Done."),
     ("chunk\ttext=a\\tb", .chunk none "a\tb"),
+    ("user\tmessage=msg-u1\ttext=Read notes.txt.", .userChunk (some "msg-u1") "Read notes.txt."),
+    ("user\ttext=a\\tb", .userChunk none "a\tb"),
     ("toolCall\tid=call-edit-1\ttitle=Edit\\tnotes.txt\tkind=edit\tstatus=pending\tlocation.path=/work/example/notes.txt\tlocation.path=/work/example/b.txt\tlocation.line=3\tcontent.text=line one\\nline two\tdiff.path=/work/example/notes.txt\tdiff.old=a\\\\b\tdiff.new=c\\r\\n\tdiff.path=/work/example/new.txt\tdiff.new=fresh\trawInput={\"path\":\"/work/example/notes.txt\"}",
       .toolCall goldenCall),
     ("permission\tticket=1\tturn=1\tid=call-2\ttitle=\tkind=other\tstatus=pending\trawInput=\toption.id=allow-once\toption.name=Allow\toption.kind=allow_once",
@@ -101,9 +103,10 @@ def codecChecks : List Check :=
         saw (decoded.all (·.toOption.isNone) && (batch? "").toOption.isNone)
             s!"{decoded.map (·.toOption.isSome)}" },
     { name :=
-        "a reply reads back as the request it answers: open's session, next's batch, send's turn, a refusal's reason, and a line of another kind refused"
+        "a reply reads back as the request it answers: open's and load's session, next's batch, send's turn, a refusal's reason, and a line of another kind refused"
       run := do
         let openedReply := reply (.open 3 "/w" #[]) goldenOpened
+        let loadedReply := reply (.load 3 "/w" #[] "sess-0001") goldenOpened
         let nextReply := reply (.next 1) "withdrawn\tticket=2"
         let sentReply := reply (.send 1 (.prompt "ask")) "sent\tturn=1"
         let refused :=
@@ -111,6 +114,9 @@ def codecChecks : List Check :=
         let crossed := reply (.next 1) goldenOpened
         let held :=
           (match openedReply with
+            | .ok value => (value.get? Opened).map (·.session) == some 1
+            | .error _ => false) &&
+            (match loadedReply with
             | .ok value => (value.get? Opened).map (·.session) == some 1
             | .error _ => false) &&
             (match nextReply with

@@ -42,6 +42,9 @@ def recording (calls : IO.Ref (Array String)) (replies : List (UInt64 × String)
     calls.modify (·.push s!"withdraw {request}")
     return true
   flush request := calls.modify (·.push s!"flush {request}")
+  load request child cwd servers session := do
+    calls.modify (·.push s!"load {request} {child} {cwd} {repr servers} {session}")
+    return true
 
 /-- The checks of the service over a binding. -/
 def serviceChecks : List Check :=
@@ -53,7 +56,7 @@ def serviceChecks : List Check :=
         let requests : List Request :=
           [.open 7 "/work/example" #[{ name := "s", command := "c" }], .next 1,
             .send 1 (.prompt "ask"), .send 1 .cancel, .send 1 (.setMode "mode-auto"),
-            .send 1 (.answer 2 "allow")]
+            .send 1 (.answer 2 "allow"), .load 8 "/work/example" #[] "sess-0001"]
         let mut taken := true
         for (request, id) in requests.zip (List.range requests.length) do
           taken := taken && (← service.start id.toUInt64 request.toPackage)
@@ -66,7 +69,7 @@ def serviceChecks : List Check :=
               seen ==
                 #["open 0 7 /work/example \"server\\tname=s\\tcommand=c\"", "next 1 1",
                   "prompt 2 1 ask", "cancel 3 1", "setMode 4 1 mode-auto", "answer 5 1 2 allow",
-                  "withdraw 3", "flush 4"])
+                  "load 6 8 /work/example \"\" sess-0001", "withdraw 3", "flush 4"])
             s!"{seen}" },
     { name :=
         "a reply is read back as the request's own type; the crate's refusal, text that does not read and no reply at all are refused"

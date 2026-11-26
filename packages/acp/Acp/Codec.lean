@@ -192,6 +192,9 @@ def eventOf (kind : String) : Reader Event := do
   | "chunk" =>
     let message ← optional "message"
     return .chunk message (← field "text")
+  | "user" =>
+    let message ← optional "message"
+    return .userChunk message (← field "text")
   | "toolCall" =>
     return .toolCall (← call)
   | "permission" =>
@@ -286,6 +289,7 @@ def reply (request : Request) (text : String) : Editor.PackageReply :=
     let typed : Except String Dynamic :=
       match request with
       | .open .. => (opened? text).map .mk
+      | .load .. => (opened? text).map .mk
       | .next _ => (batch? text).map .mk
       | .send .. => (sent? text).map .mk
     typed.mapError fun reason => .refused s!"acp answered with text it could not read: {reason}"

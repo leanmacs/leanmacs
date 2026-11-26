@@ -26,6 +26,11 @@ rig's canonical agent: the fake's script (`AgentsApiTest.Fake.canonical`) or
   is still open.
 - A cancel then withdraws ticket 2, the turn ends `cancelled`, and the
   agent exits 0.
+- `load` of `sess-0001` answers that session, in the mode `mode-ask` of the
+  same two modes, and its first events replay the agent's history
+  (`history`): the user's chunk `ask`, the reply chunk, the call
+  `call-edit-1` completed and the title `Example title`. A load of any other
+  session is refused.
 
 A property waits on each completion itself, within the rig's patience, a
 hang guard: a wait that runs out fails the property as a hang. Each records
@@ -101,6 +106,19 @@ def answered : Array Event :=
 agent's exit. -/
 def cancelled : Array Event :=
   #[.withdrawn 2, .turnEnded 1 "cancelled", .ended (.exited 0)]
+
+/-- A session the canonical agent holds no history of. -/
+def unknownSessionId : String :=
+  "sess-0404"
+
+/-- The canonical agent's title of its session. -/
+def title : String :=
+  "Example title"
+
+/-- What a load of `sessionId` replays first: the user's prompt as a chunk,
+the reply chunk, the call completed whole and the session's title. -/
+def history : Array Event :=
+  #[.userChunk (some "msg-u1") promptText, chunk, .toolCall completed, .title title]
 
 /-- What a property runs on: the service, the table it completes through,
 how long a property waits for one completion, and the canonical agent. -/
@@ -200,6 +218,17 @@ def openSession (rig : Rig) : IO (Except String Driven) := do
     rig.release child
     return .error s!"open was refused: {repr refusal}"
 
+/-- Loads the session `id` of the rig's canonical agent: the driven session,
+or the refusal, with the child released. -/
+def loadSession (rig : Rig) (id : String) : IO (Except PackageError Driven) := do
+  let child ← rig.opened
+  match ← askAs Opened rig (.load child cwd #[] id) with
+  | .ok opened =>
+    return .ok { rig, child, opened, trace := ← IO.mkRef #[], asked := ← IO.mkRef #[] }
+  | .error refusal =>
+    rig.release child
+    return .error refusal
+
 /-- The session's next batch of events, each observed. -/
 def Driven.next (driven : Driven) : IO (Except PackageError (Array Event)) := do
   match ← askAs Batch driven.rig (.next driven.opened.session) with
@@ -224,6 +253,18 @@ partial def Driven.until (driven : Driven) (last : Event → Bool) (seen : Array
       return .ok seen
     else
       driven.until last seen
+
+/-- The session's events through successive `next`s, until at least `count`
+have come; or the events so far and the refusal that stopped them. -/
+partial def Driven.taking (driven : Driven) (count : Nat) (seen : Array Event := #[]) :
+    IO (Except (Array Event × PackageError) (Array Event)) := do
+  if seen.size ≥ count then
+    return .ok seen
+  match ← driven.next with
+  | .error refusal =>
+    return .error (seen, refusal)
+  | .ok events =>
+    driven.taking count (seen ++ events)
 
 /-- Sends the session `order`, recording what the protocol's model sees of
 it once it is taken: a prompt's turn, an answer, a cancel. -/
@@ -341,7 +382,34 @@ def properties : List Property :=
                 state.answers == [1, 2] &&
                 (← driven.replays)
           | .error _ =>
-            return false }]
+            return false },
+    { name :=
+        "a load answers the session asked for, with its mode and modes, its first events are the agent's history in order, and nothing is parked"
+      holds := fun rig => do
+        match ← loadSession rig sessionId with
+        | .error refusal =>
+          throw (IO.userError s!"load was refused: {repr refusal}")
+        | .ok driven =>
+          try
+            let events ← driven.taking history.size
+            let answer ← driven.send (.answer 1 allow)
+            return driven.opened.sessionId == sessionId && driven.opened.mode == some mode &&
+                driven.opened.modes == modes &&
+                events.toOption == some history &&
+                refused answer &&
+                (← driven.trace.get).isEmpty
+          finally
+            rig.release driven.child },
+    { name := "a load of a session the agent does not hold is refused"
+      holds := fun rig => do
+        match ← loadSession rig unknownSessionId with
+        | .error (.refused _) =>
+          return true
+        | .error _ =>
+          return false
+        | .ok driven =>
+          rig.release driven.child
+          return false }]
 
 /-- The names of the properties that do not hold of `rig`, each with the
 rig's name; a property that throws, a hang among them, has failed. -/

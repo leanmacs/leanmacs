@@ -23,10 +23,16 @@ the runner with no crate and no child.
   replaced by the whole file's, usage, a title and a mode;
   `permissionRequest`, a prompt that parks a permission request for an edit
   with its raw input and diff, offering the adapter's three options, whose
-  answer ends the turn; and `burst`, a prompt's many chunks. Between orders the agent may also send by itself
+  answer ends the turn; `burst`, a prompt's many chunks; and `table`
+  and `resumable`, the agent table's agent, whose prompts' texts say what
+  they give and whose store, in `resumable`, holds a session's history. Between orders the agent may also send by itself
   (`Fake.agentSends`), through the same model.
-- **A request completes** as the stage says (`FakeAnswer`): `open` and
-  `send` at once; `next` at once when the session holds events, and
+- **A load** of a session the script holds a history of (`Script.history`)
+  opens a session whose first events are that history, answered with the
+  session id asked for; a load of any other is refused, `the agent has no
+  session <id>`.
+- **A request completes** as the stage says (`FakeAnswer`): `open`, `load`
+  and `send` at once; `next` at once when the session holds events, and
   otherwise once an order makes some, or never if it is withdrawn first.
   A second `next` of a session while one is pending is refused at its
   start. `flush` completes at once, never waiting for a pending `next`.
@@ -75,6 +81,12 @@ structure Fake.Script where
   onAnswer : (ticket : Nat) → (optionId : String) → List Fake.Move
   /-- What it does once a cancel has withdrawn the turn's requests. -/
   onCancel : List Fake.Move
+  /-- The history of each session it holds in its store, which a load
+  replays first; none for a session it does not hold. -/
+  history : String → Option (Array Event) := fun _ => none
+  /-- The id of each session it opens, the first's first; past their end,
+  `sessionId`. -/
+  sessionIds : Array String := #[]
 
 /-- The rules a flawed fake breaks, for the contract's own tests. The fake
 keeps every rule with `Fake.Flaws.none`. -/
@@ -157,6 +169,7 @@ def canonical : Script where
       [.event (.toolCall Contract.completed), .ask Contract.second Contract.options]
     else []
   onCancel := [.endTurn "cancelled", .exit 0]
+  history id := if id == Contract.sessionId then some Contract.history else none
 
 /-- The canonical agent, but the answer to the first permission request gives
 the call completed and the turn's end, `end_turn`. -/
@@ -240,6 +253,50 @@ def burst (count : Nat) : Script :=
     onPrompt := fun _ _ => (List.range count).map fun _ => .event (.chunk (some "msg-1") "x")
     onAnswer := fun _ _ => []
     onCancel := [.endTurn "cancelled"] }
+
+/-- A shell command running the tests, in progress. -/
+def bashRunning : ToolCall :=
+  { id := "call-bash-1", title := "Run the tests", kind := "execute", status := "in_progress" }
+
+/-- The agent the agent table's checks run several sessions of, each with
+its own id, `sess-0001` to `sess-0004`; what a prompt gives depends on its
+text:
+
+- `work`: the chunk `Working.` and `call-bash-1` in progress, its turn left
+  open;
+- `ask`: the edit `editPending`, then a permission request for `editAsked`
+  with `adapterOptions`, whose answer to ticket 1 gives the edit completed
+  and the turn's end;
+- `bg`: the reply `Started.`, `call-bash-1` in progress, and the turn's
+  end, `end_turn`, the call still in flight;
+- anything else: `conversation`'s turn, with its title `Example title`. -/
+def table : Script where
+  sessionId := Contract.sessionId
+  sessionIds := #["sess-0001", "sess-0002", "sess-0003", "sess-0004"]
+  mode := some "mode-auto"
+  modes := Contract.modes
+  onPrompt turn text :=
+    match text with
+    | "work" => [.event (.chunk (some "msg-w") "Working."), .event (.toolCall bashRunning)]
+    | "ask" => [.event (.toolCall editPending), .ask editAsked adapterOptions]
+    | "bg" =>
+      [.event (.chunk (some "msg-1") "Started."), .event (.toolCall bashRunning),
+        .endTurn "end_turn"]
+    | _ => conversation.onPrompt turn text
+  onAnswer ticket _ :=
+    if ticket == 1 then [.event (.toolCall editCompleted), .endTurn "end_turn"] else []
+  onCancel := [.endTurn "cancelled"]
+
+/-- The history the agent's store holds of `sess-0001`: the user's
+`Read notes.txt.`, the reply `Done.`, the edit completed and the title. -/
+def resumedHistory : Array Event :=
+  #[.userChunk (some "msg-u1") "Read notes.txt.", .chunk (some "msg-1") "Done.",
+    .toolCall editCompleted, .title "Example title"]
+
+/-- `table`, whose store holds `sess-0001` with `resumedHistory`, so a load
+of it is answered. -/
+def resumable : Script :=
+  { table with history := fun id => if id == "sess-0001" then some resumedHistory else none }
 
 /-- A fake over `script`, breaking the rules `flaws` names. -/
 def new (script : Script := canonical) (flaws : Flaws := .none) : BaseIO Fake :=
@@ -359,13 +416,30 @@ def startIn (fake : Fake) (id : UInt64) (request : Request) (thread : UInt64) (s
   | .open .. =>
     let number := state.sessions.size + 1
     let opened : Opened :=
-      { session := number, sessionId := fake.script.sessionId, mode := fake.script.mode
-        modes := fake.script.modes }
+      { session := number,
+        sessionId := (fake.script.sessionIds[number - 1]?).getD fake.script.sessionId
+        mode := fake.script.mode, modes := fake.script.modes }
     let state := arrived none
     (true, [id],
       { state with
         sessions := state.sessions.push { number }
         pending := state.pending.push (id, request, .ok (.mk opened)) })
+  | .load _ _ _ sessionId =>
+    let state := arrived none
+    match fake.script.history sessionId with
+    | none =>
+      (true, [id],
+        { state with
+          pending :=
+            state.pending.push (id, request, refusal s!"the agent has no session {sessionId}") })
+    | some history =>
+      let number := state.sessions.size + 1
+      let opened : Opened :=
+        { session := number, sessionId, mode := fake.script.mode, modes := fake.script.modes }
+      (true, [id],
+        { state with
+          sessions := state.sessions.push { number, queue := history }
+          pending := state.pending.push (id, request, .ok (.mk opened)) })
   | .next number =>
     match state.session? number with
     | none => (false, [], arrived none)

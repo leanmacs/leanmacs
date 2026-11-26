@@ -13,9 +13,9 @@ in raw JSON-RPC lines, the same exchange the fake's script plays
 - it answers `initialize`, which it accepts only with the client
   capabilities the crate sends, matched as text: `fs` with
   `readTextFile` and `writeTextFile` false, `terminal` false and
-  `auth.terminal` false, and nothing else; and then `session/new` (the
-  session `sess-0001`, in the mode `mode-ask` of `mode-ask` and
-  `mode-auto`);
+  `auth.terminal` false, and nothing else, advertising `loadSession`; and
+  then `session/new` (the session `sess-0001`, in the mode `mode-ask` of
+  `mode-ask` and `mode-auto`);
 - the prompt `ask` gives a chunk, the tool call `call-edit-1` and the
   permission request `0` for it;
 - the answer `allow` to it gives the call completed and the permission
@@ -23,6 +23,12 @@ in raw JSON-RPC lines, the same exchange the fake's script plays
 - it then waits for both the `cancelled` answer to request `1` and
   `session/cancel`, in either order, answers the prompt `cancelled`, and
   exits 0.
+
+Or, in place of `session/new`, a `session/load` of `sess-0001` replays the
+contract's history (`Contract.history`) as `session/update` lines, answers
+with the same modes, and exits 0 at the end of its input, 3 on any line
+before it; a load of any other session is answered with a JSON-RPC error,
+and it exits 0.
 
 It reads each line with `read -r`, finds what it is with `case` patterns,
 and takes a request's id with parameter expansion. The first line it does
@@ -53,8 +59,25 @@ id_of() { id=${line#*\"id\":\"}; id=${id%%\"*}; }
 say() { printf '%s\n' "$1"; }
 expect '*"method":"initialize"*"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false,"auth":{"terminal":false}}*'
 id_of
-say '{"jsonrpc":"2.0","id":"'"$id"'","result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}}'
-expect '*"method":"session/new"*'
+say '{"jsonrpc":"2.0","id":"'"$id"'","result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true},"authMethods":[]}}'
+IFS= read -r line || exit 3
+case $line in
+  *'"method":"session/load"'*'"sessionId":"sess-0001"'*)
+    id_of
+    say '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-0001","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"ask"},"messageId":"msg-u1"}}}'
+    say '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-0001","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"I will edit notes.txt."},"messageId":"msg-1"}}}'
+    say '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-0001","update":{"sessionUpdate":"tool_call","toolCallId":"call-edit-1","title":"Edit notes.txt","kind":"edit","status":"completed","locations":[{"path":"/work/example/notes.txt"}],"content":[{"type":"content","content":{"type":"text","text":"Edited."}}],"rawInput":{"path":"/work/example/notes.txt"}}}}'
+    say '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-0001","update":{"sessionUpdate":"session_info_update","title":"Example title"}}}'
+    say '{"jsonrpc":"2.0","id":"'"$id"'","result":{"modes":{"currentModeId":"mode-ask","availableModes":[{"id":"mode-ask","name":"Ask"},{"id":"mode-auto","name":"Auto"}]}}}'
+    while IFS= read -r line; do exit 3; done
+    exit 0 ;;
+  *'"method":"session/load"'*)
+    id_of
+    say '{"jsonrpc":"2.0","id":"'"$id"'","error":{"code":-32002,"message":"Resource not found"}}'
+    exit 0 ;;
+  *'"method":"session/new"'*) ;;
+  *) exit 3 ;;
+esac
 id_of
 say '{"jsonrpc":"2.0","id":"'"$id"'","result":{"sessionId":"sess-0001","modes":{"currentModeId":"mode-ask","availableModes":[{"id":"mode-ask","name":"Ask"},{"id":"mode-auto","name":"Auto"}]}}}'
 expect '*"method":"session/prompt"*"text":"ask"*'
