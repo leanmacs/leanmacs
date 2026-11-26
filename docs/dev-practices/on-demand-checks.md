@@ -299,6 +299,21 @@ keeps no backups, since any commit's app can be rebuilt, and deletes the
 `Leanmacs.app.backup-*` and `~/.config/leanmacs.backup-*` directories the
 earlier install script left. It opens, registers or runs nothing.
 
+```sh
+mise run install -- --agents
+```
+
+also adds the opt-in agent packages, `agents-api` and `acp`
+([agent-hosting.md](../design/agent-hosting.md)), to
+`~/.config/leanmacs/lakefile.toml` by this checkout's
+`packages/` paths, ahead of its `editor-core` require, skipping any already
+required. With no lakefile it writes the one the editor would generate
+(`lean/Editor/Config/LakePackage.lean`) with the two added; a
+`lakefile.lean` it refuses, as the package commands do. They stay out of
+the default set because `acp`'s crate needs Cargo, which the app does not
+ship (`packages/lakefile.toml`), so the editor's next `:reload` builds the
+set with your own Cargo.
+
 ## The job benchmark, on demand
 
 ```sh

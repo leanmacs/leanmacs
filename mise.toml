@@ -499,10 +499,11 @@ run = "cargo run --quiet --locked -p editor-config-migrate-std --bin config-migr
 # bundle, installs the default config config/default (a starter SPC map) to
 # ~/.config/leanmacs only when no config is there, otherwise only saying
 # where the default config is, and deletes the backups
-# the earlier install script left. It keeps no backups and opens, registers
+# the earlier install script left. `mise run install -- --agents` also
+# requires agents-api and acp from this checkout in the config's lakefile. It keeps no backups and opens, registers
 # or runs nothing.
 [tasks.install]
-description = "Opt-in, never part of ci; macOS on arm64 only: build Leanmacs.app and install it to /Applications, replacing the old one and deleting leftover backups (tools/install-app.sh)"
+description = "Opt-in, never part of ci; macOS on arm64 only: build Leanmacs.app and install it to /Applications, replacing the old one and deleting leftover backups (tools/install-app.sh); `-- --agents` also adds agents-api and acp to ~/.config/leanmacs/lakefile.toml"
 depends = ["app"]
 run = "tools/install-app.sh packages"
 
