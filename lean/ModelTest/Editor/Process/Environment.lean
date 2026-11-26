@@ -433,7 +433,7 @@ def environmentLookupChecks : List Check :=
         let once := after (runsOn lakeBuild) model
         let gone := { once with files := withoutFile once.files "/opt/homebrew/bin/mise" }
         let second := after (runsOn inE) gone
-        let installed := { second with environments := second.environments.install Process.Setting.auto.registered }
+        let installed := { second with environments := second.environments.install { directories := #[fun host => (Process.Setting.auto.sources host).directories[0]?] } }
         let third := after (runsOn lakeBuild) installed
         pure
           (second.processes.started ==
@@ -530,7 +530,7 @@ def environmentLookupChecks : List Check :=
         let inD := after (runsOn lakeBuild) model
         let inE := after (runsOn (movedTo lakeBuild "/p/e")) inD
         let installed :=
-          { inE with environments := inE.environments.install (Process.Setting.mise (some "/opt/mise")).registered }
+          { inE with environments := inE.environments.install { directories := #[fun host => ((Process.Setting.mise (some "/opt/mise")).sources host).directories[0]?] } }
         let again := after (runsOn lakeBuild) installed
         pure
           (inE.processes.started ==

@@ -62,6 +62,8 @@ import Editor.Window
 import Editor.Window.Real
 import Editor.Workspace
 import FilesApiTest.Fake
+import EnvironmentApi
+import EnvironmentApiTest.Fake
 
 /-!
 # Config tests: `Editor/Headless.lean`
@@ -2254,10 +2256,20 @@ def withEnvironments (context : Context) (files : List (String × String))
     onStage { stage with collaborators } fun drive stage =>
         check (Session.ofStage drive directory stage) state environments
 
-/-- A config whose `setup` sets the process environment to `setting`, written
-as Lean. -/
-def environmentText (setting : String) : String :=
-  s!"def setup : SetupM Unit := do\n  processEnvironment {setting}\n"
+/-- A process source written as Lean in a config: `name`, run at `path` with
+no arguments in the directory it is given, which sets nothing. -/
+def environmentSourceText (name path : String) : String :=
+  s!"\{ name := \"{name}\", program := .at \"{path}\", command := fun executable directory environment => \{ program := executable.toString, directory, environment }, parse := fun _ => .ok #[], output := \"nothing\" }"
+
+/-- A config whose `setup` registers the directory source `cfg`, at
+`/cfg/bin`, in every mode, written as Lean. -/
+def directoryConfig : String :=
+  s!"def setup : SetupM Unit :=\n  Extension.add (\{ name := \"cfg\", source := fun _ => some {environmentSourceText "cfg" "/cfg/bin"} } : EnvironmentApi.DirectorySource)\n"
+
+/-- A config whose `setup` registers the base `b`, at `/b/bin`, looked up in
+`/`, and chooses the base `chosen` by name, written as Lean. -/
+def baseConfig (chosen : String) : String :=
+  s!"def setup : SetupM Unit := do\n  Extension.add (\{ name := \"b\", base := fun _ => .lookup {environmentSourceText "b" "/b/bin"} \"/\" } : EnvironmentApi.BaseSource)\n  environmentBase \"{chosen}\"\n"
 
 /-- An entry of a lookup that failed, as a host's environments hold one. -/
 def failedLookup : Process.Entry :=
@@ -2266,55 +2278,85 @@ def failedLookup : Process.Entry :=
 /-- What a host's environments hold before a reload in the checks: an entry
 of a directory and source, and one of a base. -/
 def heldEntries : Array (Process.Slot × Process.Entry) :=
-  #[(.directory "/p/d" "mise", failedLookup), (.base "login", failedLookup)]
+  #[(.directory "/p/d" "seed", failedLookup), (.base "old", failedLookup)]
+
+/-- The state a check seeds a host's environments with: the window mode,
+the base `old`, a lookup in `/`, under the directory source `seed`, and
+`heldEntries`. -/
+def seededEnvironments : Process.Environments :=
+  { host := .window (some "/u"), entries := heldEntries
+    sources :=
+      { base := .lookup (EnvironmentApiTest.fakeSource "old" "/bin/old") "/"
+        directories := #[EnvironmentApiTest.fakeSource "seed" "/bin/seed"] } }
+
+/-- The name of the base `sources` holds: `inherited`, or its source's. -/
+def baseNameOf (sources : Process.Sources) : String :=
+  match sources.base with
+  | .inherited => Process.inheritedName
+  | .lookup source _ => source.name
 
 /-- The checks of the host's environments (`Editor/Headless.lean`, "A
 child's environment"), over the headless host and the real elaborator: a
-reload that installs puts the layers of config's setting in the state every
-job shares and drops every entry, the base's included, a rejected one
-changes neither, and a message the environments report is the echo of the
-next scene. -/
+reload that installs puts the layers the registry gives
+(`EnvironmentApi.ofRegistry`) in the state every job shares and drops every
+entry, the base's included; a rejected one changes neither; a base no source
+answers to is said and the base is kept; and a message the environments
+report is the echo of the next scene. -/
 def environmentHostChecks (context : Context) : List Check :=
-  let window : Process.Host := .window (some "/u")
   [{  name :=
-        "an installed reload whose setup sets the process environment puts that setting's layers in the host's environments and drops every entry, the base's included; a rejected reload changes neither"
+        "an installed reload whose config registers a directory source puts that source in the host's environments and drops every entry, the base's included; a rejected reload changes neither"
       run :=
-        withEnvironments context [("init.lean", environmentText ".inherited")]
-          fun session state _ => do
-          -- In the window mode, where auto would give the mise source.
-          state.set
-              { host := window, sources := (Process.Setting.mise none).sources window
-                entries := heldEntries }
+        withEnvironments context [("init.lean", directoryConfig)] fun session state _ => do
+          state.set seededEnvironments
           session.ask [.reload]
           let installed ← state.get
           state.modify fun held => { held with entries := heldEntries }
           session.write "init.lean" "def setup : SetupM Unit := oops"
           session.ask [.reload]
           let rejected ← state.get
-          return installed.host == window && installed.sources.base matches .inherited &&
-              installed.sources.directories.isEmpty &&
+          return installed.host == .window (some "/u") &&
+              baseNameOf installed.sources == Process.inheritedName &&
+              installed.sources.directories.map (·.name) == #["cfg"] &&
               installed.entries.isEmpty &&
-              rejected.sources.directories.isEmpty &&
+              rejected.sources.directories.map (·.name) == #["cfg"] &&
               rejected.entries == heldEntries },
-    { name := "a config that does not set the process environment installs auto"
+    { name :=
+        "a config that registers no source installs the inherited base and no directory source over a host that held both"
       run :=
         withEnvironments context [("init.lean", "def setup : SetupM Unit := pure ()")]
           fun session state _ => do
-          state.set { host := window, sources := (Process.Setting.mise none).sources window }
+          state.set seededEnvironments
           session.ask [.reload]
           let sources := (← state.get).sources
-          return sources.base matches .inherited &&
-              sources.directories.map (fun source => (source.name, source.program)) ==
-                #[("mise", .firstOf (Process.miseCandidates (some "/u")) .skip)] },
+          return baseNameOf sources == Process.inheritedName && sources.directories.isEmpty },
+    { name :=
+        "a config that chooses a base no source answers to reloads, the echo area and the report name it and list the bases, and children keep the base they had; once it chooses a registered base, that base is installed"
+      run :=
+        withEnvironments context [("init.lean", baseConfig "nope")] fun session state _ => do
+          session.resize 320 96
+          state.set seededEnvironments
+          session.ask [.reload]
+          let said := EnvironmentApi.unknownBase "nope" #["inherited", "b"]
+          let (echo, _) ← session.scene
+          let kept := baseNameOf (← state.get).sources
+          session.write "init.lean" (baseConfig "b")
+          session.ask [.reload]
+          let chosen := baseNameOf (← state.get).sources
+          let lines ← session.output.get
+          return lines.contains "reload 1: installed, 1 files, 0 commands" &&
+              lines.contains s!"base: {said}" &&
+              echo == s!"reload: {said}".quote &&
+              kept == "old" &&
+              chosen == "b" },
     { name := "a failed lookup the host's environments record is the echo of the next scene"
       run :=
         withEnvironments context [] fun session _ environments => do
           session.resize 160 96
           session.ask []
-          environments.ask (.record (.directory "/p/d" "mise") failedLookup)
+          environments.ask (.record (.directory "/p/d" "seed") failedLookup)
           let (echo, _) ← session.scene
           return echo ==
-              (Process.failureMessage (.directory "/p/d" "mise") (.exited 1 "not trusted")).quote }]
+              (Process.failureMessage (.directory "/p/d" "seed") (.exited 1 "not trusted")).quote }]
 
 /-- The state directory of the restore checks, in the fake file service's
 model. -/

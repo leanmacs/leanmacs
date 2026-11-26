@@ -2,6 +2,7 @@ import ConfigTest.Check
 import ConfigTest.Support.Shipped
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
+import Editor.Setup
 
 /-!
 # Config tests: `Editor/Setup.lean`
@@ -9,7 +10,9 @@ import Editor.Test.Linked.Keys
 The tests of `Editor/Setup.lean`: `leaderChecks`, the leader config sets
 (`leaderKey`) and the bindings it writes under `<leader>`, through a host of
 the test scheme. The root module `ConfigTest` runs them; its module doc says
-what each shows. What the Vim scheme's leader is, and that it is kept out of
+what each shows; and `processEnvironmentChecks`, a config that still calls
+the retired `processEnvironment` refused at reload with a diagnostic that
+names what replaces it. What the Vim scheme's leader is, and that it is kept out of
 the state where typing is text, are evil's (`evilLeaderChecks`,
 `packages/evil/EvilTest/Linked/Evil.lean`).
 -/
@@ -60,5 +63,35 @@ def leaderChecks (context : Context) : List Check :=
           session.typed s!"{schemeLeader} f f"
           let former ← session.echo
           return moved == "leader find".quote && former != "leader find".quote }]
+
+/-- A config whose `setup` calls the retired `processEnvironment` with
+`setting`, written as Lean. -/
+def processEnvironmentText (setting : String) : String :=
+  s!"def setup : SetupM Unit := do\n  processEnvironment {setting}\n"
+
+/-- The checks of the retired `processEnvironment` through the headless host,
+with the real elaborator: a config that still calls it is refused at reload,
+its diagnostic the refusal, which names what replaces it, the mise package's
+setting `Mise.executable` and the package `mise`. -/
+def processEnvironmentChecks (context : Context) : List Check :=
+  let refusedWith (text : String) (setting : Process.Setting) : IO Bool :=
+    withHost context [("init.lean", processEnvironmentText text)] fun session => do
+      session.ask [.reload]
+      let lines ← session.output.get
+      return lines.contains "reload 1: rejected" &&
+          lines.contains s!"diagnostic: setup:0:0: error: {processEnvironmentGone setting}"
+  [{  name :=
+        "a config that calls processEnvironment with a path to mise is refused at reload, and its diagnostic names Mise.executable with that path"
+      run := do
+        let path := "/opt/homebrew/bin/mise"
+        let said := processEnvironmentGone (.mise (some path))
+        return (← refusedWith s!"(.mise (some {path.quote}))" (.mise (some path))) &&
+            (said.splitOn s!"Mise.executable {path.quote}").length > 1 },
+    { name :=
+        "a config that calls processEnvironment .inherited is refused at reload, and its diagnostic says to leave the package mise out"
+      run := do
+        let said := processEnvironmentGone .inherited
+        return (← refusedWith ".inherited" .inherited) &&
+            (said.splitOn "leave the package `mise` out").length > 1 }]
 
 end ConfigTest

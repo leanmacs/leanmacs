@@ -13,6 +13,7 @@ import Editor.Headless.Journal
 import Editor.Headless.Journal.Real
 import Editor.Headless.Queue.Real
 import Editor.Headless.Wait
+import EnvironmentApi
 import Editor.InferredWait
 import Editor.Job.Fake
 import Editor.Job.Jobs
@@ -1271,6 +1272,7 @@ def reportLines (report : Config.Report) : Array String :=
     report.unknownStyles.map (fun name => s!"style: {Completion.Style.unknown name}") ++
     report.unknownDisplays.map (fun name => s!"display: {Completion.Display.unknown name}") ++
     report.unknownAtPoints.map (fun name => s!"at-point: {Completion.AtPoint.unknown name}") ++
+    report.unknownBase.toArray.map (fun sentence => s!"base: {sentence}") ++
     report.unusableRules.map fun sentence => s!"rule: {sentence}"
 
 /-- How a job that has ended is reported, after `job <id> <name>: `. -/
@@ -1455,10 +1457,11 @@ def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ
     (event : Config.Event β σ) : IO (Running β σ scheme) := do
   let (config, effects) := Config.step running.config event
   Config.retheme running.display.setTheme config effects
-  -- A reload that installs is config's setting of a child's environment,
-  -- and drops every directory's cached one.
+  -- A reload that installs installs the layers the registry gives a child's
+  -- environment, and drops every cached one.
   if Config.installed effects then
-    collaborators.services.environments.install Process.Setting.auto.registered
+    collaborators.services.environments.install
+        (EnvironmentApi.ofRegistry config.registry.extensionsAt config.registry.baseName).1
   let mut running := { running with config }
   for effect in effects do
     match effect with

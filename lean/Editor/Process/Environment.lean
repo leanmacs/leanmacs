@@ -587,10 +587,6 @@ def Setting.sources : Setting → Host → Sources
   | .mise none, host => { directories := #[miseSource (.firstOf host.candidates .report)] }
   | .mise (some path), _ => { directories := #[miseSource (.at path)] }
 
-/-- The layers of `setting` as registered layers (interim). -/
-def Setting.registered (setting : Setting) : Registered :=
-  { directories := #[fun host => (setting.sources host).directories[0]?] }
-
 
 end Process
 

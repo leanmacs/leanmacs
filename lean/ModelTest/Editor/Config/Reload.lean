@@ -47,6 +47,8 @@ import Editor.Text.Model
 import Editor.Value
 import Editor.Window
 import Editor.Workspace
+import EnvironmentApi
+import EnvironmentApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.Elaborator
 
@@ -691,6 +693,21 @@ def reloadChecks : List Check :=
         pure
           (state.theme == Theme.builtin ++ #[defined "keyword" (coloured 1)] &&
             state.theme == loaded.theme) },
+    { name :=
+        "an install whose config chooses a base no package registers installs, and its report names the unknown base and lists the registered ones, which the echo area says; a known name, or none, says nothing"
+      run :=
+        let bases : Package :=
+          { name := "bases", setup := Extension.add (EnvironmentApiTest.fakeBase "x") }
+        let (state, _) : ModelState × Array String := Config.State.ofPackages #[bases]
+        let unknown := reportFrom state (accepted ["a"] (environmentBase "nope"))
+        let said := EnvironmentApi.unknownBase "nope" #["inherited", "x"]
+        pure
+          (unknown.installed && unknown.unknownBase == some said &&
+            unknown.echo == some s!"reload: {said}" &&
+            (reportFrom state (accepted ["a"] (environmentBase "x"))).unknownBase == none &&
+            (reportFrom state (accepted ["a"] (environmentBase "inherited"))).unknownBase == none &&
+            (reportFrom state (accepted ["a"] (pure ()))).unknownBase == none &&
+            (reportFrom state (accepted ["a"] (pure ()))).echo == none) },
     { name :=
         "an installed reload puts config's base name in the registry, a rejected one keeps it, and one that names none leaves the packages' default; config's choice overrides a package's default"
       run :=

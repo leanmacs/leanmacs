@@ -2,6 +2,7 @@ import Editor.Appearance
 import Editor.Config.Session
 import Editor.Config.Stores
 import Editor.PackageSet.Build
+import EnvironmentApi
 
 /-!
 # Reloads, serialised by a reducer
@@ -231,6 +232,10 @@ structure Report where
   registered modes' lists name that no at-point source is registered under,
   in order, each once: they are never asked. -/
   unknownAtPoints : Array String := #[]
+  /-- What is said of the base of a child's environment the registry names
+  (`Registry.baseName`) when no base answers to it
+  (`EnvironmentApi.unknownBase`): children keep the base they had. -/
+  unknownBase : Option String := none
   /-- What is said of each display rule of the installed config whose target
   the layout it chose lacks, in order (`Report.leftOut`): those rules are
   left out, and the rest are kept. -/
@@ -246,12 +251,12 @@ error, `reload: <source>:<line>:<column>: error: ` and the first line of its
 message, then ` (and <n> more)` when it has more errors; for one rejected
 with no error to name, `reload: rejected`. A reload that installs says
 nothing, so a working config does not cover what a command said, unless its
-config named a theme, listed segments or chose completion styles or
-displays nobody registered, or made display rules whose targets do not
+config named a theme, listed segments or chose completion styles,
+displays or a base nobody registered, or made display rules whose targets do not
 exist: then `reload: ` and the sentences, `Theme.unknown`'s, then each
 `ModeLine.unknown`, then each `Completion.Style.unknown`, then each
-`Completion.Display.unknown`, then each `Completion.AtPoint.unknown` and
-then each rule left out
+`Completion.Display.unknown`, then each `Completion.AtPoint.unknown`, then
+the unknown base (`unknownBase`) and then each rule left out
 (`unusableRules`), joined by `; `. The whole report is the host's to
 print. -/
 def Report.echo (report : Report) : Option String :=
@@ -262,6 +267,7 @@ def Report.echo (report : Report) : Option String :=
         report.unknownStyles.map Completion.Style.unknown ++
         report.unknownDisplays.map Completion.Display.unknown ++
         report.unknownAtPoints.map Completion.AtPoint.unknown ++
+        report.unknownBase.toArray ++
         report.unusableRules
     if sentences.isEmpty then none else some s!"reload: {"; ".intercalate sentences.toList}"
   else
@@ -469,6 +475,8 @@ def install (state : State β σ) (outcome : Outcome β σ) : State β σ × Rep
     let unknownStyles := state.registry.unknownStyles
     let unknownDisplays := state.registry.unknownDisplays
     let unknownAtPoints := state.registry.unknownAtPoints
+    let unknownBase :=
+      (EnvironmentApi.ofRegistry state.registry.extensionsAt state.registry.baseName).2
     ({ state with
         themeName, modeLine, framePadding := built.registrations.framePadding
         keyHintDelay := built.registrations.keyHintDelay
@@ -476,7 +484,7 @@ def install (state : State β σ) (outcome : Outcome β σ) : State β σ × Rep
         titleBar := built.registrations.titleBar },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
         files := state.files.size, commands := state.commands, unknownTheme, unknownSegments
-        unknownStyles, unknownDisplays, unknownAtPoints, unusableRules })
+        unknownStyles, unknownDisplays, unknownAtPoints, unknownBase, unusableRules })
 
 /-- The appearance the window is to be asked for, and the state that
 remembers it: when the window is open and the paper of the theme now in
