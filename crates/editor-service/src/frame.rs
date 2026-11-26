@@ -248,15 +248,18 @@ impl Parse {
     /// The least the message in progress can be, its header counted, when
     /// `held` bytes are held: `None` with none in progress. A header not
     /// yet ended needs one byte more at least, and one whose length is
-    /// known its end's two bytes and its body.
+    /// known its body and its end: the two bytes of the empty line after
+    /// its last whole line, or, with a line in progress, one byte past it,
+    /// since a line in progress that is only `\r` needs only its `\n`.
     fn least(&self, held: usize) -> Option<usize> {
         if let (Some(body), Some(length)) = (self.body, self.length) {
             return Some((body - self.start).saturating_add(length));
         }
         let in_progress = held - self.start;
-        let known = self.length.map_or(0, |length| {
-            (self.cursor - self.start + 2).saturating_add(length)
-        });
+        let header = (self.line - self.start + 2).max(self.cursor - self.start + 1);
+        let known = self
+            .length
+            .map_or(0, |length| header.saturating_add(length));
         (in_progress > 0 || self.length.is_some()).then_some(known.max(in_progress + 1))
     }
 }
@@ -815,6 +818,32 @@ mod tests {
         whole.push(Stream::Out, b"e");
         assert_eq!(whole.fault(Stream::Out), None);
         assert_eq!(whole.drain().0, messages(&[b"abcde"]), "delivered whole");
+    }
+
+    #[test]
+    fn a_message_exactly_the_bound_is_never_too_long_however_it_is_split() {
+        // 26 bytes, the bound: split between the `\r` and the `\n` that end
+        // its header, only the `\n` is still to come of the header.
+        let framed = message(b"abcde");
+        let bound = framed.len() as u64;
+        let mut outbox = Outbox::new(Framing::ContentLength, Framing::Lines, bound);
+        outbox.push(Stream::Out, b"Content-Length: 5\r\n\r");
+        assert_eq!(outbox.fault(Stream::Out), None, "split before the last \\n");
+
+        let mut outbox = Outbox::new(Framing::ContentLength, Framing::Lines, bound);
+        for (at, byte) in framed.iter().enumerate() {
+            outbox.push(Stream::Out, std::slice::from_ref(byte));
+            assert_eq!(outbox.fault(Stream::Out), None, "after {} bytes", at + 1);
+        }
+        assert_eq!(outbox.drain().0, messages(&[b"abcde"]), "delivered whole");
+
+        let mut over = Outbox::new(Framing::ContentLength, Framing::Lines, bound - 1);
+        over.push(Stream::Out, b"Content-Length: 5\r\n\r");
+        assert_eq!(
+            over.fault(Stream::Out),
+            Some(Fault::MessageTooLong),
+            "one byte longer than the bound is still too long"
+        );
     }
 
     #[test]
