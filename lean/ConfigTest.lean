@@ -39,12 +39,14 @@ import Editor.RealHost
 
 The `config-test` executable is linked exactly like `editor`, with the glue
 object, the Rust archive and Lean's elaborator. `mise run ffi-test` runs it
-as `config-test <sysroot> <olean dir> <syntax fixtures> <default config>`:
-the Lean toolchain's directory, the directory holding the package's
-`.olean` files, the directory of the syntax fixtures (`tests/syntax`), whose
-Rust indent fixture the indent checks read, and the directory of the
-default config `mise run install` ships (`config/default`), which
-`defaultConfigChecks` read. It reads nothing from the
+as `config-test <sysroot> <olean dir> <syntax fixtures> <default config>
+<set dir> <core dir> <lsp fixture>`: the Lean toolchain's directory, the
+directory holding the package's `.olean` files, the directory of the syntax
+fixtures (`tests/syntax`), whose Rust indent fixture the indent checks
+read, the directory of the default config `mise run install` ships
+(`config/default`), which `defaultConfigChecks` read, and the default set's
+directory (`packages`), the core's (`lean`) and the language server check's
+root and config file (`tests/config-package/lsp`), which `lspChecks` read. It reads nothing from the
 environment or the working directory. It runs every check in `checks`, names
 the ones that failed, each with what it saw when it says (`saw`), and exits
 non-zero if any did.
@@ -312,6 +314,12 @@ show:
   its bindings names a registered command or one of the default packages'
   commands, by name; and each prefix it binds under the leader, read
   through the scheme's leader, has a prefix name (`Registry.prefixName?`);
+- `lspChecks`: Lean's language server (`ConfigTest/Lsp.lean`), started in
+  a config package the check writes in a temporary directory as an editor
+  of the default set generates it (the lakefile requiring the set and the
+  core, and the core's toolchain pin), with the root and config file of
+  `tests/config-package/lsp`, reports the root's one type error at 8:19
+  and no import error;
 - `extensionChecks`: extension points (`Editor/Extension.lean`) with the
   real elaborator, over the fixture `ExtensionFixture`, which declares an
   extension point and a compiled package that reads it: a config
@@ -504,6 +512,7 @@ def checks : List (CheckGroup Context Check) :=
         hintChecks context ++
         keyHintChecks context ++
         defaultConfigChecks context ++
+        lspChecks context ++
         extensionChecks context ++
         -- Last, the checks whose config imports `Lean`: the base the checks
         -- share then holds it, and every environment made from that base
@@ -514,8 +523,8 @@ def checks : List (CheckGroup Context Check) :=
 
 end ConfigTest
 
-/-- `config-test <sysroot> <olean dir> <syntax fixtures> <default config>`
-runs the checks: exits 0 when all hold, and 1 after naming the ones that do
+/-- `config-test <sysroot> <olean dir> <syntax fixtures> <default config>
+<set dir> <core dir> <lsp fixture>` runs the checks: exits 0 when all hold, and 1 after naming the ones that do
 not. With `--wiring` after them it runs the wiring set's checks alone, the
 mode read and selected by as every root does (`Editor.CheckGroup.Mode.read?`
 with `ConfigTest.timings?`, then `Editor.CheckGroup.select`). With
@@ -524,12 +533,17 @@ each ends, the wall time in milliseconds of the base's import and of each
 check, a tab and its name (`ConfigTest.run`): what the stress loop keeps of
 each round, to size the hang guards from. The third argument is the directory of the syntax fixtures
 (`tests/syntax`), which the indent checks read, and the fourth the directory
-of the default config (`config/default`), which `defaultConfigChecks` read.
+of the default config (`config/default`), which `defaultConfigChecks` read;
+the fifth, sixth and seventh, the default set's directory, the core's and
+the directory of the language server check's root and config file
+(`tests/config-package/lsp`), are `lspChecks`'.
 
 `lsp` is the language server check (`ConfigTest.Lsp`,
-`ConfigTest/Lsp.lean`): it starts Lean's language server in a config
-directory and requires the root's one error where the command line says,
-and `mise run ffi-test` runs it through `tools/config-package-check.sh`.
+`ConfigTest/Lsp.lean`) on a directory it is given: it starts Lean's
+language server in a config directory and requires the root's one error
+where the command line says, and `tools/config-package-check.sh` runs it
+on a directory an editor generated. The run's own `lspChecks` runs the
+same check on a config package it writes.
 
 `bench-start`, `bench-reload`, `bench-reload-directory`, `bench-soak` and
 `bench-soak-modules` are the benchmark (`ConfigTest.Bench`; `mise run config-bench`), which the gate
@@ -608,14 +622,17 @@ def main (args : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules ConfigTest.checks do
       IO.println module
     return 0
-  | sysroot :: oleanDir :: syntaxFixtures :: defaultConfig :: rest =>
+  |
+  sysroot ::
+      oleanDir ::
+      syntaxFixtures :: defaultConfig :: setDirectory :: coreDirectory :: lspFixture :: rest =>
     match Editor.CheckGroup.Mode.read? ConfigTest.timings? rest with
     | some (mode, timings) =>
       let selected := Editor.CheckGroup.select mode ConfigTest.checks
       IO.Process.exit
           (←
-            ConfigTest.run selected sysroot oleanDir syntaxFixtures defaultConfig
-                ConfigTest.shippedPackages timings)
+            ConfigTest.run selected sysroot oleanDir syntaxFixtures defaultConfig setDirectory
+                coreDirectory lspFixture ConfigTest.shippedPackages timings)
     | none =>
       ConfigTest.usage
   | _ =>

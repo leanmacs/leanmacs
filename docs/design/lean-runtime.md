@@ -1051,7 +1051,10 @@ lean-toolchain       generated when absent
   it.** Started in the config directory (`lake serve`), it reports no
   import error for a file that imports `Lean`, a module of a package of the
   set and a config file, and reports a type error at its position. The gate
-  holds that on a directory the editor generated
+  holds that on a config package config-test writes as an editor of the
+  default set generates it (`ConfigTest.lspChecks`: the lakefile
+  `Editor.Config.LakePackage.lakefile` gives, the core's pin), and, until
+  the script goes, on a directory the editor generated
   (`tools/config-package-check.sh`, `config-test lsp`). It writes
   `lake-manifest.json` and `.lake/` in the config directory, and builds
   there the config files a file imports; it fetches nothing and builds

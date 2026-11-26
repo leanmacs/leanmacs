@@ -1,3 +1,5 @@
+import ConfigTest.Check
+import Editor.Config.LakePackage
 import Editor.Job.Runner
 import Lean.Data.Lsp
 
@@ -6,10 +8,14 @@ import Lean.Data.Lsp
 
 `config-test lsp <sysroot> <config dir>` (`ConfigTest.Lsp.run`): Lean's
 language server, started in a config directory, checks the directory's
-root as the editor elaborates it. `mise run ffi-test` runs it through
-`tools/config-package-check.sh`, on a temporary directory that holds the
-lakefile and the toolchain file an editor generated, and the root and the
-config file of `tests/config-package/lsp`. It tests no module of the
+root as the editor elaborates it. config-test's run holds it in
+`lspChecks`, on a temporary directory of its own into which it writes the
+config package an editor of the default set generates (`writePackage`:
+the lakefile `Editor.Config.LakePackage.lakefile` gives for the set, by
+its Lake name, and the core, and the core's toolchain pin) and the root and
+the config file of `tests/config-package/lsp`; so no run of the built
+editor is read. `tools/config-package-check.sh` runs `lsp` too, on a
+directory the built editor generated. It tests no module of the
 editor, so it mirrors none; it sits beside the mirrored test modules under
 `ConfigTest/`, as the benchmark does.
 
@@ -31,7 +37,8 @@ for the file before that answer.
 - **It does not hang.** The exchange runs on a task, and the check gives up
   after `patience`, kills the server and fails.
 
-It writes nothing itself. Lake, run by the server, writes
+`run` writes nothing itself (`lspChecks` writes its package into its own
+temporary directory, which it removes). Lake, run by the server, writes
 `lake-manifest.json` and `.lake/` in the config directory, which is the
 caller's temporary directory, and builds there the config files the root
 imports; it fetches nothing, since the lakefile requires the package set
@@ -174,4 +181,49 @@ def run (sysroot configDir : String) (line column : Nat) : IO UInt8 := do
       IO.eprintln s!"  {problem.line}:{problem.column}: {problem.message}"
     return 1
 
+/-- The Lake name of a package set, from its lakefile's text `lakefile`:
+the value of its first `name = "…"` line, the package's own, as the editor
+writes the name the build handed it. -/
+def setNameOf (lakefile : String) : Option String :=
+  (lakefile.splitOn "\n").findSome? fun line =>
+    (line.dropPrefix? "name = \"").bind fun rest =>
+      (rest.toString.dropSuffix? "\"").map (·.toString)
+
+/-- Writes in `directory` the config package an editor of the set at
+`setDirectory`, linking the core at `coreDirectory`, both absolute,
+generates there (`Editor.Config.LakePackage`): its `lakefile.toml`
+requiring the set by its Lake name and the core, last, and its
+`lean-toolchain`, the core's pin; then the root `init.lean` and the config
+file `Config/Keys.lean` of `fixture`. -/
+def writePackage (directory setDirectory coreDirectory fixture : System.FilePath) : IO Unit := do
+  let some name := setNameOf (← IO.FS.readFile (setDirectory / "lakefile.toml"))
+    | throw (IO.userError s!"no name = \"…\" line in {setDirectory / "lakefile.toml"}")
+  let set : Editor.Config.LakePackage.Set :=
+    { name, directory := setDirectory.toString, core := coreDirectory.toString }
+  IO.FS.writeFile (directory / Editor.Config.LakePackage.lakefileName)
+      (Editor.Config.LakePackage.lakefile set)
+  IO.FS.writeFile (directory / Editor.Config.LakePackage.toolchainName)
+      (← IO.FS.readFile (coreDirectory / "lean-toolchain"))
+  IO.FS.writeFile (directory / "init.lean") (← IO.FS.readFile (fixture / "init.lean"))
+  IO.FS.createDirAll (directory / "Config")
+  IO.FS.writeFile (directory / "Config" / "Keys.lean")
+      (← IO.FS.readFile (fixture / "Config" / "Keys.lean"))
+
 end ConfigTest.Lsp
+
+namespace ConfigTest
+
+/-- The language server check in config-test's run (`ConfigTest.Lsp`): in
+a temporary directory of its own, the config package an editor of the set
+at `context.setDirectory`, linking the core at `context.coreDirectory`,
+generates, holding the root and the config file of `context.lspFixture`
+(`tests/config-package/lsp`), whose root holds one type error at 8:19. -/
+def lspChecks (context : Context) : List Check :=
+  [{  name :=
+        "Lean's language server, started in a config package written as an editor of the set generates it (its lakefile and toolchain pin) and holding the fixture's root and config file, reports the root's one type error at 8:19 and no import error"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          Lsp.writePackage directory context.setDirectory context.coreDirectory context.lspFixture
+          return (← Lsp.run context.sysroot directory.toString 8 19) == 0 }]
+
+end ConfigTest
