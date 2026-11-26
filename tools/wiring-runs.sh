@@ -81,17 +81,39 @@ TABLE
 case_compare() {
   # The fixtures whose subject is the script runner over a real loop thread
   # (docs/dev-practices/real-thread-checks.md, "The CLI's runs in the
-  # gate"), the real-thread
-  # set's runner entries, run both ways and compared
-  # (tools/fixture-compare.sh): each through the CLI, `editor headless`,
-  # over a real loop thread, which must exit 0, and stepped by the harness,
-  # which requires the two outputs to be the same, saying the lines each
-  # alone has when they are not, and to be the fixture's expected file. The
-  # list is the harness's, from the module. Its four lines and its count
-  # line are required.
+  # gate"), the real-thread set's runner entries, run both ways and
+  # compared. The list is the harness's, from the module (`fixture-test …
+  # compared`, one `<script>\t<config>\t<expected>` a line). Each is run
+  # through the CLI, `editor headless`, over a real loop thread, which must
+  # exit 0, and its output handed to the harness (`fixture-test … compare
+  # <script> <file>`), which runs it stepped and exits 1, saying the lines
+  # each side alone has, when the two outputs differ or are not the
+  # fixture's expected file. The case passes or fails by those statuses
+  # alone; nothing reads what they print. The CLI runs here, in shell,
+  # because Lean spawns no child process (docs/design/overview.md, "Rules of
+  # the boundary").
   (
     set -e
-    out=$(sh ../tools/fixture-compare.sh ../packages/.lake/build/bin/editor ../packages/.lake/build/bin/fixture-test "$(lean --print-prefix)" .lake/build/lib/lean "$(cd .. && pwd -P)") || { printf '%s\n' "$out"; exit 1; }; printf '%s\n' "$out"; for script in tests/headless/script tests/headless/keys-script tests/headless/scene-script tests/headless/ex/script; do printf '%s\n' "$out" | grep -qxF "fixture-compare: $script: the CLI over a real loop thread and the stepped run printed the same, and it is expected" || { echo "ffi-test: fixture-compare did not compare $script both ways"; exit 1; }; done; printf '%s\n' "$out" | grep -qxF 'fixture-compare: compared 4 fixtures both ways' || { echo 'ffi-test: fixture-compare did not compare four fixtures'; exit 1; }
+    editor=../packages/.lake/build/bin/editor
+    harness=../packages/.lake/build/bin/fixture-test
+    sysroot=$(lean --print-prefix)
+    oleans=.lake/build/lib/lean
+    repo=$(cd .. && pwd -P)
+    list=$("$harness" "$sysroot" "$oleans" --repo "$repo" compared)
+    out=$(mktemp)
+    trap 'rm -f "$out"' EXIT
+    # The list is read on a descriptor of its own, so that neither run can
+    # take it for its input.
+    while IFS=$tab read -r script config _ <&3; do
+      [ -n "$script" ] || continue
+      "$editor" headless "$sysroot" "$oleans" "$repo/$config" "$repo/$script" >"$out" || {
+        cat "$out"
+        exit 1
+      }
+      "$harness" "$sysroot" "$oleans" --repo "$repo" compare "$script" "$out"
+    done 3<<LIST
+$list
+LIST
   )
 }
 
