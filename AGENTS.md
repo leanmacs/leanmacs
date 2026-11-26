@@ -6,9 +6,12 @@ follows. What is being built, how it is structured and why is in
 the area you are changing before you change it, and record new facts about
 the system there. How to build, run and check the code, and what must pass
 before a change lands, is in `docs/dev-practices/`. Narrower working rules
-(planning with rdm, naming, text-rendering choices, how a gate decides,
-what a module may import and where it sits) are in `.agents/rules/`; read
-the ones for the work you are doing.
+(planning with rdm, naming, text-rendering choices, what a module may
+import and where it sits) are in `.agents/rules/`; read the ones for the
+work you are doing. Read `.agents/rules/gates.md` before planning,
+writing or reviewing any check: the gate is builds, tests and formatters,
+a new check is a Rust or Lean test, never a shell script, and reading the
+tests is enough evidence for a reviewer.
 
 ## Test-driven development
 
