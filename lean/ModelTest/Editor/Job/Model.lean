@@ -14,6 +14,7 @@ import Editor.Process.Model
 import Editor.Program
 import Editor.Test.Jobs
 import Editor.Text.Model
+import EnvironmentApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.Packages
 
@@ -163,7 +164,8 @@ def jobModelChecks : List Check :=
           job.runModel
             { now := 7
               environments :=
-                { sources := (Process.Setting.mise (some "/m")).sources .headless, limit := 3 } }
+                { sources := { directories := #[EnvironmentApiTest.fakeSource "mise" "/m"] }
+                  limit := 3 } }
         pure
           ((match outcome with
             | .finished (found, policy) =>

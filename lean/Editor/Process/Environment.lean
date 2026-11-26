@@ -12,14 +12,15 @@ in order, looked up for the child's directory, then its command's own
 environment is never changed.
 
 This module is the pure part of the answer: a source as data
-(`Process.Source`), the layers a host installs (`Process.Sources`), how
-config's setting maps onto them (`Process.Setting.sources`), how two layers
-combine (`Process.layer`), the files whose stamps keep a directory source's
-result (`Process.stampPaths`), the state every job of a host shares
-(`Process.Environments`) with the requests a job makes of it
-(`EnvironmentRequest`), and, in a section of its own at the end, the one
-directory source config reaches: mise (`Process.miseSource`, with the parser
-of what `mise env --json` prints, `Process.parseVariables`). The program
+(`Process.Source`), the layers as the registry gives them
+(`Process.Registered`) and as a host installs them (`Process.Sources`), how
+two layers combine (`Process.layer`), the files whose stamps keep a
+directory source's result (`Process.stampPaths`), the state every job of a
+host shares (`Process.Environments`) with the requests a job makes of it
+(`EnvironmentRequest`), and a parser of a JSON object of strings that a
+source may read its output with (`Process.parseVariables`). It names no
+source: the sources are packages, registered at the extension points of the
+interface library `environment-api` (`EnvironmentApi.lean`). The program
 that asks them, `Process.prepared`, is in `Editor/Job.lean`, beside the
 process operations it runs before. It imports only the process and file
 requests, so nothing of `Std` or `Lean` reaches config's closure.
@@ -38,25 +39,26 @@ requests, so nothing of `Std` or `Lean` reaches config's closure.
   `EditorM` in the reply. An executable is never looked up by bare name:
   launchd's `PATH` holds none of the usual places.
 - **The layers.** The base (`Base`) is `inherited`, launchd's: the editor's
-  own environment with no lookup, the only one config reaches in this
-  version. A base that is a lookup runs once per run, in the directory it
-  names, over the editor's environment. Each directory source then runs in
-  the child's directory, in order, with the base's and the earlier sources'
-  variables set over the editor's (`layer`), so a later source sees an
-  earlier one's `PATH`.
-- **The setting** is config's (`SetupRequest.processEnvironment`,
-  `Editor/Setup.lean`): `inherited`, `mise` with an optional absolute path
-  to the executable, and the default, `auto`. `Setting.sources` maps it: the
-  base is always `inherited`; `inherited`, and `auto` in the headless mode,
-  have no directory source; `auto` in the window mode is mise at the first
-  of `~/.local/bin/mise`, `/opt/homebrew/bin/mise` and
-  `/usr/local/bin/mise` whose stamp a file request answers
-  (`Process.miseCandidates`), skipped with none of them; `mise` with no
-  path is the same, reported `missing` with none; `mise` with a path is
-  that executable.
+  own environment with no lookup, built into the core under the name
+  `inherited` (`inheritedName`); or a lookup a package registered, which
+  runs once per run, in the directory it names, over the editor's
+  environment. Each directory source then runs in the child's directory, in
+  order, with the base's and the earlier sources' variables set over the
+  editor's (`layer`), so a later source sees an earlier one's `PATH`.
+- **The layers come from the registry.** At every reload that installs, the
+  host reads the extension points (`EnvironmentApi.ofRegistry`): every
+  directory source registered, and the base the setting `environmentBase`
+  names (`Editor/Setup.lean`; config's choice, else a package's default,
+  else `inherited`). Each is given for each mode (`Host`), and a source that
+  gives none in a mode is left out there (`Registered.sources`). A base name
+  nothing answers to gives no base, and the host keeps the one it had. With
+  nothing registered a child gets the editor's own environment, and no
+  lookup runs. A config rejected at start-up leaves nothing installed until
+  a reload installs one.
 - **A lookup** runs its source's command through the process service, with
-  a time limit (`ProcessRequest.runWithin`) and an output limit, and sets
-  every variable its parser reads from what it printed.
+  a time limit (`ProcessRequest.runWithin`, `Environments.limit`) and an
+  output limit (`Process.lookupOutput`), and sets every variable its parser
+  reads from what it printed.
 - **The caches** are the entries of the shared state, each under its
   `Slot`: the base's under `.base`, kept until a reload, so the base is
   looked up at most once per run; and one for each directory and source
@@ -64,8 +66,8 @@ requests, so nothing of `Std` or `Lean` reaches config's closure.
   that directory and in each of its ancestors, and the variables of the
   layers below it, are what they were before the lookup ran. A reload
   drops every entry and every program a source resolved to
-  (`Environments.install`). mise also reads its global config and
-  environment variables; a change to those is picked up after a reload.
+  (`Environments.install`), so what a source reads beyond its stamp files
+  is picked up after a reload.
 - **When a lookup fails** (a status other than 0, a signal, output its
   parser refuses, a run past its limit, a refusal, no executable where one
   is required), that source is skipped and the layers below it are kept;
@@ -79,10 +81,12 @@ requests, so nothing of `Std` or `Lean` reaches config's closure.
 
 ## Adding to this
 
-A new source (direnv, a login shell) is a `Source` value added to the
-sources a host installs, not a constructor: its program, its command, the
-parser of its output and its stamp names. A new question a job asks of the
-shared state is a constructor of `EnvironmentRequest` with its case in
+A new source (direnv, a login shell) is a package that registers at
+`environment-api`'s extension points (`EnvironmentApi.lean`, "Where an
+addition goes"), not a constructor here: its program, its command, the
+parser of its output and its stamp names. A new kind of data a source
+carries is a field of `Source`. A new question a job asks of the shared
+state is a constructor of `EnvironmentRequest` with its case in
 `EnvironmentRequest.Reply` and in `Environments.handle`.
 -/
 
@@ -90,19 +94,23 @@ namespace Editor
 
 namespace Process
 
-/-- Which source answers what environment a child gets: config's setting. -/
+/-- The retired setting of where a child's environment came from, kept only
+so that a config that still calls `processEnvironment` elaborates and is
+then refused with a message that names what replaces each choice
+(`processEnvironmentGone`, `Editor/Setup.lean`). Nothing reads it. -/
 inductive Setting where
-  /-- In the window mode, `mise` at the first candidate that exists, else
-  `inherited`; in the headless mode, `inherited`. The default. -/
+  /-- Was: mise at the first candidate in the window mode, nothing in the
+  headless mode. The mise package does this now. -/
   | auto
-  /-- No lookup: children start exactly as their commands say. -/
+  /-- Was: no lookup. Leaving the mise package out of the set does this now. -/
   | inherited
-  /-- `mise env --json`, run by the executable at `executable`, an absolute
-  path, or by the first candidate that exists when there is none. -/
+  /-- Was: mise at a path, or at the first candidate. The mise package's
+  setting, `Mise.executable`, takes the path now. -/
   | mise (executable : Option System.FilePath)
   deriving DecidableEq, Repr
 
-/-- Which mode the editor runs in, for what `auto` resolves to. -/
+/-- Which mode the editor runs in: a source may give a layer in one mode and
+none in another. -/
 inductive Host where
   /-- The window mode, with the user's home directory if `HOME` names one. -/
   | window (home : Option System.FilePath)
@@ -115,26 +123,12 @@ root's included. -/
 def inDirectory (directory : System.FilePath) (name : String) : System.FilePath :=
   if directory.toString.endsWith "/" then ⟨directory.toString ++ name⟩ else directory / name
 
-/-- Where mise is looked for when no path is given, in order: under the home
-directory, if there is one, then Homebrew's two prefixes. -/
-def miseCandidates (home : Option System.FilePath) : Array System.FilePath :=
-  let underHome : Array System.FilePath :=
-    match home with
-    | some home => #[inDirectory home ".local/bin/mise"]
-    | none => #[]
-  underHome ++ #[("/opt/homebrew/bin/mise" : System.FilePath), "/usr/local/bin/mise"]
-
 /-- The user's home directory the host knows, which the editor state is given
 (`Headless.Collaborators.home`): the window mode's, if `HOME` names one,
 and none in the headless mode, which reads nothing from the environment. -/
 def Host.home : Host → Option System.FilePath
   | .window home => home
   | .headless => none
-
-/-- The candidates `mise` with no path picks from in this mode. -/
-def Host.candidates : Host → Array System.FilePath
-  | .window home => miseCandidates home
-  | .headless => miseCandidates none
 
 /-- `directory` without a separator at its end, the root's kept. -/
 def trimmed (directory : System.FilePath) : System.FilePath :=
@@ -217,10 +211,12 @@ structure Entry where
   below : Array (String × String) := #[]
   deriving DecidableEq, Repr
 
-/-! ## What `mise env --json` prints
+/-! ## A JSON object of strings
 
-One JSON object whose values are strings. It is read here, and not with
-`Lean.Data.Json`, which lives in `Lean`, outside config's closure. -/
+What a source that prints one JSON object whose values are strings is read
+with (`parseVariables`; mise's, `packages/mise/Mise.lean`, prints one). It
+is read here, and not with `Lean.Data.Json`, which lives in `Lean`, outside
+config's closure. -/
 
 /-- The value of a hexadecimal digit. -/
 def hexDigit? (character : Char) : Option Nat :=
@@ -494,8 +490,9 @@ structure Policy where
 
 /-- The state every job of a host shares: the mode, the time limit, the
 layers, what each source's program resolved to, and the caches. The default
-is what a runner given no environments has: `auto` in the headless mode,
-which has no source, so children start exactly as their commands say. -/
+is what a runner given no environments has: the headless mode, the inherited
+base and no directory source, so children start exactly as their commands
+say. -/
 structure Environments where
   /-- The mode the editor runs in. -/
   host : Host := .headless
@@ -553,42 +550,6 @@ def install (state : Environments) (registered : Registered) : Environments :=
   state.installSources (registered.sources state.host state.sources.base)
 
 end Process.Environments
-
-/-! ## The mise source
-
-The one directory source config reaches: `mise env --json`, its parser
-`parseVariables` above, and the names of mise's config files as its stamp
-names. `Setting.sources` maps config's setting onto it. -/
-
-namespace Process
-
-/-- The mise source's command: `executable env --json` in `directory`, with
-`environment`, the variables of the layers below, set over the editor's. -/
-def lookupCommand (executable : System.FilePath) (directory : System.FilePath)
-    (environment : Environment := {}) : Command :=
-  { program := executable.toString, arguments := #["env", "--json"], directory, environment }
-
-/-- mise, with its executable at `program`, as a directory source: it prints
-a JSON object of strings, and its result is kept by the stamps of
-`mise.toml`, `.mise.toml`, `.tool-versions` and `mise.local.toml`. -/
-def miseSource (program : Program) : Source :=
-  { name := "mise", program
-    command := fun executable directory environment =>
-      lookupCommand executable directory environment
-    parse := parseVariables, output := "a JSON object of strings"
-    stampNames := #["mise.toml", ".mise.toml", ".tool-versions", "mise.local.toml"] }
-
-/-- The layers config's setting gives in the mode `host`: always the
-inherited base, under no directory source or the mise source. -/
-def Setting.sources : Setting → Host → Sources
-  | .inherited, _ => {}
-  | .auto, .headless => {}
-  | .auto, .window home => { directories := #[miseSource (.firstOf (miseCandidates home) .skip)] }
-  | .mise none, host => { directories := #[miseSource (.firstOf host.candidates .report)] }
-  | .mise (some path), _ => { directories := #[miseSource (.at path)] }
-
-
-end Process
 
 namespace Process.Environments
 

@@ -1454,7 +1454,6 @@ def checks : List Check :=
     fileRunnerChecks ++
     processChecks ++
     processEnvironmentChecks ++
-    environmentLookupChecks ++
     environmentLayerChecks ++
     fileWatchModelChecks ++
     fileWatchRunnerChecks ++

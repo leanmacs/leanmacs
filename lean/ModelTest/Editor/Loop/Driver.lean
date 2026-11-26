@@ -39,6 +39,7 @@ import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.Watch.Model
+import EnvironmentApiTest.Fake
 import ModelTest.Check
 
 /-!
@@ -172,12 +173,13 @@ def driverChecks : List Check :=
           | none => false
           | some driver =>
             let child : Process.Command := { program := "/bin/true", directory := "/p/d" }
-            let lookup := Process.lookupCommand "/opt/mise" "/p/d"
+            let lookup : Process.Command := { program := "/opt/mise", directory := "/p/d" }
             let driver :=
               { driver with
                 jobs :=
                   { environments :=
-                      { sources := (Process.Setting.mise (some "/opt/mise")).sources .headless }
+                      { sources :=
+                          { directories := #[EnvironmentApiTest.fakeSource "mise" "/opt/mise"] } }
                     processes :=
                       {
                         scripts :=

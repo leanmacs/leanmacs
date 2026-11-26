@@ -1,0 +1,20 @@
+#!/bin/sh
+# Stands for `mise` in the mise package's linked test: `mise env --json`,
+# run in a directory, prints one JSON object in mise's two-space layout whose
+# `PATH` is the line the file `fixture-path` in that directory holds; in a
+# directory that holds the file `fixture-fail` it fails, saying so on its
+# standard error, and exits 1. Shell builtins only, so it runs whatever PATH
+# it is given.
+if [ "$#" -ne 2 ] || [ "$1" != env ] || [ "$2" != --json ]; then
+  printf 'mise fixture: expected the arguments env --json, got: %s\n' "$*" >&2
+  exit 2
+fi
+if [ -e fixture-fail ]; then
+  printf 'mise fixture: failing here\n' >&2
+  exit 1
+fi
+if ! IFS= read -r path <fixture-path; then
+  printf 'mise fixture: no line in fixture-path here\n' >&2
+  exit 2
+fi
+printf '{\n  "PATH": "%s"\n}\n' "$path"

@@ -1,0 +1,68 @@
+# mise as a child's directory environment source: the package registers a
+# value at `environment-api`'s directory-source extension point
+# (`EnvironmentApi.DirectorySource`) that runs `mise env --json` in a child's
+# directory, and its setting, `Mise.executable`, which takes mise's path. A
+# default package, a Lake package outside the core that the default package
+# set requires (../lakefile.toml; docs/design/packages.md, "The package set
+# and its build"). It was the mise section of the core's
+# `Editor.Process.Environment`, chosen by config's `processEnvironment`,
+# until the process-environment-sources roadmap's phase 2. The gate's
+# package steps build, test, lint and format-check it through the fixture
+# set, which requires the default set (tools/package-set.sh), and review
+# holds what it imports of the core to the rule in
+# `.agents/rules/structure.md`.
+#
+# - `Mise` is the package's library: `Mise.lean`, the source and the
+#   setting, `Mise/Compiled.lean`, the `Package` value, and its entry module
+#   `Mise/EditorPackage.lean`, which the package-set build reads. Its `globs`
+#   hold every module under `Mise`, so the library's build reaches each one.
+#   It implements the core's interface library `environment-api`
+#   (`EnvironmentApi`, `lean/EnvironmentApi.lean`), which is in the core's
+#   Lake package, so it requires the core alone.
+# - `mise-test` is its test driver (`lake test`): the tests that need no
+#   Rust library, rooted at `MiseTest/Model.lean`. It is no default target,
+#   as the core's `model-test` is not: `mise run lean` links with the system
+#   compiler, which this executable has no flags for.
+# - `MiseTest` holds the test modules, and `MiseTest/Linked.lean`: the root
+#   of the executable the core's `editorLinked` facet links as the editor is
+#   linked, with the Rust library. It runs `environment-api`'s contract over
+#   the library's process service, with the fixtures under
+#   `tests/process-environment` standing in for mise.
+#
+# It has no headless fixture of its own.
+#
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the three-layer rule (.agents/rules/structure.md) holds it to that.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/mise update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages), and commit each lake-manifest.json.
+name = "mise"
+testDriver = "«mise-test»"
+defaultTargets = ["Mise", "MiseTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/lintShared"]
+
+# The core, whose Lake package holds the interface library this package
+# implements, `EnvironmentApi`, with its fakes, contract and model rigs
+# (`EnvironmentApiTest`).
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "Mise"
+globs = ["Mise.*"]
+
+[[lean_lib]]
+name = "MiseTest"
+globs = ["MiseTest.+"]
+
+[[lean_exe]]
+name = "mise-test"
+root = "MiseTest.Model"

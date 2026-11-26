@@ -156,7 +156,7 @@ run_suite() {
       mise run --skip-deps window-scenarios || status=$?
       exit "$status"') >"$log" 2>&1 ;;
   contract)
-    (cd "$root/lean" && low .lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion ../tests/launch) >"$log" 2>&1 ;;
+    (cd "$root/lean" && low .lake/build/bin/contract-test ../tests/syntax ../tests/completion ../tests/launch) >"$log" 2>&1 ;;
   linked-wiring)
     (cd "$root/lean" && low sh ../tools/package-set.sh --wiring run ../tests/packages "$prefix" .lake/build/lib/lean) >"$log" 2>&1 ;;
   rust)

@@ -38,7 +38,8 @@
 # binding-search-api/), the compile mode (compile/, with its interface
 # package compile-api/, which it, workspace/ and project-api/ require),
 # completion at point
-# (at-point/, with at-point-api/), then the languages (languages/). They register in that order. The core's Lake package
+# (at-point/, with at-point-api/), the languages (languages/), then mise as
+# a child's directory environment source (mise/). They register in that order. The core's Lake package
 # registers no package and has no entry module, since the ex line, the
 # last feature it held, moved out (features-as-packages phase 8). This is
 # also the lakefile a user's
@@ -300,3 +301,14 @@ path = "at-point"
 [[require]]
 name = "languages"
 path = "languages"
+
+# mise as a child's directory environment source: a default package
+# (process-environment-sources phase 2). It registers a value at the core
+# interface library environment-api's directory-source extension point,
+# which runs `mise env --json` in a child's directory in the window mode,
+# and its setting, `Mise.executable`, takes mise's path. Leaving it out
+# means no directory lookup. It registers last, so no earlier package's
+# order moves, and registers no command.
+[[require]]
+name = "mise"
+path = "mise"
