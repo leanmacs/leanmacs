@@ -542,7 +542,9 @@ the files, the diffs and the searches, and the process service's over
 `processes`, both answering through the fake pump; the stage's fake clock
 and watches, as before; and a fake of each of `packages`, the services a
 package brings (`Job.FakePackageService`), over the fake pump, its
-hand-offs taken from the process fake. A published snapshot a save, a diff
+hand-offs taken from the process fake; and each of `packageFakes`, a
+package's own fake of its service (`Job.PackageFake`), made over the table
+and the fake pump. A published snapshot a save, a diff
 or a search names is read from the stage's published table when the request
 is taken.
 
@@ -552,8 +554,8 @@ run first. A stage over the library's services (`Stage.overFiles`) is
 refused, as is a stage stepped already: a real service's answer comes on
 another thread, so "nothing can run" would be racy again. -/
 def Stage.stepped {β σ : Type} (stage : Stage β σ) (files : FileModel := {})
-    (processes : ProcessModel := {}) (packages : Array Job.FakePackageService.Spec := #[]) :
-    IO (Stage β σ) := do
+    (processes : ProcessModel := {}) (packages : Array Job.FakePackageService.Spec := #[])
+    (packageFakes : Array Job.PackageFake := #[]) : IO (Stage β σ) := do
   if stage.realServices then
     throw <|
         IO.userError
@@ -564,7 +566,7 @@ def Stage.stepped {β σ : Type} (stage : Stage β σ) (files : FileModel := {})
   let services ←
     SteppedServices.new collaborators.services.completions stage.clock stage.watches
         (Job.realSnapshots collaborators.published.reader) collaborators.held files processes
-        packages
+        packages packageFakes
   let fakes : Stage.Fakes :=
     { services, memory := stage.memory, journal := ← IO.mkRef none,
       syntaxService := ← IO.mkRef none }

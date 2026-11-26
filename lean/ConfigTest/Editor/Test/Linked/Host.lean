@@ -79,6 +79,113 @@ def steppedStage (context : Context) : IO (Stage Config.Elaborate.Base Config.El
   do
   (← Stage.new context context.elaborator (memorySource []) loadingCompiled).stepped stageFiles
 
+/-- What the counter service of `packageFakeChecks` answers: how many
+requests it had answered before. -/
+structure Counted where
+  /-- The count. -/
+  count : Nat
+  deriving TypeName
+
+/-- A package's own fake written in the test (`Job.PackageFake`): the service
+`counter`, which holds every request it is handed until the check lets them
+go (`release`), and then completes them through the stepped services' pump;
+with the threads that started and took them. -/
+structure CounterFake where
+  /-- The waits it holds, oldest first. -/
+  held : IO.Ref (Array UInt64)
+  /-- The waits let go and not yet taken. -/
+  released : IO.Ref (Array UInt64)
+  /-- The threads its starts and takes ran on, oldest first. -/
+  threads : IO.Ref (Array UInt64)
+  /-- How it completes a wait, once the stage has made it. -/
+  complete : IO.Ref (UInt64 → BaseIO Unit)
+
+/-- A counter fake holding nothing. -/
+def CounterFake.new : BaseIO CounterFake :=
+  return {
+      held := ← IO.mkRef #[], released := ← IO.mkRef #[], threads := ← IO.mkRef #[]
+      complete := ← IO.mkRef fun _ => pure () }
+
+/-- Lets every wait the counter holds go: each is completed as the stage
+said, through the stepped services' pump. -/
+def CounterFake.release (counter : CounterFake) : IO Unit := do
+  let held ← counter.held.modifyGet fun held => (held, #[])
+  counter.released.modify (· ++ held)
+  let complete ← counter.complete.get
+  for id in held do
+    complete id
+
+/-- The counter as the stage's package fake. -/
+def CounterFake.packageFake (counter : CounterFake) : Job.PackageFake where
+  name := "counter"
+  make completions answer := do
+    counter.complete.set (answer.complete completions)
+    return {
+        service :=
+          { name := "counter"
+            start := fun id _ => do
+              counter.threads.modify (·.push (← IO.getTID))
+              counter.held.modify (·.push id)
+              return true
+            take := fun id _ => do
+              counter.threads.modify (·.push (← IO.getTID))
+              counter.released.modify (·.filter (· != id))
+              return .ok (.mk ({ count := 1 } : Counted))
+            cancel := fun id => do
+              counter.held.modify (·.filter (· != id))
+              counter.released.modify (·.filter (· != id))
+            flush := fun id => answer.complete completions id }
+        quiescent := do
+          return (← counter.held.get).isEmpty && (← counter.released.get).isEmpty }
+
+/-- The job `count`, which asks the service `counter` and finishes with its
+count, and the command `count-it`, which starts it. -/
+def countingCompiled : Compiled :=
+  { commands := #[{ name := "count-it", action := .plain (discard <| startJob "count") }]
+    jobs :=
+      #[{ name := "count"
+          work := fun _ =>
+            Work.of
+              (fun _ => PackageService.askAs Counted { service := "counter", operation := "count" })
+              fun _ => pure () }] }
+
+/-- The checks of a package's own fake on a stepped stage
+(`Job.PackageFake`, `Stage.stepped`). -/
+def packageFakeChecks (context : Context) : List Check :=
+  [{  name :=
+        "a stage stepped with a package's own fake hands the runner its service: a job's request to it is held until the check lets it go, completes only on the session's step, all on the check's thread, and the stage is not quiescent while the fake holds it"
+      run := do
+        let counter ← CounterFake.new
+        let stage ←
+          (← Stage.new context context.elaborator (memorySource []) countingCompiled).stepped
+              (packageFakes := #[counter.packageFake])
+        let some fakes := stage.fakes | saw false "the stepped stage has no fakes"
+        let thread ← IO.getTID
+        onStage stage fun drive stage => do
+            let session := Session.ofStage drive "/" stage
+            session.ask [.run "count-it"]
+            session.step
+            let heldAtRest := (← counter.held.get).size
+            let busy := !(← fakes.services.quiescent)
+            let unquiet ← fakes.unquiet
+            let before ← session.output.get
+            counter.release
+            let dueBeforeStep := !(← fakes.services.pump.quiescent)
+            session.step
+            let after ← session.output.get
+            let threads ← counter.threads.get
+            let finished ← fakes.services.pump.finishedThreads
+            saw
+                (heldAtRest == 1 && busy && unquiet.any (·.startsWith "the package fake counter") &&
+                  !before.contains "job 1 count: ok" &&
+                  dueBeforeStep &&
+                  after.contains "job 1 count: ok" &&
+                  threads.size == 2 &&
+                  threads.all (· == thread) &&
+                  finished.all (· == thread) &&
+                  (← fakes.services.quiescent))
+                s!"held {heldAtRest} at rest, busy {busy}, unquiet {unquiet}, due before the step {dueBeforeStep}; output {before} then {after}; the counter on {threads}, completions on {finished}, the check on {thread}" }]
+
 /-- The checks of a stepped stage (`Stage.stepped`) and its session's
 steps. -/
 def steppedStageChecks (context : Context) : List Check :=
@@ -240,7 +347,7 @@ def steppedStageChecks (context : Context) : List Check :=
 
 /-- The checks of the stage makers no other check reaches. -/
 def stageMakerChecks (context : Context) : List Check :=
-  steppedStageChecks context ++
+  steppedStageChecks context ++ packageFakeChecks context ++
     [{  name :=
           "a stage's fake syntax service is the host's syntax handler: it learns the text the host published of what was typed, from the stage's table, refuses its captures as not parsed until the check steps it, and its step posts one `parsed` event to the stage's memory queue, which the stepped host's loop takes and answers with one scene"
         run := do

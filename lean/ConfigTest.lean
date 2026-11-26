@@ -351,7 +351,10 @@ show:
   and the drain ended only by the check's step;
 - `stageMakerChecks`: a stepped stage (`Stage.stepped`): its job runs only
   on the session's step, every piece, completion and request on the
-  check's thread; a step leaves a job asleep on the fake clock held; the
+  check's thread; a package's own fake of its service (`Job.PackageFake`)
+  is handed the runner, holds a job's request until the check lets it go,
+  completes it on the session's step, and keeps the stage from being
+  quiescent while it holds it; a step leaves a job asleep on the fake clock held; the
   loop's end steps a cancelled job never stepped to its end; the bracket
   fails a check that left a completion unstepped; a stepped stage refuses
   the library's services and a real host refuses it, and refuses a stage

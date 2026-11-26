@@ -13,7 +13,8 @@ Five fakes, published for `model-test`, `config-test` and the packages'
 linked tests: the fake clock, below, the fake file service (`FakeFiles`,
 after it), the fake process service (`FakeProcesses`), with its hand-off
 of a child to a package's crate (`FakeProcesses.handOff`), the fake of a
-package's service (`FakePackageService`) and the fake watch service
+package's service (`FakePackageService`), the frame of a package's own
+fake of its service (`PackageFake`), and the fake watch service
 (`FakeFileWatches`), each of whose doc comment has its rules; the fake scheduler
 (`FakeScheduler`), which runs a job's code only when a check steps it; the
 fake completion pump (`FakePump`), the one step point they answer through
@@ -1786,6 +1787,30 @@ def quiescent (service : FakePackageService) : BaseIO Bool := do
   return state.pending.isEmpty && state.replies.isEmpty && state.parked.isEmpty
 
 end FakePackageService
+
+/-- What a package's own fake of its service makes (`PackageFake.make`): the
+service the runner is given, and whether it holds nothing in flight. -/
+structure PackageFake.Made where
+  /-- The service, as the runner reaches it. -/
+  service : PackageService
+  /-- Whether it holds nothing in flight: a stage holding a request of it is
+  not quiescent. -/
+  quiescent : BaseIO Bool
+
+/-- A package's own fake of its service, which a check hands the stepped
+stage (`Stage.stepped`, `SteppedServices.new`) beside the fakes of specs
+(`FakePackageService.Spec`): made over the stepped services' table of waits
+and their pump, so each of its completions is a step of the check's. Where a
+spec's model is a pure function of the request, a package's own fake keeps
+state, so it may hold a request until an order of the check's, or of
+another job, makes its reply, as a session's long poll waits for its
+agent's next events (`agents-api`'s fake). -/
+structure PackageFake where
+  /-- The service's name. -/
+  name : String
+  /-- Makes the fake over the stepped services' table, completing each wait
+  as `FakeAnswer` says: through the pump, on the check's step. -/
+  make : Completions → FakeAnswer → BaseIO PackageFake.Made
 
 /-- One thing a fake watch service was handed, in its log. -/
 inductive FakeFileWatches.Order where

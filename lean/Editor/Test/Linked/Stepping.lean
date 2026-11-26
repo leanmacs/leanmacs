@@ -91,6 +91,9 @@ def unquiet (fakes : SteppedFakes) : IO (Array String) := do
       held :=
         held.push
           s!"the fake of the package service {package.spec.name} holds {← package.waiting} requests"
+  for (name, made) in fakes.services.packageFakes do
+    unless ← made.quiescent do
+      held := held.push s!"the package fake {name} holds a request"
   if let some service← fakes.syntaxService.get then
     unless ← service.quiescent do
       held := held.push "the syntax fake holds an undelivered parse"

@@ -26,8 +26,9 @@ service has been flushed (`childrenReapedTo`); and the bracket a check's
 temporary directory lives in (`withFiles`), which removes it only once the
 services have worked what was handed to them under it. And the job
 services of a stepped check (`SteppedServices`): the fake scheduler, the
-fake completion pump, and the file, diff, grep and process fakes and the
-package services' fakes answering through it, over one table of waits,
+fake completion pump, and the file, diff, grep and process fakes, the
+package services' fakes and the packages' own fakes answering through it,
+over one table of waits,
 which the check steps on its own thread.
 
 **One table and one pump a process.** The library has one completion queue,
@@ -93,6 +94,9 @@ structure SteppedServices where
   spec, answering through the pump, their hand-offs taken from
   `processes`. -/
   packages : Array Job.FakePackageService := #[]
+  /-- The packages' own fakes of their services (`Job.PackageFake`), each
+  made over the table and answering through the pump, by name. -/
+  packageFakes : Array (String × Job.PackageFake.Made) := #[]
   /-- The services a runner is given, over the fakes. -/
   jobs : Job.Services
 
@@ -102,12 +106,15 @@ published snapshot is read through `snapshots`, by the job's snapshot
 reads and by the file fake when it takes a save, a diff or a search that
 names one (`Job.FakeFiles.learn`); a load the fake makes is held in `held`,
 the host's table of what its jobs hold, as a library snapshot of its text
-(`Job.FakeFiles.holding`); and a fake of each of `packages`, the services a
-package brings, over the pump and the process fake. -/
+(`Job.FakeFiles.holding`); a fake of each of `packages`, the services a
+package brings, over the pump and the process fake; and each of
+`packageFakes`, a package's own fake of its service, made over the table and
+the pump. -/
 def SteppedServices.new (completions : Job.Completions) (clock : Job.FakeClock)
     (watches : Job.FakeFileWatches) (snapshots : SnapshotId → BaseIO (Option String))
     (held : Job.HeldSnapshots) (files : FileModel := {}) (processes : ProcessModel := {})
-    (packages : Array Job.FakePackageService.Spec := #[]) : IO SteppedServices := do
+    (packages : Array Job.FakePackageService.Spec := #[])
+    (packageFakes : Array Job.PackageFake := #[]) : IO SteppedServices := do
   let scheduler ← Job.FakeScheduler.new
   let pump ← Job.FakePump.new completions
   -- A load the fake made is held in the host's table as a library snapshot
@@ -129,14 +136,19 @@ def SteppedServices.new (completions : Job.Completions) (clock : Job.FakeClock)
   let fakePackages ←
     packages.mapM fun spec =>
         Job.FakePackageService.new completions spec (some fakeProcesses) (.onStep pump)
+  let made ←
+    packageFakes.mapM fun fake => do
+        return (fake.name, ← fake.make completions (.onStep pump))
   return {
       scheduler, pump, files := fakeFiles, processes := fakeProcesses, packages := fakePackages
+      packageFakes := made
       jobs :=
         { completions, timers := clock.timers, files := fakeFiles.files
           processes := fakeProcesses.processes, fileWatches := watches.fileWatches
           diffs := fakeFiles.diffs, greps := fakeFiles.greps, fuzzy := Fuzzy.real, snapshots
           scheduler := scheduler.scheduler
-          packages := Job.PackageServices.of (fakePackages.map (·.service)) } }
+          packages :=
+            Job.PackageServices.of (fakePackages.map (·.service) ++ made.map (·.2.service)) } }
 
 /-- Runs one piece of work of the stepped services, on the caller's thread:
 the oldest piece of a job's code that can run, else the oldest due
@@ -147,10 +159,12 @@ def SteppedServices.step (services : SteppedServices) : IO Bool := do
   services.pump.step
 
 /-- Whether the stepped services hold nothing: no job's code is left to
-run, no completion is due, and no package service's fake holds a request. -/
+run, no completion is due, and no package service's fake, of a spec or a
+package's own, holds a request. -/
 def SteppedServices.quiescent (services : SteppedServices) : IO Bool := do
   return (← services.scheduler.quiescent) && (← services.pump.quiescent) &&
-      (← services.packages.allM (·.quiescent))
+      (← services.packages.allM (·.quiescent)) &&
+      (← services.packageFakes.allM (·.2.quiescent))
 
 /-- The mark of `Services.over`: it runs a real background service (`Editor/RealHost.lean`). -/
 def Services.over.realHost : RealHost :=
