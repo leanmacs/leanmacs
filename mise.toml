@@ -112,6 +112,10 @@ run = [
   # the default packages are among them. It stops at the first package
   # whose driver fails, with that driver's status.
   'PATH="$PWD/no-cargo:$PATH" sh ../tools/package-set.sh test ../tests/packages',
+  # The test driver of the package that ships a grammar, in a set of its own
+  # (tests/grammar-set/lakefile.toml says why it is apart), which no package
+  # step reaches: with the same `cargo` that fails.
+  'PATH="$PWD/no-cargo:$PATH" lake -d ../tests/grammar-set/ini-grammar test --wfail',
 ]
 
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
@@ -157,6 +161,16 @@ run = [
   # the core links an editor with no package; that such an editor refuses
   # to start is ModelTest's (lean/ModelTest/Editor/Executable/Refusal.lean).
   "lake -d ../tests/empty-set build --wfail :editor",
+  # The editor of the grammar set (tests/grammar-set), whose `editor` facet
+  # stages the package ini-grammar's `grammars/` under the set's build
+  # directory and writes `editor.grammars` beside the editor, which the
+  # package's linked test reads (ffi-test, below); the editor is never
+  # started. No package step reaches this set.
+  "lake -d ../tests/grammar-set build --wfail :editor",
+  # The package's default targets, with its own linters on.
+  "lake -d ../tests/grammar-set/ini-grammar build --wfail",
+  # And its linked test, linked as the editor is.
+  "lake -d ../tests/grammar-set/ini-grammar build --wfail +IniGrammarTest.Linked:editorLinked",
 ]
 
 # lean-fmt is the Lake dependency of a package of its own, its host
@@ -179,6 +193,10 @@ run = [
   # The same two over each package of the fixture set (tools/package-set.sh;
   # docs/dev-practices/the-gate.md, "The package steps").
   "sh ../tools/package-set.sh fmt ../tests/packages",
+  # The same two over the package of the grammar set, which no package step
+  # reaches.
+  "lake -d ../tools/lean-fmt exe lean-fmt format --check --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root ../tests/grammar-set/ini-grammar",
+  "lake -d ../tools/lean-fmt exe lean-fmt check --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root ../tests/grammar-set/ini-grammar",
 ]
 
 [tasks.lean-format]
@@ -189,6 +207,8 @@ run = [
   "lake -d ../tools/lean-fmt exe lean-fmt format --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root .",
   "lake -d ../tools/lean-fmt exe lean-fmt check --fix --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root .",
   "sh ../tools/package-set.sh format ../tests/packages",
+  "lake -d ../tools/lean-fmt exe lean-fmt format --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root ../tests/grammar-set/ini-grammar",
+  "lake -d ../tools/lean-fmt exe lean-fmt check --fix --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root ../tests/grammar-set/ini-grammar",
 ]
 
 # Tracked files only, so Lake's fetched packages and build output are never
@@ -343,6 +363,13 @@ run = [
   # own harness and no linked test runs twice.
   "sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
   "sh ../tools/package-set.sh --no-linked run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
+  # The linked test of the package that ships a grammar
+  # (tests/grammar-set/ini-grammar/IniGrammarTest/Linked.lean), which no
+  # package step reaches: run in the package's directory with the grammar
+  # set's editor, beside which `lean` staged the package's `grammars/`, the
+  # fixture grammar library Cargo builds (the line only builds it and passes
+  # its path), and the syntax fixtures.
+  "lib=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-syntax-fixture-ini) && (cd ../tests/grammar-set/ini-grammar && .lake/build/bin/IniGrammarTest-Linked \"$(cd ../.lake/build/bin && pwd)/editor\" \"$lib\" \"$(cd ../../syntax && pwd)\")",
 ]
 
 # The window scenarios of the wiring set (`FfiTest.windowScenarios`,
@@ -1214,6 +1241,22 @@ run = [
   "actionlint -shellcheck= -pyflakes= .github/workflows/*.yml",
   "zizmor --offline --config .github/zizmor.yml .github/workflows",
 ]
+
+# On demand: run it by hand, and do not add it to `ci` or to hk.pkl (the
+# operator's decision, 2026-11-26): it installs a package set, about 420 MB,
+# and no gate step installs one (docs/design/packages.md, "The install").
+# The wiring check over the grammar set's build (`ffi-test`) covers the
+# grammar path in the gate. It copies the test package ini-grammar with the
+# fixture grammar library at this platform's path, builds and installs a set
+# that requires the default set and the copy with `:editorInstall` into a
+# temporary directory of its own, and runs the installed editor headless on
+# the INI fixture (crates/editor-syntax-fixture-ini/tests/package_install.rs;
+# docs/dev-practices/on-demand-checks.md, "A package's grammar, installed,
+# on demand"). It needs the default set's editor, which `lean` builds.
+[tasks.grammar-install-check]
+description = "On demand, never part of ci: install a set with a package that ships a grammar into a temporary directory and see the installed editor, run headless, highlight the package's language (crates/editor-syntax-fixture-ini/tests/package_install.rs)"
+depends = ["lean"]
+run = 'LEANMACS_SYSROOT="$(cd lean && lean --print-prefix)" cargo test --locked -p editor-syntax-fixture-ini --test package_install -- --ignored --nocapture'
 
 [tasks.ci]
 description = "The whole gate; the pre-commit hook and `hk check` run this, and it gates review and landing (rdm's dispatch.verify)"

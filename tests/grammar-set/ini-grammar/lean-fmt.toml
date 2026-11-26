@@ -1,0 +1,6 @@
+# lean-fmt's config for this package (`mise run lean-fmt`). The files under
+# `tests/` are the install check's config files: a module of a config
+# directory, another Lake package, which the editor elaborates at runtime,
+# so they are no modules of this package and are not built with it.
+# Everything else is checked with the defaults, as the core is.
+exclude = ["tests/**"]

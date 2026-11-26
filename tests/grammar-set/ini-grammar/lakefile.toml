@@ -1,0 +1,51 @@
+# A test package that ships a grammar (docs/design/packages.md, "A
+# package's grammars"), used by tests alone, through the grammar set
+# (../lakefile.toml): it brings the language `ini`, which is not compiled
+# into the editor, and declares the grammar `ini` per platform, its files
+# under `grammars/`.
+#
+# - `IniGrammar` is the package's library: `IniGrammar.lean`, and its entry
+#   module `IniGrammar/EditorPackage.lean`, which the package-set build
+#   reads.
+# - `grammars/` holds the grammar's files: in git, only
+#   `queries/highlights.scm`, a copy of the fixture grammar's query. No
+#   library is checked in: the checks that need one copy the staged
+#   directory into a temporary directory of their own and put the fixture
+#   library, which Cargo builds (crates/editor-syntax-fixture-ini), at the
+#   path the declaration names for the platform they run on.
+# - `ini-grammar-test` is its test driver (`lake test`), rooted at
+#   `IniGrammarTest/Model.lean`: the checks that need no Rust library.
+# - `IniGrammarTest/Linked.lean` is the root of the executable the core's
+#   `editorLinked` facet links as the editor is, with the Rust library: the
+#   wiring checks over the grammar set's build and the real grammar, file and
+#   syntax services and display.
+# - `tests/install/` holds the config directory and the script of the
+#   on-demand install check
+#   (crates/editor-syntax-fixture-ini/tests/package_install.rs).
+#
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters are loaded as a Lean plugin (`plugins`).
+#
+# The keyword `editor-grammars` says it ships grammars under `grammars/`
+# (`grammarsKeyword`, lean/lakefile.lean).
+name = "ini-grammar"
+keywords = ["editor-grammars"]
+testDriver = "«ini-grammar-test»"
+defaultTargets = ["IniGrammar", "IniGrammarTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/lintShared"]
+
+[[require]]
+name = "editor-core"
+path = "../../../lean"
+
+[[lean_lib]]
+name = "IniGrammar"
+
+[[lean_lib]]
+name = "IniGrammarTest"
+globs = ["IniGrammarTest.+"]
+
+[[lean_exe]]
+name = "ini-grammar-test"
+root = "IniGrammarTest.Model"

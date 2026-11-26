@@ -976,9 +976,7 @@ def rootSource (entries schemes base : Array Name) (setName pin : String)
     match shipping.find? (·.1 == name) with
     | some (_, lake) => s!"(Editor.Package.shipping {lake.quote} {name}.packages)"
     | none => s!"{name}.packages"
-  let lists :=
-    if entries.isEmpty then "#[]"
-    else " ++ ".intercalate (entries.map listed).toList
+  let lists := if entries.isEmpty then "#[]" else " ++ ".intercalate (entries.map listed).toList
   let supplied := ", ".intercalate (schemes.map fun name => s!"{name}.scheme").toList
   let names := ", ".intercalate (base.map fun name => s!"`{name}").toList
   s!"import Editor
@@ -1103,8 +1101,7 @@ def setEntries (pkg : Package) : FetchM (Array SetEntry) := do
     match ← entryModule? dep with
     | some mod =>
       entries :=
-        entries.push
-          { core := dep.keyName == __name__, module := mod.name, scheme, grammars, lake }
+        entries.push { core := dep.keyName == __name__, module := mod.name, scheme, grammars, lake }
     | none =>
       if scheme then
         error

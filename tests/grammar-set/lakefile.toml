@@ -1,0 +1,30 @@
+# A package set used by tests alone (docs/design/packages.md, "A package's
+# grammars"): it requires the test package `ini-grammar`, which ships the
+# fixture INI grammar's files under its `grammars/` and carries the keyword
+# `editor-grammars`, and through it the core. It is apart from the fixture
+# set (tests/packages/), whose harness runs every default package's
+# fixtures: a package grammar there would start the core's
+# `register-grammars` job at every install of every one of those fixtures,
+# shifting their job ids and adding a refusal to their echo.
+#
+# No package step (tools/package-set.sh) runs over it: its package's linked
+# test takes the fixture grammar library as an argument, so mise.toml names
+# its lines itself.
+#
+# - `mise run lean` links an editor from it
+#   (`lake -d ../tests/grammar-set build :editor`, in lean/), whose `editor`
+#   facet stages `ini-grammar/grammars/` under `.lake/build/grammars/` and
+#   writes `editor.grammars` beside the editor; the editor is never started
+#   (no package of the set supplies an input scheme). It builds the
+#   package's targets and its linked test too.
+# - `mise run lean-test` runs the package's test driver (`lake test`).
+# - `mise run ffi-test` runs the package's linked test, which reads what
+#   this set's build staged.
+# - `mise run grammar-install-check`, on demand only, installs a set that
+#   requires a copy of the package (crates/editor-syntax-fixture-ini/tests/
+#   package_install.rs).
+name = "grammar-set"
+
+[[require]]
+name = "ini-grammar"
+path = "ini-grammar"
