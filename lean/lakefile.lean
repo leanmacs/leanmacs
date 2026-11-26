@@ -427,6 +427,12 @@ target glue.o pkg : FilePath := do
   let srcJob ← inputTextFile <| pkg.dir / "ffi" / "glue.c"
   buildLeanO oFile srcJob #[] #["-O2", "-Wall", "-Wextra", "-Werror"]
 
+/-- The directory of the static libraries Lean's runtime needs of the
+toolchain install `install` (`leanSystemLibDir`): the install's own,
+whatever `lean` is on the `PATH`. -/
+def systemLibDirOf (install : LeanInstall) : FilePath :=
+  install.systemLibDir
+
 /-- The directory of the static libraries Lean's runtime needs (libgmp, libuv
 and the rest), inside the Lean toolchain Lake itself is using, as this
 lakefile is elaborated: for the core's own `lean_exe`s, whose `moreLinkArgs`
@@ -442,7 +448,17 @@ def leanSystemLibDir : FilePath :=
     do
       let (_, some lean, _) ←
         Lake.findInstall? | throw <| IO.userError "cannot find the Lean toolchain to link against"
-      return lean.systemLibDir
+      return systemLibDirOf lean
+
+/- Guards: the static libraries' directory the core's executables link
+against is the one of the toolchain install Lake found (`systemLibDirOf`,
+over the `LeanInstall` that `Lake.findInstall?` returns), whatever `lean`
+is on the `PATH`: its own `lib`. That Lake finds its install by the
+running `lake`, not the `PATH`, is Lake's. -/
+#guard systemLibDirOf { sysroot := "/t" } == ("/t/lib" : FilePath)
+
+#guard
+  systemLibDirOf { sysroot := "/elsewhere/toolchain" } == ("/elsewhere/toolchain/lib" : FilePath)
 
 /-- The link arguments of `linkArgs`, with the static libraries'
 directory `systemLibDir`. -/
@@ -703,6 +719,14 @@ libraries it needs, as Cargo builds them for the core (`rustlib`):
 def prebuiltRustFiles (root : FilePath) : FilePath × FilePath :=
   (root / "target" / "release" / s!"lib{(rustCrateName "core").replace "-" "_"}.a",
     systemLibrariesFile (rustDir root "core"))
+
+/- Guards: the core's archive and its system libraries' file in the
+repository (`prebuiltRustFiles`), which a set with no crate reuses and the
+bundle ships at `target/` under `lean`. -/
+#guard
+  prebuiltRustFiles "/r" ==
+    (("/r/target/release/libeditor_rust.a" : FilePath),
+      ("/r/target/editor-rust/core/native-static-libs" : FilePath))
 
 /-- The core's archive as it is already built, in the repository `root`
 (`target/release/libeditor_rust.a`, with its system libraries beside the
@@ -1097,6 +1121,18 @@ def writeModuleRecord (pkg : Package) (executable : FilePath) : FetchM Unit := d
   writeIfChanged (executable.toString ++ ".oleans")
       (directories.foldl (fun text directory => text ++ s!"{directory}\n") "")
 
+/-- The text of the record `<executable>.set` for the set at `dir`, resolved:
+the directory, on one line (`writeSetRecord`). -/
+def setRecordText (dir : FilePath) : String :=
+  s!"{dir}\n"
+
+/-- The text of the record `<executable>.coredir` for the core whose
+directory Lake holds as `coreDir`, with `cwd` the working directory: the
+directory, made absolute against `cwd` when it is relative and never
+resolved through links, on one line (`writeCoreDirRecord`). -/
+def coreDirRecordText (coreDir cwd : FilePath) : String :=
+  s!"{if coreDir.isAbsolute then coreDir else cwd / coreDir}\n"
+
 /-- The record of where a package set is, written beside the editor the
 set's build links, at `<executable>.set`: the set's directory, absolute,
 on one line. An editor run directly, outside a bundle, reads it
@@ -1105,7 +1141,7 @@ generates for a config directory, so that Lean's language server, started
 there, finds the modules config imports. It is written only when its text
 would change. -/
 def writeSetRecord (pkg : Package) (executable : FilePath) : FetchM Unit := do
-  writeIfChanged (executable.toString ++ ".set") s!"{← IO.FS.realPath pkg.dir}\n"
+  writeIfChanged (executable.toString ++ ".set") (setRecordText (← IO.FS.realPath pkg.dir))
 
 /-- The record of where the core a set's editor links is, written beside
 the editor the set's build links, at `<executable>.coredir`: the directory
@@ -1121,12 +1157,18 @@ manifest to it. A per-user install copies it as `editor.coredir`
 def writeCoreDirRecord (executable : FilePath) : FetchM Unit := do
   let some core := (← getWorkspace).findPackageByKey? __name__
     | error "the core's package is not in the workspace"
-  let directory ←
-    if core.dir.isAbsolute then
-      pure core.dir
-    else
-      (· / core.dir) <$> IO.currentDir
-  writeIfChanged (executable.toString ++ ".coredir") s!"{directory}\n"
+  writeIfChanged (executable.toString ++ ".coredir") (coreDirRecordText core.dir (← IO.currentDir))
+
+/- Guards: the records the package-set build writes beside the editor for
+where the set and the core are (`setRecordText`, `coreDirRecordText`): one
+line each, the directory; the core's made absolute against the working
+directory when Lake holds it relative, and never resolved through
+links. -/
+#guard setRecordText "/r/packages" == "/r/packages\n"
+
+#guard coreDirRecordText "/r/lean" "/w" == "/r/lean\n"
+
+#guard coreDirRecordText "../lean" "/r/packages" == "/r/packages/../lean\n"
 
 /-- The variables a rebuild of a set must run with as the link did, and
 which the record `<executable>.build` holds (`buildRecordText`): the C
@@ -1288,6 +1330,31 @@ package_facet editor pkg : FilePath := do
 def installDirVar : String :=
   "EDITOR_INSTALL_DIR"
 
+/-- The `.olean` record of an install (`editorInstall`): the one relative
+line `lib/lean` (`Editor/ModuleLookup.lean`, "The record"), so the
+directory can be renamed into place. -/
+def installOleansRecord : String :=
+  "lib/lean\n"
+
+/-- Why `editorInstall` refuses the directory `named` names (`installDirVar`),
+with `present` whether it is there: an unset variable, and a directory that
+is there; none for one that is not. -/
+def installRefusal? (named : Option String) (present : Bool) : Option String :=
+  match named with
+  | none =>
+    some
+      s!"{installDirVar} must name the directory to install the editor into, which must not exist yet"
+  | some dir =>
+    if present then
+      some s!"{dir} already exists: the editor is installed only into a directory that does not"
+    else none
+
+/-- The command `editorInstall` signs the copied executable `exe` with, on
+macOS (`isOSX`): an ad-hoc signature, as `editorApp` signs the bundle;
+none elsewhere, where the copy keeps the linker's. -/
+def installSigning (isOSX : Bool) (exe : FilePath) : Option (String × Array String) :=
+  if isOSX then some ("/usr/bin/codesign", #["--force", "--sign", "-", exe.toString]) else none
+
 /-- A set's editor installed into one directory of its own, for a user's
 package set (`EDITOR_INSTALL_DIR=<dir> lake -d <set dir> build
 :editorInstall`; `docs/design/packages.md`, "User package sets"). It builds
@@ -1314,16 +1381,16 @@ package_facet editorInstall pkg : FilePath := do
   let root ← setRoot pkg
   let importsJob ← root.transImports.fetch
   (exeJob.zipWith Prod.mk importsJob).mapM fun (exe, imports) => do
-      let refused :=
-        s!"{installDirVar} must name the directory to install the editor into, which must not exist yet"
-      let dir : FilePath ←
-        match ← IO.getEnv installDirVar with
-        | some given =>
-          pure given
+      let named ← IO.getEnv installDirVar
+      let present ←
+        match named with
+        | some dir =>
+          FilePath.pathExists dir
         | none =>
-          error refused
-      if ← dir.pathExists then
-        error s!"{dir} already exists: the editor is installed only into a directory that does not"
+          pure false
+      if let some reason := installRefusal? named present then
+        error reason
+      let dir : FilePath := named.getD ""
       let modules := dir / "lib" / "lean"
       IO.FS.createDirAll modules
       IO.FS.writeBinFile (dir / "editor") (← IO.FS.readBinFile exe)
@@ -1341,12 +1408,35 @@ package_facet editorInstall pkg : FilePath := do
             if let some parent := copy.parent then
               IO.FS.createDirAll parent
             IO.FS.writeBinFile copy (← IO.FS.readBinFile source)
-      IO.FS.writeFile (dir / "editor.oleans") "lib/lean\n"
-      if Platform.isOSX then
-        proc (quiet := true)
-            { cmd := "/usr/bin/codesign",
-              args := #["--force", "--sign", "-", (dir / "editor").toString] }
+      IO.FS.writeFile (dir / "editor.oleans") installOleansRecord
+      if let some (cmd, args) := installSigning Platform.isOSX (dir / "editor") then
+        proc (quiet := true) { cmd, args }
       return dir
+
+/- Guards: the install (`editorInstall`). Its `.olean` record is the one
+relative line `lib/lean` (`installOleansRecord`), so the directory can be
+renamed into place; it refuses an unset variable and a directory that is
+there, naming why (`installRefusal?`), and takes one that is not; and on
+macOS, and there only, it signs the copied executable ad hoc
+(`installSigning`). Whether codesign accepts the result is codesign's. -/
+#guard installOleansRecord == "lib/lean\n"
+
+#guard
+  installRefusal? none false ==
+    some
+      "EDITOR_INSTALL_DIR must name the directory to install the editor into, which must not exist yet"
+
+#guard
+  installRefusal? (some "/d/v") true ==
+    some "/d/v already exists: the editor is installed only into a directory that does not"
+
+#guard installRefusal? (some "/d/v") false == none
+
+#guard
+  installSigning true "/d/v/editor" ==
+    some ("/usr/bin/codesign", #["--force", "--sign", "-", "/d/v/editor"])
+
+#guard installSigning false "/d/v/editor" == none
 
 /-- The root module of a package set, written and not built:
 `lake -d <set dir> query :editorRoot` writes
@@ -1496,6 +1586,15 @@ through the features still in the core, so the bundle ships them as it ships
 def stagedInterfaceLibraries : List Lean.Name :=
   [`FilesApi, `FilesApiTest]
 
+/-- `shipsLibrary` on names: whether the library `libName` of a package
+whose base name is `baseName`, the core when `isCore`, ships. -/
+def shipsLibraryNamed (isCore : Bool) (baseName libName : Name) : Bool :=
+  if isCore then libName == `Editor || libName == `Lint || stagedInterfaceLibraries.contains libName
+  else
+    match toUpperCamelCase baseName with
+    | .str namespace_ base => libName != .str namespace_ (base ++ "Test")
+    | _ => true
+
 /-- Whether a library of `pkg` ships its modules built in the bundle
 (`editorShipped`): of the core, `Editor`, the library
 `coreIdentity` reads, the interface libraries staged in it
@@ -1506,12 +1605,22 @@ the plugin's trace is in every module's and a build from the bundle needs
 it built to read them as up to date; of another package, each library but
 its tests, `<P>Test`. -/
 def shipsLibrary (pkg : Package) (lib : LeanLib) : Bool :=
-  if pkg.keyName == __name__ then
-    lib.name == `Editor || lib.name == `Lint || stagedInterfaceLibraries.contains lib.name
-  else
-    match toUpperCamelCase pkg.baseName with
-    | .str namespace_ base => lib.name != .str namespace_ (base ++ "Test")
-    | _ => true
+  shipsLibraryNamed (pkg.keyName == __name__) pkg.baseName lib.name
+
+/- Guards: which libraries the bundle ships (`shipsLibraryNamed`): of the
+core, `Editor`, the linters' `Lint` and the staged interface libraries
+`FilesApi` and `FilesApiTest`, and none of its test libraries; of another
+package, each library but its tests, `<P>Test`. -/
+#guard [`Editor, `Lint, `FilesApi, `FilesApiTest].all (shipsLibraryNamed true `«editor-core» ·)
+
+#guard
+  ![`ModelTests, `ConfigFixture, `InterpretedFixture].any (shipsLibraryNamed true `«editor-core» ·)
+
+#guard shipsLibraryNamed false `compile `Compile
+
+#guard !shipsLibraryNamed false `compile `CompileTest
+
+#guard !shipsLibraryNamed false `«shipped-themes» `ShippedThemesTest
 
 /-- Every module of the library `lib` whose source file is there: its
 modules (`LeanLib.modules`) and each module under the directory of one of
@@ -1539,6 +1648,12 @@ def libraryModules (lib : LeanLib) (listed : Array Module) : IO (Array Module) :
       modules := modules.push mod
   return modules
 
+/-- Of a directory's `entries`, the files Lake wrote for a module whose
+last part is the stem, `stem` being that part and a dot: every entry whose
+name starts with it, in order of their paths (`builtFiles`). -/
+def builtOf (stem : String) (entries : Array IO.FS.DirEntry) : Array FilePath :=
+  ((entries.filter (·.fileName.startsWith stem)).map (·.path)).qsort (·.toString < ·.toString)
+
 /-- The files of the built module `mod` in its package's build directory:
 every file in the directory of its `.olean` and in that of its C file
 whose name is the module's last part and an ending (`Api.olean`,
@@ -1550,9 +1665,77 @@ def builtFiles (mod : Module) : IO (Array FilePath) := do
   for dir in [mod.oleanFile.parent, mod.cFile.parent] do
     let some dir := dir | continue
     if ← dir.isDir then
-      let entries := (← dir.readDir).filter (·.fileName.startsWith stem)
-      files := files ++ (entries.map (·.path)).qsort (·.toString < ·.toString)
+      files := files ++ builtOf stem (← dir.readDir)
   return files
+
+/- Guards: the files Lake wrote for a module that the bundle ships, of a
+directory's entries (`builtOf`): every one named the module's last part and
+an ending, in order, and none of another module whose name only starts the
+same. -/
+#guard
+  builtOf "Api."
+      #[{ root := "/b", fileName := "Api.trace" }, { root := "/b", fileName := "ApiX.olean" },
+        { root := "/b", fileName := "Api.olean" }, { root := "/b", fileName := "Api.c.o.export" },
+        { root := "/b", fileName := "Api.olean.hash" }] ==
+    (#["/b/Api.c.o.export", "/b/Api.olean", "/b/Api.olean.hash", "/b/Api.trace"] : Array FilePath)
+
+/-- The line `editorShipped` lists for the file `file` of the package at
+`dir`, copied from `source`, its package at `place`: `file<TAB><source><TAB>
+<place>/<file relative to dir>`; none for a file that is not under
+`dir`. -/
+def shippedFileLine (dir file source : FilePath) (place : String) : Option String :=
+  (relativeUnder dir file).map fun relative => s!"file\t{source}\t{place}/{relative}"
+
+/-- Whether `editorShipped` lists a package's file `file` by the file it
+resolves to: its `lean-toolchain`, which in this repository is a link to
+the core's pin that would dangle in the bundle. -/
+def listsResolved (file : FilePath) : Bool :=
+  file.fileName == some "lean-toolchain"
+
+/-- The `oleans` lines `editorShipped` lists for the set's `.olean`
+directories `directories`, in order (`moduleDirectories`), with `placed`
+each package's directory, `.olean` directory and place: each directory
+under the bundle's `lean` at its package's place; an error for a
+directory of no package of the set, or not under its package's. -/
+def shippedOleansLines (directories : Array FilePath)
+    (placed : Array (FilePath × FilePath × String)) : Except String (Array String) :=
+  directories.mapM fun directory => do
+    let some (dir, _, place) := placed.find? fun (_, libDir, _) => libDir == directory
+      | throw s!"the .olean directory {directory} is of no package of the set"
+    let some relative := relativeUnder dir directory
+      | throw s!"{directory} is not under its package's directory {dir}"
+    return s!"oleans\tlean/{place}/{relative}"
+
+/- Guards: the lines `editorShipped` lists. A package's file goes to its
+place under the package's (`shippedFileLine`), its `lean-toolchain` among
+them, listed by the file it resolves to (`listsResolved`), so the bundle
+holds the pin's text where the checkout holds a link; and the `oleans`
+lines are the set's `.olean` directories in order, the core's first, each
+under the bundle's `lean` at its package's place (`shippedOleansLines`),
+and a directory of no package of the set is an error. -/
+#guard
+  shippedFileLine "/r/packages/compile" "/r/packages/compile/lean-toolchain"
+      "/r/lean/lean-toolchain" "set/compile" ==
+    some "file\t/r/lean/lean-toolchain\tset/compile/lean-toolchain"
+
+#guard
+  shippedFileLine "/r/packages/compile" "/r/other/lean-toolchain" "/r/lean/lean-toolchain" "set" ==
+    none
+
+#guard listsResolved "/r/packages/compile/lean-toolchain"
+
+#guard !listsResolved "/r/packages/compile/lakefile.toml"
+
+#guard
+  (shippedOleansLines #["/r/lean/.lake/build/lib/lean", "/r/packages/compile/.lake/build/lib/lean"]
+        #[("/r/lean", "/r/lean/.lake/build/lib/lean", "lean"),
+          ("/r/packages/compile", "/r/packages/compile/.lake/build/lib/lean",
+            "set/compile")]).toOption ==
+    some
+      #["oleans\tlean/lean/.lake/build/lib/lean", "oleans\tlean/set/compile/.lake/build/lib/lean"]
+
+#guard
+  (shippedOleansLines #["/elsewhere/lib"] #[("/r/lean", "/r/lean/lib", "lean")]).toOption.isNone
 
 /-- What an app bundle ships of the set `pkg`, built (`lake -d <set dir>
 query :editorShipped`; `docs/design/lean-runtime.md`, "Build"), so a
@@ -1627,14 +1810,14 @@ package_facet editorShipped pkg : Array String := do
       for (dep, place) in placed do
         for file in [dep.configFile, dep.dir / "lake-manifest.json", dep.dir / "lean-toolchain"] do
           if ← file.pathExists then
-            let some relative := relativeUnder dep.dir file
-              | error s!"{file} is not under its package's directory {dep.dir}"
             let source ←
-              if file.fileName == some "lean-toolchain" then
+              if listsResolved file then
                 IO.FS.realPath file
               else
                 pure file
-            lines := lines.push (line source s!"{place}/{relative}")
+            let some listed := shippedFileLine dep.dir file source place
+              | error s!"{file} is not under its package's directory {dep.dir}"
+            lines := lines.push listed
       let gluePlace := placeOf core
       for file in
         [core.dir / "ffi" / "glue.c", core.buildDir / "ffi" / "glue.o",
@@ -1664,12 +1847,13 @@ package_facet editorShipped pkg : Array String := do
         let some relative := relativeUnder root file
           | error s!"{file} is not under the repository {root}"
         lines := lines.push (line file relative)
-      for directory in directories do
-        let some dep := placed.find? fun (dep, _) => directory == dep.leanLibDir
-          | error s!"the .olean directory {directory} is of no package of the set"
-        let some relative := relativeUnder dep.1.dir directory
-          | error s!"{directory} is not under its package's directory {dep.1.dir}"
-        lines := lines.push s!"oleans\tlean/{dep.2}/{relative}"
+      match
+        shippedOleansLines directories
+          (placed.map fun (dep, place) => (dep.dir, dep.leanLibDir, place)) with
+      | .ok oleans =>
+        lines := lines ++ oleans
+      | .error message =>
+        error message
       return lines
 
 /-- The file of the executable `editorLinked` links for the module `mod`:
@@ -1758,6 +1942,11 @@ def requireArm64Mac : JobM Unit := do
   unless isArm64Mac do
     error
         s!"the app bundle builds only on macOS on arm64 (this toolchain targets {Platform.target}); see `requireArm64Mac` in lakefile.lean"
+
+/-- The bundle's `CFBundleExecutable`: the app's launcher (`launcher`), which
+`tools/stage-bundle.sh` places at `Contents/MacOS/leanmacs`. -/
+def appExecutable : String :=
+  "leanmacs"
 
 /-- The app's name: the bundle's, `<name>.app`, and its icon's. -/
 def appName : String :=
@@ -1934,7 +2123,7 @@ def appInfoPlist (version build commit : String) : String :=
 \t\t</dict>
 \t</array>
 \t<key>CFBundleExecutable</key>
-\t<string>leanmacs</string>
+\t<string>{appExecutable}</string>
 \t<key>CFBundleIconFile</key>
 \t<string>{appName}</string>
 \t<key>CFBundleIdentifier</key>
@@ -1978,6 +2167,215 @@ def appIconSizes : List (String × Nat) :=
     ("icon_32x32@2x.png", 64), ("icon_128x128.png", 128), ("icon_128x128@2x.png", 256),
     ("icon_256x256.png", 256), ("icon_256x256@2x.png", 512), ("icon_512x512.png", 512),
     ("icon_512x512@2x.png", 1024)]
+
+/-- The variable the lowest macOS the binaries are linked for is taken from
+(`mise.toml`'s `[env]`), which their `minos` records. -/
+def deploymentTargetVar : String :=
+  "MACOSX_DEPLOYMENT_TARGET"
+
+/-- Whether the version `given` is no later than `limit`, each a list of
+its dot-separated numbers, a missing part being 0. -/
+def versionAtMost : List Nat → List Nat → Bool
+  | [], [] => true
+  | [], limit :: rest => 0 < limit || (limit == 0 && versionAtMost [] rest)
+  | given :: rest, [] => given == 0 && versionAtMost rest []
+  | given :: rest, limit :: more => given < limit || (given == limit && versionAtMost rest more)
+
+/-- Whether binaries linked for the deployment target `linked`, the value of
+`deploymentTargetVar`, run on the bundle's `LSMinimumSystemVersion`,
+`minimum`: the target must be set, a version, and no later than it;
+anything else is an error naming the variable, so a bundle whose
+binaries need a later macOS than it claims is never built (`mise run
+app-check`, step 5). -/
+def deploymentTargetFits (linked : Option String) (minimum : String) : Except String Unit := do
+  let parse (text : String) : Option (List Nat) := (text.splitOn ".").mapM String.toNat?
+  let some given := linked
+    |
+    throw
+        s!"{deploymentTargetVar} must be the lowest macOS the binaries are linked for, no later than LSMinimumSystemVersion {minimum}, but is unset"
+  let (some version, some limit) := (parse given, parse minimum)
+    |
+    throw
+        s!"{deploymentTargetVar} must be a version no later than LSMinimumSystemVersion {minimum}, but holds {repr given}"
+  unless versionAtMost version limit do
+    throw
+        s!"{deploymentTargetVar} is {given}, later than the bundle's LSMinimumSystemVersion {minimum}: the binaries would not run on every macOS the bundle claims"
+
+/-- One step of assembling the app bundle (`appSteps`), which `editorApp`
+runs in order. -/
+inductive AppStep where
+  /-- Runs the program `cmd` with `args`, failing the build if it fails. -/
+  | run (cmd : String) (args : Array String)
+  /-- Writes `text` as the file `file`. -/
+  | write (file : FilePath) (text : String)
+  /-- Makes the directory `dir` and those above it. -/
+  | makeDirectory (dir : FilePath)
+  /-- Moves the staged bundle into the bundle's place, by renames. -/
+  | moveIntoPlace
+  deriving BEq, Inhabited
+
+/-- How `editorApp` assembles the bundle in `staging`, from the stage script
+`stager`, the launcher `launcher`, the set's editor `exe`, the toolchain
+`sysroot`, the list of shipped files `list`, the artwork `art` and the
+property list's text `plist`: the bundle staged, its `Info.plist` written,
+its icon made from the artwork in an iconset beside it, its extended
+attributes cleared, then the whole staged bundle signed, the last step
+that touches it, since a write after the signature breaks the seal, and
+then moved into place. -/
+def appSteps (stager launcher exe sysroot list staging art : FilePath) (plist : String) :
+    Array AppStep :=
+  let staged := staging / s!"{appName}.app"
+  let iconset := staging / s!"{appName}.iconset"
+  #[.run stager.toString
+        #["--launcher", launcher.toString, staged.toString, exe.toString, sysroot.toString,
+          list.toString],
+      .write (staged / "Contents" / "Info.plist") plist, .makeDirectory iconset] ++
+    (appIconSizes.toArray.map fun (name, size) =>
+      .run "/usr/bin/sips"
+        #["-z", toString size, toString size, art.toString, "--out", (iconset / name).toString]) ++
+    #[.run "/usr/bin/iconutil"
+        #["-c", "icns", iconset.toString, "-o",
+          (staged / "Contents" / "Resources" / s!"{appName}.icns").toString],
+      .run "/usr/bin/xattr" #["-cr", staged.toString],
+      .run "/usr/bin/codesign" #["--force", "--sign", "-", staged.toString], .moveIntoPlace]
+
+/- Guards: the bundle's `Info.plist` (`appInfoPlist`). It holds the four
+stamped values `editor --version` and the release read, the core's tag
+derived from the build ID; exactly two document types, "Text" then "Any
+file"; no `Owner` or `Default` rank and no type declarations; arm64 as
+the architecture; the launcher, `appExecutable`, as `CFBundleExecutable`;
+and `appMinimumSystemVersion` as `LSMinimumSystemVersion`. -/
+#guard
+  let plist := appInfoPlist "0.1.0" "20010203040506" "0123456789abcdef0123456789abcdef01234567"
+  [("CFBundleShortVersionString", "0.1.0"), ("CFBundleVersion", "20010203040506"),
+        ("LeanmacsCommit", "0123456789abcdef0123456789abcdef01234567"),
+        ("LeanmacsCoreTag", "nightly-20010203040506"), ("CFBundleExecutable", appExecutable),
+        ("LSMinimumSystemVersion", appMinimumSystemVersion)].all
+    fun (key, value) => holdsText plist s!"<key>{key}</key>\n\t<string>{value}</string>\n"
+
+#guard
+  let plist :=
+    appInfoPlist "0.1.0" "20010203040506" "0123456789abcdef0123456789abcdef01234567"
+  (plist.splitOn "<key>CFBundleTypeName</key>\n\t\t\t<string>").drop 1 |>.map
+      (·.takeWhile (· != '<') |>.toString) ==
+    ["Text", "Any file"]
+
+#guard
+  let plist := appInfoPlist "0.1.0" "20010203040506" "0123456789abcdef0123456789abcdef01234567"
+  !holdsText plist "<string>Owner</string>" && !holdsText plist "<string>Default</string>" &&
+    !holdsText plist "TypeDeclarations" &&
+    holdsText plist
+      "<key>LSArchitecturePriority</key>\n\t<array>\n\t\t<string>arm64</string>\n\t</array>"
+
+#guard appExecutable == "leanmacs"
+
+/- Guards: the version file's line (`parseAppVersion`): one to three
+dot-separated runs of digits, with or without one trailing newline; an
+empty file, a fourth part, an empty part, a letter, a space or a second
+line is an error naming the file. -/
+#guard (parseAppVersion "0.1.0").toOption == some "0.1.0"
+
+#guard (parseAppVersion "0.1.0\n").toOption == some "0.1.0"
+
+#guard (parseAppVersion "1").toOption == some "1"
+
+#guard
+  ["", "\n", "0.1.0.1", "0..1", "v0.1", " 0.1", "0.1.0\n\n", "0.1\n2"].all fun text =>
+    match parseAppVersion text with
+    | .error message => message.startsWith "app/version must be one line"
+    | .ok _ => false
+
+/- Guards: the stamp (`parseAppStamp`): a build ID of 14 digits and a
+commit of 40 lowercase hex digits is taken; each unset or malformed value
+is an error that starts with its variable's name. -/
+#guard
+  (parseAppStamp (some "20010203040506")
+        (some "0123456789abcdef0123456789abcdef01234567")).toOption ==
+    some ("20010203040506", "0123456789abcdef0123456789abcdef01234567")
+
+#guard
+  [(none, some "0123456789abcdef0123456789abcdef01234567"),
+        (some "2001020304050", some "0123456789abcdef0123456789abcdef01234567"),
+        (some "2001020304050x", some "0123456789abcdef0123456789abcdef01234567")].all
+    fun (build, commit) =>
+    match parseAppStamp build commit with
+    | .error message => message.startsWith appBuildIdVar
+    | .ok _ => false
+
+#guard
+  [none, some "0123456789ABCDEF0123456789abcdef01234567", some "0123456789abcdef"].all fun commit =>
+    match parseAppStamp (some "20010203040506") commit with
+    | .error message => message.startsWith appCommitVar
+    | .ok _ => false
+
+/- Guards: the artwork (`checkAppArtwork`, over what `sips` prints): a
+1024×1024 PNG is taken; another size or format, or nothing read, is an
+error naming the file. -/
+#guard
+  (checkAppArtwork
+        "/a/Leanmacs.png\n  pixelWidth: 1024\n  pixelHeight: 1024\n  format: png\n").toOption ==
+    some ()
+
+#guard
+  ["  pixelWidth: 512\n  pixelHeight: 512\n  format: png\n",
+        "  pixelWidth: 1024\n  pixelHeight: 768\n  format: png\n",
+        "  pixelWidth: 1024\n  pixelHeight: 1024\n  format: jpeg\n", ""].all
+    fun text =>
+    match checkAppArtwork text with
+    | .error message => message.startsWith "app/Leanmacs.png must be a 1024x1024 PNG"
+    | .ok _ => false
+
+/- Guards: the icon's images (`appIconSizes`): the ten standard names, each
+once, each size following from its name, `icon_<n>x<n>.png` being n
+pixels and `icon_<n>x<n>@2x.png` 2n. -/
+#guard
+  appIconSizes.map (·.1) ==
+    ["icon_16x16.png", "icon_16x16@2x.png", "icon_32x32.png", "icon_32x32@2x.png",
+      "icon_128x128.png", "icon_128x128@2x.png", "icon_256x256.png", "icon_256x256@2x.png",
+      "icon_512x512.png", "icon_512x512@2x.png"]
+
+#guard
+  appIconSizes.all fun (name, size) =>
+    match
+      ((name.dropPrefix? "icon_").map (·.toString.takeWhile (· != 'x') |>.toString)).bind
+        String.toNat? with
+    | some points => size == if holdsText name "@2x" then 2 * points else points
+    | none => false
+
+/- Guards: the deployment target (`deploymentTargetFits`): the binaries'
+minimum macOS, `MACOSX_DEPLOYMENT_TARGET`, must be no later than the
+bundle's `LSMinimumSystemVersion`, which `editorApp` checks before it
+links; an unset one is refused, naming the variable. -/
+#guard (deploymentTargetFits (some "26.0") "26.0").toOption == some ()
+
+#guard (deploymentTargetFits (some "25") "26.0").toOption == some ()
+
+#guard
+  [some "26.1", some "27", none, some "x"].all fun linked =>
+    match deploymentTargetFits linked "26.0" with
+    | .error message => message.startsWith "MACOSX_DEPLOYMENT_TARGET"
+    | .ok () => false
+
+/- Guards: how `editorApp` assembles the bundle (`appSteps`, which the facet
+runs in order). It stages the bundle, writes its `Info.plist` and makes
+its icon; then clears extended attributes, then signs the whole staged
+bundle, the last step that touches it, since a write after the signature
+breaks the seal; and the renames into place come last. Whether `codesign`
+accepts the bundle is codesign's. -/
+#guard
+  let steps :=
+    appSteps "/t/stage-bundle.sh" "/t/leanmacs" "/t/editor" "/t/sysroot" "/s/list" "/s/staging"
+      "/c/app/Leanmacs.png" "<plist/>"
+  steps[0]? ==
+      some
+        (.run "/t/stage-bundle.sh"
+          #["--launcher", "/t/leanmacs", "/s/staging/Leanmacs.app", "/t/editor", "/t/sysroot",
+            "/s/list"]) &&
+    steps.contains (.write "/s/staging/Leanmacs.app/Contents/Info.plist" "<plist/>") &&
+    steps[steps.size - 3]? == some (.run "/usr/bin/xattr" #["-cr", "/s/staging/Leanmacs.app"]) &&
+    steps[steps.size - 2]? ==
+      some (.run "/usr/bin/codesign" #["--force", "--sign", "-", "/s/staging/Leanmacs.app"]) &&
+    steps.back? == some .moveIntoPlace
 
 /-- `Leanmacs.app`, the editor of a package set as a macOS app bundle, at
 `<set>/.lake/build/Leanmacs.app`: `lake -d <set dir> build :editorApp`
@@ -2037,6 +2435,11 @@ interrupted leaves the old bundle, never a half-built one the old trace
 would take as up to date (`mise run app-check`, step 7). -/
 package_facet editorApp pkg : FilePath := do
   requireArm64Mac
+  -- Before anything is linked: the binaries' minimum macOS must be no later
+  -- than the bundle's.
+  if let .error message :=
+      deploymentTargetFits (← IO.getEnv deploymentTargetVar) appMinimumSystemVersion then
+    error message
   let some core := (← getWorkspace).findPackageByKey? __name__
     | error "the core's package is not in the workspace"
   let exe ← fetch <| pkg.facet `editor
@@ -2106,40 +2509,28 @@ package_facet editorApp pkg : FilePath := do
           let sysroot ← getLeanSysroot
           let list := pkg.buildDir / s!"{appName}.app.shipped"
           IO.FS.writeFile list shippedText
-          proc (quiet := true)
-              { cmd := stager.toString
-                args :=
-                  #["--launcher", launcherFile.toString, staged.toString, exe.toString,
-                    sysroot.toString, list.toString] }
-          IO.FS.writeFile (staged / "Contents" / "Info.plist") plist
-          -- The system's tools, by absolute path: mise's PATH may hold others of
-          -- the same name (a Python package installs an `xattr` with no `-r`).
-          -- The iconset is in the staging directory but outside the bundle, so
-          -- it is never sealed and goes with the staging directory.
-          let iconset := staging / s!"{appName}.iconset"
-          IO.FS.createDirAll iconset
-          for (name, size) in appIconSizes do
-            proc (quiet := true)
-                { cmd := "/usr/bin/sips"
-                  args :=
-                    #["-z", toString size, toString size, art.toString, "--out",
-                      (iconset / name).toString] }
-          proc (quiet := true)
-              { cmd := "/usr/bin/iconutil"
-                args :=
-                  #["-c", "icns", iconset.toString, "-o",
-                    (staged / "Contents" / "Resources" / s!"{appName}.icns").toString] }
-          proc (quiet := true) { cmd := "/usr/bin/xattr", args := #["-cr", staged.toString] }
-          -- Last: nothing may be written into the bundle after this.
-          proc (quiet := true)
-              { cmd := "/usr/bin/codesign", args := #["--force", "--sign", "-", staged.toString] }
-          -- Moved into place by renames: an interruption between them leaves
-          -- the old bundle or none, and with none the next build rebuilds.
-          if ← old.pathExists then
-            IO.FS.removeDirAll old
-          if ← bundle.pathExists then
-            IO.FS.rename bundle old
-          IO.FS.rename staged bundle
+          -- The system's tools, by absolute path (`appSteps`): mise's PATH may
+          -- hold others of the same name (a Python package installs an
+          -- `xattr` with no `-r`). The iconset is in the staging directory but
+          -- outside the bundle, so it is never sealed and goes with the
+          -- staging directory.
+          for step in appSteps stager launcherFile exe sysroot list staging art plist do
+            match step with
+            | .run cmd args =>
+              proc (quiet := true) { cmd, args }
+            | .write file text =>
+              IO.FS.writeFile file text
+            | .makeDirectory dir =>
+              IO.FS.createDirAll dir
+            | .moveIntoPlace =>
+              -- Moved into place by renames: an interruption between them
+              -- leaves the old bundle or none, and with none the next build
+              -- rebuilds.
+              if ← old.pathExists then
+                IO.FS.removeDirAll old
+              if ← bundle.pathExists then
+                IO.FS.rename bundle old
+              IO.FS.rename staged bundle
           IO.FS.removeDirAll staging
           if ← old.pathExists then
             IO.FS.removeDirAll old

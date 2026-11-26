@@ -413,9 +413,19 @@ order; the set's name and the pin as given), the config base (`setBase`),
 the order packages register in (`requireOrderOf`, the walk
 `setPackages` makes), the `.olean` directories (`moduleDirectoriesOf`), the
 core's identity (`coreIdentityOf`), the build record and the one a bundle
-ships (`buildRecordOf`, `shippedBuildRecord`), and whether a set or a crate
-is in the repository (`isUnderRoot`, `outsideCrateRefusal?`, beside
-`rustSource`).
+ships (`buildRecordOf`, `shippedBuildRecord`), whether a set or a crate is
+in the repository (`isUnderRoot`, `outsideCrateRefusal?`, beside
+`rustSource`), the records of where the set and the core are
+(`setRecordText`, `coreDirRecordText`); what a bundle ships
+(`shipsLibraryNamed`, `builtOf`, `prebuiltRustFiles`, `shippedFileLine`,
+`listsResolved`, `shippedOleansLines`); the install (`installOleansRecord`,
+`installRefusal?`, `installSigning`); the app's `Info.plist`, version,
+stamp, artwork, icon sizes and deployment target (`appInfoPlist`,
+`parseAppVersion`, `parseAppStamp`, `checkAppArtwork`, `appIconSizes`,
+`deploymentTargetFits`) and the order it is assembled and signed in
+(`appSteps`); and the toolchain the core's executables link against
+(`systemLibDirOf`). Whether Lake, LaunchServices or codesign then do
+their part is theirs.
 
 #### The config base of a set
 
