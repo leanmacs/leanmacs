@@ -304,10 +304,7 @@ def itemArguments : Item → List Argument
   | .message id text => .str "message" :: Arguments.optionalString id ++ [.str text]
   | .toolCall call => .str "toolCall" :: call.toArguments
   | .permission ticket turn call options state =>
-    [.str "permission", .nat ticket] ++ Arguments.optionalNat turn ++ call.toArguments ++
-      [.nat options.size] ++
-      options.toList.flatMap PermissionOption.toArguments ++
-      stateArguments state
+    .str "permission" :: Arguments.permission ticket turn call options ++ stateArguments state
   | .turnEnded turn stopReason => [.str "turnEnded", .nat turn, .str stopReason]
   | .note text => [.str "note", .str text]
 
@@ -327,18 +324,15 @@ where
     | .str "toolCall" :: rest => do
       let (call, rest) ← ToolCall.take? rest
       return (.toolCall call, rest)
-    | .str "permission" :: .nat ticket :: rest => do
-      let (turn, rest) ← Arguments.optionalNat? rest
-      let (call, rest) ← ToolCall.take? rest
-      let .nat count :: rest := rest | none
-      let (options, rest) ← Arguments.many PermissionOption.take? count rest #[]
+    | .str "permission" :: rest => do
+      let (permission, rest) ← Arguments.permission? Item.permission rest
       match rest with
       | .str "pending" :: rest =>
-        some (.permission ticket turn call options .pending, rest)
+        some (permission .pending, rest)
       | .str "withdrawn" :: rest =>
-        some (.permission ticket turn call options .withdrawn, rest)
+        some (permission .withdrawn, rest)
       | .str "answered" :: .str optionId :: rest =>
-        some (.permission ticket turn call options (.answered optionId), rest)
+        some (permission (.answered optionId), rest)
       | _ =>
         none
     | .str "turnEnded" :: .nat turn :: .str stopReason :: rest =>
@@ -360,20 +354,6 @@ def optional? {α : Type} (decode : Value → Option α) : Value → Option (Opt
   | .null => some none
   | tree => (decode tree).map some
 
-/-- The usage as arguments. -/
-def usageArguments (usage : Usage) : List Argument :=
-  [.nat usage.used, .nat usage.size] ++
-    match usage.cost with
-    | none => [.bool false]
-    | some (amount, currency) => [.bool true, .str amount, .str currency]
-
-/-- The usage arguments are (`usageArguments`). -/
-def usage? : List Argument → Option Usage
-  | [.nat used, .nat size, .bool false] => some { used, size }
-  | [.nat used, .nat size, .bool true, .str amount, .str currency] =>
-    some { used, size, cost := some (amount, currency) }
-  | _ => none
-
 /-- A conversation as a tree. -/
 def encode (conversation : Conversation) : Value :=
   .record
@@ -384,7 +364,7 @@ def encode (conversation : Conversation) : Value :=
       ("mode", optional .str conversation.mode),
       ("modes", .list (conversation.modes.toList.map fun mode => leaves mode.toArguments)),
       ("title", optional .str conversation.title),
-      ("usage", optional (fun usage => leaves (usageArguments usage)) conversation.usage),
+      ("usage", optional (fun usage => leaves usage.toArguments) conversation.usage),
       ("items", .list (conversation.items.toList.map fun item => leaves (itemArguments item))),
       ("unfolded", .list (conversation.unfolded.toList.map .str)),
       ("turn", optional .nat conversation.turn), ("awaiting", .bool conversation.awaiting),
@@ -418,7 +398,7 @@ def decode : Value → Option Conversation
     let usage ←
       optional?
           (fun tree => do
-            usage? (← ofLeaves? tree))
+            Arguments.whole Usage.take? (← ofLeaves? tree))
           (field fields "usage")
     let .list items := field fields "items" | none
     let items ←

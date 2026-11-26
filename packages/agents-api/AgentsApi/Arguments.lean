@@ -1,4 +1,5 @@
 import AgentsApi.Request
+import AgentsApi.View
 
 /-!
 # A session's values as command arguments
@@ -13,6 +14,11 @@ them back in its command. The encoding is this package's, neutral of any
 protocol: each value is its kind's word, then its fields, an optional one
 written `false`, or `true` and the value, and an array its count and then
 each item.
+
+A consumer that keeps a usage (`Usage.toArguments`, `Usage.take?`) or a
+permission request's fields (`Arguments.permission`,
+`Arguments.permission?`) in arguments of its own writes them with the same
+pieces the events use, so the layout is written once, here.
 
 A list that is not one written here, a truncated one or one of an unknown
 kind among them, is read as none, never as part of a value.
@@ -125,6 +131,44 @@ def PermissionOption.take? : List Argument → Option (PermissionOption × List 
   | .str id :: .str name :: .str kind :: rest => some ({ id, name, kind }, rest)
   | _ => none
 
+namespace Arguments
+
+/-- A permission request's fields as arguments: its ticket, its turn, when
+it has one, the call it is for, then the count of its options and each. -/
+def permission (ticket : Nat) (turn : Option Nat) (call : ToolCall)
+    (options : Array PermissionOption) : List Argument :=
+  [.nat ticket] ++ optionalNat turn ++ call.toArguments ++ [.nat options.size] ++
+    options.toList.flatMap PermissionOption.toArguments
+
+/-- A permission request's fields off the front of `arguments`
+(`permission`), handed to `make`, and the rest. -/
+def permission? {α : Type} (make : Nat → Option Nat → ToolCall → Array PermissionOption → α) :
+    List Argument → Option (α × List Argument)
+  | .nat ticket :: rest => do
+    let (turn, rest) ← optionalNat? rest
+    let (call, rest) ← ToolCall.take? rest
+    let .nat count :: rest := rest | none
+    let (options, rest) ← many PermissionOption.take? count rest #[]
+    return (make ticket turn call options, rest)
+  | _ => none
+
+end Arguments
+
+/-- A usage as arguments: the tokens used, the window's size, then its
+cost, `false`, or `true`, the amount and the currency. -/
+def Usage.toArguments (usage : Usage) : List Argument :=
+  [.nat usage.used, .nat usage.size] ++
+    match usage.cost with
+    | none => [.bool false]
+    | some (amount, currency) => [.bool true, .str amount, .str currency]
+
+/-- A usage off the front of `arguments`, and the rest. -/
+def Usage.take? : List Argument → Option (Usage × List Argument)
+  | .nat used :: .nat size :: .bool false :: rest => some ({ used, size }, rest)
+  | .nat used :: .nat size :: .bool true :: .str amount :: .str currency :: rest =>
+    some ({ used, size, cost := some (amount, currency) }, rest)
+  | _ => none
+
 /-- How a session ended, as arguments: its kind's word, then its field. -/
 def Ending.toArguments : Ending → List Argument
   | .exited code => [.str "exited", .int code]
@@ -147,15 +191,9 @@ def Event.toArguments : Event → List Argument
   | .chunk messageId? text => .str "chunk" :: optionalString messageId? ++ [.str text]
   | .toolCall call => .str "toolCall" :: call.toArguments
   | .permission ticket turn call options =>
-    [.str "permission", .nat ticket] ++ optionalNat turn ++ call.toArguments ++
-      [.nat options.size] ++
-      options.toList.flatMap PermissionOption.toArguments
+    .str "permission" :: Arguments.permission ticket turn call options
   | .withdrawn ticket => [.str "withdrawn", .nat ticket]
-  | .usage used size cost =>
-    [.str "usage", .nat used, .nat size] ++
-      match cost with
-      | none => [.bool false]
-      | some (amount, currency) => [.bool true, .str amount, .str currency]
+  | .usage used size cost => .str "usage" :: Usage.toArguments { used, size, cost }
   | .title text => [.str "title", .str text]
   | .mode id => [.str "mode", .str id]
   | .turnEnded turn stopReason => [.str "turnEnded", .nat turn, .str stopReason]
@@ -170,17 +208,11 @@ def Event.take? : List Argument → Option (Event × List Argument)
   | .str "toolCall" :: rest => do
     let (call, rest) ← ToolCall.take? rest
     return (.toolCall call, rest)
-  | .str "permission" :: .nat ticket :: rest => do
-    let (turn, rest) ← optionalNat? rest
-    let (call, rest) ← ToolCall.take? rest
-    let .nat count :: rest := rest | none
-    let (options, rest) ← many PermissionOption.take? count rest #[]
-    return (.permission ticket turn call options, rest)
+  | .str "permission" :: rest => Arguments.permission? Event.permission rest
   | .str "withdrawn" :: .nat ticket :: rest => some (.withdrawn ticket, rest)
-  | .str "usage" :: .nat used :: .nat size :: .bool false :: rest =>
-    some (.usage used size none, rest)
-  | .str "usage" :: .nat used :: .nat size :: .bool true :: .str amount :: .str currency :: rest =>
-    some (.usage used size (some (amount, currency)), rest)
+  | .str "usage" :: rest => do
+    let (held, rest) ← Usage.take? rest
+    return (.usage held.used held.size held.cost, rest)
   | .str "title" :: .str text :: rest => some (.title text, rest)
   | .str "mode" :: .str id :: rest => some (.mode id, rest)
   | .str "turnEnded" :: .nat turn :: .str stopReason :: rest =>
