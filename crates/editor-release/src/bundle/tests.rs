@@ -346,6 +346,80 @@ fn the_olean_record_lists_the_olean_places_in_order() {
 }
 
 #[test]
+fn the_shipped_form_stages_a_packages_grammars_under_the_set_and_records_them() {
+    let grammars = "/r/tests/grammar-set/ini-grammar/grammars";
+    let files = files()
+        .with_file(
+            format!("{grammars}/darwin-aarch64/libtree-sitter-ini.dylib"),
+            "library",
+        )
+        .with_file(
+            format!("{grammars}/queries/highlights.scm"),
+            "(section) @type",
+        )
+        .with_file(
+            LIST,
+            format!(
+                "file\t{grammars}\tset/ini-grammar/grammars\n\
+                 grammars\tini-grammar\tset/ini-grammar/grammars\n\
+                 oleans\tcore\n"
+            ),
+        );
+    let after = staged(&shipped(None), files);
+    let staged_at = format!("{LEAN}/set/ini-grammar/grammars");
+    assert_eq!(
+        under(&after, &staged_at),
+        [
+            "darwin-aarch64",
+            "darwin-aarch64/libtree-sitter-ini.dylib",
+            "queries",
+            "queries/highlights.scm"
+        ]
+    );
+    assert_eq!(
+        file(
+            &after,
+            &format!("{staged_at}/darwin-aarch64/libtree-sitter-ini.dylib")
+        )
+        .0,
+        "library"
+    );
+    assert_eq!(
+        file(&after, &format!("{RESOURCES}/editor.grammars")).0,
+        "ini-grammar\tlean/set/ini-grammar/grammars\n"
+    );
+}
+
+#[test]
+fn a_grammars_line_with_no_lake_name_or_an_unstaged_place_is_refused() {
+    let nameless = files().with_file(
+        LIST,
+        "file\t/r/a/grammars\tset/a/grammars\ngrammars\t\tset/a/grammars\noleans\tcore\n",
+    );
+    assert_eq!(
+        refused(&shipped(None), nameless),
+        Refusal::NoLakeName(PathBuf::from(LIST))
+    );
+    let unstaged = files().with_file(
+        LIST,
+        "file\t/src/lakefile.lean\tlakefile.lean\ngrammars\tini-grammar\tset/ini-grammar/grammars\noleans\tcore\n",
+    );
+    assert_eq!(
+        refused(&shipped(None), unstaged),
+        Refusal::UnstagedGrammars {
+            lake: "ini-grammar".to_owned(),
+            place: "set/ini-grammar/grammars".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_list_with_no_grammars_line_writes_no_grammars_record() {
+    let after = staged(&shipped(None), files());
+    assert_eq!(after.node(format!("{RESOURCES}/editor.grammars")), None);
+}
+
+#[test]
 fn the_shipped_build_record_drops_lean_cc_and_keeps_every_other_line_in_order() {
     let after = staged(&shipped(None), files());
     assert_eq!(
@@ -654,7 +728,19 @@ fn each_refusal_says_what_is_wrong() {
             kind: "dir".to_owned()
         }
         .to_string(),
-        "/work/shipped holds a line of kind dir, which is neither file nor oleans"
+        "/work/shipped holds a line of kind dir, which is neither file, oleans nor grammars"
+    );
+    assert_eq!(
+        Refusal::NoLakeName(PathBuf::from(LIST)).to_string(),
+        "/work/shipped holds a grammars line that names no Lake package"
+    );
+    assert_eq!(
+        Refusal::UnstagedGrammars {
+            lake: "ini-grammar".to_owned(),
+            place: "set/ini-grammar/grammars".to_owned(),
+        }
+        .to_string(),
+        "the grammars of ini-grammar at set/ini-grammar/grammars are staged by no file line"
     );
     assert_eq!(
         Refusal::NotInAnyDirectory {

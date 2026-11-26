@@ -6,7 +6,7 @@
 //! read back.
 
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tempfile::TempDir;
@@ -116,6 +116,99 @@ fn the_binary_stages_the_shipped_form() {
     if cfg!(target_os = "macos") {
         assert!(lean.join("link-stubs/platform-version").is_file());
     }
+}
+
+/// The platform's name a per-platform grammar declaration lists a library
+/// under (`Language.Grammar.platformOf`), and the file name of the fixture
+/// library at that path in the test package's `grammars/`.
+fn platform_library() -> (String, &'static str) {
+    let os = if cfg!(target_os = "macos") {
+        "darwin"
+    } else {
+        std::env::consts::OS
+    };
+    let name = if cfg!(target_os = "macos") {
+        "libtree-sitter-ini.dylib"
+    } else {
+        "libtree-sitter-ini.so"
+    };
+    (format!("{os}-{}", std::env::consts::ARCH), name)
+}
+
+/// Copies the directory `from` into `to`, each file's bytes.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary's test: it copies the test package's checked-in grammars into the test's own directory"
+)]
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("the directory");
+    for entry in std::fs::read_dir(from).expect("the package's grammars") {
+        let entry = entry.expect("an entry");
+        let target = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("a file");
+        }
+    }
+}
+
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary's test: it lays the test package's grammars and the fixture library out in the test's own directory and reads back the bundle the real `stage-bundle` wrote there"
+)]
+fn the_binary_stages_a_packages_grammar_library_and_queries() {
+    let dir = TempDir::new().expect("a temporary directory");
+    let root = dir.path();
+    let sysroot = root.join("toolchain");
+    write(&sysroot.join("lib/lean/Init.olean"), "init\n");
+    let editor = root.join("build/editor");
+    std::fs::create_dir_all(editor.parent().expect("build")).expect("build");
+    std::fs::copy(env!("CARGO_BIN_EXE_link-stubs"), &editor).expect("an executable");
+    // The test package's own `grammars/`, with the fixture library at the
+    // path its declaration names for this platform.
+    let package: PathBuf = [
+        env!("CARGO_MANIFEST_DIR"),
+        "../../tests/grammar-set/ini-grammar",
+    ]
+    .iter()
+    .collect();
+    let grammars = root.join("ini-grammar/grammars");
+    copy_tree(&package.join("grammars"), &grammars);
+    let (platform, name) = platform_library();
+    let library = grammars.join(&platform).join(name);
+    std::fs::create_dir_all(library.parent().expect("the platform's directory"))
+        .expect("the platform's directory");
+    std::fs::copy(editor_syntax_fixture_ini::LIBRARY, &library).expect("the fixture library");
+    write(&root.join("src/Mod.olean"), "module\n");
+    let list = root.join("shipped");
+    write(
+        &list,
+        &format!(
+            "file\t{}\tset/lib/Mod.olean\nfile\t{}\tset/ini-grammar/grammars\ngrammars\tini-grammar\tset/ini-grammar/grammars\noleans\tset/lib\n",
+            root.join("src/Mod.olean").display(),
+            grammars.display()
+        ),
+    );
+    let app = root.join("Leanmacs.app");
+    stage_bundle(&[&app, &editor, &sysroot, &list]);
+
+    let resources = app.join("Contents/Resources");
+    let staged = resources.join("lean/set/ini-grammar/grammars");
+    assert_eq!(
+        std::fs::read(staged.join(&platform).join(name)).expect("the staged library"),
+        std::fs::read(editor_syntax_fixture_ini::LIBRARY).expect("the fixture library")
+    );
+    assert_eq!(
+        std::fs::read(staged.join("queries/highlights.scm")).expect("the staged query"),
+        std::fs::read(package.join("grammars/queries/highlights.scm"))
+            .expect("the package's query")
+    );
+    assert_eq!(
+        std::fs::read_to_string(resources.join("editor.grammars")).expect("editor.grammars"),
+        "ini-grammar\tlean/set/ini-grammar/grammars\n"
+    );
 }
 
 #[test]

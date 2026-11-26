@@ -32,12 +32,18 @@
 //! - each file the shipped list names, at its place under `lean/`: the
 //!   list is what `lake -d <set dir> query :editorShipped` prints
 //!   (`lean/lakefile.lean`): one line `file<TAB><source><TAB><place>` a
-//!   file, and one line `oleans<TAB><place>` for each `.olean` directory,
-//!   in the order the editor searches them. A source that is a directory is
-//!   copied whole;
+//!   file, one line `oleans<TAB><place>` for each `.olean` directory,
+//!   in the order the editor searches them, and one line
+//!   `grammars<TAB><lake name><TAB><place>` for each Lake package that ships
+//!   grammars, its `grammars/` directory's place under `lean/`. A source
+//!   that is a directory is copied whole;
 //! - `editor.oleans`: those directories, one a line, relative to
 //!   `Contents/Resources` (`lean/Editor/ModuleLookup.lean`, "The bundle's
 //!   record");
+//! - `editor.grammars`: one line `<lake name><TAB>lean/<place>` for each
+//!   `grammars` line, in order, relative to `Contents/Resources`
+//!   (`lean/Editor/ModuleLookup.lean`, "The grammars"); none for a list
+//!   with no such line;
 //! - `editor.build`: the executable's `<executable>.build` without its
 //!   `LEAN_CC=` line, every other line in order, so a build the app runs
 //!   compiles and links with the bundled toolchain's own `clang`
@@ -50,9 +56,11 @@
 //!   program runs.
 //!
 //! The list is read and checked whole before anything is copied: a line of
-//! a kind other than `file`, `oleans` or none, a `file` line whose place
-//! would rename its source, and a list with no `oleans` line are refused
-//! ([`Refusal`]), and so are the stubs' refusals.
+//! a kind other than `file`, `oleans`, `grammars` or none, a `file` line
+//! whose place would rename its source, a list with no `oleans` line, a
+//! `grammars` line that names no Lake package, and one whose place no
+//! `file` line stages are refused ([`Refusal`]), and so are the stubs'
+//! refusals.
 //!
 //! **Module files alone** ([`Form::Modules`], `mise run module-bench`'s
 //! experiments on what config may import; `docs/design/lean-runtime.md`,
@@ -286,7 +294,7 @@ pub enum Refusal {
     /// A list or a closure is not UTF-8 text.
     NotText(PathBuf),
     /// The shipped list holds a line of a kind other than `file`,
-    /// `oleans` or none.
+    /// `oleans`, `grammars` or none.
     UnknownKind {
         /// The list.
         list: PathBuf,
@@ -302,6 +310,15 @@ pub enum Refusal {
     },
     /// The shipped list has no `oleans` line.
     NoOleans(PathBuf),
+    /// A `grammars` line of the shipped list names no Lake package.
+    NoLakeName(PathBuf),
+    /// A `grammars` line's place is the place of no `file` line.
+    UnstagedGrammars {
+        /// The Lake package it names.
+        lake: String,
+        /// Its place.
+        place: String,
+    },
     /// A module of the closure is in no directory searched.
     NotInAnyDirectory {
         /// The module.
@@ -325,13 +342,22 @@ impl fmt::Display for Refusal {
             Self::NotText(path) => write!(f, "{} is not UTF-8 text", path.display()),
             Self::UnknownKind { list, kind } => write!(
                 f,
-                "{} holds a line of kind {kind}, which is neither file nor oleans",
+                "{} holds a line of kind {kind}, which is neither file, oleans nor grammars",
                 list.display()
             ),
             Self::Renamed { source, place } => {
                 write!(f, "{source} would be renamed to {place}")
             }
             Self::NoOleans(list) => write!(f, "{} names no .olean directory", list.display()),
+            Self::NoLakeName(list) => write!(
+                f,
+                "{} holds a grammars line that names no Lake package",
+                list.display()
+            ),
+            Self::UnstagedGrammars { lake, place } => write!(
+                f,
+                "the grammars of {lake} at {place} are staged by no file line"
+            ),
             Self::NotInAnyDirectory {
                 module,
                 toolchain,
@@ -446,17 +472,19 @@ fn common_steps(command: &Command, files: &impl Files) -> Result<Vec<Step>, Refu
 }
 
 /// A shipped list's lines, read and checked whole: the `file` lines'
-/// sources and places, and the `oleans` lines' places, in order.
+/// sources and places, the `oleans` lines' places, and the `grammars`
+/// lines' Lake packages and places, in order.
 struct Shipped {
     files: Vec<(String, String)>,
     oleans: Vec<String>,
+    grammars: Vec<(String, String)>,
 }
 
 fn read_shipped(text: &str, list: &Path) -> Result<Shipped, Refusal> {
     let lines: Vec<Vec<&str>> = text.lines().map(|l| l.split('\t').collect()).collect();
     let field = |fields: &[&str], at: usize| fields.get(at).copied().unwrap_or("").to_owned();
     for fields in &lines {
-        if !matches!(fields[0], "file" | "oleans" | "") {
+        if !matches!(fields[0], "file" | "oleans" | "grammars" | "") {
             return Err(Refusal::UnknownKind {
                 list: list.to_owned(),
                 kind: fields[0].to_owned(),
@@ -466,6 +494,7 @@ fn read_shipped(text: &str, list: &Path) -> Result<Shipped, Refusal> {
     let mut shipped = Shipped {
         files: Vec::new(),
         oleans: Vec::new(),
+        grammars: Vec::new(),
     };
     for fields in &lines {
         match fields[0] {
@@ -478,11 +507,26 @@ fn read_shipped(text: &str, list: &Path) -> Result<Shipped, Refusal> {
                 shipped.files.push((source, place));
             }
             "oleans" => shipped.oleans.push(field(fields, 1)),
+            "grammars" => {
+                let (lake, place) = (field(fields, 1), field(fields, 2));
+                if lake.is_empty() {
+                    return Err(Refusal::NoLakeName(list.to_owned()));
+                }
+                shipped.grammars.push((lake, place));
+            }
             _ => {}
         }
     }
     if shipped.oleans.is_empty() {
         return Err(Refusal::NoOleans(list.to_owned()));
+    }
+    for (lake, place) in &shipped.grammars {
+        if !shipped.files.iter().any(|(_, staged)| staged == place) {
+            return Err(Refusal::UnstagedGrammars {
+                lake: lake.clone(),
+                place: place.clone(),
+            });
+        }
     }
     Ok(shipped)
 }
@@ -537,6 +581,17 @@ fn shipped_steps(
         path: resources.join("editor.oleans"),
         bytes: oleans.into_bytes(),
     });
+    if !shipped.grammars.is_empty() {
+        let record: String = shipped
+            .grammars
+            .iter()
+            .map(|(lake, place)| format!("{lake}\tlean/{place}\n"))
+            .collect();
+        steps.push(Step::Write {
+            path: resources.join("editor.grammars"),
+            bytes: record.into_bytes(),
+        });
+    }
 
     for (source, place) in &shipped.files {
         let from = PathBuf::from(source);

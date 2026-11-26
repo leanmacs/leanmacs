@@ -809,6 +809,7 @@ name = "editor-release-std"
 version = "0.1.0"
 dependencies = [
  "editor-release",
+ "editor-syntax-fixture-ini",
  "tempfile",
 ]
 
