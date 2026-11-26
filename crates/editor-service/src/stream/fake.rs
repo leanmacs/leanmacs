@@ -61,6 +61,9 @@ pub struct Flaws {
     /// A message longer than the bound is not refused when its length is
     /// parsed: its body is read first.
     pub read_long_body: bool,
+    /// A write to a child that cannot take it, one with no input or one
+    /// whose last delivery was pulled, is answered as written.
+    pub accept_closed_write: bool,
 }
 
 /// What the fake has seen, as a test reads it.
@@ -395,6 +398,9 @@ impl FakeSource {
             return Err(InputClosed("the fake has no such child".into()));
         };
         let Some(input) = model.input.as_mut().filter(|_| !model.gone) else {
+            if flaws.accept_closed_write {
+                return Ok(());
+            }
             return Err(InputClosed(
                 "cannot write to the fake child's standard input: it is closed".into(),
             ));

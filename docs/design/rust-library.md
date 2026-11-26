@@ -461,22 +461,25 @@ that holds the process's one process service provides it:
 
 **What pins it.**
 
-- **The contract**, `editor_service::stream::contract::check`, ten
+- **The contract**, `editor_service::stream::contract::check`, twelve
   properties over children of nine scenarios: `TAKEN_LINES` (lines read
   and a line written after a take-over, then the exit), `TAKEN_HELD`
   (2,000 lines at a bound of 64: the reader parks while nothing pulls,
   then every line arrives in order, none over the bound), `TAKEN_MEGABYTES`
   (a line of three mebibytes under a bound of four, whole), the refusals
-  `REFUSED_TAKEN`, `REFUSED_READ_PENDING` and `REFUSED_NO_SUCH_CHILD`, and
+  `REFUSED_TAKEN`, `REFUSED_READ_PENDING` and `REFUSED_NO_SUCH_CHILD`, the
+  write's refusals as input closed `REFUSED_WRITE_NO_INPUT` (a child with
+  no input) and `REFUSED_WRITE_ENDED` (after the last delivery was
+  pulled), and
   `MESSAGES`, `MESSAGE_AT_BOUND`, `MESSAGE_TOO_LONG` (a header announcing
   a body past the bound, the body never written, ends the child at once)
   and `MESSAGE_MALFORMED`. Each pull and write runs on a thread of the
   check's, waited for up to the ground's hang guard, so a hang fails its
   property and a fake's panic fails it too. It passes on `FakeSource`, and
-  bites on five flawed fakes, each named by the property it breaks (output
+  bites on six flawed fakes, each named by the property it breaks (output
   past the bound dropped, a second take-over allowed, a pending read
   ignored, a message split where a pull finds it, a too-long body read
-  before the refusal). `editor-process`'s `tests/stream_contract.rs` runs
+  before the refusal, a write to a closed input answered as written). `editor-process`'s `tests/stream_contract.rs` runs
   it on `Service<FakeProcesses>` and `editor-process-std`'s on
   `Service<StdProcesses>`, real children in a temporary directory.
 - **The orderings, forced**, in `editor-process`'s `service/hand_off.rs`,

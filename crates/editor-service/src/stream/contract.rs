@@ -9,8 +9,9 @@
 //! mimics it, as a streaming child. So one contract holds the fake and the
 //! real service to the same rules.
 //!
-//! The properties are [`TAKEN_LINES`] to [`REFUSED_NO_SUCH_CHILD`] for a
-//! child taken over, its bound and the refusals, and [`MESSAGES`] to
+//! The properties are [`TAKEN_LINES`] to [`REFUSED_WRITE_ENDED`] for a
+//! child taken over, its bound and the refusals of a take-over and of a
+//! write, and [`MESSAGES`] to
 //! [`MESSAGE_MALFORMED`] for `Content-Length` framing.
 //!
 //! Every wait of the check returns on its event, a pull's or a write's
@@ -250,6 +251,17 @@ pub const REFUSED_READ_PENDING: &str =
 /// whose last delivery was pulled.
 pub const REFUSED_NO_SUCH_CHILD: &str =
     "an unknown child, and one whose last delivery was pulled, is no such child";
+/// A write to a child taken over that has no input is refused as
+/// [`InputClosed`], with words: [`Scenario::OneLine`]'s, before it is
+/// pulled, which still gives its line and its exit.
+pub const REFUSED_WRITE_NO_INPUT: &str =
+    "a write to a child with no input is refused as input closed";
+/// A write to a child whose last delivery was pulled is refused as
+/// [`InputClosed`], with words, though it had an input:
+/// [`Scenario::AwaitsLine`]'s, after the line it was written came back
+/// and its exit.
+pub const REFUSED_WRITE_ENDED: &str =
+    "a write after the last delivery was pulled is refused as input closed";
 /// `Content-Length` messages, split across writes, one with a
 /// `Content-Type` and one with an empty body, are delivered whole as
 /// [`Frames::Messages`], then the exit.
@@ -267,13 +279,15 @@ pub const MESSAGE_MALFORMED: &str =
     "a malformed header ends the child, the messages before it intact";
 
 /// Every property, by name, in the order [`check`] runs them.
-pub const PROPERTIES: [&str; 10] = [
+pub const PROPERTIES: [&str; 12] = [
     TAKEN_LINES,
     TAKEN_HELD,
     TAKEN_MEGABYTES,
     REFUSED_TAKEN,
     REFUSED_READ_PENDING,
     REFUSED_NO_SUCH_CHILD,
+    REFUSED_WRITE_NO_INPUT,
+    REFUSED_WRITE_ENDED,
     MESSAGES,
     MESSAGE_AT_BOUND,
     MESSAGE_TOO_LONG,
@@ -291,6 +305,8 @@ pub fn check(ground: &impl Ground) -> Vec<&'static str> {
         (REFUSED_TAKEN, check.refused_taken()),
         (REFUSED_READ_PENDING, check.refused_read_pending()),
         (REFUSED_NO_SUCH_CHILD, check.refused_no_such_child()),
+        (REFUSED_WRITE_NO_INPUT, check.refused_write_no_input()),
+        (REFUSED_WRITE_ENDED, check.refused_write_ended()),
         (MESSAGES, check.messages()),
         (MESSAGE_AT_BOUND, check.message_at_bound()),
         (MESSAGE_TOO_LONG, check.message_too_long()),
@@ -467,6 +483,32 @@ impl<G: Ground> Check<'_, G> {
         )
     }
 
+    /// [`REFUSED_WRITE_NO_INPUT`].
+    fn refused_write_no_input(&self) -> Option<bool> {
+        let (_, streams) = self.opened(Scenario::OneLine)?;
+        let refused = self.write(&streams, b"x\n")?;
+        let all = self.to_the_end(&streams)?;
+        Some(
+            input_closed(&refused)
+                && lines_of(&all, Stream::Out) == [b"taken".to_vec()]
+                && last_end(&all) == Some(Ended::Exited { code: 0 }),
+        )
+    }
+
+    /// [`REFUSED_WRITE_ENDED`].
+    fn refused_write_ended(&self) -> Option<bool> {
+        let (_, streams) = self.opened(Scenario::AwaitsLine)?;
+        let written = self.write(&streams, b"go\n")? == Ok(());
+        let all = self.to_the_end(&streams)?;
+        let refused = self.write(&streams, b"again\n")?;
+        Some(
+            written
+                && lines_of(&all, Stream::Out) == [b"go".to_vec()]
+                && last_end(&all) == Some(Ended::Exited { code: 0 })
+                && input_closed(&refused),
+        )
+    }
+
     /// The messages `scenario`'s child delivers on standard output to its
     /// last delivery, and how it ended.
     fn messages_to_the_end(&self, scenario: Scenario) -> Option<(Vec<Vec<u8>>, Option<Ended>)> {
@@ -516,6 +558,11 @@ impl<G: Ground> Check<'_, G> {
     }
 }
 
+/// Whether `written` is a refusal as input closed, in words.
+fn input_closed(written: &Result<(), InputClosed>) -> bool {
+    matches!(written, Err(InputClosed(words)) if !words.is_empty())
+}
+
 /// How the last of `deliveries` says the child ended.
 fn last_end(deliveries: &[Delivery]) -> Option<Ended> {
     deliveries.last().and_then(|last| last.ended.clone())
@@ -553,11 +600,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_properties_are_ten_and_each_is_named_once() {
+    fn the_properties_are_twelve_and_each_is_named_once() {
         let mut names = PROPERTIES.to_vec();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 10);
+        assert_eq!(names.len(), 12);
     }
 
     #[test]
@@ -569,8 +616,8 @@ mod tests {
         assert_eq!(failures, [""; 0]);
         assert_eq!(
             fake.record().written.len(),
-            2,
-            "the echo's line and the awaited one"
+            5,
+            "the echo's line, the awaited one twice and the two refused"
         );
     }
 
@@ -607,6 +654,16 @@ mod tests {
         });
 
         assert_eq!(failed, [REFUSED_READ_PENDING]);
+    }
+
+    #[test]
+    fn a_fake_that_accepts_a_write_to_a_closed_input_is_reported() {
+        let failed = failures(Flaws {
+            accept_closed_write: true,
+            ..Flaws::default()
+        });
+
+        assert_eq!(failed, [REFUSED_WRITE_NO_INPUT, REFUSED_WRITE_ENDED]);
     }
 
     #[test]
