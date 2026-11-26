@@ -252,10 +252,12 @@ job reads as it comes and whose standard input it writes to (phase 2;
   with its input (closed or a pipe), how each output stream is framed and
   its bound; then each read, write and close is a wait of the caller's,
   completed once, whose reply is taken once (`Service::take_stream`).
-  Framing is plain data (`editor_process::frame`): lines split on `\n`, a
-  line without its `\n` and keeping a `\r`, the bytes after the last `\n`
-  a last line at the stream's end; or raw bytes, whose deliveries end to
-  end are the stream. **Coalescing is the reads being pulls**: a read is
+  Framing is plain data (`editor_service::frame`, which `editor-process`
+  re-exports as `editor_process::frame`): lines split on `\n`, a line
+  without its `\n` and keeping a `\r`, the bytes after the last `\n` a last
+  line at the stream's end; raw bytes, whose deliveries end to end are the
+  stream; or `Content-Length` messages, whole bodies without their headers
+  ("Handing a streaming child to a package's crate, as built", below). **Coalescing is the reads being pulls**: a read is
   completed once, by the first reader that makes something deliverable,
   never once a chunk, and its delivery is drained when it is taken, so it
   holds everything read up to then. A completion-queue turn ends one wait,
@@ -272,7 +274,11 @@ job reads as it comes and whose standard input it writes to (phase 2;
   feed counted, ends the child as `LineTooLong`, its group killed. A partial
   line that fills the bound exactly is judged by one more byte, read
   outside the bound: if it comes the line is too long, and if the stream
-  ends there the line is its last, delivered whole. The last delivery carries the
+  ends there the line is its last, delivered whole. A `Content-Length`
+  message longer than the bound, its header counted, ends the child as
+  `MessageTooLong` as soon as its length is parsed, with no probe and its
+  body unread; a malformed header, or a stream that ends inside a message,
+  ends it as `Failed`. The last delivery carries the
   exit, once both streams have ended and the child is reaped, and the child
   is then forgotten. A write is handed to a writer thread, which writes
   every byte and then completes; a child that closed its input, or ended,
@@ -319,7 +325,15 @@ job reads as it comes and whose standard input it writes to (phase 2;
   open (a run's words after its input and its two framings, with the bound
   for the limit), a read, a write, a close of its input, a take of a wait's
   reply (the same record as a run's result, a delivery's two streams in its
-  buffers) and a readout of whether it is held, for tests. In Lean a run is
+  buffers) and a readout of whether it is held, for tests. A delivery's
+  frames cross as words, each stream's framing (0 lines, 1 bytes, 2
+  messages) and for lines and messages their count and lengths, and its end
+  as a code (0 not yet, 1 exited, 2 a line too long, 3 failed, 4 a message
+  too long); framing 2 and code 4 are `Content-Length`'s, which an open's
+  words do not spell yet, so no child Lean opens produces them. One more C
+  function, `editor_ffi_library_start`, which the entry point calls before
+  Lean runs, provides the service as `editor-service`'s stream source
+  ("Handing a streaming child to a package's crate, as built", below). In Lean a run is
   a request of the job port (`lean/Editor/Process.lean`, `Process.run`),
   with a pure model that scripts commands, and a run that keeps its head
   is `ProcessRequest.runHead`, answered `Process.Head.whole` or
@@ -334,12 +348,12 @@ job reads as it comes and whose standard input it writes to (phase 2;
   environment, as built"). The headless and window mains call the shutdown
   before they quit the queues.
 
-### Handing a streaming child to a package's crate (proposal)
+### Handing a streaming child to a package's crate, as built
 
-Status: **a proposal**, from the ACP design spike of 2026-11-23 (the
-acp-agents roadmap's transport design "C"). The spike's code is on its own
-branch, marked `SPIKE`, and is not built on `main`. What was proved by
-running code and what was only read is said below.
+Built by the acp-agents roadmap's phase 2 (its transport design "C"), from
+the ACP design spike of 2026-11-23; it is no longer a proposal. The spike's
+code, marked `SPIKE`, never landed: what is described here was built again
+test-first.
 
 An ACP client (and later an LSP client) is a package's crate that speaks
 JSON-RPC to a child. The core's process service keeps owning the child:
@@ -351,114 +365,163 @@ streams and writes its input, Rust to Rust, and the job reads it no more.
 Rust still never calls Lean: the crate reports through its own service's
 completions, which Lean pulls.
 
-**The shape.** A package's crate may depend only on `editor-service`
+**The pieces.** A package's crate may depend only on `editor-service`
 ([packages.md](packages.md), "The service conventions as a crate of their
-own"), which depends on nothing, so the hand-off is a port there in the
-editor's terms, and the crate that holds the process's one process service
-provides it:
+own"), so the hand-off is a port there, in the editor's terms, and the crate
+that holds the process's one process service provides it:
 
 | Piece | Where | What |
 |---|---|---|
-| `stream::StreamSource` | `editor-service` | The port: `take_over(child) -> Result<Box<dyn ChildStreams>, Refused>` |
-| `stream::ChildStreams` | `editor-service` | A child taken over: `pull()`, which blocks until a delivery, the end or a cancel (`Pulled::Delivered(Delivery)` or `Pulled::Cancelled`); `write(bytes)`, which blocks until they are in the pipe |
-| `stream::provide`, `stream::take_over` | `editor-service` | One process-wide `OnceLock` holding the source, and the call a package's crate makes. Refusals: no service provided, no such live child, a read of the job's pending, taken already |
-| `Service::hand_off(child)` | `editor-process` | Marks the child handed under its stream lock and returns a `Handed`: `pull` waits on the child's `changed` condvar for something deliverable, the end, or the abandon a cancel makes, and drains the outbox as a take does; `write` hands the bytes to the child's writer thread and waits for its reply |
-| the source | `editor-ffi` (`processes/spike_stream.rs` in the spike) | Forwards `take_over` to the one `PROCESSES` static and converts `Delivery` to `editor-service`'s plain types; installed with `provide` as the static is made |
-
-The spike duplicates the frame and delivery types in `editor-service`
-because `editor-process` depends on nothing. Proposed instead: move
-`editor_process::frame` (plain data, no thread, no port) into
-`editor-service`, and let `editor-process` depend on it, so a delivery is
-one type on both sides. `deny.toml` gives `editor-service` no entry, so the
-edge is allowed. The source should be provided when the library starts,
-not when the process service is first used, so a take-over never depends
-on an open having come first; in the spike it is provided at first use,
-which an open always is.
+| `frame` | `editor-service` | The framing of a child's streams (`Framing`, `Frames`, `Framer`, `Outbox`) and `Stream`, moved here from `editor-process`, which depends on `editor-service` and re-exports both (`editor_process::frame`, `editor_process::Stream`). Plain data, no thread and no port, so it widens every package crate's reach by values alone. A delivery's frames are one type on both sides |
+| `stream::StreamSource` | `editor-service` | The port: `take_over(child) -> Result<Box<dyn ChildStreams>, Refused>`, refused as `NoService`, `NoSuchChild`, `ReadPending` or `Taken` |
+| `stream::ChildStreams` | `editor-service` | A child taken over: `pull()`, which blocks until a `Delivery` (both streams' frames and, in the last, how it `Ended`: exited, signalled, a line or a message too long, failed), the end or a cancel (`Pulled::Cancelled`); and `write(bytes)`, which blocks until they are in the pipe, or answers `InputClosed` with the platform's words |
+| `stream::provide`, `stream::take_over` | `editor-service` | One process-wide `OnceLock` holding the source, provided once, and the call a package's crate makes. The editor links from one Rust archive, so there is one static |
+| `stream::fake::FakeSource` | `editor-service` | The port's published fake: a model a test steps on its own thread, framed and bounded by the real `Outbox`, so its rules cannot drift from the service's. A child writes into model pipes, of which only the bound's room enters the outbox; it answers a line of its input, ends, or is cancelled. A pull never blocks: with nothing to give it panics, saying to step the fake first. It records take-overs and writes |
+| `stream::contract::check` | `editor-service` | The port's contract, over a `Ground` that opens a child for each of the contract's `Scenario`s, makes a job's read pending and withdraws it, and waits for a reader's park |
+| `Service::hand_off(child)`, `Handed` | `editor-process` (`service/hand_off.rs`) | The hand-off on the service; `Service` is the port's `StreamSource` itself and `Handed` its `ChildStreams`, through `End::ended`, so the provider converts nothing |
+| `stream_contract::ServiceGround` | `editor-process` | The contract's ground over a `Service`: each scenario a `/bin/sh -c` script, or the `FakeProcesses` script that mimics it (`stream_contract::scripts`) |
+| `editor_ffi_library_start` | `editor-ffi` (`processes.rs`, `processes/streams.rs`) | A C function, idempotent, that provides a zero-sized source forwarding each take-over to the one `PROCESSES` static. `editor_entry` (`lean/ffi/glue.c`) calls it first, before the main-thread service is opened and before Lean runs. Providing it forces no `LazyLock`, so nothing starts at load, and a take-over never depends on an open having come first |
 
 **The rules it keeps.**
 
-- **The bound and "held, never dropped".** A consumer's `pull` is the
-  job's read and take in one call: it drains the outbox, which makes room
-  and wakes a parked reader. A consumer that does not pull holds the child
-  in `write(2)` exactly as a job that does not read does. Nothing is
-  dropped, and the bound still counts each stream on its own.
+- **The bound and "held, never dropped".** A consumer's pull is the job's
+  read and take in one call: it drains the outbox, which makes room and
+  wakes a parked reader. A consumer that does not pull holds the child in
+  `write(2)` exactly as a job that does not read does. Nothing is dropped,
+  and the bound still counts each stream on its own. The bound is the
+  opener's choice; an agent's is in megabytes ("The bound for ACP",
+  below).
 - **One reader.** A child with a read of the job's pending is refused
-  (`ReadPending`); the job takes or cancels its read first. Once handed, a
-  read by the job is refused, and a second take-over is refused (`Taken`).
-- **Cancel, kill and shutdown** reach a consumer mid-pull with nothing new:
-  a cancel and shutdown already abandon the child's stream under its lock
-  and notify `changed`, which is the condvar the consumer waits on, so its
-  pull answers `Cancelled`. The one change the waiter needed was to notify
-  `changed` once it has recorded the exit, so a consumer waiting for the
-  end wakes.
+  (`ReadPending`): the job takes or cancels its read first. Once handed,
+  the job's read, write and close of it are refused, as for an unknown
+  child, and a second take-over is refused (`Taken`). A child the service
+  does not hold live, unknown, cancelled or forgotten after its last
+  delivery, is `NoSuchChild`. The refusals are checked under the state
+  lock and then the stream's, as a read is.
+- **A job's write in flight at the hand-off** completes to the job, and the
+  consumer's write follows it: the write slot records who asked
+  (`Asker::Job(wait)` or `Asker::Consumer`), the writer answers each reply
+  to its asker, and a consumer's write waits on `changed` for a slot a
+  job's write still holds. The spike's writer sent every reply to the
+  consumer once the child was handed, which stranded that job's wait.
+- **Cancel, kill and shutdown** reach a consumer mid-pull: they abandon the
+  child's stream under its lock and notify `changed`, the condvar the
+  consumer waits on, so its pull answers `Cancelled`. **The waiter
+  notifies `changed` once it has recorded the exit**, so a consumer waiting
+  for the end wakes; that was the one change the spike found was needed.
 - **A child that exits before the hand-off** keeps its frames and its exit
   in its stream state until its last delivery is taken (`Streamed::end`,
   `Service::forget`), so a take-over after the exit still delivers every
-  line and the exit; a child whose last delivery the job already took is
-  forgotten and refused (`NoSuchChild`).
+  line and the exit, in one pull.
 - **Who owns the session.** The child stays named for the job that opened
   it, and the runner cancels every child a job holds when the job ends, so
   the opening job must live as long as the session, or the hand-off must
-  move the child out of the job's set. Proposed: a session is one long job
-  that opens the child, hands it over and waits on the crate's
-  completions; its cancel is the session's end.
-- **Threads.** Each child keeps its waiter, two readers and its writer, and
-  the consumer adds its own: one thread that runs the protocol's connection
-  (for ACP the SDK's future under a plain `block_on`, no runtime,
-  [agent-hosting.md](agent-hosting.md), "The ACP spike"), and one that
-  pulls into it. Six or so a session, for a handful of sessions.
+  move the child out of the job's set. That, and a running Lean job
+  awaiting a package's completion, is phase 3's, not built: a package
+  cannot add a service to the job runner's `Job.Services` yet
+  ([packages.md](packages.md), "Behind a port, so it stays replaceable").
+- **Threads.** Each child keeps its waiter, two readers and its writer,
+  and the consumer adds its own: for ACP one thread that runs the
+  protocol's connection (the SDK's future under a plain `block_on`, no
+  runtime, [agent-hosting.md](agent-hosting.md), "The ACP spike") and one
+  that pulls into it. Six or so a session, for a handful of sessions.
 
-**What was proved by running code.**
-
-- `crates/editor-process-std/tests/spike_handoff.rs`, on real processes:
-  lines read and written after the hand-off; 2,000 lines through a bound of
-  64, the child held while nothing pulls and every line delivered once it
-  does; a cancel and a shutdown each wake a consumer blocked in a pull;
-  a child with a pending read refused, and taken over once the read is
-  withdrawn. The test of a child that exits before the hand-off does not
-  force that order (the child usually exits first); the rule is read in
-  the service, not forced.
-- **The riskiest assumption, that a package's crate reaches the core's one
-  running process service**: in the fixture package `echo`, a linked test
-  opens a streaming child through the job port's real process service
-  (`Job.realProcesses`, which `Process.start` reaches, from the linked test
-  kit's services rather than a running job), hands its number to the
-  binding `Echo.Real.attach`, and the crate (`rust/src/attach.rs`,
-  depending on `editor-service` alone) takes it over through
-  `editor_service::stream::take_over`, reads its lines, writes `pong` back
-  when it reads `ping-me`, sees its exit, and completes a request of its own
-  service, which Lean's pump ends and Lean takes. A second child, blocked
-  in a pull, is cancelled through the job port and the crate sees the
-  cancel. Run: `one`, `ping-me`, `got pong`, `three`, exit 2, in three
-  pulls; then `<cancelled>`. The generated crate's bans
-  (`tools/rust-bans-check.sh tests/packages`) still pass. So one archive
-  does give one copy of `editor-service`'s static, and the source
-  `editor-ffi` provided is the one the package's crate finds.
-- **Not proved**: a running Lean job awaiting a package's completion. A
-  package cannot add a service to the job runner's `Job.Services` yet
-  ([packages.md](packages.md), "Behind a port, so it stays replaceable"),
-  so the linked test registers its waits in the kit's table directly. The
-  ACP roadmap has to add that before a session can be a job.
-
-**`Content-Length` framing**, which an LSP client needs, is a third
-`Framing` beside `Lines` and `Bytes`. What it needs beyond today's `frame`
-module (read, not built):
+**`Content-Length` framing**, which an LSP client needs, is the third
+`Framing` beside `Lines` and `Bytes`, in `editor_service::frame`:
 
 - A framer with two states, header and body. The header is ASCII lines
-  ending `\r\n` up to an empty line; `Content-Length: <n>` is required,
-  `Content-Type` is allowed and ignored, any other header or a malformed
-  one ends the child as `Failed`, its group killed, as a read that fails
-  does. A take gives whole bodies, `Frames::Messages(Vec<Vec<u8>>)`,
-  without their headers.
-- The bound counts the header in progress and the body in progress, as it
-  counts a partial line. Unlike a line, a message's size is known before
-  its body is read, so one whose header plus `n` exceeds the bound is
-  refused at once, `End::MessageTooLong` beside `LineTooLong`, with no probe
-  byte; and a reader can ask for exactly the body's remaining bytes.
-- A header with no end within the bound is too long, as a partial line is.
+  ending `\r\n` up to an empty line; `Content-Length: <decimal>` is
+  required, once, its name matched without regard to case; `Content-Type`
+  is allowed and ignored. Any other header, a length twice or missing, one
+  that is not a decimal number, a bare `\n`, a line with no colon or a byte
+  that is not ASCII is malformed. A take gives whole bodies,
+  `Frames::Messages(Vec<Vec<u8>>)`, without their headers. The framer
+  keeps a parse cursor, so a push parses only what it adds, and a body is
+  never scanned.
+- The bound counts the header in progress, the body in progress and the
+  headers of messages not yet taken. A message's size is known once its
+  length is parsed, so one whose header and length pass the bound is
+  `MessageTooLong` at once, beside `LineTooLong`, with no probe byte and no
+  further read, its body unread; so is a header with no end that fills the
+  bound. `Outbox::fault` says which (`Fault::LineFillsBound`, today's
+  partial line at the bound, judged by one byte more as before;
+  `Fault::MessageTooLong`; `Fault::Malformed`). The service ends the child
+  on `MessageTooLong` as `End::MessageTooLong`, and on a malformed header,
+  or a stream that ends inside a message, as `End::Failed` with the
+  framer's words, its group killed either way.
 - Writes stay bytes: the consumer frames what it writes (an ACP line with
   its `\n`, an LSP header and body), and the writer writes every byte.
   Nothing in the service parses JSON.
+- **Reachable from Rust alone, for now.** `Service::open` takes it for
+  either stream, and the port, its fake and its contract cover it; the
+  open's words across the C boundary (framing 0 lines, 1 bytes) and Lean's
+  `Process.Framing` do not spell it yet. A delivery's messages would cross
+  as framing word 2 and a message too long as end code 4 ("Across the
+  boundary", above), which no child Lean opens produces yet.
+
+**What pins it.**
+
+- **The contract**, `editor_service::stream::contract::check`, ten
+  properties over children of nine scenarios: `TAKEN_LINES` (lines read
+  and a line written after a take-over, then the exit), `TAKEN_HELD`
+  (2,000 lines at a bound of 64: the reader parks while nothing pulls,
+  then every line arrives in order, none over the bound), `TAKEN_MEGABYTES`
+  (a line of three mebibytes under a bound of four, whole), the refusals
+  `REFUSED_TAKEN`, `REFUSED_READ_PENDING` and `REFUSED_NO_SUCH_CHILD`, and
+  `MESSAGES`, `MESSAGE_AT_BOUND`, `MESSAGE_TOO_LONG` (a header announcing
+  a body past the bound, the body never written, ends the child at once)
+  and `MESSAGE_MALFORMED`. Each pull and write runs on a thread of the
+  check's, waited for up to the ground's hang guard, so a hang fails its
+  property and a fake's panic fails it too. It passes on `FakeSource`, and
+  bites on five flawed fakes, each named by the property it breaks (output
+  past the bound dropped, a second take-over allowed, a pending read
+  ignored, a message split where a pull finds it, a too-long body read
+  before the refusal). `editor-process`'s `tests/stream_contract.rs` runs
+  it on `Service<FakeProcesses>` and `editor-process-std`'s on
+  `Service<StdProcesses>`, real children in a temporary directory.
+- **The orderings, forced**, in `editor-process`'s `service/hand_off.rs`,
+  on the real service over the port's fake, each held at its step by a
+  latch: `a_cancel_while_the_consumer_is_blocked_in_a_pull_answers_cancelled`
+  and `a_shutdown_while_the_consumer_is_blocked_in_a_pull_answers_cancelled`
+  (a test hook, `before_pull_wait`, runs under the stream's lock just
+  before the consumer's wait, so the abandon comes only once it is in it;
+  the child's streams held open by a process outside its group and its
+  reap held, so nothing but the abandon wakes it),
+  `a_child_that_exits_before_its_hand_off_still_delivers_its_lines_and_its_exit`
+  (the hook `exit_recorded`, then both readers let go, then the hand-off),
+  and `the_waiter_wakes_a_consumer_waiting_for_the_end` (the reap held while
+  the consumer waits). Each was seen to bite by hand on 2026-11-25: with
+  the notify taken out of the abandon, the first two fail as hangs; with
+  the waiter's taken out, the last does; and with the spike's diverted
+  write, `a_jobs_write_in_flight_at_the_hand_off_completes_to_the_job_and_the_consumers_follows_it`
+  fails waiting for the job's completion.
+- **`Content-Length`**: the framer's unit tests in `editor_service::frame`
+  (whole messages across every split, an empty body, `Content-Type`
+  ignored, each malformed header, a stream ended inside a message, the
+  bound with the header counted, four mebibytes pushed a byte at a time
+  parsed once); and on `FakeProcesses`
+  `a_message_past_the_bound_kills_the_group_at_its_header_with_no_byte_of_its_body_read`,
+  whose record shows the header's bytes read while the pipe held body.
+- **The wiring.** `editor-ffi`'s `tests/stream_source.rs`, on real
+  processes: once the library has started, a take-over is answered by the
+  service; a child opened through the C function is taken over through
+  `editor_service::stream::take_over`, read and written to and its exit
+  seen; and the job's read of it is refused. In the fixture package `echo`,
+  the linked test's wiring module `EchoTest/Linked/Echo/Real/Attach.lean`
+  opens a streaming child through the linked kit's real process port, with
+  a bound of four mebibytes, hands its number to `Echo.Real.attach`, and
+  the crate (`rust/src/attach.rs`, depending on `editor-service` alone)
+  takes it over, reads `one`, `ping-me`, `got pong` (writing `pong` back)
+  and `three` and sees the exit 2; a second child, blocked in a pull, is
+  cancelled through the job port and the crate sees `<cancelled>`; and a
+  child whose last delivery was pulled is not taken over again. So one
+  archive does give one copy of `editor-service`'s static, and the source
+  `editor-ffi` provided is the one the package's crate finds. That the
+  crate reaches the child through `editor-service` alone is its manifest's
+  one dependency on the editor (`cargo tree -p echo-service --edges
+  normal` lists `editor-service` and `editor-wait` and nothing else of the
+  editor's), a reviewer's check: the generated crate's bans refuse
+  `editor-ffi` and peer package crates, not `editor-process`.
 
 **The bound for ACP.** Claude Code's adapter sent a 27,490-byte line on its
 first prompt (its list of commands), and a tool call's update carries the
@@ -2678,9 +2741,10 @@ better generic primitive, not a feature-specific service.
 - **JSON throughput.** Decided for ACP: an agent's stream is parsed in
   Rust, by the protocol's SDK in the ACP package's crate, which takes the
   child's stream over from the process service ("Handing a streaming child
-  to a package's crate", a proposal), and Lean gets plain events. A
-  language server's stream is still to decide; the same hand-off, with
-  `Content-Length` framing, would let an LSP client do the same.
+  to a package's crate, as built"), and Lean gets plain events. A
+  language server's stream is still to decide; the same hand-off, with the
+  `Content-Length` framing built beside it, would let an LSP client do the
+  same.
 - **HTTP.** A Lean client, or a small Rust one behind the same pattern.
 - **Backpressure** for a process that outpaces its consumer: answered for
   process output, which is held at its bound by not being read, and for

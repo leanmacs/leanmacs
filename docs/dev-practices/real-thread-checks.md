@@ -91,6 +91,7 @@ and `ModelTest/Lint/RealHost/`.
 | `packages/evil/EvilTest/Linked/Evil/Operators.lean`, `.../Evil/TreeObjects.lean` | `.wiring` | The shipped Rust `indents` and `textObjects` queries through the Vim scheme's keys, which the syntax model does not hold. |
 | `packages/files/FilesTest/Linked/Files/Real.lean` | `.wiring` | The library's file, watch and syntax services through the files package's commands, each end to end. |
 | `packages/compile/CompileTest/Linked/Compile/Real.lean` | `.wiring` | The library's process service through the compile mode: a child's streamed lines and its exit status. |
+| `tests/packages/echo/EchoTest/Linked/Echo/Real/Attach.lean` | `.wiring` | The library's process service, taken over by the echo crate through `editor-service`'s stream source: the subject is a child the real process port opened, and no fake opens a child the crate can take. |
 | `packages/version-control/VersionControlTest/Linked/VersionControl/Git.lean`, `packages/workspace/WorkspaceTest/Linked/Workspace/Contract.lean`, `.../Workspace/Lister.lean`, `tests/packages/echo/EchoTest/Linked/Echo/Real.lean` | `.contract` | A port's contract against its real adapter, which the module's root hands it. |
 | The roots `lean/ConfigTest.lean`, `lean/FfiTest.lean` and the linked roots of compile, version-control, workspace, files and echo | `.edge` | Their `main` starts the process's services and pump, or runs the benches or scenarios, and hands them to the modules above. |
 

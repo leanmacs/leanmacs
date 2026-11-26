@@ -41,9 +41,9 @@ package `agents-api`; decided by the owner, 2026-11-23):**
   it as a streaming child (`Process.start`, `lean/Editor/Process.lean`),
   framed by line, and hands it to the package's crate, which takes its
   streams over and runs the protocol's Rust SDK on them, Rust to Rust
-  (transport design "C"; the primitive is a proposal,
+  (transport design "C"; the primitive is built,
   [rust-library.md](rust-library.md), "Handing a streaming child to a
-  package's crate"). Lean gets plain events from the crate (a message
+  package's crate, as built"). Lean gets plain events from the crate (a message
   chunk, a tool call, a permission request), never JSON-RPC
   ([packages.md](packages.md), "Behind a port, so it stays replaceable").
 - Serving the agent's requests while the editor's own prompt request is
@@ -108,7 +108,10 @@ proved by running code):
 | API churn | High. 0.8 to 0.15 broke between December 2025 and June 2026 (0.11 a new design); then 1.0.0 (2026-06-24), 2.0.0 (07-23), 3.0.0 (10-06) and 5.0.0 (11-02), with no 4. Minors come every few days. Semver is promised for the stable API from now on; the `unstable_*` API and the schema pin may move in a minor |
 
 So the SDK fits design C: no runtime to host, any stream, and every
-callback can become a parked request and a plain event. The cost is the
+callback can become a parked request and a plain event. **The stream
+hand-off** the spike proved is now built (acp-agents phase 2):
+[rust-library.md](rust-library.md), "Handing a streaming child to a
+package's crate, as built". The cost is the
 churn: pin it exactly in the root lock, keep its types inside the crate
 behind the `agents-api` port, and expect a major upgrade every few months.
 
@@ -411,7 +414,7 @@ pins that with the mode off no watch is open; the phase is
 - **The line bound** for an agent's stream: a line is about three times
   the largest file an edit touches, and a line past the bound ends the
   agent ([rust-library.md](rust-library.md), "Handing a streaming child to
-  a package's crate").
+  a package's crate, as built").
 - **The user's Claude settings**: decided 2026-11-23, no longer open. The
   editor uses the host's Claude settings as they are, with no session mode
   and no config of its own ("The ACP spike", "The user's environment leaks
