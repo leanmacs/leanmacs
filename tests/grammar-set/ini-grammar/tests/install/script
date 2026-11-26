@@ -1,0 +1,24 @@
+# The script the installed editor's headless mode runs in the on-demand
+# install check (crates/editor-syntax-fixture-ini/tests/package_install.rs),
+# in a directory holding a copy of the INI fixture. Its `highlights` line
+# must be exactly the one `expected` holds.
+
+# The config installs, which starts the core's `register-grammars` job for
+# the package's grammar `ini`.
+reload
+settle
+installed
+
+# The fixture opens in the code mode with the package's language `ini`.
+# `join` waits for the load and the registration, whichever ends last
+# highlighting the buffer.
+run open-fixture
+join
+
+# The scene, whose echo would say a refused registration of `ini`, which
+# the check holds it never does.
+scene
+
+# The faces the package's grammar and highlights query draw the fixture in,
+# once the library has delivered its tree.
+highlights

@@ -69,5 +69,25 @@ Each export is a fixture for one property of the registration contract
 ## Who reuses it
 
 The roadmap `syntax-runtime-grammars` reuses the fixture in its later phases:
-a language naming a grammar file (phase 4) and a new language highlighted in
-the editor, and a run-time grammar taking a compiled-in one's place (phase 5).
+a language naming a grammar file (phase 4), and a package that ships it
+(phase 5).
+
+- **The package that ships it.** `tests/grammar-set/ini-grammar` is a test
+  package with the keyword `editor-grammars` that declares the grammar `ini`
+  per platform, relative to its `grammars/`
+  (`docs/design/packages.md`, "A package's grammars"). Only its highlights
+  query is checked in there; no library is. Its linked test copies what the
+  grammar set's build staged into a temporary directory and puts this
+  crate's library at the path the declaration names for the platform it
+  runs on (`mise run ffi-test` hands it the path this crate's binary
+  prints), and `editor-release-std`'s `tests/stage_bundle.rs` stages it as
+  that package's grammar into a bundle laid out in a temporary directory.
+- **The on-demand install check.** `tests/package_install.rs`, run by `mise
+  run grammar-install-check` and never part of the gate, copies that
+  package with this library, installs a set that requires the default set
+  and the copy with `:editorInstall` into a temporary directory, and runs
+  the installed editor headless on the INI fixture, comparing its
+  `highlights` line with the package's `tests/install/expected`
+  (`docs/dev-practices/on-demand-checks.md`, "A package's grammar,
+  installed, on demand"). It lives here because this crate owns the
+  library.
