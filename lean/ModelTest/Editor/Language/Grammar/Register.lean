@@ -52,21 +52,23 @@ registration. -/
 def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
     (files : Array (String × String)) (directories : Array String := #[]) : Option TestDriver := do
   let start : ModelState :=
-    { registry :=
+    {
+      registry :=
         (({} : Config.Registry).replaceLanguages .compiled Language.shipped).replaceModes .compiled
           Language.modes }
   let (state, _) := Config.step start .requested
   let (state, effects) := Config.step state (.finished (accepted ["a"] setup))
   let (generation, grammars) ←
     effects.findSome? fun
-      | .registerGrammars generation grammars => some (generation, grammars)
-      | _ => none
+        | .registerGrammars generation grammars => some (generation, grammars)
+        | _ => none
   let keys : Loop.Keys TestScheme.scheme := { registered := state.registry.registered }
   let model := { editorModel with syntaxTree := { compiled := #["json", "lean"] } }
   let fileModel :=
     files.foldl (fun model (path, text) => model.withFile path text.toUTF8)
       (directories.foldl (fun model (path : String) => model.withDirectory path) ({} : FileModel))
-  let driver ← (Loop.Driver.over keys (fun _ => none) (EditorState.initial ⟨640, 480⟩) model).toOption
+  let driver ←
+    (Loop.Driver.over keys (fun _ => none) (EditorState.initial ⟨640, 480⟩) model).toOption
   let driver :=
     { driver with jobs := { grammars := { libraries := some libraries }, files := fileModel } }
   return driver.startWork Language.Grammar.jobName (Language.Grammar.work generation grammars)
@@ -102,7 +104,7 @@ and the language `ini` of `*.ini` that names it. -/
 def declaresIni : SetupM Unit := do
   defineGrammar "ini" "/g/libtree-sitter-ini.so"
   defineLanguage
-    { name := "ini", patterns := [.extension "ini"], syntaxTree := { grammar := "ini" } }
+      { name := "ini", patterns := [.extension "ini"], syntaxTree := { grammar := "ini" } }
 
 /-- The checks of the core's `register-grammars` job and its command
 (`Editor/Language/Grammar/Register.lean`), driven from the reducer's effect
@@ -112,16 +114,17 @@ def grammarRegisterChecks : List Check :=
         "after a config that declares the grammar ini and a language of *.ini installs, its job registers ini and reads its highlights from queries/ beside the library: a .ini buffer opened before the job's command is plain until it and is then attached with ini and highlighted with that query, as is a .ini buffer opened after it"
       run :=
         pure <|
-          let libraries := #[("/g/libtree-sitter-ini.so", .exports #[("tree_sitter_ini", .grammar)])]
-          match installedWith declaresIni libraries #[("/g/queries/highlights.scm", declaredHighlights)]
-          with
+          let libraries :=
+            #[("/g/libtree-sitter-ini.so", .exports #[("tree_sitter_ini", .grammar)])]
+          match
+            installedWith declaresIni libraries
+              #[("/g/queries/highlights.scm", declaredHighlights)] with
           | none => false
           | some driver =>
             let before := openedIn driver "/w/a.ini"
             let (answered, delivered) := before.finish 1
             let after := openedIn answered "/w/b.ini"
-            attachedGrammars before == #[] && highlighters before == #[] &&
-              delivered.isSome &&
+            attachedGrammars before == #[] && highlighters before == #[] && delivered.isSome &&
               answered.loop.state.grammars.answerOf? 1 "ini" ==
                 some (.registered { highlights := some declaredHighlights, injections := none }) &&
               attachedGrammars answered == #["ini"] &&
@@ -133,7 +136,8 @@ def grammarRegisterChecks : List Check :=
         "a refused registration of the new grammar ini, its library not in the table, says in the echo area its name and the refusal, and a .ini buffer opened before or after the job's command stays open with no syntax tree"
       run :=
         pure <|
-          match installedWith declaresIni #[] #[("/g/queries/highlights.scm", declaredHighlights)] with
+          match
+            installedWith declaresIni #[] #[("/g/queries/highlights.scm", declaredHighlights)] with
           | none => false
           | some driver =>
             let before := openedIn driver "/w/a.ini"
@@ -146,8 +150,10 @@ def grammarRegisterChecks : List Check :=
                   (registeredBefore := false) &&
               answered.loop.state.echo ==
                 "grammar `ini`: the grammar was refused: no file is at the grammar's path, so its languages have no syntax tree" &&
-              attachedGrammars answered == #[] && highlighters answered == #[] &&
-              attachedGrammars after == #[] && highlighters after == #[] &&
+              attachedGrammars answered == #[] &&
+              highlighters answered == #[] &&
+              attachedGrammars after == #[] &&
+              highlighters after == #[] &&
               buffers after == #["scratch", "/w/a.ini", "/w/b.ini"] },
     { name :=
         "a refused registration of a declaration named lean says the compiled-in grammar stays, and a .lean buffer opened before or after the job's command keeps the compiled-in lean grammar and its shipped highlights"
@@ -188,7 +194,8 @@ def grammarRegisterChecks : List Check :=
         "a query file that cannot be read ships no query of its kind and is said in the echo area with the grammar and the file; the grammar is still registered"
       run :=
         pure <|
-          let libraries := #[("/g/libtree-sitter-ini.so", .exports #[("tree_sitter_ini", .grammar)])]
+          let libraries :=
+            #[("/g/libtree-sitter-ini.so", .exports #[("tree_sitter_ini", .grammar)])]
           match
             installedWith declaresIni libraries #[("/g/queries/highlights.scm", declaredHighlights)]
               #["/g/queries/indents.scm"] with

@@ -155,8 +155,8 @@ def over (later earlier : List Language.Grammar) : List Language.Grammar :=
 /-- The query files read from a declared grammar's directory, each with the
 kind it fills. -/
 def queryFiles : List (String × QueryKind) :=
-  [("highlights.scm", .highlights), ("injections.scm", .injections),
-    ("indents.scm", .indents), ("textobjects.scm", .textObjects)]
+  [("highlights.scm", .highlights), ("injections.scm", .injections), ("indents.scm", .indents),
+    ("textobjects.scm", .textObjects)]
 
 /-- `queries` with the source of `kind` set to `source`. -/
 def Queries.set (queries : Queries) (kind : QueryKind) (source : Option String) : Queries :=

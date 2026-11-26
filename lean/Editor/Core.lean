@@ -20,9 +20,6 @@ import Editor.Job.ProtocolContract
 import Editor.Job.PumpContract
 import Editor.Job.SchedulerContract
 import Editor.Jumps.Go
-import Editor.Language.Grammar
-import Editor.Language.Grammar.Answer
-import Editor.Language.Grammar.Register
 import Editor.Main
 import Editor.SearchRoot
 import Editor.SyntaxTree.DeliveryContract

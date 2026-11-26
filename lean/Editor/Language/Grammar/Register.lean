@@ -88,7 +88,7 @@ def register (grammars : Array Language.Grammar) : JobM (Array Reply) :=
     | .ok _ =>
       let loads ←
         queryFiles.toArray.mapM fun (file, _) => do
-          return (file, ← File.load (grammar.queries / file) queryLimit)
+            return (file, ← File.load (grammar.queries / file) queryLimit)
       return { grammar, outcome := .ok loads }
 
 /-- The queries `loads` read, and a sentence for each load refused for

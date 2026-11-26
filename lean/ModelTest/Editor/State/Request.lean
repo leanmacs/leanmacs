@@ -92,15 +92,16 @@ def stateRequests : List StateRequest :=
     .setLocalMark ⟨0⟩ 'b' (some (marker 1 7)), .setGlobalMark 'A' (some (.held ⟨0⟩ (marker 0 7))),
     .setGlobalMark 'B' (some (.held ⟨9⟩ (marker 0 7))),
     .setGlobalMark 'C' (some (.held ⟨0⟩ (marker 1 7))), .setGlobalMark 'D' (some (.file "/f" 1 2)),
-    .setGlobalMark 'A' none, .setGrammars { generation := 1, answers := #[("ini", .registered {})] },
-    .rehighlight #["ini"]]
+    .setGlobalMark 'A' none,
+    .setGrammars { generation := 1, answers := #[("ini", .registered {})] }, .rehighlight #["ini"]]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
 asks the text store nothing, so a marker's id is written out by hand. -/
 def stateRequestChecks : List Check :=
   let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
-  [{  name := "setGrammars replaces the recorded answers; rehighlight is answered and changes no state"
+  [{  name :=
+        "setGrammars replaces the recorded answers; rehighlight is answered and changes no state"
       run :=
         pure <|
           let first : Language.Grammar.Answers :=

@@ -821,7 +821,8 @@ def setupChecks : List Check :=
     { name :=
         "a setup's grammar declaration giving only a name and a library path is collected with the symbol tree_sitter_<name> and the query directory queries/ beside the library"
       run :=
-        match Config.Registrations.ofSetup (defineGrammar "ini" "/opt/grammars/libtree-sitter-ini.so"),
+        match
+          Config.Registrations.ofSetup (defineGrammar "ini" "/opt/grammars/libtree-sitter-ini.so"),
           Config.Registrations.ofSetup (command "x" (makes "1")) with
         | .ok collected, .ok plain =>
           pure
@@ -837,8 +838,8 @@ def setupChecks : List Check :=
         "a setup's grammar declaration giving a symbol, a query directory and a policy is collected with those"
       run :=
         let setup : SetupM Unit :=
-          defineGrammar "conf" "/opt/grammars/libconf.so" (symbol := "conf")
-            (queries := "/other/conf-queries") (policy := ReparsePolicy.incremental)
+          defineGrammar "conf" "/opt/grammars/libconf.so" (symbol := "conf") (queries :=
+            "/other/conf-queries") (policy := ReparsePolicy.incremental)
         match Config.Registrations.ofSetup setup with
         | .ok collected =>
           pure

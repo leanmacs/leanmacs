@@ -39,8 +39,8 @@ import Editor.SyntaxTree.Model
 import Editor.TabBar
 import Editor.Test.Config
 import Editor.Test.Loop
-import Editor.Test.Modes
 import Editor.Test.Models
+import Editor.Test.Modes
 import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
@@ -225,7 +225,8 @@ def iniLanguage : Language :=
 checks' modes with `modes` for config, the languages `json` and `ini`, the
 declaration of `ini`, and the config generation 1. -/
 def declaredRegistry (modes : Array Mode) : Config.Registry :=
-  { ((enterRegistry.replaceModes .config modes).replaceLanguages .compiled
+  {
+    ((enterRegistry.replaceModes .config modes).replaceLanguages .compiled
           #[Language.json, iniLanguage]).replaceGrammars
       .config #[declaredIni] with
     generation := 1 }
@@ -280,7 +281,8 @@ def modeEnterChecks : List Check :=
           let keys : Loop.Keys TestScheme.scheme :=
             { enterKeys registry with
               command? := fun name =>
-                if name == "rehighlight" then some rehighlight else (enterKeys registry).command? name }
+                if name == "rehighlight" then some rehighlight
+                else (enterKeys registry).command? name }
           let first :=
             iniAnswered { highlights := some "(number) @number", indents := some jsonIndents }
           let second := iniAnswered { highlights := some "(string) @string" }
@@ -292,12 +294,14 @@ def modeEnterChecks : List Check :=
           match entered.runModel iniModel with
           | (.ok state, before) =>
             let again : EditorM EditorState := do
-              return (← Loop.run keys { state with grammars := second }
-                    { command := "rehighlight" } []).state
+              return (←
+                    Loop.run keys { state with grammars := second } { command := "rehighlight" }
+                        []).state
             match again.runModel before with
             | (.ok _, after) =>
               before.texts.contents.size == after.texts.contents.size &&
-                before.syntaxTree.kept.size == 1 && after.syntaxTree.kept.isEmpty &&
+                before.syntaxTree.kept.size == 1 &&
+                after.syntaxTree.kept.isEmpty &&
                 before.syntaxTree.highlighted.size == 2 &&
                 before.syntaxTree.highlighted[0]? == after.syntaxTree.highlighted[0]? &&
                 after.syntaxTree.highlighted.size == 2 &&

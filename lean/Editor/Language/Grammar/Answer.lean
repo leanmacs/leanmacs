@@ -65,7 +65,6 @@ structure Language.Grammar.Answers where
 or the answers are of another generation. -/
 def Language.Grammar.Answers.answerOf? (answers : Language.Grammar.Answers) (generation : Nat)
     (name : String) : Option Language.Grammar.Answer :=
-  if answers.generation == generation then (answers.answers.find? (·.1 == name)).map (·.2)
-  else none
+  if answers.generation == generation then (answers.answers.find? (·.1 == name)).map (·.2) else none
 
 end Editor

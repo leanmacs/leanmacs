@@ -784,7 +784,9 @@ def reloadChecks : List Check :=
         let told (state : ModelState) : List Language.Grammar := state.registry.registered.grammars
         pure
           (told start == [] && grammarOf loaded == some "ini" && told loaded == declared &&
-            grammarOf kept == some "ini" && told kept == declared && grammarOf bare == none &&
+            grammarOf kept == some "ini" &&
+            told kept == declared &&
+            grammarOf bare == none &&
             told bare == []) },
     { name :=
         "an installed reload whose config declares grammars starts their registration for the new generation, after cancelling config's jobs and before its report; an installed reload that declares none, and a rejected one, start none"

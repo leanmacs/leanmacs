@@ -2128,8 +2128,7 @@ def reloadEchoChecks (context : Context) : List Check :=
             lines.any fun line =>
               line.startsWith "job " && line.endsWith s!" {Language.Grammar.jobName}: started"
           saw
-              (started &&
-                echo.startsWith "\"grammar `ini`: the grammar's registration failed: " &&
+              (started && echo.startsWith "\"grammar `ini`: the grammar's registration failed: " &&
                 echo.endsWith ", so its languages have no syntax tree\"")
               s!"lines={lines} echo={echo}" }]
 

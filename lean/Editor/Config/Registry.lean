@@ -1335,10 +1335,9 @@ def ownersByKind (registry : Registry) : Array (Array Owner) :=
     registry.prefixNames.map (·.owner), registry.modes.map (·.owner), registry.ex.map (·.owner),
     registry.faces.map (·.owner), registry.themes.map (·.owner), registry.segments.map (·.owner),
     registry.languages.map (·.owner), registry.grammars.map (·.owner),
-    registry.sources.map (·.owner), registry.styles.map (·.owner),
-    registry.displays.map (·.owner), registry.atPoints.map (·.owner),
-    registry.atPointUses.map (·.owner), registry.menus.map (·.owner), registry.codecs.map (·.1),
-    registry.extensions.map (·.owner)]
+    registry.sources.map (·.owner), registry.styles.map (·.owner), registry.displays.map (·.owner),
+    registry.atPoints.map (·.owner), registry.atPointUses.map (·.owner),
+    registry.menus.map (·.owner), registry.codecs.map (·.1), registry.extensions.map (·.owner)]
 
 /-- What the loop is told of the registry for a command's state requests,
 its questions to the registry and its control requests
@@ -1939,15 +1938,15 @@ definition of what an owner's registrations are: an install calls it for
 def Registry.replaceOwned (registry : Registry) (owner : Owner) (registrations : Registrations) :
     Registry :=
   registry.replace owner registrations.commands |>.replaceJobs owner
-                                    registrations.jobs |>.replaceBindings
-                                  owner registrations.bindings |>.replacePrefixNames
-                                owner registrations.prefixNames |>.replaceModes
-                              owner registrations.modes |>.replaceEx
-                            owner registrations.ex |>.replaceFaces
-                          owner registrations.faces |>.replaceThemes
-                        owner registrations.themes |>.replaceSegments
-                      owner registrations.segments |>.replaceLanguages
-                    owner registrations.languages |>.replaceGrammars
+                                      registrations.jobs |>.replaceBindings
+                                    owner registrations.bindings |>.replacePrefixNames
+                                  owner registrations.prefixNames |>.replaceModes
+                                owner registrations.modes |>.replaceEx
+                              owner registrations.ex |>.replaceFaces
+                            owner registrations.faces |>.replaceThemes
+                          owner registrations.themes |>.replaceSegments
+                        owner registrations.segments |>.replaceLanguages
+                      owner registrations.languages |>.replaceGrammars
                     owner registrations.grammars |>.replaceSources
                   owner registrations.sources |>.replaceStyles
                 owner registrations.styles |>.replaceDisplays

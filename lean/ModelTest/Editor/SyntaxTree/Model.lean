@@ -175,7 +175,8 @@ def syntaxTreeChecks : List Check :=
           let snapshot := ids[0]?.getD ⟨0⟩
           let compiled := { model with compiled := #["json", "lean"] }
           let leanRegistered : GrammarRegistry :=
-            { registered :=
+            {
+              registered :=
                 #[("lean", { library := "/lib/lean.so", symbol := "tree_sitter_lean" }, .whole)] }
           let both : SyntaxTreeM Bool := do
             let names ← SyntaxTree.grammars
@@ -186,7 +187,8 @@ def syntaxTreeChecks : List Check :=
             let leanShips ← SyntaxTree.shippedQuery "lean" .highlights
             let jsonShips ← SyntaxTree.shippedQuery "json" .highlights
             return names == #["json", "lean"] && found.size == 1 &&
-                leanShips == SyntaxTreeModel.highlights && jsonShips == SyntaxTreeModel.highlights
+                leanShips == SyntaxTreeModel.highlights &&
+                jsonShips == SyntaxTreeModel.highlights
           let overridden : SyntaxTreeM Bool := do
             let names ← SyntaxTree.grammars
             SyntaxTree.attach snapshot "lean"

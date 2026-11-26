@@ -51,8 +51,8 @@ def enteredWith (ini : Language.Grammar) (text : TextId) (replies : Array Langua
   let (answers, sentences) ← Language.Grammar.answersOf {} 1 replies
   unless sentences.isEmpty do
     throw .noSuchText
-  let some tree := Language.Grammar.treeOf [ini] answers 1 declaredIniLanguage.syntaxTree |
-    throw .noSuchText
+  let some tree :=
+    Language.Grammar.treeOf [ini] answers 1 declaredIniLanguage.syntaxTree | throw .noSuchText
   Highlight.enter Language.codeName text tree
 
 -- inferred-waits W90: stays (the declared grammar's wiring over the real binding, settled on its own snapshot)
@@ -81,8 +81,8 @@ def declaredGrammarDrawnCheck (completions : Job.Completions) (fixture : JobCont
       let made : EditorM TextId := createText settings
       let (.ok text, texts) ← made.runReal (.over rig.published) shown.handle | return false
       let handle ←
-        Job.spawn services (Work.of (fun _ => Language.Grammar.register #[ini]) (enteredWith ini text))
-          (pure ())
+        Job.spawn services
+            (Work.of (fun _ => Language.Grammar.register #[ini]) (enteredWith ini text)) (pure ())
       discard <| hangGuarded "the registration job's end" handle.outcome.result?
       let some (.finished command) ← handle.outcome? | return false
       let real ← RealSyntaxTree.new rig.published.reader
@@ -122,8 +122,8 @@ the core's reading of its answers and resolution of a language's tree, and
 the text entered with that tree on the real syntax tree binding and drawn on
 the real display. It registers only the fixture's own name, `ini`, never a
 compiled-in one, so later checks see the same service. -/
-def grammarDeclarationChecks (completions : Job.Completions)
-    (fixture : JobContract.GrammarFixture) (syntaxFixtures : System.FilePath) : List Check :=
+def grammarDeclarationChecks (completions : Job.Completions) (fixture : JobContract.GrammarFixture)
+    (syntaxFixtures : System.FilePath) : List Check :=
   [declaredGrammarDrawnCheck completions fixture syntaxFixtures]
 
 end ContractTest

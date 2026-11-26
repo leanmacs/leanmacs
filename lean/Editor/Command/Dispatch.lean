@@ -658,8 +658,8 @@ def rehighlighting (registered : Loop.Registered) (state : EditorState) (grammar
     EditorM Unit := do
   for (buffer, major, lineage) in registered.rehighlighted state grammars do
     Highlight.leave buffer.text
-    if let some tree := Mode.syntaxTreeOf lineage (registered.treeOfLanguage state buffer.language)
-    then
+    if let some tree :=
+        Mode.syntaxTreeOf lineage (registered.treeOfLanguage state buffer.language) then
       Highlight.enter major buffer.text tree
 
 /-- What runs when the mode `name`, of `lineage` (root first), has become

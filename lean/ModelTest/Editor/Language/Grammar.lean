@@ -1,4 +1,3 @@
-import Editor.Language
 import Editor.Language.Grammar
 import Editor.Language.Grammar.Answer
 import ModelTest.Check
@@ -34,8 +33,8 @@ def grammarDeclarationChecks : List Check :=
     { name := "a declaration given a symbol, a query directory and a policy keeps them"
       run :=
         let conf :=
-          Language.Grammar.declare "conf" "/opt/grammars/libconf.so" (symbol := "conf")
-            (queries := "/other/conf-queries") (policy := ReparsePolicy.incremental)
+          Language.Grammar.declare "conf" "/opt/grammars/libconf.so" (symbol := "conf") (queries :=
+            "/other/conf-queries") (policy := ReparsePolicy.incremental)
         pure
           (conf ==
             { name := "conf"

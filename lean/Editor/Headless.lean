@@ -1511,7 +1511,7 @@ def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ
       -- `cancelJobs` cancels it before its command runs.
       let (id, started) ←
         running.startWork collaborators .config Language.Grammar.jobName
-          (Language.Grammar.work generation grammars)
+            (Language.Grammar.work generation grammars)
       collaborators.emit s!"job {id} {Language.Grammar.jobName}: started"
       running := started
   return running

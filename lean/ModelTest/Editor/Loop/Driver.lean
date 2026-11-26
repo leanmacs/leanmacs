@@ -84,8 +84,11 @@ def driverChecks : List Check :=
             let driver :=
               { driver with
                 jobs :=
-                  { grammars :=
-                      { libraries := some #[(library, .exports #[("tree_sitter_ini", .grammar)])] } } }
+                  {
+                    grammars :=
+                      {
+                        libraries :=
+                          some #[(library, .exports #[("tree_sitter_ini", .grammar)])] } } }
             let work : Work :=
               Work.of (fun _ => Grammar.register { library, symbol := "tree_sitter_ini" }) fun _ =>
                 makes "registered"
@@ -94,7 +97,8 @@ def driverChecks : List Check :=
               started.model.syntaxTree.grammars == #["json", "ini"] &&
               started.pending.map (·.id) == #[1] &&
               !started.model.texts.contents.contains "registered" },
-    { name := "work started outside a step runs on the job model under the next id and is delivered by finish"
+    { name :=
+        "work started outside a step runs on the job model under the next id and is delivered by finish"
       run :=
         pure <|
           match newDriver with
@@ -105,8 +109,10 @@ def driverChecks : List Check :=
             let (delivered, stepped) := started.finish 1
             started.next == 2 &&
               started.pending.map (fun job => (job.id, job.name)) == #[(1, "own")] &&
-              !started.model.texts.contents.contains "done" && stepped.isSome &&
-              delivered.model.texts.contents.contains "done" && delivered.pending.isEmpty },
+              !started.model.texts.contents.contains "done" &&
+              stepped.isSome &&
+              delivered.model.texts.contents.contains "done" &&
+              delivered.pending.isEmpty },
     { name :=
         "a command that hands a restart's plan over has it handed back with its step, kept by the driver, and the outbox emptied"
       run :=

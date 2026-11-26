@@ -27,7 +27,8 @@ def grammarAnswerChecks : List Check :=
         pure
           (answers.answerOf? 3 "ini" == some (.registered queries) &&
             answers.answerOf? 3 "conf" == some (.refused (.refused .notFound) false) &&
-            answers.answerOf? 3 "toml" == none && answers.answerOf? 2 "ini" == none &&
+            answers.answerOf? 3 "toml" == none &&
+            answers.answerOf? 2 "ini" == none &&
             answers.answerOf? 4 "ini" == none &&
             ({} : Language.Grammar.Answers).answerOf? 0 "ini" == none) }]
 
