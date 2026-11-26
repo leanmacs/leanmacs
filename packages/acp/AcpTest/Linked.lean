@@ -4,6 +4,7 @@ import AcpTest.Linked.Acp.Conversation
 import AcpTest.Linked.Acp.Permissions
 import AcpTest.Linked.Acp.Real.Contract
 import AcpTest.Linked.Acp.Real.Session
+import AcpTest.Linked.Acp.Table
 import AgentsApiTest.Contract
 import Editor
 import Editor.Headless
@@ -38,6 +39,11 @@ pump, one pump a process, which only the wired groups use, and runs:
   `AcpTest/Linked/Acp/Permissions.lean`): AC2 to AC4 of the permissions
   phase, silence, the queue's refusals and prompt, and the close of a
   queue buffer, likewise handed `Acp.packages`;
+- the agent table, the stall watchdog, the agents list and resume through
+  the same stepped host, two of them in turn across a restart over the
+  journal's recording fake (`AcpTest.Linked.tableChecks`,
+  `AcpTest/Linked/Acp/Table.lean`): AC2 to AC5 of the agent-table phase,
+  likewise handed `Acp.packages`;
 
 - `agents-api`'s contract against the crate's binding, each property on a
   scripted agent executable of its own (`AcpTest.Linked.contractChecks`,
@@ -51,8 +57,8 @@ pump, one pump a process, which only the wired groups use, and runs:
 
 and says so. Its checks are a check set (`AcpTest.Linked.checks`,
 `Editor.CheckGroup`, `docs/dev-practices/real-thread-checks.md`, "How the
-set runs"): the conversation's checks and the permissions' checks in a
-plain group each, then two groups,
+set runs"): the conversation's, the permissions' and the table's checks in
+a plain group each, then two groups,
 of its two modules of the wiring set, which the build's `linter.wiringSet`
 holds true and complete. With `--wiring` after
 the two directories it runs those groups alone, the stress loop's
@@ -69,8 +75,8 @@ started for the run (`Services.start`). -/
 abbrev AcpTest.Linked.Context :=
   Editor.Test.Linked.HostContext × Editor.Test.Linked.Services
 
-/-- Every check of the linked test: its check set, the conversation's checks
-and the permissions' checks over `Acp.packages` in a plain group each, the
+/-- Every check of the linked test: its check set, the conversation's, the
+permissions' and the table's checks over `Acp.packages` in a plain group each, the
 contract's one check in the group
 of `AcpTest/Linked/Acp/Real/Contract.lean`, and AC4 in the group of
 `AcpTest/Linked/Acp/Real/Session.lean`, over the package services the edge
@@ -78,6 +84,7 @@ builds from acp's packages. -/
 def AcpTest.Linked.checks : List (Editor.CheckGroup AcpTest.Linked.Context AcpTest.Check) :=
   [.plain fun (context, _) => AcpTest.Linked.conversationChecks context Acp.packages,
     .plain fun (context, _) => AcpTest.Linked.permissionChecks context Acp.packages,
+    .plain fun (context, _) => AcpTest.Linked.tableChecks context Acp.packages,
     .wired "AcpTest.Linked.Acp.Real.Contract" wiringSet.AcpTest.Linked.Acp.Real.Contract
       fun (_, services) => AcpTest.Linked.contractChecks services,
     .wired "AcpTest.Linked.Acp.Real.Session" wiringSet.AcpTest.Linked.Acp.Real.Session

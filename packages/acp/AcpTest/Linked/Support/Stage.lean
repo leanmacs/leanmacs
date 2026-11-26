@@ -1,6 +1,7 @@
 import Acp.ClaudeCode
 import Acp.Conversation
 import Acp.Permissions
+import Acp.Table
 import AcpTest.Check
 import AgentsApiTest.Fake
 import BuffersApiTest.Fake
@@ -110,6 +111,37 @@ conversation its words name in the focused view. -/
 def showConversation : String :=
   "test-show-conversation"
 
+/-- The name of the check's command that says, in the echo area, each
+record of the focused buffer's project's agent table, as acp's project
+store holds it. -/
+def tableName : String :=
+  "test-table"
+
+/-- The name of the check's command that puts the focused view's cursor on
+the first row of the agent its words name, in the focused agents list. -/
+def cursorToAgent : String :=
+  "test-cursor-to-agent"
+
+/-- A record as `test-table` says it:
+`<id>|<sessionId>|<name>|<agent>|<root>|<attention>|<activity>|<ended>`, with
+`-` for none, the attention's word and the activity `nothing`, `unknown`
+or the titles in flight. -/
+def recordLine (record : AgentRecord) : String :=
+  let attention :=
+    match record.attention with
+    | .waiting => "waiting"
+    | .finished => "finished"
+    | .working => "working"
+    | .idle => "idle"
+  let activity :=
+    match record.activity with
+    | .unknown => "unknown"
+    | .items work => if work.isEmpty then "nothing" else ",".intercalate (work.toList.map (·.title))
+  let root := ((record.location.root?).map (·.toString)).getD record.location.describe
+  "|".intercalate
+    [toString record.id, record.sessionId.getD "-", record.name, record.agent, root, attention,
+      activity, record.ended.getD "-"]
+
 /-- The words of a command's text argument, split at spaces. -/
 def wordsOf (call : Call) : List String :=
   match call.arguments with
@@ -129,7 +161,11 @@ conversation that no view shows and tells two conversations of one header
 apart; `test-show-conversation <n>`, which shows the buffer of the conversation
 `n` in the focused view; `test-read-only`, which says whether the focused
 buffer is read-only; `test-store`, which says the number of every conversation in the
-store and of every queue buffer in acp's queue store; and `test-to-reachable`, which gives the focused buffer a workspace
+store, of every queue buffer in acp's queue store and of every agents list in its list
+store; `test-table`, which says each record of the focused buffer's project's agent
+table (`recordLine`); `test-cursor-to-agent <id>`, which places the cursor on the
+agent's first row of the focused agents list (`Acp.Table.rowOf`); and
+`test-to-reachable`, which gives the focused buffer a workspace
 where commands cannot run. -/
 def probePackage : Package :=
   { name := "acp-test"
@@ -172,7 +208,21 @@ def probePackage : Package :=
               s!"probe: pending {conversation.pending.toList}, turn {conversation.turn}, read-only {readOnly}"
       commandWith storeName fun _ => do
           message
-              s!"store: {((← Acp.Conversation.conversations).map (·.number)).toList}, queues {(← Acp.Permissions.queueBuffers).toList}"
+              s!"store: {((← Acp.Conversation.conversations).map (·.number)).toList}, queues {(← Acp.Permissions.queueBuffers).toList}, lists {(← Acp.Table.listBuffers).toList}"
+      commandWith tableName fun call => do
+          let some (_, project) := (← editorState).workspaceOf? call.target.window.buffer
+            | message "table: none"
+          let held ← Acp.Table.records project.identity
+          message s!"table: {" ; ".intercalate (held.toList.map recordLine)}"
+      commandWith cursorToAgent fun call => do
+          let some [id] := (wordsOf call).mapM String.toNat? | return
+          let some (project, held) ← Acp.Table.listOf? call.target.window.buffer | return
+          let view ← Acp.Conversation.chosenView
+          let running := Acp.Table.running (← Acp.Conversation.conversations)
+          let some row := Acp.Table.rowOf view project.name held running id | return
+          let offset ← call.target.buffer.text.offsetOf ⟨row, 0⟩
+          Jumps.placeCursor call.target.window.id offset
+      exCommand cursorToAgent cursorToAgent (takes := .text)
       commandWith toReachable fun call => do
           discard <| Workspace.register reachable "git@example.invalid:o/r.git"
           Workspace.setBufferWorkspace call.target.window.buffer reachable }
