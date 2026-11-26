@@ -184,7 +184,7 @@ run_suite() {
       sh ../tools/wiring-runs.sh run "$1" scenarios || status=$?
       exit "$status"' ffi-wiring "$prepared/runs") >"$log" 2>&1 ;;
   contract)
-    (cd "$root/lean" && low .lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion) >"$log" 2>&1 ;;
+    (cd "$root/lean" && low .lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion ../tests/launch) >"$log" 2>&1 ;;
   linked-wiring)
     (cd "$root/lean" && low sh ../tools/package-set.sh --wiring run ../tests/packages "$prefix" .lake/build/lib/lean) >"$log" 2>&1 ;;
   cli-wiring)

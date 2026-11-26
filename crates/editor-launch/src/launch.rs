@@ -930,6 +930,26 @@ mod tests {
         assert_eq!(strings(&fake.spawn.spawned[0])[3], "/d/editors/c/2/editor");
     }
 
+    /// The arguments a hand-over execs its candidate with, after the
+    /// program, are the checked-in fixture `tests/launch/arguments-v1`, one
+    /// a line, which Lean's `Editor.Restart.Launch.strip` reads too
+    /// (`ContractTest.launchRecordChecks`): every launch flag, a failed
+    /// candidate among them, then the editor's own arguments.
+    #[test]
+    fn the_hand_over_exec_arguments_are_the_checked_in_fixture() {
+        let mut fake = handing_over(
+            &["/new/editor", SHIPPED],
+            &["/new/editor"],
+            &["/new/editor", SHIPPED],
+        );
+        run(&args(&["--handover", RECORD]), &mut fake.world());
+        let fixture = include_str!("../../../tests/launch/arguments-v1");
+        assert_eq!(
+            strings(&fake.exec.execs[0]),
+            fixture.lines().collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn a_failed_candidate_is_skipped_and_named_with_failed() {
         let mut fake = handing_over(

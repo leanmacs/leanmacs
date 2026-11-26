@@ -1,0 +1,12 @@
+--launched-by
+/Apps/Leanmacs.app/Contents/MacOS/leanmacs
+--shipped
+/Apps/Leanmacs.app/Contents/MacOS/editor
+--restore
+/s/session/session-4.json
+--handed-over
+/s/session/handover
+--failed
+/new/editor
+--state
+/s

@@ -34,7 +34,17 @@
 //! both read, `tests/launch/handover-v1`; a field only the launcher writes
 //! is in the cold fixture, `tests/launch/handover-cold`, which only the
 //! Rust tests read. A field an older launcher must not skip raises
-//! [`VERSION`].
+//! [`VERSION`]. Lean's encoding of the fixture's value is held to the same
+//! file by `ContractTest.launchRecordChecks`
+//! (`lean/ContractTest/Editor/Restart/Launch.lean`).
+//!
+//! The arguments the launcher execs a hand-over's candidate with
+//! ([`crate::launch`]) are a fixture both sides read too,
+//! `tests/launch/arguments-v1`, one a line: a new launch flag is a line
+//! there, in the launcher's test of it
+//! (`the_hand_over_exec_arguments_are_the_checked_in_fixture`) and in Lean's
+//! `Editor.Restart.Launch.strip`, whose reading of the file
+//! `ContractTest.launchRecordChecks` holds.
 
 use std::fmt;
 use std::path::PathBuf;
