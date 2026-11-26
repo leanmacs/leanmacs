@@ -41,6 +41,11 @@
 //! - **A write blocks** until every byte is in the child's pipe; a child
 //!   that has no input, closed it, or ended answers [`InputClosed`] with
 //!   the platform's words. Nothing is buffered beyond the pipe.
+//! - **One writer at a time.** A consumer may pull on one thread while it
+//!   writes on another, but writes from one thread at a time: overlapping
+//!   writes are each written whole, but which caller is answered with
+//!   which reply is unspecified, so one may be told `Ok` of a refused
+//!   write or the reverse.
 //!
 //! # Where an addition goes
 //!
@@ -137,7 +142,8 @@ pub enum Refused {
 pub struct InputClosed(pub String);
 
 /// A streaming child, taken over: pulled and written from the consumer's
-/// own thread. Each call blocks.
+/// own threads. Each call blocks. It writes from one thread at a time
+/// ([`ChildStreams::write`]); a pull may run beside a write.
 pub trait ChildStreams: Send + Sync {
     /// The next delivery: blocks until something is deliverable, the child
     /// has ended, or it was cancelled, and drains it. A consumer that does
@@ -146,6 +152,12 @@ pub trait ChildStreams: Send + Sync {
 
     /// Writes every byte of `bytes` to the child's standard input, and
     /// blocks until they are in its pipe.
+    ///
+    /// A consumer writes from one thread at a time. Writes that overlap,
+    /// from two threads sharing these streams, are each written whole, but
+    /// which caller receives which reply is unspecified: one may be
+    /// answered `Ok` when its own write was refused, or the reverse. A
+    /// pull may run on another thread meanwhile.
     ///
     /// # Errors
     ///
