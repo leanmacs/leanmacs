@@ -1207,15 +1207,6 @@ requests do not wait for, and the command list grows with every package.
   workspace table (`workspaces`) with the project's `shell-history`; after
   it `kept` back at 2 and `unkept` at 0; and the summary and `*restore*`
   saying the restart stopped `hold`.
-- **acp's agent table** (`packages/acp/tests/headless/table/` and
-  `table-restore/`, `case_acp_table_restore`), on the fixture set's
-  editor, which holds `acp`, with a scripted `claude-code` from the
-  fixture's config: `table/script` starts a session its agent ends and
-  aborts once indexed, status 134; `table-restore/script` reads the
-  project's `agents-table` back (`workspaces`), lists the record and
-  visits it, which resumes the session with `session/load` through the
-  real crate, its history shown. Each output is held to its expected file
-  by `fixture-test … expect`, by its exit status.
 
 `ffi-test` runs **the restart** as processes (`tests/headless/restart/`;
 `lean/Editor/Restore/Restart.lean`), after the `launcher` task has built the

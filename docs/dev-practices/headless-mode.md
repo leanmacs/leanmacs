@@ -2316,15 +2316,7 @@ runs it through the CLI:
   process exec'd, a directory written, a real state directory read by the
   next process, records beside an installed executable, a grammar of the
   library's syntax service. Its CLI run covers it; it is also stepped when
-  its stepped output is its expected file too. A new case holds a
-  real-effect entry's CLI output to its expected file with
-  `fixture-test … expect <script> <file> [--dir <dir>]`, which writes the
-  run's directory `@DIR@`, drops the `job ` and `commands:` lines, as the
-  restore cases do, and exits 1 with the first difference, so the
-  comparison is inside a program and not a shell `diff`
-  (`.agents/rules/gates.md`); `acp`'s table fixtures are held so
-  (`case_acp_table_restore`). The older cases still compare in shell;
-  moving them onto `expect` is later work.
+  its stepped output is its expected file too.
 
 An entry not stepped is skipped, with its line `fixture-test: <script>:
 left to the CLI (<site>): <covers>`; an entry under a root that names no

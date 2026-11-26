@@ -104,8 +104,6 @@ def run (packages : Array Package) (schemes : Array SchemePackage) (base : Array
         printCompared harness tree
       | .compare script file =>
         compare harness tree script file
-      | .expect script file dir =>
-        expect harness tree script file dir
     finally
       try
         files.remove

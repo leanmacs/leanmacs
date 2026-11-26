@@ -120,12 +120,7 @@ are compared both ways by `case_compare` in `tools/wiring-runs.sh`, which
 runs each through the CLI and hands its output to `fixture-test … compare
 <script> <file>`, each step decided by its exit status, and the others'
 subject is a real effect, the journal's write, abort, restart and recovery among
-them (`restore/abort-script` then `restore-script`). A real-effect entry's
-output is held to its expected file by `fixture-test … expect <script>
-<file> [--dir <dir>]`, which exits 1 with the first difference: `acp`'s
-table entries (`packages/acp/tests/headless/table/script` and
-`table-restore/script`, `case_acp_table_restore`), which run on the
-fixture set's editor, since the default set holds no `acp`. The user-sets and
+them (`restore/abort-script` then `restore-script`). The user-sets and
 bundle-sets restarts (W68, W69) run the real editor in their gate steps too.
 
 ## How the set runs

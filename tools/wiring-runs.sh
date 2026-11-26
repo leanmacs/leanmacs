@@ -67,7 +67,6 @@ scenarios	window_host_generate
 scenarios	window_host_direct
 scenarios	window_host_undrawn
 fixtures	greeting
-fixtures	acp_table_restore
 TABLE
 }
 
@@ -595,51 +594,6 @@ case_greeting() {
   (
     set -e
     out=$(../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/packages/greeting/tests/headless/hello/config ../tests/packages/greeting/tests/headless/hello/script) && printf '%s\n' "$out" | grep -qxF 'run greeting-hello: no such command'
-  )
-}
-
-# packages/acp/tests/headless/table/script, packages/acp/tests/headless/table-restore/script
-case_acp_table_restore() {
-  # acp's agent table kept across a restart and a session resumed on its
-  # first visit (acp-agents phase 7, AC4 and AC5), on the fixture set's
-  # editor, which holds acp, agents-api and the crate. As the restore
-  # lines do: `note.txt` copied into a temporary directory beside a
-  # `.project` marker, each script written there with `@FILE@` replaced by
-  # the copy's path, and both run with `--state` naming a directory there
-  # and `table/config`, whose scripted `claude-code` replaces the real
-  # adapter. The first starts a session and aborts once the index is
-  # written, status 134; the second, status 0, reads the table back,
-  # lists the record and visits it, which loads it with session/load
-  # through the crate. Each output is held to its expected file by the
-  # harness (`fixture-test … expect <script> <file> --dir <dir>`), which
-  # writes the directory `@DIR@`, drops the `job ` and `commands:` lines and
-  # exits 1 on a difference: no shell compares (.agents/rules/gates.md).
-  (
-    set -e
-    editor=../tests/packages/.lake/build/bin/editor
-    harness=../tests/packages/.lake/build/bin/fixture-test
-    sysroot=$(lean --print-prefix)
-    oleans=.lake/build/lib/lean
-    repo=$(cd .. && pwd -P)
-    f=../packages/acp/tests/headless
-    dir=$(mktemp -d)
-    trap 'rm -rf "$dir"' EXIT
-    dir=$(cd "$dir" && pwd -P)
-    mkdir "$dir/work"
-    cp $f/table/note.txt "$dir/work/note.txt"
-    touch "$dir/work/.project"
-    sed "s|@FILE@|$dir/work/note.txt|" $f/table/script > "$dir/table"
-    sed "s|@FILE@|$dir/work/note.txt|" $f/table-restore/script > "$dir/table-restore"
-    status=0
-    "$editor" headless --state "$dir/state" "$sysroot" "$oleans" $f/table/config "$dir/table" >"$dir/table.out" || status=$?
-    if [ "$status" -ne 134 ]; then
-      cat "$dir/table.out"
-      echo "wiring-runs: acp_table_restore: the first process exited $status, not 134" >&2
-      exit 1
-    fi
-    "$harness" "$sysroot" "$oleans" --repo "$repo" expect packages/acp/tests/headless/table/script "$dir/table.out" --dir "$dir"
-    "$editor" headless --state "$dir/state" "$sysroot" "$oleans" $f/table/config "$dir/table-restore" >"$dir/table-restore.out"
-    "$harness" "$sysroot" "$oleans" --repo "$repo" expect packages/acp/tests/headless/table-restore/script "$dir/table-restore.out" --dir "$dir"
   )
 }
 

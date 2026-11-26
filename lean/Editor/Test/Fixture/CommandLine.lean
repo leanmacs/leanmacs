@@ -13,12 +13,7 @@ repository's root, and what to do:
   `tools/wiring-runs.sh`, which runs each through the CLI;
 - `compare <script> <file>`: run the fixture of `script` stepped and compare
   it with the CLI's output in `file`, both ways, and with its expected file,
-  exiting 1 on a difference; `case_compare` hands it each CLI run;
-- `expect <script> <file> [--dir <dir>]`: hold the CLI's output in `file` of
-  a real-effect entry of the real-thread set, which runs only through the
-  CLI, to the fixture's expected file, `dir` written `@DIR@` and the `job `
-  and `commands:` lines dropped, exiting 1 with the first difference; a
-  case of `tools/wiring-runs.sh` hands it each run, so no shell compares.
+  exiting 1 on a difference; `case_compare` hands it each CLI run.
 
 `real-thread [--site <prefix>]`, alone on the command line, needs no
 toolchain: it prints the real-thread set's entries, all or those whose site
@@ -40,10 +35,6 @@ inductive Command where
   | compared
   /-- Run the fixture of `script` stepped and compare it with `file`. -/
   | compare (script file : String)
-  /-- Hold the CLI's output in `file`, of the real-effect entry of `script`,
-  to the fixture's expected file, its run's directory `dir` written
-  `@DIR@`. -/
-  | expect (script file : String) (dir : Option String)
   deriving DecidableEq, Repr
 
 /-- The harness's command line, read. -/
@@ -60,7 +51,7 @@ structure Invocation where
 
 /-- The harness's usage. -/
 def usage : String :=
-  "fixture-test <sysroot> <olean dirs> --repo <repository> run <root>... | compared | compare <script> <cli output file> | expect <script> <cli output file> [--dir <dir>], or fixture-test real-thread [--site <prefix>]"
+  "fixture-test <sysroot> <olean dirs> --repo <repository> run <root>... | compared | compare <script> <cli output file>, or fixture-test real-thread [--site <prefix>]"
 
 /-- The command line `arguments` read, or why it cannot be. -/
 def read (arguments : List String) : Except String Invocation :=
@@ -72,9 +63,6 @@ def read (arguments : List String) : Except String Invocation :=
       | ["run"] => .error "run names no discovery root"
       | ["compared"] => .ok .compared
       | ["compare", script, file] => .ok (.compare script file)
-      | ["expect", script, file] => .ok (.expect script file none)
-      | ["expect", script, file, "--dir", dir] => .ok (.expect script file (some dir))
-      | "expect" :: _ => .error "expect takes <script> <cli output file> [--dir <dir>]"
       | [] => .error "no command"
       | command :: _ => .error s!"{command} is no command"
     command.map ({ sysroot, oleans, repository, command := · })

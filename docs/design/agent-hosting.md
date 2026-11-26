@@ -529,13 +529,19 @@ and a visit's reorder; the table read back after a restart over the
 journal's recording fake, two hosts in turn
 (`AcpTest/Linked/Support/Restart.lean`), and an agent started after it
 minted an id past the kept records'; a session loaded on its first
-visit with its history shown, once; a refused load retried. The contract
-holds the fake and the crate to a load and a refused load. Through the
-CLI, `packages/acp/tests/headless/table/` and `table-restore/` run on the
-fixture set's editor with a scripted agent (`tools/wiring-runs.sh`,
-`case_acp_table_restore`): the record written by a real journal and index
-before an abort, read back by the next process, and resumed through the
-real crate.
+visit with its history shown, once; a refused load retried. The restart
+check's second host restores before any reload, so acp's codec, which its
+packages register, meets the cell at the restore, and its `keep` gives
+each record's ending. The crate's `session/load` is held in Rust: the
+request it sends, the history (a user's chunks among it) posted in order
+before `opened`, and an agent with no `loadSession` refused
+(`rust/src/session/tests.rs`), and the replay of `load.jsonl` against
+`load.events` (`rust/tests/replay.rs`). `agents-api`'s contract holds the
+fake and the crate, over the scripted agent (`AcpTest/ScriptedAgent.lean`),
+to a load whose first events are the history in order, the user's chunk
+first, and to a refused load. No test drives the built editor through a
+restart: the real journal and index are the core's to test, and acp's side
+of the restart is the stepped check above.
 
 ### Upgrading the SDK
 

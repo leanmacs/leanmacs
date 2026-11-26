@@ -95,13 +95,6 @@ def restart (script covers : String) : Entry :=
   cliOnly s!"tests/headless/restart/{script}" covers
     "ffi-test: the five restart lines (the launcher leanmacs, a probe of a real program, the exec)"
 
-/-- The entry of a fixture of acp's agent table, the restore lines of the
-package's own: the real journal and index of the fixture set's editor,
-which holds acp, and the real crate's session/load. -/
-def acpTable (script covers : String) : Entry :=
-  cliOnly s!"packages/acp/tests/headless/{script}" covers
-    "ffi-test: the acp table restore lines (the fixture set's editor, --state on a temporary directory, an abort's status 134, a second process)"
-
 /-- The real-thread set: every fixture of the three groups that a `ci` task
 runs through the CLI. -/
 def entries : Array Entry :=
@@ -176,11 +169,7 @@ def entries : Array Entry :=
       subject :=
         .realEffect
           "a per-user install of the fixture set built with no .olean (:editorInstall), and the default set's editor answering no such command"
-      stepped := true },
-    acpTable "table/script"
-      "acp's agent table journalled and indexed with a session's record before an abort",
-    acpTable "table-restore/script"
-      "acp's agent table restored by the next process from the project's store, and a session resumed by session/load on its first visit"]
+      stepped := true }]
 
 /-- The entry of `script`, if it has one. -/
 def entry? (script : String) : Option Entry :=
