@@ -544,6 +544,7 @@ dependencies = [
 name = "editor-process"
 version = "0.1.0"
 dependencies = [
+ "editor-service",
  "editor-wait",
 ]
 
