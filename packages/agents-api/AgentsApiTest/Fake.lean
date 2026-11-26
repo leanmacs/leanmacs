@@ -25,8 +25,10 @@ the runner with no crate and no child.
   with its raw input and diff, offering the adapter's three options, whose
   answer ends the turn; `burst`, a prompt's many chunks; and `table`
   and `resumable`, the agent table's agent, whose prompts' texts say what
-  they give and whose store, in `resumable`, holds a session's history. Between orders the agent may also send by itself
-  (`Fake.agentSends`), through the same model.
+  they give, or that the prompt is refused (`Script.refuses`), and whose
+  store, in `resumable`, holds a session's history. Between orders the
+  agent may also send by itself (`Fake.agentSends`), through the same
+  model.
 - **A load** of a session the script holds a history of (`Script.history`)
   opens a session whose first events are that history, answered with the
   session id asked for; a load of any other is refused, `the agent has no
@@ -87,6 +89,9 @@ structure Fake.Script where
   /-- The id of each session it opens, the first's first; past their end,
   `sessionId`. -/
   sessionIds : Array String := #[]
+  /-- The words of its refusal of a prompt of text `text`, which begins no
+  turn and leaves the session open; none for a prompt it takes. -/
+  refuses : (text : String) → Option String := fun _ => none
 
 /-- The rules a flawed fake breaks, for the contract's own tests. The fake
 keeps every rule with `Fake.Flaws.none`. -/
@@ -258,6 +263,10 @@ def burst (count : Nat) : Script :=
 def bashRunning : ToolCall :=
   { id := "call-bash-1", title := "Run the tests", kind := "execute", status := "in_progress" }
 
+/-- The words of the table's agent's refusal of a prompt of `refuse`. -/
+def promptRefusal : String :=
+  "the agent refuses the prompt"
+
 /-- The agent the agent table's checks run several sessions of, each with
 its own id, `sess-0001` to `sess-0004`; what a prompt gives depends on its
 text:
@@ -269,6 +278,7 @@ text:
   and the turn's end;
 - `bg`: the reply `Started.`, `call-bash-1` in progress, and the turn's
   end, `end_turn`, the call still in flight;
+- `refuse`: refused, `promptRefusal`, with no turn begun;
 - anything else: `conversation`'s turn, with its title `Example title`. -/
 def table : Script where
   sessionId := Contract.sessionId
@@ -286,6 +296,7 @@ def table : Script where
   onAnswer ticket _ :=
     if ticket == 1 then [.event (.toolCall editCompleted), .endTurn "end_turn"] else []
   onCancel := [.endTurn "cancelled"]
+  refuses text := if text == "refuse" then some promptRefusal else none
 
 /-- The history the agent's store holds of `sess-0001`: the user's
 `Read notes.txt.`, the reply `Done.`, the edit completed and the title. -/
@@ -358,14 +369,17 @@ def order (fake : Fake) (session : Session) : Order → Session × PackageReply
   | .prompt text =>
     if session.ended then (session, refusal "the session has ended")
     else
-      let turn := session.turn
-      match session.protocol.step (.send turn (some turn)) with
-      | none => (session, refusal "the prompt's request is outstanding")
-      | some protocol =>
-        let session :=
-          { session with
-            protocol, turn := turn + 1, trace := session.trace.push (.send turn (some turn)) }
-        (session.moves (fake.script.onPrompt turn text), .ok (.mk ({ turn := some turn } : Sent)))
+      match fake.script.refuses text with
+      | some words => (session, refusal words)
+      | none =>
+        let turn := session.turn
+        match session.protocol.step (.send turn (some turn)) with
+        | none => (session, refusal "the prompt's request is outstanding")
+        | some protocol =>
+          let session :=
+            { session with
+              protocol, turn := turn + 1, trace := session.trace.push (.send turn (some turn)) }
+          (session.moves (fake.script.onPrompt turn text), .ok (.mk ({ turn := some turn } : Sent)))
   | .answer ticket optionId =>
     match session.protocol.step (.answer ticket) with
     | some protocol =>

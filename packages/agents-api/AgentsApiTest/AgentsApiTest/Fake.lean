@@ -11,8 +11,9 @@ cancel's withdrawals, a withdrawn `next`, and when it holds nothing; a
 fresh fake's independent state, the agent's own sends into a parked
 `next`, a cancel that leaves the `cancellable` session open, and the
 `permissionRequest` agent's parked request and its answer; a load and a
-refused load; and the agent table's script's four prompts. The test
-driver's root, `AgentsApiTest/Model.lean`, runs them.
+refused load; and the agent table's script's four prompts and the one
+it refuses. The test driver's root, `AgentsApiTest/Model.lean`, runs
+them.
 -/
 
 namespace AgentsApiTest
@@ -307,6 +308,25 @@ def fakeChecks : List Check :=
               (done.map (·.contains (.title "Example title"))) == some true &&
               sentFor answer none &&
               afterAnswer == some #[.toolCall Fake.editCompleted, .turnEnded 1 "end_turn"])
-            s!"ids {ids}, work {repr work}, ask {repr ask}, bg {repr bg}, done {repr done}, after {repr afterAnswer}" }]
+            s!"ids {ids}, work {repr work}, ask {repr ask}, bg {repr bg}, done {repr done}, after {repr afterAnswer}" },
+    { name :=
+        "the table's script refuses a prompt of refuse before any turn begins: the model takes no send, and the next prompt is turn 1"
+      run := do
+        let fake ← Fake.new Fake.table
+        let completions ← Editor.Job.Completions.new
+        let service := fake.service completions
+        discard <| answered service completions (.open 0 Contract.cwd #[])
+        let refused ← answered service completions (.send 1 (.prompt "refuse"))
+        let words :=
+          match refused with
+          | some (.error (.refused words)) => words
+          | _ => ""
+        let traceAfter ← fake.trace
+        let work ← answered service completions (.send 1 (.prompt "work"))
+        let events ← eventsNow service completions
+        saw
+            (words == Fake.promptRefusal && traceAfter.isEmpty && sentFor work (some 1) &&
+              events == some #[.chunk (some "msg-w") "Working.", .toolCall Fake.bashRunning])
+            s!"refused {words}, trace {repr traceAfter}, sent {sentFor work (some 1)}, events {repr events}" }]
 
 end AgentsApiTest
