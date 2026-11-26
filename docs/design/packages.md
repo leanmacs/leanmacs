@@ -48,7 +48,7 @@ host registers one are in [lean-runtime.md](lean-runtime.md), "Packages".
 **No feature is in the core's Lake package** (`lean/lakefile.lean`, the
 package `editor-core`): it registers no `Package` and has no entry module
 ("A package's entry module", below). The default package set
-(`packages/lakefile.toml`) requires the core and twenty-six default
+(`packages/lakefile.toml`) requires the core and twenty-seven default
 packages, in this order, each with the interface packages it requires:
 
 1. `ex` (`ex-api`, `buffers-api`, `shell-api`), `frame-commands`
@@ -73,7 +73,9 @@ packages, in this order, each with the interface packages it requires:
 5. `mise`, a child's directory environment source over the core's
    interface library `environment-api`, the process-environment-sources
    roadmap's phase 2 ("The core interface library `environment-api`",
-   below).
+   below);
+6. `login-shell`, the base of a child's environment in the window mode,
+   over the same library, that roadmap's phase 3.
 
 Each has a directory under `packages/`, as each of the eighteen interface
 packages has. "The module map", below, lists them with what each
@@ -140,15 +142,15 @@ could move later.
 - **The default set is `packages/lakefile.toml`** (the Lake package
   `default-set`). It requires the core (`editor-core`, from `../lean`) and
   the default packages, each of which has a directory under `packages/`
-  and a `require` there. There are twenty-six, required in the order the
+  and a `require` there. There are twenty-seven, required in the order the
   top of this document lists: the seven of phase 8 ("The default packages
   of the features-as-packages roadmap's phase 8", below), `evil` and
   `themes` ("… phase 7"), the seven of phase 6 ("… phase 6"), then
   `completion`, `mode-line`, `minibuffer`, `shipped-themes`,
   `execute-command`, `binding-search`, `compile`, `at-point` and
   `languages` ("The first default package", "The default package
-  `compile`", "… phase 3" and "… phase 4"), then `mise` ("The core
-  interface library `environment-api`"). Twenty of them require an
+  `compile`", "… phase 3" and "… phase 4"), then `mise` and
+  `login-shell` ("The core interface library `environment-api`"). Twenty of them require an
   interface package of their own or another's, which is in the set through
   that `require`. It is the lakefile a user's set starts from.
 - **The core defines the build**, as Lake facets in `lean/lakefile.lean`.
@@ -296,7 +298,7 @@ The set's packages are visited from the set, **each after the packages it
 - an interface package has no entry module and registers nothing, so a
   `require` of one reorders nothing.
 
-So the default set registers its twenty-six in the order its lakefile
+So the default set registers its twenty-seven in the order its lakefile
 requires them. Each phase that moved features out of the core's own list
 put them first in the set, in the order that list held them, because the
 core's packages registered before every default package:
@@ -400,8 +402,8 @@ package `evil` declares it, so the default set's array holds
 build says of the editor for the files it generates in a config directory
 ("A config directory requires the core and the set", below): the set's Lake name and the
 text of the core's `lean-toolchain`. The default set's root imports
-exactly these twenty-eight modules (`lake -d ../packages query
-:editorRootImports` lists them), and its base is the twenty-seven named
+exactly these twenty-nine modules (`lake -d ../packages query
+:editorRootImports` lists them), and its base is the twenty-eight named
 (`:editorBase`). The interface packages have no entry module, so neither
 names them; their modules come with their implementations' libraries.
 
@@ -619,7 +621,7 @@ globs = ["Config.+"]
   alone was used. The gate starts the window mode's wiring for both sets'
   editors with that default and requires config to load (`ffi-test
   window-host-direct`, a window scenario). The default set's record names
-  forty-five directories, the core's, then those of its twenty-six
+  forty-six directories, the core's, then those of its twenty-seven
   default packages and eighteen interface packages in the order the build
   visits them, each interface package before the first package that
   requires it (`shell-api`'s, `ex-api`'s, `buffers-api`'s, `ex`',
@@ -632,10 +634,10 @@ globs = ["Config.+"]
   `working-set`'s, `shell`'s, `version-control`'s, `completion-api`'s,
   `completion`'s, `mode-line`'s, `minibuffer`'s, `shipped-themes`',
   `execute-command-api`'s, `execute-command`'s, `binding-search-api`'s,
-  `binding-search`'s, `compile`'s, `at-point`'s, `languages`' and
-  `mise`'), and the
-  fixture set's fifty-two, the core's, `greeting-api`'s, `greeting`'s,
-  `greeting-loud`'s, `echo`'s, the default set's forty-four in that
+  `binding-search`'s, `compile`'s, `at-point`'s, `languages`', `mise`'
+  and `login-shell`'s), and the
+  fixture set's fifty-three, the core's, `greeting-api`'s, `greeting`'s,
+  `greeting-loud`'s, `echo`'s, the default set's forty-five in that
   order, the opt-in `agents-api`'s and `acp`'s, and `word-count`'s, each
   holding its package's modules.
 - **A directory given on the command line is a search path**, one
@@ -723,7 +725,7 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   package's commands, stops at the first that fails and passes its exit
   status through, and decides nothing of its own.
 - **The gate gives the steps the fixture set**, which requires the default
-  set. So the default packages, the twenty-six default packages and the
+  set. So the default packages, the twenty-seven default packages and the
   eighteen interface packages, are tested, built, formatted and run
   through it. The default set's own
   `editor` and `fixture-test` are built beside it, for the standing
@@ -1914,7 +1916,7 @@ guide quotes.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the twenty-six default packages and the eleven interface packages, then the opt-in packages `agents-api` and `acp` (below), after the default set so that `acp`'s ex names register after the default packages', as the default packages' fixtures, which this set's harness runs too, list them, then `word-count` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the twenty-seven default packages and the eleven interface packages, then the opt-in packages `agents-api` and `acp` (below), after the default set so that `acp`'s ex names register after the default packages', as the default packages' fixtures, which this set's harness runs too, list them, then `word-count` |
 | `tests/packages/greeting-api/` | The interface package `greeting-api` (`keywords = ["editor-interface"]`): the name `greeting-reply` (`GreetingApi.replyName`) and every name it declares (`GreetingApi.names`); in its test library, the fake `GreetingApiTest.fake` and the contract check `GreetingApiTest.contractChecks`, and its test driver, which holds the fake to the contract and shows the contract refuse a package that lacks or misspells the name. It has no entry module and registers nothing |
 | `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
@@ -1989,7 +1991,7 @@ formatter's host.
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
 `lean/` links its `lean-toolchain` to it**, a relative symbolic link (the
-default set and its forty-four packages, the twenty-six default
+default set and its forty-five packages, the twenty-seven default
 packages and the eighteen interface packages, the fixture set and its
 four packages, the writing guide's example package `word-count`, the
 empty set, the user-set fixture `tests/user-sets/hello-init`, and the
@@ -2349,10 +2351,11 @@ an implementation package; a package may import interface packages. A
 package is an interface package when its lakefile declares
 `keywords = ["editor-interface"]`, and an implementation package
 otherwise. The rule holds for every module of a package, its tests
-included. The twenty-six default packages are implementation packages:
+included. The twenty-seven default packages are implementation packages:
 each imports the core and, but for `mode-line`, `shipped-themes`,
-`languages`, `restore`, `package-set` and `mise` (which imports the core's
-interface library `EnvironmentApi`), one or more interface packages,
+`languages`, `restore`, `package-set`, `mise` and `login-shell` (the last
+two import the core's interface library `EnvironmentApi`), one or more
+interface packages,
 its own or another's ("The module map", below, lists each one's
 `require`s). The eighteen interface packages import the core alone, but
 for `ex-api`, whose contract names `shell-api`'s `shell-command`, and
@@ -3030,7 +3033,7 @@ package may import it. Its module docs say where an addition goes.
 
 | Library | Declares | Publishes for tests | Its own tests | Implemented by | Used by | Stays |
 |---|---|---|---|---|---|---|
-| `EnvironmentApi` (`lean/EnvironmentApi.lean`) | The hook `EnvironmentApi.DirectorySource` (every value applies in registration order, a later value of a name replacing the earlier in its place, `DirectorySource.ordered`) and the choice `EnvironmentApi.BaseSource` by the name the core's setting `environmentBase` gives, beside the core's built-in `inherited` (`BaseSource.choose`, `unknownBase`); `registered` and `ofRegistry`, the layers as the host installs them | `EnvironmentApiTest.fakeDirectory`, `fakeBase`, `fakePackage` and `fakeSource`; the contract, `directoryContract` and `baseContract`; the model rigs, `modelDirectoryRig` and `modelBaseRig` | `ModelTest.environmentRegistryChecks`, `ModelTest.environmentApiChecks` | `mise` (`Mise.Compiled`, `packages/mise/`), whose `miseChecks` run the directory contract on the model rig and whose linked test (`MiseTest.Linked.Mise.Contract`) runs it over the real process service | the core's host (`Editor.Headless`) and reload reducer (`Editor.Config.Reload`); config | Stays a core interface: the core reads a child's layers through it |
+| `EnvironmentApi` (`lean/EnvironmentApi.lean`) | The hook `EnvironmentApi.DirectorySource` (every value applies in registration order, a later value of a name replacing the earlier in its place, `DirectorySource.ordered`) and the choice `EnvironmentApi.BaseSource` by the name the core's setting `environmentBase` gives, beside the core's built-in `inherited` (`BaseSource.choose`, `unknownBase`); `registered` and `ofRegistry`, the layers as the host installs them | `EnvironmentApiTest.fakeDirectory`, `fakeBase`, `fakePackage` and `fakeSource`; the contract, `directoryContract` and `baseContract`; the model rigs, `modelDirectoryRig` and `modelBaseRig` | `ModelTest.environmentRegistryChecks`, `ModelTest.environmentApiChecks` | `mise` (`Mise.Compiled`, `packages/mise/`), whose `miseChecks` run the directory contract on the model rig and whose linked test (`MiseTest.Linked.Mise.Contract`) runs it over the real process service; `login-shell` (`LoginShell.Compiled`, `packages/login-shell/`), whose `loginShellChecks` run the base contract on the model rig and whose linked test runs it over the real process service (`LoginShellTest.Linked.LoginShell.Contract`) and holds the one wiring check of a real base under a real directory source (`LoginShellTest.Linked.LoginShell.Real`) | the core's host (`Editor.Headless`) and reload reducer (`Editor.Config.Reload`); config | Stays a core interface: the core reads a child's layers through it |
 
 - **The base is chosen by name.** `environmentBase` is a core setting:
   config's choice, else the latest package's default (a package's
@@ -3053,9 +3056,25 @@ package may import it. Its module docs say where an addition goes.
   harness with the real elaborator: the installed registry, read through
   `EnvironmentApi.ofRegistry`, gives one directory source, `mise` at the
   first of `Mise.candidates` in the window mode and none in the headless
-  mode, and config's `Mise.executable "/opt/mise"` replaces it in both
+  mode, and config's `Mise.executable "/opt/mise"` replaces it in both;
+  with the base the registry names (`RegistryRequest.environmentBase`),
+  `login-shell`, looked up in the home directory in the window mode and
+  inherited in the headless mode
   ([headless-mode.md](../dev-practices/headless-mode.md), "How the gate
   runs a fixture").
+- **The login shell is the default base** (`packages/login-shell/`,
+  process-environment-sources phase 3). The package registers the base
+  `login-shell` and calls `environmentBase "login-shell"`, a default that
+  config's `environmentBase` overrides. Its executable is a probed program
+  (`Process.Program.probed`): `SHELL`, else the user record's login shell
+  (`id -P`), else `/bin/zsh`, so the decision is data the core runs and
+  the models see, not a shell one-liner. Its lookup has a time limit of
+  its own (`Process.Source.limit`, 5 s, the setting
+  `LoginShell.timeLimit`). Its base is `.inherited` in the headless mode,
+  so every headless fixture and every test keeps launchd's environment.
+  mise cannot be registered beside it in a test (no package imports an
+  implementation package), so its one wiring check over a real directory
+  source uses this library's fake at a fixture standing in for mise.
 
 ## Rust in a package
 
@@ -3526,6 +3545,7 @@ points it registers at and reads, and the names it declares or reaches.
 | `at-point` | implementation | `at-point-api`, `evil-api` | none | none | registers `at-point-api`'s names; reaches `insert-newline` and `insert-tab` by `evil-api`'s constants |
 | `languages` | implementation | none | none | none | registers the `code` mode and the languages that ship |
 | `mise` | implementation | none | `EnvironmentApi.DirectorySource` | none | declares no name; its setting, `Mise.executable`, registers at the same point |
+| `login-shell` | implementation | none | `EnvironmentApi.BaseSource` (and a default `environmentBase`) | none | declares no name; its setting, `LoginShell.timeLimit`, registers at the same point |
 
 Two first-party packages live under `packages/` and have no row, as they
 are not of the default set: the agents packages, opt-in and built with
@@ -3586,6 +3606,7 @@ in its phase's section, above.
 | The frame commands | `frame-commands` | features-as-packages phase 8 |
 | The ex command line | `ex` | features-as-packages phase 8 |
 | A child's directory environment source, mise (the mise section of `Editor.Process.Environment`, chosen by config's `processEnvironment`) | `mise` | process-environment-sources phase 2 ("The core interface library `environment-api`") |
+| A child's base environment, the login shell (new) | `login-shell` | process-environment-sources phase 3 ("The core interface library `environment-api`") |
 
 ## Input schemes
 

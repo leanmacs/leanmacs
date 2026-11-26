@@ -2262,17 +2262,23 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   count of the scenes published.
 - **`tests/headless/environment-sources`** is the default set's wiring of
   a child's environment, the one check that the set registers the `mise`
-  package's directory source: its config's command `layers` reads the
-  installed registry through `environment-api`
-  (`EnvironmentApi.ofRegistry`, as the host reads it at a reload that
-  installs) and says the directory sources it gives in the window mode,
-  with the home directory `/u`, and in the headless mode. With no setting,
-  `mise first of /u/.local/bin/mise, /opt/homebrew/bin/mise,
-  /usr/local/bin/mise, else skip | headless: none` (`Mise.candidates`);
-  with `Mise.executable "/opt/mise"` in config (`executable-config/`),
-  `mise at /opt/mise` in both, config's value replacing the package's. A
+  package's directory source and the `login-shell` package's base, and
+  chooses that base: its config's command `layers` reads the installed
+  registry through `environment-api` (`EnvironmentApi.ofRegistry`, with
+  the base the registry names, `RegistryRequest.environmentBase`, as the
+  host reads them at a reload that installs) and says the base and the
+  directory sources it gives in the window mode, with the home directory
+  `/u`, and in the headless mode. With no setting, `base login-shell in
+  /u, probed by /usr/bin/printenv SHELL, /usr/bin/id -P, else /bin/zsh;
+  mise first of /u/.local/bin/mise, /opt/homebrew/bin/mise,
+  /usr/local/bin/mise, else skip | headless: base inherited; none`
+  (`LoginShell.program`, `Mise.candidates`); with `Mise.executable
+  "/opt/mise"` in config (`executable-config/`), `mise at /opt/mise` in
+  both, config's value replacing the package's, over the same bases. A
   set that drops `mise`, from its lakefile's requires or its entry
-  modules, says `none` for both and rejects the second config. A config
+  modules, says `none` for the directory sources and rejects the second
+  config; one that drops `login-shell` says `base inherited` in both
+  modes. A config
   that calls `Mise.executable` twice (`twice-config/`) is rejected, its
   diagnostic saying the setting `Mise.executable` is set twice. It starts
   no child.

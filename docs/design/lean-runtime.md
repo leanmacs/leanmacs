@@ -1496,7 +1496,7 @@ def package : Package :=
   features-as-packages roadmap's phase 8 moved the last seven packages it
   listed out (`ex`, `frame-commands`, `menu`, `window-commands`,
   `tab-commands`, `restore` and `package-set`) and removed it. The
-  default set registers its twenty-six packages in the order its lakefile
+  default set registers its twenty-seven packages in the order its lakefile
   requires them, those seven first, which keeps each kind of entry where
   the hosts registered it before there were packages
   ([packages.md](packages.md), "The order packages register in",

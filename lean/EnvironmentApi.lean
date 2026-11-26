@@ -9,8 +9,9 @@ as its own `lean_lib` with the layout and names an interface package has
 (`lean/lakefile.lean`, `lean_lib EnvironmentApi`), as `files-api` is: the
 contract between the core, which builds a child's environment in layers
 (`Editor/Process/Environment.lean`, `Process.prepared` in
-`Editor/Job.lean`), and the packages that give it sources, the default
-package `mise` (`packages/mise/`) first. It imports only the core's API, and
+`Editor/Job.lean`), and the packages that give it sources: the default
+packages `mise` (`packages/mise/`), a directory source, and `login-shell`
+(`packages/login-shell/`), the default base. It imports only the core's API, and
 its test library (`EnvironmentApiTest`) only that, this library and the
 core's test kit. The core reads it at every reload that installs, so it is a
 core interface for good: a source is a package, and the core names none.
@@ -54,10 +55,10 @@ child gets the editor's own environment, and no lookup runs.
 
 - **A new directory source** (direnv, a project's `.env`): a package that
   registers a `DirectorySource`.
-- **A new base** (a login shell): a package that registers a `BaseSource`,
-  and, to be the default, calls `environmentBase` with its name in its
-  `setup` (a package's `environmentBase` is a default, which config's
-  overrides).
+- **A new base**: a package that registers a `BaseSource`, and, to be the
+  default, calls `environmentBase` with its name in its `setup` (a
+  package's `environmentBase` is a default, which config's overrides), as
+  the login shell does (`packages/login-shell/`).
 - **A new kind of data a source carries** (how its executable is found,
   what its lookup runs, how its output is read): a field of `Process.Source`
   in the core.
@@ -72,14 +73,22 @@ child gets the editor's own environment, and no lookup runs.
 - The contract every real source runs, `EnvironmentApiTest.directoryContract`
   and `EnvironmentApiTest.baseContract`: on this library's fakes by
   `ModelTest.environmentApiChecks`, and against real processes by each real
-  source's own linked test (mise's: `MiseTest.Linked.Mise.Contract`).
+  source's own linked test (mise's: `MiseTest.Linked.Mise.Contract`; the
+  login shell's: `LoginShellTest.Linked.LoginShell.Contract`).
+- A real base under a real directory source, once:
+  `LoginShellTest.Linked.LoginShell.Real`, the one wiring linked test, its
+  base the login shell at a fixture shell and its directory source this
+  library's fake at a fixture standing in for mise (no package may import
+  another implementation package, so mise's own source cannot be there).
 - The host's wiring, once: `ConfigTest.environmentHostChecks`, over the
   headless host and the real elaborator.
 - The default set's wiring, once: the standing fixture
   `tests/headless/environment-sources`, on the default set's fixture
-  harness, reads the installed registry through `ofRegistry` (mise's
-  source alone, in the window mode; none in the headless mode; config's
-  `Mise.executable` in its place).
+  harness, reads the installed registry through `ofRegistry`, with the base
+  the registry names (`RegistryRequest.environmentBase`): in the window
+  mode the base `login-shell`, looked up in the home directory, under
+  mise's source; in the headless mode the inherited base and no directory
+  source; config's `Mise.executable` in mise's place.
 
 Its test library publishes the fakes (`EnvironmentApiTest.fakeDirectory`,
 `fakeBase`, `fakePackage`), the contract, and model rigs a package's model

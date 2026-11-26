@@ -267,7 +267,9 @@ where the package put it. `EnvironmentApi.BaseSource` is a choice by name
 `environmentBase`, beside the core's built-in `inherited`, launchd's
 environment; a name nothing answers to refuses the config at reload, with a
 diagnostic that lists the bases there are, and children keep the base they
-had.
+had. Its one shipped value is the login-shell package's `login-shell`,
+the default base because its package calls `environmentBase` (a
+package's call is a default, which config's overrides).
 
 **A package's setting** is a function config calls to register config's
 value at a point in place of the package's, as `Mise.executable` does. It

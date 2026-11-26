@@ -827,18 +827,22 @@ and changes on disk:
   `Process.prepared` in `lean/Editor/Job.lean`). The question is "what
   environment does a child started in this directory get?", and the answer
   is four layers, each later one winning a variable of the same name: the
-  editor's own environment, then the base's variables, then each directory
-  source's for the child's directory in order, then the command's own
-  `Environment`. The editor's own process environment is never changed.
+  editor's own environment, then the base's variables (by default the
+  login shell's in the window mode, and none in the headless mode and the
+  tests), then each directory source's for the child's directory in order
+  (mise's), then the command's own `Environment`. The editor's own process
+  environment is never changed.
   `Process.run`, `Process.runWithin` and `Process.start` each prepare their
   command first, as a job program, so the model and the runner run the same
   code; a lookup itself is a raw request, so it never looks itself up.
   - *Sources as data.* A source (`Process.Source`) is a name, where its
-    executable is (a path, or the first of some candidates whose stamp a
-    file request answers, skipped or reported when none is), the command its
-    lookup runs (built from the executable, the directory and the
-    environment so far), a parser from its output to variables, and, for a
-    directory source, the file names whose stamps keep its result. None of
+    executable is (a path; the first of some candidates whose stamp a file
+    request answers, skipped or reported when none is; or the first
+    absolute path some probes print, commands run through the process
+    service, else a fallback), the command its lookup runs (built from the
+    executable, the directory and the environment so far), a parser from
+    its output to variables, for a directory source the file names whose
+    stamps keep its result, and, if it has one, its own time limit. None of
     it is a program, so the core composes sources it does not name, and a
     source can travel through a registry and run in a job with no `EditorM`
     in the reply.
@@ -847,8 +851,26 @@ and changes on disk:
     directory source sees the base's `PATH`.
   - *The base* is launchd's `inherited` environment, the editor's own with
     no lookup, built into the core under the name `inherited`, or a base
-    source a package registers. A base that is a lookup runs once per run
-    over the editor's environment.
+    source a package registers. A base that is a lookup runs once per run,
+    the first time a child is prepared, over the editor's environment, its
+    probes first when its executable is probed; a failure falls back to the
+    editor's own environment and is said once per run. The default set's
+    base is the login-shell package's (`packages/login-shell/`, a default
+    package that chooses its base with `environmentBase`): in the window
+    mode, the user's shell (`SHELL`, else the user record's login shell,
+    else `/bin/zsh`) run as a login shell, not interactive, in the home
+    directory, printing its environment NUL-separated between two markers;
+    every variable but the shell's `PWD`, `OLDPWD`, `SHLVL` and `_` is
+    kept, under a time limit of 5 s, the package's setting
+    `LoginShell.timeLimit`. The headless mode and every test keep
+    launchd's environment. Config's `environmentBase "inherited"` opts out.
+  - *What a Finder start gets.* The editor itself runs with launchd's
+    minimal environment, `PATH=/usr/bin:/bin:/usr/sbin:/sbin`. Every child
+    it starts gets the login shell's variables over that, then mise's for
+    its directory (whose lookup so runs with the shell's `PATH`, and whose
+    `PATH` entries come first, so a project's pinned tool wins over the
+    shell's), then its own. If the shell fails, children get launchd's
+    environment under mise's, and the echo area says why once.
   - *The registry* gives the layers. The sources are packages registered at
     the extension points of the core's interface library `environment-api`
     (`lean/EnvironmentApi.lean`; [packages.md](packages.md), "The core
