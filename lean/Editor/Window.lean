@@ -89,6 +89,10 @@ structure Environment where
   /-- The `.olean` directories the build recorded for the executable, in
   order; none when it has no record (`ModuleLookup.recorded`). -/
   recordedOleans : List String := []
+  /-- Where the grammars directory of each Lake package of the executable's
+  set that ships grammars is staged, by the Lake package's name; none when it
+  has no record (`ModuleLookup.grammarDirectories`). -/
+  grammarDirectories : List (String × System.FilePath) := []
   deriving DecidableEq, Repr
 
 /-- A way a frame reaches the display, by wgpu's names, that one run may ask
@@ -192,6 +196,10 @@ structure Options where
   /-- How this run was launched (`Editor/Restart/Launch.lean`), which the
   executable read before the options. -/
   launch : Restart.Launch := {}
+  /-- Where the grammars directories of the set's Lake packages are staged,
+  from the environment (`Environment.grammarDirectories`), which the host
+  hands its packages' registration (`Headless.Collaborators.grammarDirectories`). -/
+  grammarDirectories : List (String × System.FilePath) := []
   deriving DecidableEq, Repr
 
 /-- The window mode's command line, as the usage says it. -/
@@ -348,7 +356,8 @@ def parse (environment : Environment) (arguments : List String) : Except String 
         report := read.report
         presentMode := read.presentMode
         frameLatency := read.frameLatency
-        given := read.withoutFile arguments }
+        given := read.withoutFile arguments
+        grammarDirectories := environment.grammarDirectories }
 
 /-- The command line a restart hands the next run: every option given, the
 file dropped, no launch flag ("A restart", in the module docs). -/

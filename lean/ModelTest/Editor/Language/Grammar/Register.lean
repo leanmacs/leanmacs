@@ -61,8 +61,8 @@ def shippedState : ModelState :=
 skipped. -/
 def withPackages (state : ModelState) (packages : Array Package)
     (grammarDirectories : List (String × System.FilePath)) : ModelState :=
-  packages.foldl (fun state package => (state.register package grammarDirectories).toOption.getD state)
-    state
+  packages.foldl
+    (fun state package => (state.register package grammarDirectories).toOption.getD state) state
 
 /-- The package `ini-grammar`, of the Lake package of that name, that
 declares the grammar `ini` for macOS on Apple silicon alone, relative to its
@@ -325,9 +325,8 @@ def grammarRegisterChecks : List Check :=
             installedWith (pure ())
               #[("/s/grammars/ini-grammar/darwin-aarch64/libtree-sitter-ini.so",
                   .exports #[("tree_sitter_ini", .grammar)])]
-              #[("/s/grammars/ini-grammar/queries/highlights.scm", packageHighlights)]
-              (platform := "linux-x86_64") (packages := #[iniPackage])
-              (grammarDirectories := iniStagedAt) with
+              #[("/s/grammars/ini-grammar/queries/highlights.scm", packageHighlights)] (platform :=
+              "linux-x86_64") (packages := #[iniPackage]) (grammarDirectories := iniStagedAt) with
           | none => false
           | some driver =>
             let (answered, delivered) := driver.finish 1
@@ -343,9 +342,8 @@ def grammarRegisterChecks : List Check :=
             installedWith (pure ())
               #[("/s/grammars/ini-grammar/darwin-aarch64/libtree-sitter-ini.so",
                   .exports #[("tree_sitter_ini", .grammar)])]
-              #[("/s/grammars/ini-grammar/queries/highlights.scm", packageHighlights)]
-              (platform := "linux-x86_64") (packages := #[iniPackage])
-              (grammarDirectories := iniStagedAt) with
+              #[("/s/grammars/ini-grammar/queries/highlights.scm", packageHighlights)] (platform :=
+              "linux-x86_64") (packages := #[iniPackage]) (grammarDirectories := iniStagedAt) with
           | none => false
           | some driver =>
             let before := openedIn driver "/w/a.ini"

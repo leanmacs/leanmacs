@@ -298,7 +298,8 @@ show:
   elaborator: one by name and library alone is built with the symbol
   `tree_sitter_<name>` and the query directory `queries/` beside the
   library, one with a symbol, a query directory and a policy with those,
-  and a language naming the first with it as its grammar;
+  and a language naming the first with it as its grammar; and one
+  declared per platform with those paths;
 - `hintChecks`: the key hints through a host of the test scheme: after a
   reload, a config's prefix name and a binding's description are in the
   scene's `hint` lines after the scheme's leader and after the leader and
@@ -401,7 +402,9 @@ show:
   installs a config declaring a grammar starts the job `register-grammars`,
   whose command says the registration failed on the stepped stage, which
   has no grammar service, and a second install before that job is
-  stepped cancels it, so only the second job's command runs;
+  stepped cancels it, so only the second job's command runs; and a host
+  handed a package shipping a grammar and the directory its Lake package
+  is staged in starts that job at the first install;
 - `faceChecks`: a face set in a config file reaches the next frame,
   through a host handed the display's real binding over the library's
   layout: the host's reload re-themes its display (`Config.retheme`), and

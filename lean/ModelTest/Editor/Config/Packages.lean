@@ -399,7 +399,8 @@ def packageChecks : List Check :=
           (installed.registry.grammarTable == [Language.Grammar.declare "ini" "/mine/libini.so"] &&
             effects.contains (.registerGrammars 1 #["ini"]) &&
             installed.registry.grammars.any (·.owner.name == "ini-grammar")) },
-    { name := "Package.shipping tags every package of the array with the Lake package and changes nothing else"
+    { name :=
+        "Package.shipping tags every package of the array with the Lake package and changes nothing else"
       run :=
         let packages := #[{ shippingIni with lakePackage := none }, commanding "other" []]
         let shipped := Package.shipping "ini-grammar" packages

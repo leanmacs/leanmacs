@@ -370,6 +370,10 @@ structure Compiled where
   is made with it set, so the mode's keys hold from the first key and no
   on-enter action runs. -/
   major : Option String := none
+  /-- Where the grammars directory of each Lake package is staged, by the
+  Lake package's name, which the host resolves its packages' grammars
+  against (`Headless.Collaborators.grammarDirectories`). -/
+  grammarDirectories : List (String × System.FilePath) := []
 
 /-- The name of the package a stage makes of a `Compiled`'s arrays. -/
 def Compiled.packageName : String :=
@@ -467,6 +471,7 @@ def Stage.new {β σ : Type} (context : HostContext) (elaborator : Config.Elabor
           posts := requests + 4, pauseEvents := requests + 5
           packages :=
             #[listingsPackage, Test.Shipped.modeLine] ++ compiled.packages ++ #[compiled.package]
+          grammarDirectories := compiled.grammarDirectories
           log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter
           dispose := do
             let emitted := (← output.get).size

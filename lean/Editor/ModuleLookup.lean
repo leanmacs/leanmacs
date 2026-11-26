@@ -112,6 +112,31 @@ set").
 - The directory is normalised lexically (`PackageSet.normalise`), and one
   that is not there is none, in either case.
 
+## The grammars
+
+A package set's Lake packages that carry the keyword `editor-grammars` ship
+grammar files under their `grammars/` directory (`docs/design/packages.md`,
+"A package's grammars"), and a package's grammar declarations name paths
+relative to it. Where each such directory is staged beside an executable is
+a record of lines `<lake name><TAB><directory>` (`grammarsRecordedIn`), read
+like the `.olean` record (`grammarDirectories`):
+
+- **Outside a bundle**, `<executable>.grammars` (`grammarsRecordPath`), a
+  relative line resolved against the executable's directory: the set's
+  build writes absolute lines naming `<set>/.lake/build/grammars/<lake>`,
+  and a per-user install copies each directory to `grammars/<lake>` beside
+  its executable and writes relative lines, so the install still renames
+  into place.
+- **In a bundle**, `<bundle>/Contents/Resources/editor.grammars`
+  (`bundleGrammarsRecordPath`), relative lines resolved against
+  `Contents/Resources`: the `stage-bundle` binary writes
+  `lean/set/<rel>/grammars`, the package's own copy in the bundle's staged
+  set. The record beside the executable is never read in a bundle.
+
+No record, or no line for a Lake package, is no directory: a package of it
+that declares grammars is refused (`Editor/Config/Packages.lean`, "A
+package's grammars").
+
 Nothing is read from the environment: `LEAN_PATH` and every other variable
 are ignored, as the elaborator ignores them. The executable's path is read
 at each edge, from `IO.appPath`, with the record through `recorded`: the
@@ -289,5 +314,48 @@ def coreDirectory? {m : Type → Type} [Monad m] (appPath : String)
     return if ← isDirectory directory then some directory else none
   | none =>
     return none
+
+/-- The file the package-set build writes beside an executable it links, to
+say where the grammars directory of each Lake package of the set that ships
+grammars is staged ("The grammars", in the module docs):
+`<executable>.grammars`. -/
+def grammarsRecordPath (appPath : String) : System.FilePath :=
+  appPath ++ ".grammars"
+
+/-- The bundle's record of its staged grammars directories ("The grammars",
+in the module docs): `<bundle>/Contents/Resources/editor.grammars`. -/
+def bundleGrammarsRecordPath (bundle : System.FilePath) : System.FilePath :=
+  bundle / "Contents" / "Resources" / "editor.grammars"
+
+/-- What the text of a grammars record names: each line that holds a tab,
+a Lake package's name before it and its directory after it, a relative
+directory resolved against `base` and an absolute one kept, in order; a
+blank line and a line with no tab are skipped. -/
+def grammarsRecordedIn (base : System.FilePath) (text : String) : List (String × System.FilePath) :=
+  (text.splitOn "\n").filterMap fun line =>
+    match line.splitOn "\t" with
+    | lake :: directory :: rest =>
+      let directory : System.FilePath := "\t".intercalate (directory :: rest)
+      some (lake, if directory.isAbsolute then directory else base / directory)
+    | _ => none
+
+/-- The staged grammars directory of each Lake package of the set the
+executable at `appPath` was built from that ships grammars, read through
+`readFile`, the port, which answers a file's text or none when it cannot be
+read: in a bundle, those of the bundle's record (`bundleGrammarsRecordPath`)
+resolved against its `Contents/Resources`; outside one, those of the file
+`grammarsRecordPath` names resolved against the executable's directory;
+none when there is no such file. The edges pass the real read, and the
+model tests a fake. -/
+def grammarDirectories {m : Type → Type} [Monad m] (appPath : String)
+    (readFile : System.FilePath → m (Option String)) : m (List (String × System.FilePath)) := do
+  match bundle? appPath with
+  | some bundle =>
+    return ((← readFile (bundleGrammarsRecordPath bundle)).map
+            (grammarsRecordedIn (bundle / "Contents" / "Resources"))).getD
+        []
+  | none =>
+    let directory := (System.FilePath.mk appPath).parent.getD "."
+    return ((← readFile (grammarsRecordPath appPath)).map (grammarsRecordedIn directory)).getD []
 
 end Editor.ModuleLookup

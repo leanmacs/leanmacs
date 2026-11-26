@@ -193,13 +193,13 @@ def grammarsUnder (package : Package) (directory? : Option System.FilePath) :
     return #[]
   let some directory := directory? | throw noGrammarsDirectory
   package.grammars.mapM fun grammar => do
-    match grammar.under directory with
-    | .error path =>
-      throw (leavesGrammars grammar.name path)
-    | .ok resolved =>
-      if let some problem := resolved.problem? then
-        throw problem
-      return resolved
+      match grammar.under directory with
+      | .error path =>
+        throw (leavesGrammars grammar.name path)
+      | .ok resolved =>
+        if let some problem := resolved.problem? then
+          throw problem
+        return resolved
 
 /-- What `package`'s `setup` registers, with its grammars resolved against
 `directory?` (`grammarsUnder`), or the message `package` is refused with
@@ -276,8 +276,8 @@ Lake package (each a Lake package's name and the directory its grammars
 directory is staged in, `ModuleLookup.grammarDirectories`); and the message
 of each package that was refused, in order. A refused package is skipped and
 the rest register. -/
-def ofPackages (packages : Array Package) (grammarDirectories : List (String × System.FilePath) := [])
-    : State β σ × Array String :=
+def ofPackages (packages : Array Package)
+    (grammarDirectories : List (String × System.FilePath) := []) : State β σ × Array String :=
   packages.foldl
     (fun (state, refused) package =>
       match state.register package grammarDirectories with

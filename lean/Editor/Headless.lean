@@ -1015,6 +1015,13 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   publishes no menu bar; the executable's hosts are handed the packages
   of its package set. -/
   packages : Array Package := #[]
+  /-- Where the grammars directory of each Lake package that ships grammars
+  is staged beside the executable, by the Lake package's name
+  (`ModuleLookup.grammarDirectories`, read at the edge): `packages`'
+  grammar declarations are resolved against them as they register
+  (`Config.State.ofPackages`). None by default, so a package that declares
+  grammars is refused. -/
+  grammarDirectories : List (String × System.FilePath) := []
   /-- Where a log entry goes: a command that took longer than `slowAfter`,
   and a package the host refused as its loop started (`Running.new`).
   The editor thread calls it. It is not `emit`: the output is what a test
@@ -2492,7 +2499,8 @@ handed to the collaborators' log, prefixed with `package: `; the others
 register and the loop starts. -/
 def Running.new {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β σ scheme) :
     IO (Running β σ scheme) := do
-  let (config, refused) := Config.State.ofPackages collaborators.packages
+  let (config, refused) :=
+    Config.State.ofPackages collaborators.packages collaborators.grammarDirectories
   for message in refused do
     collaborators.log s!"package: {message}"
   return {
@@ -4476,6 +4484,8 @@ def main (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Na
     catch _ =>
       return none
   let recorded ← ModuleLookup.recorded appPath readFile
+  -- And where the set's grammars directories are staged, by the same rule.
+  let grammarDirectories ← ModuleLookup.grammarDirectories appPath readFile
   let
     { render := drawn, generate, sysroot, oleans, config := configDir, script := scriptPath, state,
       resume, data }
@@ -4530,6 +4540,7 @@ def main (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Na
   let collaborators :=
     { shipped with
       generator, workingDirectory, launch, replace := Restart.real, packageSet, package
+      grammarDirectories
       display :=
         if drawn then drawnDisplay else fun snapshots => Host.Display.recorder cells snapshots
       render := if drawn then some Render.library else none }

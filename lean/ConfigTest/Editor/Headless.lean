@@ -2164,6 +2164,28 @@ def reloadEchoChecks (context : Context) : List Check :=
               (held && lines.any (·.startsWith "reload 2: installed") &&
                 echo.startsWith "\"grammar `conf`: " &&
                 echo.endsWith ", so its languages have no syntax tree\"")
+              s!"lines={lines} echo={echo}" },
+    { name :=
+        "a host whose collaborators hold a package shipping the grammar ini and the directory its Lake package is staged in starts register-grammars at the first install, and says the grammar ini's registration failed, so its languages have no syntax tree"
+      run :=
+        let shipping : Package :=
+          { name := "ini-grammar", setup := pure ()
+            grammars :=
+              #[Language.Grammar.declare "ini" "libtree-sitter-ini.so" (queries := "queries")]
+            lakePackage := some "ini-grammar" }
+        withHost context [("init.lean", "def setup : SetupM Unit := pure ()\n")] (compiled :=
+          { packages := #[shipping]
+            grammarDirectories := [("ini-grammar", "/s/grammars/ini-grammar")] }) fun session => do
+          session.ask [.reload]
+          session.step
+          let lines ← session.lines
+          let echo ← session.echo
+          let started :=
+            lines.any fun line =>
+              line.startsWith "job " && line.endsWith s!" {Language.Grammar.jobName}: started"
+          saw
+              (started && echo.startsWith "\"grammar `ini`: the grammar's registration failed: " &&
+                echo.endsWith ", so its languages have no syntax tree\"")
               s!"lines={lines} echo={echo}" }]
 
 /-- The checks of what the executable's host (`Headless.shippedOver`) starts

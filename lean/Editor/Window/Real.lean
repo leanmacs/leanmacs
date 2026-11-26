@@ -303,6 +303,7 @@ def host (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Na
       home := processes.home
       launch := { options.launch with arguments := options.restartArguments }
       packageSet, package := package.getD shipped.package
+      grammarDirectories := options.grammarDirectories
       -- The window mode keeps no count of its activity: its steps of it
       -- do nothing.
       tracksIdle := false }
@@ -399,9 +400,11 @@ def shutdown (drained : IO (Task Bool)) : IO Unit := do
 
 /-- What the window mode is told of the world, read at the edge, for the
 executable at `appPath`: the working directory, the variables the default
-config directory and the default state directory are found by, and the `.olean` directories the
+config directory and the default state directory are found by, the `.olean` directories the
 build recorded beside that executable (`ModuleLookup.recorded`, with the
-real file read: a record that is not there, or cannot be read, is none).
+real file read: a record that is not there, or cannot be read, is none),
+and where its set's grammars directories are staged
+(`ModuleLookup.grammarDirectories`, by the same rule).
 `main` reads it for the running executable, and `ffi-test
 window-host-direct` for an editor it is pointed at. -/
 def environmentAt (appPath : String) : IO Environment := do
@@ -415,7 +418,8 @@ def environmentAt (appPath : String) : IO Environment := do
       xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME", xdgStateHome := ← IO.getEnv "XDG_STATE_HOME"
       xdgDataHome := ← IO.getEnv "XDG_DATA_HOME"
       home := ← IO.getEnv "HOME", appPath
-      recordedOleans := ← ModuleLookup.recorded appPath readFile }
+      recordedOleans := ← ModuleLookup.recorded appPath readFile
+      grammarDirectories := ← ModuleLookup.grammarDirectories appPath readFile }
 
 /-- The mark of `main`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
 def main.realHost : RealHost :=

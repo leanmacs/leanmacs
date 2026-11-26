@@ -212,6 +212,45 @@ def moduleLookupChecks : List Check :=
               [])
         let inBundle := "/Applications/Leanmacs.app/Contents/Resources/lean/lean"
         pure
-          (directory [inBundle] == (some inBundle, []) && directory ["/elsewhere"] == (none, [])) }]
+          (directory [inBundle] == (some inBundle, []) && directory ["/elsewhere"] == (none, [])) },
+    { name :=
+        "outside a bundle, the grammars record beside the executable names each Lake package's directory, a relative one resolved against the executable's directory and an absolute one kept, blank and tabless lines skipped; with no record, none"
+      run :=
+        let installedAt := "/d/editors/c0ffee/2/editor"
+        let read (appPath : String) (files : List (String × String)) :
+          List (String × System.FilePath) × List String :=
+          Id.run
+            ((ModuleLookup.grammarDirectories (m := StateM (List String)) appPath fun path => do
+                  modify (· ++ [path.toString])
+                  return (files.find? (·.1 == path.toString)).map (·.2)).run
+              [])
+        let record := "ini-grammar\tgrammars/ini-grammar\n\nno tab here\nconf\t/abs/conf\n"
+        pure
+          (ModuleLookup.grammarsRecordPath installedAt == "/d/editors/c0ffee/2/editor.grammars" &&
+            read installedAt [(s!"{installedAt}.grammars", record)] ==
+              ([("ini-grammar", ("/d/editors/c0ffee/2/grammars/ini-grammar" : System.FilePath)),
+                  ("conf", "/abs/conf")],
+                [s!"{installedAt}.grammars"]) &&
+            read built [] == ([], [s!"{built}.grammars"])) },
+    { name :=
+        "in a bundle, Contents/Resources/editor.grammars names them, relative lines resolved against Contents/Resources; the record beside the executable is not read"
+      run :=
+        let bundleRecord := "/Applications/Leanmacs.app/Contents/Resources/editor.grammars"
+        let read (files : List (String × String)) : List (String × System.FilePath) × List String :=
+          Id.run
+            ((ModuleLookup.grammarDirectories (m := StateM (List String)) installed fun path => do
+                  modify (· ++ [path.toString])
+                  return (files.find? (·.1 == path.toString)).map (·.2)).run
+              [])
+        pure
+          (ModuleLookup.bundleGrammarsRecordPath "/Applications/Leanmacs.app" == bundleRecord &&
+            read
+                [(bundleRecord, "ini-grammar\tlean/set/ini-grammar/grammars\n"),
+                  (s!"{installed}.grammars", "x\t/x\n")] ==
+              ([("ini-grammar",
+                    ("/Applications/Leanmacs.app/Contents/Resources/lean/set/ini-grammar/grammars" :
+                      System.FilePath))],
+                [bundleRecord]) &&
+            read [] == ([], [bundleRecord])) }]
 
 end ModelTest
