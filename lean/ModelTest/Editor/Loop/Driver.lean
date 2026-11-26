@@ -29,6 +29,9 @@ import Editor.Process.Model
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.SyntaxTree.Model
+import Editor.SyntaxTree.Registration
+import Editor.SyntaxTree.Registration.Model
 import Editor.Test.Driver
 import Editor.Test.Jobs
 import Editor.Test.Keys
@@ -71,6 +74,40 @@ def driverChecks : List Check :=
     steps.flatMap fun step => (step.map (·.starts)).getD #[]
   let echoOf (driver : TestDriver) : Option String := driver.model.display.scenes.back?.map (·.echo)
   [{  name :=
+        "a grammar a job registers on the job model is listed by the syntax tree model once the job has run, before its command is delivered"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let library := "/g/libtree-sitter-ini.so"
+            let driver :=
+              { driver with
+                jobs :=
+                  { grammars :=
+                      { libraries := some #[(library, .exports #[("tree_sitter_ini", .grammar)])] } } }
+            let work : Work :=
+              Work.of (fun _ => Grammar.register { library, symbol := "tree_sitter_ini" }) fun _ =>
+                makes "registered"
+            let started := driver.startWork "register" work
+            driver.model.syntaxTree.grammars == #["json"] &&
+              started.model.syntaxTree.grammars == #["json", "ini"] &&
+              started.pending.map (·.id) == #[1] &&
+              !started.model.texts.contents.contains "registered" },
+    { name := "work started outside a step runs on the job model under the next id and is delivered by finish"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let work : Work := Work.of (fun _ => pure "done") makes
+            let started := driver.startWork "own" work
+            let (delivered, stepped) := started.finish 1
+            started.next == 2 &&
+              started.pending.map (fun job => (job.id, job.name)) == #[(1, "own")] &&
+              !started.model.texts.contents.contains "done" && stepped.isSome &&
+              delivered.model.texts.contents.contains "done" && delivered.pending.isEmpty },
+    { name :=
         "a command that hands a restart's plan over has it handed back with its step, kept by the driver, and the outbox emptied"
       run :=
         pure <|

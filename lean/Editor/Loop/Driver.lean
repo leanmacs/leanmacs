@@ -75,6 +75,11 @@ handled after the answer's command.
 - **A step's journal orders are handed to the file model** (`journaled`),
   before its jobs start, as a host hands them its file service: so a job
   the step starts reads what they wrote.
+- **The core's own work is started outside a step** (`startWork`), as a
+  host starts the work a reducer's effect asks for (the registration of
+  config's grammars, `Editor/Headless.lean`): run on the job model under
+  the next id, kept as started and not delivered, and delivered by
+  `finish`, as a registered job is.
 - **A reload a step asked for is counted** (`reloads`), and **a theme a step
   asked for is recorded** (`themes`). The driver has no config session to
   reload or to switch the theme of: a host feeds its reload reducer
@@ -114,6 +119,12 @@ two ports are played (`Editor/File/Cases.lean`):
 - **The files are the driver's `jobs.files`.** A test sets them before it
   feeds an event, and changes them between two events to stand for another
   program writing a file.
+- **What a job registers is the syntax tree model's to list.** After a run
+  of a job's program that changed the job model's grammar registry
+  (`JobModel.grammars`), the editor's syntax tree model is handed it
+  (`SyntaxTreeModel.registry`), before the job's command is delivered: the
+  library's worker answers a registration before the job's command reaches
+  the editor, so the command, and any step before it, sees the grammar.
 
 Pinned by `ModelTest.driverChecks`, and the answers by
 `ModelTest.promptChecks`.
@@ -317,7 +328,17 @@ def ranOn (driver : Loop.Driver scheme) (id : Nat) (name : String) (key : Option
     let said := jobs.reported.extract driver.jobs.reported.size jobs.reported.size
     said.foldl (fun loop text => { loop with state := { loop.state with echo := text } })
       driver.loop
-  match JobModel.runParking program start with
+  let ran := JobModel.runParking program start
+  -- The library lists a grammar a job registered before the job's command
+  -- reaches the editor.
+  let driver :=
+    match ran with
+    | .ended _ jobs | .parked _ jobs _ | .posted _ jobs _ =>
+      if jobs.grammars == driver.jobs.grammars then driver
+      else
+        let syntaxTree := { driver.model.syntaxTree with registry := jobs.grammars }
+        { driver with model := { driver.model with syntaxTree } }
+  match ran with
   | .ended value jobs =>
     let driver := { driver with loop := saidBy jobs }
     let outcome : Job.Outcome (EditorM Unit) :=
@@ -433,6 +454,14 @@ def started (driver : Loop.Driver scheme) (starts : Array JobStart) : Loop.Drive
         ({ driver with next := driver.next + 1 } : Loop.Driver scheme).ranOn id start.name start.key
           (work start.arguments ()).run)
     driver
+
+/-- The driver once `work`, the core's own work called `name`, is started
+outside a step, as a host starts the work a reducer's effect asks for: run
+on the job model as a started job's is, under the next id, and kept as not
+delivered, or held, as `started` keeps one. -/
+def startWork (driver : Loop.Driver scheme) (name : String) (work : Work) : Loop.Driver scheme :=
+  let id := driver.next
+  ({ driver with next := driver.next + 1 } : Loop.Driver scheme).ranOn id name none (work ()).run
 
 /-- The driver once each of `orders`, a step's journal orders
 (`Loop.Stepped.journal`, `Editor/Restore.lean`), is handed to the file model

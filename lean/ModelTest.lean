@@ -92,6 +92,7 @@ import ModelTest.Editor.Keymap
 import ModelTest.Editor.Language
 import ModelTest.Editor.Language.Grammar
 import ModelTest.Editor.Language.Grammar.Answer
+import ModelTest.Editor.Language.Grammar.Register
 import ModelTest.Editor.Layout
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
@@ -1210,6 +1211,16 @@ names a scheme's key:
   relative path, a later owner's declaration over an earlier's, the tree
   a buffer's language resolves to in each case, and the sentences a
   refusal and an unread query file are said in;
+- `grammarRegisterChecks`: the core's `register-grammars` job and its
+  command (`Editor/Language/Grammar/Register.lean`), driven from the
+  reload reducer's effect through the loop's driver on the job model and
+  the editor's models: a declared grammar registered, its highlights read
+  from `queries/` beside its library, and a buffer of its language plain
+  until the job's command and highlighted from it on, opened before or
+  after; a refused new grammar said, its buffers left plain; a refused
+  declaration of the compiled-in `lean` said to keep it, and its buffers
+  keeping it; a registered `lean` taking the compiled-in one's place; and
+  a query file that cannot be read said, the grammar still registered;
 - `modeRegistryChecks`: modes in the registry
   (`Editor/Config/Registry.lean`): a mode's lineage, and the active keymaps
   of a view, in precedence order;
@@ -1582,6 +1593,7 @@ def checks : List Check :=
     languageMatchChecks ++
     grammarAnswerChecks ++
     grammarDeclarationChecks ++
+    grammarRegisterChecks ++
     modeRegistryChecks ++
     modeDispatchChecks ++
     modeEnterChecks ++
