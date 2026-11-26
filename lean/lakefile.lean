@@ -1231,16 +1231,6 @@ def buildRecordOf (lookup : String → Option String) : String :=
       | none => text)
     ""
 
-/-- The record an app bundle ships as `Contents/Resources/editor.build`, from
-the set's `record` (`buildRecordOf`): its lines in order, but the
-`LEAN_CC` line, since a build from the bundle runs its own toolchain's
-compiler. The package-set build writes it beside the editor as
-`<executable>.shipped-build`. -/
-def shippedBuildRecord (record : String) : String :=
-  "".intercalate
-    (((record.splitOn "\n").filter fun line => !line.isEmpty && !line.startsWith "LEAN_CC=").map
-      (· ++ "\n"))
-
 /-- The text of the record `<executable>.build`: one line `NAME=value` for
 each of `buildVariables` that is set, in that order, as the environment of
 this build holds it; nothing for one that is unset (`buildRecordOf`). -/
@@ -1250,10 +1240,7 @@ def buildRecordText : IO String := do
 
 /- Guards: the record `<executable>.build` (`buildRecordOf`): a line for each
 of `buildVariables` that is set, in that order, and nothing for one that is
-unset; and the record a bundle ships (`shippedBuildRecord`, written as
-`<executable>.shipped-build`): the same with its `LEAN_CC` line dropped,
-since a bundle builds with its own toolchain's compiler, and a record with
-no `LEAN_CC` line unchanged. -/
+unset. -/
 #guard
   buildRecordOf
       (fun
@@ -1270,12 +1257,6 @@ no `LEAN_CC` line unchanged. -/
     "MACOSX_DEPLOYMENT_TARGET=26.0\n"
 
 #guard buildRecordOf (fun _ => none) == ""
-
-#guard
-  shippedBuildRecord "LEAN_CC=/usr/bin/cc\nMACOSX_DEPLOYMENT_TARGET=26.0\n" ==
-    "MACOSX_DEPLOYMENT_TARGET=26.0\n"
-
-#guard shippedBuildRecord "MACOSX_DEPLOYMENT_TARGET=26.0\n" == "MACOSX_DEPLOYMENT_TARGET=26.0\n"
 
 /-- The core's identity from what it mixes (`coreIdentity`): the hashes of
 the objects of the core's modules, `objects`, the glue's, `glue`, the Rust
@@ -1357,9 +1338,7 @@ package_facet editor pkg : FilePath := do
   writeModuleRecord pkg executable
   writeSetRecord pkg executable
   writeCoreDirRecord executable
-  let record ← buildRecordText
-  writeIfChanged (executable.toString ++ ".build") record
-  writeIfChanged (executable.toString ++ ".shipped-build") (shippedBuildRecord record)
+  writeIfChanged (executable.toString ++ ".build") (← buildRecordText)
   let identity ←
     (← coreIdentity pkg).mapM fun identity =>
         writeIfChanged (executable.toString ++ ".core") s!"{identity}\n"

@@ -412,8 +412,8 @@ imports `Editor` and `Editor.Main` alone; entry modules and the scheme in
 order; the set's name and the pin as given), the config base (`setBase`),
 the order packages register in (`requireOrderOf`, the walk
 `setPackages` makes), the `.olean` directories (`moduleDirectoriesOf`), the
-core's identity (`coreIdentityOf`), the build record and the one a bundle
-ships (`buildRecordOf`, `shippedBuildRecord`), whether a set or a crate is
+core's identity (`coreIdentityOf`), the build record (`buildRecordOf`),
+whether a set or a crate is
 in the repository (`isUnderRoot`, `outsideCrateRefusal?`, beside
 `rustSource`), the records of where the set and the core are
 (`setRecordText`, `coreDirRecordText`); what a bundle ships
@@ -2042,12 +2042,9 @@ executable it links, besides `editor.oleans` and `editor.set`:
   outputs in `lean/.lake`, or fail to link the system frameworks. The
   record says what the last build of the facet ran with: it is written
   whether or not the link itself had to run.
-- **`editor.shipped-build`**: the record a bundle ships, which is
-  `editor.build` without its `LEAN_CC` line (`shippedBuildRecord`), since a
-  build from a bundle runs its own toolchain's compiler. Until phase 8 of
-  the gates roadmap rewrites the stage script, `tools/stage-bundle.sh`
-  still writes `Contents/Resources/editor.build` itself, dropping the line
-  with `grep -v`; the rewrite copies this record there instead.
+  A bundle ships it as `Contents/Resources/editor.build` without its
+  `LEAN_CC` line, since a build from a bundle runs its own toolchain's
+  compiler: `tools/stage-bundle.sh` drops the line as it copies the record.
 - **`editor.coredir`**: the directory of the core the editor links, one
   absolute line: the workspace's `editor-core` package directory, the core
   Lake actually linked, as Lake spells it, never resolved through links.
