@@ -14,8 +14,8 @@
 //! # A streaming child
 //!
 //! [`Service::open`] starts a command with [`Streaming`]: whether its
-//! standard input is a pipe, how each output stream is framed (as lines or
-//! as bytes, [`Framing`]), and its bound. The child's thread, its waiter,
+//! standard input is a pipe, how each output stream is framed (as lines,
+//! as bytes or as `Content-Length` messages, [`Framing`]), and its bound. The child's thread, its waiter,
 //! refuses what a run refuses and a bound of 0, spawns, takes both outputs
 //! and the input, registers the child, keeps [`StreamReply::Opened`] under
 //! the child's id and completes it; then it starts a reader for each
@@ -50,6 +50,13 @@
 //!   too long only if that byte comes. If the stream ends there instead,
 //!   the line is its last, delivered whole. A read that fails ends the
 //!   child as a line too long does, with [`End::Failed`].
+//! - **A `Content-Length` message longer than the bound**, its header
+//!   counted, is known as soon as its length is parsed: the reader reads
+//!   nothing more, its body least of all, the group is killed, and the last
+//!   delivery ends with [`End::MessageTooLong`], the messages before it
+//!   intact. So is a header with no end that fills the bound. A header that
+//!   breaks a rule, or a stream that ends inside a message, ends the child
+//!   the same way with [`End::Failed`], saying what was wrong.
 //! - **The last delivery** says how the child ended ([`Delivery::ended`]):
 //!   [`End::Exited`] once both streams have ended, every frame is in it and
 //!   the child has been reaped. The service then forgets the child: a
@@ -273,7 +280,18 @@ pub enum End {
         /// The bound, in bytes.
         bound: u64,
     },
-    /// A read failed, and the group was killed.
+    /// A `Content-Length` message of this stream was longer than the
+    /// bound, its header counted, so could never be delivered whole: the
+    /// group was killed as soon as its length was parsed, and no more of
+    /// the stream was read.
+    MessageTooLong {
+        /// The stream.
+        stream: Stream,
+        /// The bound, in bytes.
+        bound: u64,
+    },
+    /// A read failed, or a `Content-Length` header broke a rule or the
+    /// stream ended inside a message, and the group was killed.
     Failed(Refusal),
 }
 
@@ -1785,13 +1803,29 @@ fn stream_reader<P: Processes>(
         let (ended, kill) = match read {
             Ok(0) => {
                 streamed.outbox.end(stream);
-                (true, false)
+                // A message cut short by the stream's end is malformed.
+                match streamed.outbox.fault(stream) {
+                    Some(Fault::Malformed(words)) => {
+                        fail(&mut streamed, End::Failed(malformed(words)));
+                        (true, true)
+                    }
+                    _ => (true, false),
+                }
             }
             Ok(count) => {
                 streamed.outbox.push(stream, &buffer[..count.min(want)]);
-                if streamed.outbox.fault(stream) == Some(Fault::LineFillsBound)
-                    && streamed.failed.is_none()
-                {
+                let fault = streamed.outbox.fault(stream);
+                if let Some(Fault::MessageTooLong) = fault {
+                    // Its size is known from its header: it can never be
+                    // delivered whole, and nothing more is read, its body
+                    // least of all.
+                    let bound = streamed.outbox.bound();
+                    fail(&mut streamed, End::MessageTooLong { stream, bound });
+                    (true, true)
+                } else if let Some(Fault::Malformed(words)) = fault {
+                    fail(&mut streamed, End::Failed(malformed(words)));
+                    (true, true)
+                } else if fault == Some(Fault::LineFillsBound) && streamed.failed.is_none() {
                     // A partial line fills the bound. It is a last line if
                     // the stream ends here, and longer than the bound if one
                     // more byte comes: look one byte further, kept outside
@@ -1841,6 +1875,20 @@ fn stream_reader<P: Processes>(
             return;
         }
     }
+}
+
+/// Ends a streaming child as `end`, unless something ended it first.
+fn fail(streamed: &mut Streamed, end: End) {
+    streamed.failed.get_or_insert(end);
+}
+
+/// The refusal a malformed `Content-Length` stream ends its child with:
+/// what was wrong, in words.
+fn malformed(words: String) -> Refusal {
+    Refusal::new(
+        RefusalKind::Failed,
+        format!("cannot frame a child's stream: {words}"),
+    )
 }
 
 /// Reads `output` to its end, keeping up to `limit` bytes. Past the limit,
@@ -3744,6 +3792,180 @@ mod streaming {
         assert!(fake.until(DEADLINE, |record| record.reaped == [child]));
         assert_eq!(fake.record().killed, [child]);
         assert!(!fake.alive(child) && !fake.alive(child + 1));
+        assert!(flushed(&service, &completed));
+    }
+
+    /// Messages framing on standard output and lines on standard error,
+    /// with `input` and `bound`.
+    fn messages_with(input: Input, bound: u64) -> Streaming {
+        Streaming {
+            input,
+            out: Framing::ContentLength,
+            err: Framing::Lines,
+            bound,
+        }
+    }
+
+    /// `body` framed as a message: its `Content-Length` header and the body.
+    fn message(body: &[u8]) -> Vec<u8> {
+        let mut framed = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
+        framed.extend_from_slice(body);
+        framed
+    }
+
+    /// Every message of standard output in `deliveries`, in order.
+    fn messages_of(deliveries: &[Delivery]) -> Vec<Vec<u8>> {
+        deliveries
+            .iter()
+            .flat_map(|delivered| match &delivered.out {
+                Frames::Messages(bodies) => bodies.clone(),
+                other => panic!("messages, not {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn content_length_messages_are_delivered_whole_to_a_jobs_read() {
+        let mut written = message(b"{\"id\":1}");
+        written.extend(message(b""));
+        written.extend(message(b"two"));
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).stdout(written).pipe_capacity(7)),
+        )]);
+        let (service, completed) = service(&fake);
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            messages_with(Input::Closed, 64),
+        );
+
+        let deliveries = to_the_end(&service, &completed, 1, 2);
+
+        assert_eq!(
+            messages_of(&deliveries),
+            [b"{\"id\":1}".to_vec(), Vec::new(), b"two".to_vec()]
+        );
+        assert_eq!(
+            deliveries.last().and_then(|last| last.ended.clone()),
+            Some(End::Exited(Exit::Code(0)))
+        );
+        assert!(flushed(&service, &completed));
+    }
+
+    #[test]
+    fn a_message_past_the_bound_kills_the_group_at_its_header_with_no_byte_of_its_body_read() {
+        let header = b"Content-Length: 1000\r\n\r\n".to_vec();
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .steps([
+                    Step::Write(Stream::Out, message(b"ok")),
+                    Step::Write(Stream::Out, header.clone()),
+                    Step::Write(Stream::Out, vec![b'x'; 1000]),
+                ])
+                .pipe_capacity(message(b"ok").len() + header.len())
+                .hold(Hold::UntilKilled)
+                .members(1)),
+        )]);
+        let (service, completed) = service(&fake);
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            messages_with(Input::Closed, 64),
+        );
+        let child = fake.record().spawned[0].0;
+
+        let deliveries = to_the_end(&service, &completed, 1, 2);
+
+        assert_eq!(
+            messages_of(&deliveries),
+            [b"ok".to_vec()],
+            "intact before it"
+        );
+        assert_eq!(
+            deliveries.last().and_then(|last| last.ended.clone()),
+            Some(End::MessageTooLong {
+                stream: Stream::Out,
+                bound: 64
+            })
+        );
+        assert!(fake.until(DEADLINE, |record| record.reaped == [child]));
+        let record = fake.record();
+        assert_eq!(
+            record.children[&child].read[0],
+            message(b"ok").len() + header.len(),
+            "the header read, and no byte of the body, though the pipe held some"
+        );
+        assert!(record.children[&child].written[0] > record.children[&child].read[0]);
+        assert_eq!(record.killed, [child]);
+        assert!(!fake.alive(child + 1), "its group is killed");
+        assert!(flushed(&service, &completed));
+    }
+
+    #[test]
+    fn a_malformed_header_kills_the_group_and_ends_the_child_as_failed_the_messages_before_it_intact()
+     {
+        let mut written = message(b"ok");
+        written.extend_from_slice(b"X-Unknown: 1\r\n\r\n");
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .stdout(written)
+                .hold(Hold::UntilKilled)
+                .members(1)),
+        )]);
+        let (service, completed) = service(&fake);
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            messages_with(Input::Closed, ROOMY),
+        );
+        let child = fake.record().spawned[0].0;
+
+        let deliveries = to_the_end(&service, &completed, 1, 2);
+
+        assert_eq!(messages_of(&deliveries), [b"ok".to_vec()]);
+        let Some(End::Failed(refusal)) = deliveries.last().and_then(|last| last.ended.clone())
+        else {
+            panic!("failed");
+        };
+        assert_eq!(refusal.kind, RefusalKind::Failed);
+        assert!(refusal.detail.contains("X-Unknown"), "{}", refusal.detail);
+        assert!(fake.until(DEADLINE, |record| record.reaped == [child]));
+        assert_eq!(fake.record().killed, [child]);
+        assert!(!fake.alive(child + 1));
+        assert!(flushed(&service, &completed));
+    }
+
+    #[test]
+    fn a_stream_that_ends_inside_a_message_ends_the_child_as_failed() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).stdout("Content-Length: 5\r\n\r\nab")),
+        )]);
+        let (service, completed) = service(&fake);
+        opened(
+            &service,
+            &completed,
+            1,
+            command("x"),
+            messages_with(Input::Closed, ROOMY),
+        );
+
+        let deliveries = to_the_end(&service, &completed, 1, 2);
+
+        assert!(messages_of(&deliveries).is_empty());
+        assert!(matches!(
+            deliveries.last().and_then(|last| last.ended.clone()),
+            Some(End::Failed(refusal)) if refusal.detail.contains("ended inside a message")
+        ));
         assert!(flushed(&service, &completed));
     }
 

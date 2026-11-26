@@ -99,14 +99,15 @@
 //! | A refusal | 1, 2, 3, 4, 6, 7, as a run's | |
 //! | Input closed | 8 | |
 //! | Opened | 10 | |
-//! | Delivered | 11 | for each stream, out then err: its framing (0 lines, 1 bytes, 2 messages), and for lines and messages their count and each one's length; then the end: 0 not yet, 1 exited and the exit's kind and number, 2 a line too long and its stream (0 out, 1 err) and the bound, 3 a read that failed, whose words the detail is |
+//! | Delivered | 11 | for each stream, out then err: its framing (0 lines, 1 bytes, 2 messages), and for lines and messages their count and each one's length; then the end: 0 not yet, 1 exited and the exit's kind and number, 2 a line too long and its stream (0 out, 1 err) and the bound, 3 a read that failed or a malformed message, whose words the detail is, 4 a message too long and its stream and the bound |
 //! | Written | 12 | |
 //!
 //! A delivery's two buffers are its streams' bytes, the lines end to end
 //! without their line feeds, and the messages' bodies end to end without
 //! their headers. Messages (framing 2) are `editor-service`'s
 //! `Content-Length` framing, which an open's words do not spell yet: no
-//! child Lean opens delivers them.
+//! child Lean opens delivers them, nor ends as a message too long (end
+//! 4).
 //!
 //! # The C functions
 //!
@@ -394,6 +395,9 @@ pub fn encoded_stream(reply: StreamReply) -> Encoded {
                 }
                 Some(End::LineTooLong { stream, bound }) => {
                     words.extend([2, u64::from(stream == Stream::Err), bound]);
+                }
+                Some(End::MessageTooLong { stream, bound }) => {
+                    words.extend([4, u64::from(stream == Stream::Err), bound]);
                 }
                 Some(End::Failed(refusal)) => {
                     words.push(3);
@@ -1207,6 +1211,15 @@ pub(crate) mod tests {
             }),
         ));
         assert_eq!(too_long.words, [0, 0, 0, 0, 2, 1, 64]);
+        let message_too_long = encoded_stream(delivered(
+            Frames::Messages(Vec::new()),
+            lines(&[]),
+            Some(End::MessageTooLong {
+                stream: Stream::Out,
+                bound: 4096,
+            }),
+        ));
+        assert_eq!(message_too_long.words, [2, 0, 0, 0, 4, 0, 4096]);
         let failed = encoded_stream(delivered(
             lines(&[]),
             lines(&[]),
