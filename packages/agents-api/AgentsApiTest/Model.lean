@@ -1,3 +1,4 @@
+import AgentsApiTest.AgentsApi
 import AgentsApiTest.AgentsApiTest.Protocol
 import AgentsApiTest.Check
 
@@ -11,12 +12,16 @@ imports the test modules and runs their checks:
 - `protocolChecks`: the protocol's model (`AgentsApiTest/Protocol.lean`),
   each rule of `step` and what `replay` says of a broken trace. The
   theorems over every reachable state are built, not run
-  (`AgentsApiTest/Protocol/Theorems.lean`).
+  (`AgentsApiTest/Protocol/Theorems.lean`);
+- `agentsApiChecks`: the interface library (`AgentsApi.lean`): the service's
+  request vocabulary read back as it was written and a malformed request
+  refused, the agent registration point a choice by name, and an agent's
+  command.
 -/
 
 /-- Every check of the test driver, in the order they run. -/
 def AgentsApiTest.checks : List AgentsApiTest.Check :=
-  AgentsApiTest.protocolChecks
+  AgentsApiTest.protocolChecks ++ AgentsApiTest.agentsApiChecks
 
 /-- Runs the checks, and prints each that failed; the exit status is 1 when
 one did. -/

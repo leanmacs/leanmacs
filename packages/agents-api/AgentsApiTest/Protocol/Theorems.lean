@@ -53,8 +53,9 @@ structure Inv (state : State) : Prop where
 /-- Two entries of a list whose first parts are distinct are equal when their
 first parts are. -/
 theorem eq_of_fst_eq {α β : Type} :
-    ∀ {entries : List (α × β)}, (entries.map (·.1)).Nodup →
-      ∀ {one two : α × β}, one ∈ entries → two ∈ entries → one.1 = two.1 → one = two
+    ∀ {entries : List (α × β)},
+      (entries.map (·.1)).Nodup →
+        ∀ {one two : α × β}, one ∈ entries → two ∈ entries → one.1 = two.1 → one = two
   | [], _, _, _, inOne, _, _ => by simp at inOne
   | head :: rest, distinct, one, two, inOne, inTwo, same => by
     rw [List.map_cons, List.nodup_cons] at distinct
@@ -115,7 +116,9 @@ theorem inv_step {state after : State} {action : Action} (inv : Inv state)
         not_or.mp fun answered => fresh.2 ((inv.asked ticket).mpr answered)
       split at stepped
       · cases stepped
-        refine { inv with answers := nodup_snoc inv.answers unasked.1, apart := ?_, asked := ?_ }
+        refine
+          { inv with
+            answers := nodup_snoc inv.answers unasked.1, apart := ?_, asked := ?_ }
         · intro other parkedOther
           simp only [List.mem_append, List.mem_singleton, not_or]
           exact ⟨inv.apart other parkedOther, fun same => unasked.2 (same ▸ parkedOther)⟩
@@ -133,7 +136,9 @@ theorem inv_step {state after : State} {action : Action} (inv : Inv state)
             · exact .inl (.inr inParked)
       · rename_i uncancelled
         cases stepped
-        refine { inv with parked := ?_, apart := ?_, asked := ?_, cancelled := ?_, closed := ?_ }
+        refine
+          { inv with
+            parked := ?_, apart := ?_, asked := ?_, cancelled := ?_, closed := ?_ }
         · rw [List.map_append]
           exact nodup_snoc inv.parked unasked.2
         · intro other parkedOther
@@ -233,8 +238,8 @@ theorem inv_step {state after : State} {action : Action} (inv : Inv state)
           simp only [List.mem_map, List.mem_filter, bne_iff_ne, ne_eq] at kept
           obtain ⟨kept, ⟨keptParked, keptTurn⟩, isOther⟩ := kept
           rw [← isOther]
-          simp only [List.mem_append, List.mem_map, List.mem_filter, beq_iff_eq, not_or,
-            not_exists, not_and]
+          simp only [List.mem_append, List.mem_map, List.mem_filter, beq_iff_eq, not_or, not_exists,
+            not_and]
           refine ⟨inv.apart _ (List.mem_map_of_mem keptParked), ?_⟩
           intro withdrawn withdrawnParked same
           have := eq_of_fst_eq inv.parked withdrawnParked.1 keptParked same
@@ -294,8 +299,9 @@ protocol takes names an outstanding request and takes that one request out;
 and a response to a request that is not outstanding is refused. -/
 theorem respond_answers_exactly_one {state : State} (reached : Reachable state) :
     state.outstanding.Nodup ∧
-      (∀ request after, state.step (.respond request) = some after →
-        request ∈ state.outstanding ∧ after.outstanding = state.outstanding.erase request) ∧
+      (∀ request after,
+        state.step (.respond request) = some after →
+          request ∈ state.outstanding ∧ after.outstanding = state.outstanding.erase request) ∧
       ∀ request, request ∉ state.outstanding → state.step (.respond request) = none := by
   refine ⟨reached.inv.outstanding, ?_, ?_⟩
   · intro request after stepped
@@ -319,7 +325,8 @@ state no ticket is answered twice and no parked ticket is answered; and once
 the connection is closed, every ticket asked has been answered exactly
 once. -/
 theorem parked_answered_exactly_once {state : State} (reached : Reachable state) :
-    state.answers.Nodup ∧ (∀ entry ∈ state.parked, entry.1 ∉ state.answers) ∧
+    state.answers.Nodup ∧
+      (∀ entry ∈ state.parked, entry.1 ∉ state.answers) ∧
       (state.closed = true → ∀ ticket ∈ state.asked, state.answers.count ticket = 1) := by
   have inv := reached.inv
   refine ⟨inv.answers, fun entry inParked => inv.apart _ (List.mem_map_of_mem inParked), ?_⟩

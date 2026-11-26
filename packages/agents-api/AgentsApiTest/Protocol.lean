@@ -117,16 +117,17 @@ def step (state : State) : Action → Option State
     else some { state with outstanding := state.outstanding.erase request }
   | .ask ticket =>
     if state.closed = true ∨ ticket ∈ state.asked then none
-    else if state.turnCancelled then
-      some
-        { state with
-          asked := state.asked ++ [ticket]
-          answers := state.answers ++ [ticket] }
     else
-      some
-        { state with
-          asked := state.asked ++ [ticket]
-          parked := state.parked ++ [(ticket, state.turn)] }
+      if state.turnCancelled then
+        some
+          { state with
+            asked := state.asked ++ [ticket]
+            answers := state.answers ++ [ticket] }
+      else
+        some
+          { state with
+            asked := state.asked ++ [ticket]
+            parked := state.parked ++ [(ticket, state.turn)] }
   | .answer ticket =>
     if state.closed = true ∨ ticket ∉ state.parkedTickets then none
     else
@@ -144,7 +145,8 @@ def step (state : State) : Action → Option State
           { state with
             parked := state.parked.filter (·.2 != some turn)
             answers := state.answers ++ (state.parked.filter (·.2 == some turn)).map (·.1)
-            cancelled := if turn ∈ state.cancelled then state.cancelled else state.cancelled ++ [turn] }
+            cancelled :=
+              if turn ∈ state.cancelled then state.cancelled else state.cancelled ++ [turn] }
   | .close =>
     if state.closed = true then none
     else
