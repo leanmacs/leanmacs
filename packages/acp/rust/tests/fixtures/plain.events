@@ -1,0 +1,13 @@
+opened	session=0	sessionId=sess-0001	mode=mode-ask	mode.id=mode-ask	mode.name=Ask	mode.description=Asks before it acts.	mode.id=mode-auto	mode.name=Auto	mode.description=Acts on its own.
+title	text=Example title
+usage	used=1100	size=200000
+toolCall	id=call-read-1	title=Read	kind=read	status=pending	rawInput={}
+toolCall	id=call-read-1	title=Read notes.txt	kind=read	status=pending	location.path=/work/example/notes.txt	location.line=1	rawInput={"file_path":"/work/example/notes.txt"}
+usage	used=1250	size=200000
+toolCall	id=call-read-1	title=Read notes.txt	kind=read	status=completed	location.path=/work/example/notes.txt	location.line=1	content.text=Example notes.	rawInput={"file_path":"/work/example/notes.txt"}
+mode	id=mode-auto
+chunk	message=msg-1	text=The notes say 
+chunk	message=msg-1	text=hello. Done.
+usage	used=1300	size=200000	cost.amount=0.0123	cost.currency=USD
+turnEnded	turn=1	stopReason=end_turn
+ended	how=exited	code=0

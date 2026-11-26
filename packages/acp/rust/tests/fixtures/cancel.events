@@ -1,0 +1,7 @@
+opened	session=0	sessionId=sess-0001	mode=mode-ask	mode.id=mode-ask	mode.name=Ask	mode.description=Asks before it acts.	mode.id=mode-auto	mode.name=Auto	mode.description=Acts on its own.
+toolCall	id=call-edit-1	title=Edit notes.txt	kind=edit	status=pending	location.path=/work/example/notes.txt	rawInput={"file_path":"/work/example/notes.txt"}
+permission	ticket=1	turn=1	id=call-edit-1	title=Edit notes.txt	kind=edit	status=pending	location.path=/work/example/notes.txt	rawInput={"file_path":"/work/example/notes.txt"}	option.id=allow-once	option.name=Allow	option.kind=allow_once	option.id=reject-once	option.name=Reject	option.kind=reject_once
+withdrawn	ticket=1
+withdrawn	ticket=2
+turnEnded	turn=1	stopReason=cancelled
+ended	how=exited	code=0
