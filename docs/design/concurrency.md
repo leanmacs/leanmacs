@@ -902,7 +902,8 @@ and changes on disk:
   - *The mise package's lookup* (`packages/mise/`, a default package) runs
     `<mise> env --json` in the child's directory in the window mode, mise
     found at the first of the usual places whose stamp a file request
-    answers, skipped with none; the headless mode and the checks look
+    answers, skipped with none, and nothing said; a mise elsewhere is named
+    with `Mise.executable`. The headless mode and the checks look
     nothing up. Config's `Mise.executable` takes mise's path, and leaving
     the package out means no directory lookup. Every lookup runs through
     the process service with a mebibyte of output and a time limit, 5 s by

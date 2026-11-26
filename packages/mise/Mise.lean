@@ -21,13 +21,16 @@ for each directory, kept by the stamps of mise's config files
   `~/.local/bin/mise`, `/opt/homebrew/bin/mise` and `/usr/local/bin/mise`
   whose stamp a file request answers (`candidates`), resolved once and kept
   until a reload; with none of them there it is skipped, and nothing is
-  said.
+  said (a default package must not speak for users without mise); a mise
+  elsewhere is named with `Mise.executable`, whose lookup failures are
+  reported.
 - **The headless mode looks nothing up**: the value gives no source there,
   so the checks and the headless fixtures start their children exactly as
   their commands say.
 - **The setting.** `Mise.executable "/path"` in config registers a value of
   the same name, `mise`, at `/path`, in every mode (`at`); the hook replaces
   the package's value with it in its place (`EnvironmentApi.DirectorySource.ordered`).
+  It is also the way to run a mise outside the usual places.
   A relative path is refused (`relativePath`), and so is a second call in
   one `setup` (`Extension.setting`, `Config.Registrations.settingTwice`), as
   the retired `processEnvironment (.mise (some path))`, which it replaces,
@@ -83,7 +86,8 @@ def source (program : Process.Program) : Process.Source :=
     parse := Process.parseVariables, output := "a JSON object of strings", stampNames }
 
 /-- The package's directory source: in the window mode, mise at the first of
-`candidates` there is, skipped with none; in the headless mode, no lookup. -/
+`candidates` there is, skipped with none, and nothing said; in the headless
+mode, no lookup. -/
 def directorySource : EnvironmentApi.DirectorySource :=
   { name := "mise"
     source := fun

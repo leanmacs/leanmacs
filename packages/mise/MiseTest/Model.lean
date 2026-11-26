@@ -23,14 +23,16 @@ The test module mirrors the modules it tests: the checks of `Mise.lean` and
   (`EnvironmentApiTest.directoryContract`) on the model rig.
 - `miseLookupChecks`: a child's environment looked up by mise on the job
   model, with the layers a host installs from the package's value and
-  config's `Mise.executable`: the first candidate that exists, kept until a
-  reload; no lookup in the headless mode or with none there; the lookup's
+  config's `Mise.executable`: the first candidate that exists, tried in
+  order and kept until a reload; no lookup in the headless mode, and with
+  none there no lookup and nothing said; the lookup's
   variables under the command's own, for a run and a streaming start; the
   stamps that keep a directory's result, a directory of its own, and a
   reload's install; and a lookup that fails, prints what is not a JSON
   object or outlives its limit, reported once. They were the core's
   (`ModelTest.environmentLookupChecks`) while mise was the core's, and
-  moved here with their assertions as they were.
+  moved here from the core, with the candidate-order and silent-none checks
+  added since.
 -/
 
 /-- Every check of the test driver, in the order they run. -/

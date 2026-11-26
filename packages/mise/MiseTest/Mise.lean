@@ -179,6 +179,16 @@ def stampsAny (requests : Array JobRequest) (paths : List System.FilePath) : Boo
     | .file (.stamp path) => paths.contains path
     | _ => false
 
+/-- The paths among `paths` whose stamps `requests` read, in the order read.
+The lookup also reads the stamps of mise's config files; filtering to
+`paths` keeps those out. -/
+def stampedAmong (requests : Array JobRequest) (paths : List System.FilePath) :
+    Array System.FilePath :=
+  requests.filterMap fun request =>
+    match request with
+    | .file (.stamp path) => if paths.contains path then some path else none
+    | _ => none
+
 /-- The job model the lookup checks start from: the files `files`, the
 scripts of `mise` at `executable` printing `lookupJson` in each of
 `directories` and of each command merged there, and the environments in the
@@ -217,6 +227,27 @@ def miseLookupChecks : List Check :=
             (after (runsOn lakeBuild) home).processes.started ==
               #[Mise.lookupCommand "/u/.local/bin/mise" "/p/d", mergedOf lakeBuild]) },
     { name :=
+        "the package's mise in the window mode tries the candidates in order, the home directory's first, and stops at the first there: /usr/local/bin/mise runs when neither of the others is there, and with no home directory the home candidate is not tried"
+      run :=
+        let all : List System.FilePath := "/u/.local/bin/mise" :: candidates
+        let usrLocal :=
+          lookupModel packageLayers (.window (some "/u")) (filesAt ["/usr/local/bin/mise"])
+            "/usr/local/bin/mise"
+        let home :=
+          lookupModel packageLayers (.window (some "/u")) (filesAt all) "/u/.local/bin/mise"
+        let homeless :=
+          lookupModel packageLayers (.window none)
+            (filesAt ["/u/.local/bin/mise", "/usr/local/bin/mise"]) "/usr/local/bin/mise"
+        pure
+          ((after (runsOn lakeBuild) usrLocal).processes.started ==
+              #[Mise.lookupCommand "/usr/local/bin/mise" "/p/d", mergedOf lakeBuild] &&
+            stampedAmong (requestsOf (runsOn lakeBuild) usrLocal) all == all.toArray &&
+            stampedAmong (requestsOf (runsOn lakeBuild) home) all ==
+              #[System.FilePath.mk "/u/.local/bin/mise"] &&
+            (after (runsOn lakeBuild) homeless).processes.started ==
+              #[Mise.lookupCommand "/usr/local/bin/mise" "/p/d", mergedOf lakeBuild] &&
+            stampedAmong (requestsOf (runsOn lakeBuild) homeless) all == candidates.toArray) },
+    { name :=
         "the package's mise in the window mode keeps what it resolved until a reload: with Homebrew's mise gone, a start in another directory still runs it and reads no candidate's stamp, and after install the next start resolves again"
       run :=
         let all : List System.FilePath := "/u/.local/bin/mise" :: candidates
@@ -247,12 +278,19 @@ def miseLookupChecks : List Check :=
               second.processes.started ++
                 #[Mise.lookupCommand "/usr/local/bin/mise" "/p/d", mergedOf lakeBuild]) },
     { name :=
-        "the package's mise in the window mode with none of the candidates starts the child as it would have"
+        "the package's mise in the window mode with none of the candidates tries each in order, runs no lookup, starts the child as it would have and says nothing, in each directory: a start in another directory reads no candidate's stamp and says nothing either"
       run :=
+        let all : List System.FilePath := "/u/.local/bin/mise" :: candidates
+        let model :=
+          lookupModel packageLayers (.window (some "/u")) {} (directories := ["/p/d", "/p/e"])
+        let inE := movedTo lakeBuild "/p/e"
+        let once := after (runsOn lakeBuild) model
+        let other := after (runsOn inE) once
         pure
-          ((after (runsOn lakeBuild)
-                (lookupModel packageLayers (.window (some "/u")) {})).processes.started ==
-            #[lakeBuild]) },
+          (stampedAmong (requestsOf (runsOn lakeBuild) model) all == all.toArray &&
+            other.processes.started == #[lakeBuild, inE] &&
+            other.reported.isEmpty &&
+            !stampsAny (requestsOf (runsOn inE) once) all) },
     { name :=
         "the package's mise in the headless mode starts the child as it would have and reads no stamp"
       run :=

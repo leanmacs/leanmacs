@@ -5,7 +5,8 @@ window mode, a child started in a directory gets what `mise env --json`
 sets there (its `PATH` first), layered over the base, the editor's own
 environment unless another base is chosen. mise is found at the first of
 `~/.local/bin/mise`, `/opt/homebrew/bin/mise` and `/usr/local/bin/mise`,
-never by bare name; the result is kept until one of mise's config files
+never by bare name; with none of them there the package does nothing
+and says nothing. The result is kept until one of mise's config files
 (`mise.toml`, `.mise.toml`, `.tool-versions`, `mise.local.toml`) in the
 directory or an ancestor changes, or a reload. The headless mode looks
 nothing up. An editor without it does no directory lookup: children start
@@ -25,7 +26,8 @@ def setup : SetupM Unit := do
 ```
 
 runs mise at that absolute path, in every mode, in place of looking in the
-usual places. It replaces the retired
+usual places: this is how to use a mise installed elsewhere. It
+replaces the retired
 `processEnvironment (.mise (some path))`; leaving the package out replaces
 `processEnvironment .inherited`.
 
