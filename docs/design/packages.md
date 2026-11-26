@@ -603,9 +603,9 @@ globs = ["Config.+"]
   `execute-command-api`'s, `execute-command`'s, `binding-search-api`'s,
   `binding-search`'s, `compile`'s, `at-point`'s and `languages`'), and the
   fixture set's fifty-one, the core's, `greeting-api`'s, `greeting`'s,
-  `greeting-loud`'s, `echo`'s, the opt-in `agents-api`'s and `acp`'s, the
-  default set's forty-three in that order, and `word-count`'s, each holding
-  its package's modules.
+  `greeting-loud`'s, `echo`'s, the default set's forty-three in that
+  order, the opt-in `agents-api`'s and `acp`'s, and `word-count`'s, each
+  holding its package's modules.
 - **A directory given on the command line is a search path**, one
   directory or several joined with `:`, and outside a bundle the recorded
   directories are searched after the ones given (`ModuleLookup.resolve`).
@@ -1889,7 +1889,7 @@ guide quotes.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the opt-in packages `agents-api` and `acp` (below), then the default set, and through it the twenty-five default packages and the eleven interface packages, then `word-count` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the twenty-five default packages and the eleven interface packages, then the opt-in packages `agents-api` and `acp` (below), after the default set so that `acp`'s ex names register after the default packages', as the default packages' fixtures, which this set's harness runs too, list them, then `word-count` |
 | `tests/packages/greeting-api/` | The interface package `greeting-api` (`keywords = ["editor-interface"]`): the name `greeting-reply` (`GreetingApi.replyName`) and every name it declares (`GreetingApi.names`); in its test library, the fake `GreetingApiTest.fake` and the contract check `GreetingApiTest.contractChecks`, and its test driver, which holds the fake to the contract and shows the contract refuse a package that lacks or misspells the name. It has no entry module and registers nothing |
 | `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
