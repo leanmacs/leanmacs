@@ -2,8 +2,9 @@
 //! ([`StdEnv`]), programs over `std::process` ([`StdProcess`]) and files
 //! over `std::fs` ([`StdFiles`]), the writer of a prepared nightly's texts
 //! ([`write_prepared`]), and the binaries that wire them to
-//! `editor-release`'s core: `leanmacs-release` (`src/bin/leanmacs-release.rs`)
-//! and `link-stubs` (`src/bin/link-stubs.rs`).
+//! `editor-release`'s core: `leanmacs-release` (`src/bin/leanmacs-release.rs`),
+//! `stage-bundle` (`src/bin/stage-bundle.rs`) and `link-stubs`
+//! (`src/bin/link-stubs.rs`).
 //!
 //! The adapters are thin: every decision is the core's. `tests/contract.rs`
 //! holds [`StdProcess`] and [`StdFiles`] to their ports' contracts, the
@@ -11,6 +12,7 @@
 //! on a git repository it makes; `tests/nightly_mount.rs` (`mise run
 //! nightly-check`) prepares a nightly from a real image; `tests/site.rs`
 //! runs `leanmacs-release site` on the fixtures in `tests/site/`;
+//! `tests/stage_bundle.rs` runs `stage-bundle` on both its forms, and
 //! `tests/link_stubs.rs` runs `link-stubs` on a copy of itself. Only release
 //! tooling depends on this crate, and the editor never links it
 //! (`deny.toml`).

@@ -83,7 +83,7 @@ def recordPathOf (appPath : String) (kind : String) : String :=
 /-- The record of the core's identity of the executable at `appPath`:
 beside it, `<executable>.core`, where the package-set build writes it; in
 an app bundle, `<bundle>/Contents/Resources/<name>.core`, where
-`tools/stage-bundle.sh` puts it, since `codesign` refuses a file in
+the `stage-bundle` binary puts it, since `codesign` refuses a file in
 `Contents/MacOS` that is not code. The launcher reads it by the same rule
 (`crates/editor-launch/src/editors.rs`, `core_record`). -/
 def coreRecordPath (appPath : String) : String :=
@@ -92,7 +92,7 @@ def coreRecordPath (appPath : String) : String :=
 /-- The record of the build environment of the executable at `appPath`
 (`recordPathOf`): beside it, `<executable>.build`, where the package-set
 build writes it; in an app bundle, `<bundle>/Contents/Resources/<name>.build`,
-which `tools/stage-bundle.sh` writes without `LEAN_CC`, so a build the app
+which the `stage-bundle` binary writes without `LEAN_CC`, so a build the app
 runs compiles with the bundled toolchain's own `clang`. -/
 def buildRecordPath (appPath : String) : String :=
   recordPathOf appPath "build"

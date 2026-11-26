@@ -170,7 +170,7 @@ could move later.
 | `editorRootImports` | a package, the set | For `lake query`: the generated root's direct imports, one module a line |
 | `editorFixtures` | a package, the set | `<set>/.lake/build/bin/fixture-test`, the set's headless fixture harness, linked as the editor is from a root of its own (`EditorSetFixtures`), and beside it `fixture-test.oleans` ([headless-mode.md](../dev-practices/headless-mode.md), "How the gate runs a fixture") |
 | `editorBase` | a package, the set | For `lake query`: the set's config base, one module a line: `Editor`, then the entry module of each package of the set outside the core |
-| `editorShipped` | a package, the set | For `lake query`: what an app bundle ships of the set, built: one line `file<TAB><source><TAB><place>` a file (the core's `Editor` library, its interface library `FilesApi` and each other package's libraries but its tests, with their sources and every file Lake wrote; the lakefiles; the core's glue; the Rust archive), and one `oleans<TAB><place>` a `.olean` directory, for `tools/stage-bundle.sh` ([lean-runtime.md](lean-runtime.md), "The app ships the toolchain") |
+| `editorShipped` | a package, the set | For `lake query`: what an app bundle ships of the set, built: one line `file<TAB><source><TAB><place>` a file (the core's `Editor` library, its interface library `FilesApi` and each other package's libraries but its tests, with their sources and every file Lake wrote; the lakefiles; the core's glue; the Rust archive), and one `oleans<TAB><place>` a `.olean` directory, for the `stage-bundle` binary (`editor_release::bundle`; [lean-runtime.md](lean-runtime.md), "The app ships the toolchain") |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
 | `editorRustCrates` | a package, the set | For `lake query`: the set's package crates, one a line ("Rust in a package", below) |
 | `editorRustCrate` | a package, the set | For `lake query`: writes the crate generated from the set's package crates and prints its directory; builds nothing |
@@ -2029,7 +2029,7 @@ executable it links, besides `editor.oleans` and `editor.set`:
   module the default set does not link does not change the identity. A
   per-user editor linked against another core is never started
   ([lean-runtime.md](lean-runtime.md), "A cold start picks the newest
-  per-user editor"). `tools/stage-bundle.sh` copies the record
+  per-user editor"). The `stage-bundle` binary copies the record
   in the bundle's resources, `Contents/Resources/editor.core`: `codesign`
   refuses a file in `Contents/MacOS` that is not code (found by `mise run
   app-check`). The launcher and the editor read it there for an executable
@@ -2044,7 +2044,8 @@ executable it links, besides `editor.oleans` and `editor.set`:
   whether or not the link itself had to run.
   A bundle ships it as `Contents/Resources/editor.build` without its
   `LEAN_CC` line, since a build from a bundle runs its own toolchain's
-  compiler: `tools/stage-bundle.sh` drops the line as it copies the record.
+  compiler: the `stage-bundle` binary drops the line as it copies the
+  record (`editor_release::bundle`).
 - **`editor.coredir`**: the directory of the core the editor links, one
   absolute line: the workspace's `editor-core` package directory, the core
   Lake actually linked, as Lake spells it, never resolved through links.

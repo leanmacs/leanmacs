@@ -124,7 +124,8 @@ path and the record (`lean/Editor/ModuleLookup.lean`, pinned by
 and the executable's path is read from `IO.appPath`.
 
 `mise run bundle-test`, part of the gate, lays out that bundle in a
-temporary directory with `tools/stage-bundle.sh` and runs the headless
+temporary directory with the `stage-bundle` binary
+(`editor_release::bundle`) and runs the headless
 mode of its editor, through the launcher, on `tests/headless/bundle` and
 the default packages' fixtures, with no directory argument, an empty
 environment and a working directory outside the bundle
@@ -133,13 +134,14 @@ from `lean/`, into a directory of your own:
 
 ```sh
 lake -d ../packages query :editorShipped > <dir>/shipped
-../tools/stage-bundle.sh <dir>/Leanmacs.app ../packages/.lake/build/bin/editor \
+cargo run --quiet --locked -p editor-release-std --bin stage-bundle -- \
+  <dir>/Leanmacs.app ../packages/.lake/build/bin/editor \
   "$(lean --print-prefix)" <dir>/shipped
 ```
 
 On APFS the toolchain and the module files are cloned, so the stage costs
 about 0.3 GB of disk, the editor and the launcher, and takes about 13 s.
-The script's `--closure` and `--roots` forms stage module files alone into
+The binary's `--closure` and `--roots` forms stage module files alone into
 one directory, `Contents/Resources/lean/editor`, which they name in the
 record; `mise run module-bench` uses them to measure what config may
 import ([`lean-runtime.md`](../design/lean-runtime.md), "What config may

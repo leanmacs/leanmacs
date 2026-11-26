@@ -146,7 +146,7 @@ reads as up to date, the set's lakefile, the Rust archive that a set with
 no Rust package relinks with, and the link stubs the toolchain's linker
 needs for the system's frameworks. What ships of the set is what
 `lake -d ../packages query :editorShipped` lists, and
-`tools/stage-bundle.sh` copies it, the layout `mise run bundle-test`
+the `stage-bundle` binary (`editor_release::bundle`) copies it, the layout `mise run bundle-test`
 stages ([`headless-mode.md`](headless-mode.md), "From an app bundle").
 Config may import any module of `Init`, `Std` and `Lean` the toolchain
 holds. Its size is in [`lean-runtime.md`](../design/lean-runtime.md),
@@ -225,7 +225,7 @@ turns it to show a new artwork rebuilds the icon).
 Lake rebuilds the bundle only when an input changes: the executable, the
 `Editor` library's modules, the default packages', which the executable
 links, `config-test` (which lists the closure), the
-stage script, the toolchain, the lakefile, the version file, the artwork,
+`stage-bundle` binary, the toolchain, the lakefile, the version file, the artwork,
 or the build ID or commit.
 A second `mise run app` with nothing changed copies and signs nothing, and
 Lake prints no `Built «default-set»:editorApp` line. A rebuild starts from an empty

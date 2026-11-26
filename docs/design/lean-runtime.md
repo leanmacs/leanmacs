@@ -135,8 +135,8 @@ lean/link-stubs/                           macOS: the system libraries' link stu
   builds and lists every module of the core's `Editor` library and its
   interface library `FilesApi`, which a package may import, and of each other library of the
   set's packages but its tests, with the files Lake wrote for each, the
-  lakefiles and the core's glue; `tools/stage-bundle.sh` copies the list
-  and decides nothing. Each package's modules ship once, in that package's
+  lakefiles and the core's glue; the `stage-bundle` binary
+  (`editor_release::bundle`) copies the list and decides nothing. Each package's modules ship once, in that package's
   own build directory.
 - **A build from the bundle compiles none of it.** Lake decides "up to
   date" by trace hashes, never by modification time; a module's trace mixes
@@ -168,9 +168,9 @@ lean/link-stubs/                           macOS: the system libraries' link stu
   `Contents/Resources/lean/link-stubs`: `-F` and `-L` the directory, a
   `-framework` or `-l` for each stub, and `-Wl,-platform_version,macos,
   <minos>,<sdk>` from its `platform-version` (`linkAsEditor`,
-  `stubLinkArgs`). `tools/stage-bundle.sh` writes them from the shipped
-  editor as the `link-stubs` binary does (`editor_release::stubs`), as phase 1 proved ("A link on the
-  user's machine, measured"). With `LEAN_CC` set, a checkout's link, the
+  `stubLinkArgs`). The `stage-bundle` binary writes them from the shipped
+  editor (`editor_release::stubs`, as the `link-stubs` binary does), as
+  phase 1 proved ("A link on the user's machine, measured"). With `LEAN_CC` set, a checkout's link, the
   archive's `native-static-libs` line is passed as before. The stubs hold
   only what the shipped editor imports, and the toolchain has no C library
   headers, so a package's C that calls another system function or
@@ -2583,7 +2583,7 @@ A config file may import a module of the editor's package set and a module
 of `Init`, `Std` or `Lean`, and an app bundle carries the module files such
 an import reads, since it can rely on no toolchain on the machine. Which
 files those are, and what a base with `Lean` costs, was measured from
-staged bundles (`tools/stage-bundle.sh`), on 2026-11-19, on an Apple M5
+staged bundles (the stage script then, the `stage-bundle` binary now), on 2026-11-19, on an Apple M5
 Max, macOS 27.2, Lean 4.35.0, with
 
 ```sh
@@ -2637,8 +2637,9 @@ or `Lean` beside it, and a bundled editor reads a module from the bundle
 alone, so `:editorApp` and `bundle-test` take the closure of that base with
 `Std` and `Lean` over the set's `.olean` directories, the core's and each
 default package's, and stage it into the bundle's one directory
-(`tools/stage-bundle.sh`, which takes the package directories joined with
-`:` and copies a module from the first that holds it). On 2026-11-19:
+(the `stage-bundle` binary, `editor_release::bundle`, which takes the
+package directories joined with `:` and copies a module from the first that
+holds it). On 2026-11-19:
 
 | | |
 |---|---|

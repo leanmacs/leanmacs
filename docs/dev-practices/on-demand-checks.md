@@ -118,7 +118,7 @@ timed as if it were a start-up. For `Editor` and for `Editor Lean` it prints the
 import reads (`config-test bench-modules <sysroot> <olean dir> <module>…`)
 and the bytes of each file kind, of whole top-level directories and of those
 modules alone; which file kinds the import needs, by staging the whole
-directories in a temporary directory with `tools/stage-bundle.sh` with
+directories in a temporary directory with the `stage-bundle` binary with
 `olean`, then `olean olean.server`, then `olean olean.server
 olean.private`, then that with `ir ir.sig`, and importing from each; and,
 with the closure staged with the kinds it needs, five runs of `bench-start`
@@ -128,7 +128,7 @@ default package set's, which elaborates config on the set's base
 (`Editor`, then the entry module of each default package), and a config
 file may import `Std` and `Lean`, so the script stages the closure of that
 base with `Std` and `Lean` from the directories the build recorded beside
-the editor into one directory, `lean/editor`, which `tools/stage-bundle.sh`'s
+the editor into one directory, `lean/editor`, which the `stage-bundle` binary's
 `--closure` form names in the bundle's record, so the staged editor finds
 it with no directory argument, prints its modules and bytes,
 and times five runs of that bundle's headless mode with an empty
@@ -375,9 +375,10 @@ and inodes: the second build copied and signed nothing. Lake's output is
 printed, and holds no `Built «default-set»:editorApp` line. Then, in a
 clone of the core and of the default set, `lean/` and `packages/` side by
 side in the temporary directory (`cp -c`, so it takes no space), with a
-`cargo` that does nothing first on the `PATH`, it swaps the stage script
-for one that stages and then fails, builds `editorApp`, which must fail,
-puts the script back so the inputs hash to the old trace again, and builds
+`cargo` that does nothing first on the `PATH`, it swaps the built
+`stage-bundle` binary for a script that stages with it and then fails,
+builds `editorApp`, which must fail, puts the binary back so the inputs
+hash to the old trace again, and builds
 once more: the bundle must still verify and be the old one, so a failed or
 interrupted rebuild leaves no half-built bundle taken as up to date. In the
 same clone it writes another version, 9.8.7, into `lean/app/version` and
@@ -423,7 +424,8 @@ It writes nothing outside its temporary directory but that second build,
 which is shown to write nothing, opens no window and needs no person. It is
 not part of the gate because the gate does not build the bundle, which is
 about 3.9 GB and must be signed, and runs on Linux too. It is the check for
-any change to `editorApp`, to `tools/stage-bundle.sh` or to module lookup
+any change to `editorApp`, to the `stage-bundle` binary
+(`editor_release::bundle`) or to module lookup
 (`lean/Editor/ModuleLookup.lean`): such a change is not done until this
 ends `app-check: ok`. CI's build job runs it on every push to main, before
 it packs the disk image ([`ci.md`](ci.md)).

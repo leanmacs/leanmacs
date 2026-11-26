@@ -349,7 +349,7 @@ def modules.realHost : Editor.RealHost :=
 
 /-- `bench-modules`: makes the base of `modules` and prints the name of
 every module the import read, one a line and unescaped, so that
-`tools/stage-bundle.sh --closure` can map each to its files. -/
+the `stage-bundle` binary's `--closure` can map each to its files. -/
 def modules (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
   let (real, _) ← measured sysroot oleanDir (modules.map String.toName).toArray
   let base ← real.base none #[]

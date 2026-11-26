@@ -65,7 +65,7 @@ A bundle's `.olean` directories are the lines of
 `<bundle>/Contents/Resources/editor.oleans` (`bundleRecordPath`), each
 relative line resolved against `<bundle>/Contents/Resources` and an
 absolute one kept (`recordedInBundle`), in order: the staged core's, then
-each staged default package's (`tools/stage-bundle.sh`;
+each staged default package's (the `stage-bundle` binary;
 `docs/design/lean-runtime.md`, "Build"). So the bundle ships each package's
 modules once, in that package's own build directory, where a user's
 package-set build reads them too. It is in `Contents/Resources`, beside
@@ -86,7 +86,7 @@ in the config directory, finds the modules config imports.
   knows no set directory.
 - **In a bundle** it is `<bundle>/Contents/Resources/lean/set`, by the
   bundle's layout, as the toolchain is: the default set the app ships,
-  which `tools/stage-bundle.sh` stages there, so the lakefile an editor in
+  which the `stage-bundle` binary stages there, so the lakefile an editor in
   the app generates names it.
 - A directory that is not there is none, in either case.
 

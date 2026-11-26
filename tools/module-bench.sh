@@ -9,7 +9,8 @@
 #    toolchain's `Init` and `Std`, and `Lean` for the second set, and the
 #    package's `Editor`) and of those modules alone, the closure;
 # 2. which file kinds the import reads: it stages the whole directories in
-#    a temporary directory with tools/stage-bundle.sh, with each kind set in
+#    a temporary directory with the `stage-bundle` binary
+#    (crates/editor-release-std), with each kind set in
 #    turn (`olean`; `olean olean.server`; `olean olean.server
 #    olean.private`; and that with `ir ir.sig`), and runs
 #    `config-test bench-start` on the staged directories. The smallest set
@@ -35,7 +36,7 @@
 # each module copied from the first of the directories the build recorded
 # beside the editor that holds it (`editor.oleans`), with the kinds the set
 # `Editor` was found to need, into the bundle's one directory
-# `Contents/Resources/lean/editor`, which tools/stage-bundle.sh's
+# `Contents/Resources/lean/editor`, which the `stage-bundle` binary's
 # `--closure` mode names in the bundle's record, `editor.oleans`, so the
 # staged editor finds its modules with no directory argument. Its modules
 # and bytes are printed too. The app's own figures are
@@ -56,8 +57,10 @@ if [ "$(uname -s)" != Darwin ]; then
 fi
 
 lean_dir=$(cd "$1" && pwd)
-tools=$(cd "$lean_dir/../tools" && pwd)
 fixtures=$(cd "$lean_dir/../tests/headless/bundle" && pwd)
+repo=$(cd "$lean_dir/.." && pwd)
+cargo build --quiet --locked --release --manifest-path "$repo/Cargo.toml" -p editor-release-std --bin stage-bundle
+stage_bundle="$repo/target/release/stage-bundle"
 editor="$lean_dir/../packages/.lake/build/bin/editor"
 config_test="$lean_dir/.lake/build/bin/config-test"
 sysroot=$(cd "$lean_dir" && lean --print-prefix)
@@ -156,7 +159,7 @@ for set in "Editor" "Editor Lean"; do
     read -r -a kind_list <<<"$kinds"
     stage=$work/stage
     rm -rf "$stage"
-    "$tools/stage-bundle.sh" --roots "$roots" "$stage/Leanmacs.app" "$editor" "$sysroot" "$package" "${kind_list[@]}"
+    "$stage_bundle" --roots "$roots" "$stage/Leanmacs.app" "$editor" "$sysroot" "$package" "${kind_list[@]}"
     resources=$stage/Leanmacs.app/Contents/Resources/lean
     if out=$(env -u LEAN_STACK_SIZE_KB "$config_test" bench-start "$resources/toolchain" "$resources/editor" "${modules[@]}" 2>"$work/start.err"); then
       echo "$label: kinds $kinds, whole directories: imports and loads: $out"
@@ -185,7 +188,7 @@ for set in "Editor" "Editor Lean"; do
   # 3. Start-up and memory, on the closure staged with those kinds.
   stage=$work/stage
   rm -rf "$stage"
-  "$tools/stage-bundle.sh" --closure "$closure" "$stage/Leanmacs.app" "$editor" "$sysroot" "$package" "${kind_list[@]}"
+  "$stage_bundle" --closure "$closure" "$stage/Leanmacs.app" "$editor" "$sysroot" "$package" "${kind_list[@]}"
   resources=$stage/Leanmacs.app/Contents/Resources/lean
   : >"$work/real"
   : >"$work/rss"
@@ -216,7 +219,7 @@ for set in "Editor" "Editor Lean"; do
     "$config_test" bench-modules "$sysroot" "$searched" "${base[@]}" Std Lean >"$base_closure"
     counts=$(cut -d. -f1 "$base_closure" | sort | uniq -c | awk '{ printf "%s%s %s", sep, $2, $1; sep = ", " }')
     rm -rf "$stage"
-    "$tools/stage-bundle.sh" --closure "$base_closure" "$stage/Leanmacs.app" "$editor" "$sysroot" "$searched" "${kind_list[@]}"
+    "$stage_bundle" --closure "$base_closure" "$stage/Leanmacs.app" "$editor" "$sysroot" "$searched" "${kind_list[@]}"
     staged_bytes=$(cd "$stage/Leanmacs.app/Contents/Resources/lean" && find . -type f | sum_listed .)
     echo "the default set's base with Std and Lean (${base[*]} Std Lean): closure: $(wc -l <"$base_closure" | tr -d ' ') modules ($counts); shipped with kinds $needed: $(mb "$staged_bytes") MB"
     mkdir -p "$work/elsewhere"

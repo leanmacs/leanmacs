@@ -5,15 +5,16 @@
 # docs/design/lean-runtime.md, "Build").
 #
 # Run from lean/, after `lean`. Cargo first builds the app's launcher
-# (crates/editor-launch-std, the binary `leanmacs`), release, into target/;
-# its own up-to-date check makes that quick once built. Everything else is
+# (crates/editor-launch-std, the binary `leanmacs`) and the stager
+# (crates/editor-release-std, the binary `stage-bundle`), release, into
+# target/; its own up-to-date check makes that quick once built. Everything else is
 # in one temporary directory (its path with its links resolved, as
 # CoreFoundation names a bundle), removed by a trap, its read-only bits put
 # back first.
 #
 # 1. **The stage.** `lake -d ../packages query :editorShipped` lists what
 #    the bundle ships of the default set, built (lean/lakefile.lean,
-#    `editorShipped`), and tools/stage-bundle.sh lays `Leanmacs.app` out
+#    `editorShipped`), and the `stage-bundle` binary lays `Leanmacs.app` out
 #    from it: the default set's `editor` and the launcher in
 #    `Contents/MacOS`, the whole Lean toolchain, the core and the default
 #    packages with their sources and build output, the set's lakefile, the
@@ -91,7 +92,7 @@ fi
 lean_dir=$(pwd -P)
 repo=$(cd .. && pwd -P)
 if [ "$mode" != headless ]; then
-  cargo build --quiet --locked --release --manifest-path ../Cargo.toml -p editor-launch-std --bin leanmacs
+  cargo build --quiet --locked --release --manifest-path ../Cargo.toml -p editor-launch-std --bin leanmacs -p editor-release-std --bin stage-bundle
 fi
 sysroot=$(lean --print-prefix)
 shipped_editor=$repo/packages/.lake/build/bin/editor
@@ -150,7 +151,7 @@ lean=$app/Contents/Resources/lean
 if [ "$mode" != headless ]; then
   started=$(date +%s)
   lake -d ../packages query :editorShipped >"$dir/shipped"
-  "$repo/tools/stage-bundle.sh" --launcher "$repo/target/release/leanmacs" "$dir/Leanmacs.app" \
+  "$repo/target/release/stage-bundle" --launcher "$repo/target/release/leanmacs" "$dir/Leanmacs.app" \
     "$shipped_editor" "$sysroot" "$dir/shipped"
   echo "bundle-test: staged the bundle ($(($(date +%s) - started)) s)"
 fi

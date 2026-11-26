@@ -618,7 +618,7 @@ run = [
 # The app bundle's layout, staged and run (tools/bundle-test.sh, whose
 # header says each step; docs/dev-practices/the-gate.md, "The bundle
 # test"; docs/dev-practices/headless-mode.md, "From an app bundle"):
-# tools/stage-bundle.sh lays `Leanmacs.app` out in a temporary directory
+# the stage-bundle binary lays `Leanmacs.app` out in a temporary directory
 # from what `lake -d ../packages query :editorShipped` lists, the whole
 # Lean toolchain, the Rust archive and, on macOS, the link stubs; the
 # bundle must hold every piece a user's package-set build needs; and its
@@ -629,7 +629,7 @@ run = [
 # just `lean` before it, and has a time limit of its own: on Linux the
 # toolchain is copied, about 3.1 GB, where macOS clones it.
 [tasks.bundle-test]
-description = "Stage the app bundle's layout in a temporary directory, with the launcher, the whole Lean toolchain, the core and the default packages built, the Rust archive and the link stubs, check it holds each piece a package-set build needs, and run its editor through the launcher with no directory argument and an empty environment: the headless fixtures, the generated lakefile, --version and the launcher's probes (tools/bundle-test.sh, tools/stage-bundle.sh, tests/headless/bundle)"
+description = "Stage the app bundle's layout in a temporary directory, with the launcher, the whole Lean toolchain, the core and the default packages built, the Rust archive and the link stubs, check it holds each piece a package-set build needs, and run its editor through the launcher with no directory argument and an empty environment: the headless fixtures, the generated lakefile, --version and the launcher's probes (tools/bundle-test.sh, the stage-bundle binary of crates/editor-release-std, tests/headless/bundle)"
 depends = ["lean"]
 dir = "lean"
 # The bundle fixture's first settle may wait 90 s (tests/headless/bundle/
@@ -714,7 +714,7 @@ run = "id=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-r
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
 # hk.pkl: the gate does not build the bundle, and runs on Linux too. It is
-# the check for any change to `editorApp`, tools/stage-bundle.sh or module
+# the check for any change to `editorApp`, the stage-bundle binary or module
 # lookup (lean/Editor/ModuleLookup.lean).
 #
 # tools/app-check.sh copies the built bundle into a temporary directory
@@ -954,7 +954,7 @@ run = [
 # `Editor` with `Lean` (tools/module-bench.sh): the modules each import
 # reads and the bytes of each file kind, of whole top-level directories and
 # of those modules alone; which file kinds the import needs, found by
-# staging the directories with tools/stage-bundle.sh in a temporary
+# staging the directories with the stage-bundle binary in a temporary
 # directory with each kind set in turn and importing from them; and, staged
 # with the kinds it needs, the start-up time and resident memory of
 # `bench-start`, and of the staged bundle's headless mode for `Editor`. The

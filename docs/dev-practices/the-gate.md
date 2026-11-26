@@ -1884,9 +1884,10 @@ trap and runs its editor as the installed app runs it
 1. **The stage.** `lake -d ../packages query :editorShipped` lists what the
    bundle ships of the default set, built: the core's and each default
    package's sources and build output, the set's and the packages'
-   lakefiles, the core's glue and the Rust archive. `tools/stage-bundle.sh`
-   copies them, the whole Lean toolchain, the editor, the launcher (built
-   by Cargo, release, first) and, on macOS, the link stubs into
+   lakefiles, the core's glue and the Rust archive. The `stage-bundle`
+   binary (`editor_release::bundle`, built by Cargo, release, first with
+   the launcher) copies them, the whole Lean toolchain, the editor, the
+   launcher and, on macOS, the link stubs into
    `Leanmacs.app`, and writes the records `editor.core`, `editor.oleans`
    and `editor.build` (without `LEAN_CC`) in `Contents/Resources`. Every
    copy is a clone on APFS; on Linux the toolchain, about 3.1 GB, is

@@ -86,13 +86,13 @@
 #    printed, and holds no `Built «default-set»:editorApp` line;
 # 7. in a clone of the core and of the default set, `lean/` and `packages/`
 #    side by side as they are in the checkout (`cp -c`: the files share
-#    their blocks, so it is quick and takes no space), with the stage script
-#    beside them and
+#    their blocks, so it is quick and takes no space), with the built
+#    `stage-bundle` binary in the clone's `target/release` and
 #    a `cargo` that does nothing first on the PATH, so nothing but
-#    `editorApp` builds: replaces the stage script with one that stages and
-#    then fails, as a failed or interrupted rebuild would, builds
-#    `editorApp`, which must fail, puts the script back, so the inputs hash
-#    to the old trace again, and builds once more. The bundle must still
+#    `editorApp` builds: replaces the binary with a script that stages
+#    with it and then fails, as a failed or interrupted rebuild would,
+#    builds `editorApp`, which must fail, puts the binary back, so the
+#    inputs hash to the old trace again, and builds once more. The bundle must still
 #    verify (`codesign --verify --strict --deep`) and be the old one: a
 #    rebuild that never finished leaves no half-built bundle that the old
 #    trace takes as up to date;
@@ -539,11 +539,10 @@ step "building editorApp again copied and signed nothing"
 
 # 7. A rebuild that fails leaves the old bundle, never a half-built one.
 clone="$dir/clone"
-mkdir -p "$clone/tools" "$clone/target/release" "$clone/target/editor-rust" "$clone/bin"
+mkdir -p "$clone/target/release" "$clone/target/editor-rust" "$clone/bin"
 cp -Rpc "$lean_dir" "$clone/lean"
 cp -Rpc "$set_dir" "$clone/packages"
-cp -p "$lean_dir/../tools/stage-bundle.sh" "$clone/tools/stage-bundle.real"
-cp -p "$lean_dir/../tools/link-stubs.sh" "$clone/tools/link-stubs.sh"
+cp -pc "$lean_dir/../target/release/stage-bundle" "$clone/target/release/stage-bundle.real"
 # The default set's Rust archive and the crate generated for it, with the
 # system libraries it needs and the root lock it is seeded from: the fake
 # `cargo` below builds nothing, so they must be there already.
@@ -553,8 +552,8 @@ cp -p "$lean_dir/../Cargo.lock" "$clone/Cargo.lock"
 mkdir -p "$clone/crates/editor-ffi"
 cp -pc "$lean_dir/../target/release/leanmacs" "$clone/target/release/leanmacs"
 printf '#!/bin/sh\nexit 0\n' >"$clone/bin/cargo"
-printf '#!/usr/bin/env bash\n"$(dirname "$0")/stage-bundle.real" "$@"\nexit 1\n' >"$clone/tools/stage-bundle.sh"
-chmod +x "$clone/bin/cargo" "$clone/tools/stage-bundle.sh"
+printf '#!/usr/bin/env bash\n"$(dirname "$0")/stage-bundle.real" "$@"\nexit 1\n' >"$clone/target/release/stage-bundle"
+chmod +x "$clone/bin/cargo" "$clone/target/release/stage-bundle"
 cloned="$clone/packages/.lake/build/Leanmacs.app"
 clone_marks() {
   stat -f '%m %i' "$cloned/Contents/MacOS/editor" "$cloned/Contents/_CodeSignature/CodeResources"
@@ -565,14 +564,14 @@ build_clone() {
 before=$(clone_marks)
 if build_clone >"$dir/failed.log" 2>&1; then
   cat "$dir/failed.log"
-  fail "building editorApp with a stage script that fails succeeded"
+  fail "building editorApp with a stager that fails succeeded"
 fi
-grep -q "stage-bundle.sh' exited with code 1" "$dir/failed.log" || {
+grep -q "stage-bundle' exited with code 1" "$dir/failed.log" || {
   cat "$dir/failed.log"
-  fail "building editorApp with a stage script that fails failed, but not in the stage script"
+  fail "building editorApp with a stager that fails failed, but not in the stager"
 }
-mv "$clone/tools/stage-bundle.real" "$clone/tools/stage-bundle.sh"
-build_clone || fail "building editorApp in the clone with the stage script back failed"
+mv "$clone/target/release/stage-bundle.real" "$clone/target/release/stage-bundle"
+build_clone || fail "building editorApp in the clone with the stager back failed"
 codesign --verify --strict --deep "$cloned" ||
   fail "after a failed rebuild, the old trace took a half-built bundle as up to date"
 [ "$before" = "$(clone_marks)" ] || fail "after a failed rebuild, the bundle is not the old one"

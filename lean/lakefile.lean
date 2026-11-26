@@ -418,6 +418,28 @@ target launcher pkg : FilePath :=
     setTrace (← computeTrace binary)
     return binary
 
+/-- The bundle's stager (`crates/editor-release-std`, the binary
+`stage-bundle`, over `editor_release::bundle`), which lays the app bundle out
+from what `editorShipped` lists and writes its link stubs. Built as
+`launcher` is, by Cargo with its own up-to-date check, into the workspace's
+`target/release`, and traced by the binary, so a change to how the bundle
+is laid out rebuilds it. Only `editorApp` fetches it, so the model tests'
+failing `cargo` (`mise run lean-test`) never reaches it. -/
+target stageBundle pkg : FilePath :=
+  Job.async do
+    requireSupportedPlatform
+    let root := pkg.dir / ".."
+    let targetDir := root / "target"
+    proc (quiet := true)
+        { cmd := "cargo"
+          args :=
+            #["build", "--release", "--locked", "--package", "editor-release-std", "--bin",
+              "stage-bundle", "--manifest-path", (root / "Cargo.toml").toString, "--target-dir",
+              targetDir.toString] }
+    let binary := targetDir / "release" / "stage-bundle"
+    setTrace (← computeTrace binary)
+    return binary
+
 /-- The C glue between `@[extern]` declarations and the Rust library
 (`ffi/glue.c`), compiled against the toolchain's own `lean.h`. Nothing lints C
 for us, so every warning is an error. -/
@@ -826,9 +848,9 @@ def systemLibraryArgs (file : FilePath) : IO (Array String) := do
   return ((text.split Char.isWhitespace).filter (!·.isEmpty)).toArray.map (·.toString)
 
 /-- The directory of the link stubs in the repository `root`:
-`<root>/link-stubs`, which `tools/stage-bundle.sh` writes into an app
-bundle's `Contents/Resources/lean` from the shipped editor
-(`tools/link-stubs.sh`). -/
+`<root>/link-stubs`, which the `stage-bundle` binary (`stageBundle`)
+writes into an app bundle's `Contents/Resources/lean` from the shipped
+editor (`editor_release::stubs`, as the `link-stubs` binary does). -/
 def linkStubsDir (root : FilePath) : FilePath :=
   root / "link-stubs"
 
@@ -910,7 +932,7 @@ def linkAsEditor (set : Package) (root : Module) (file : FilePath) : FetchM (Job
         if fromStubs then
           unless ← stubs.isDir do
             error
-                s!"linking with the toolchain's own clang needs link stubs at {stubs} (tools/link-stubs.sh), and there are none: set LEAN_CC to a compiler that links against the macOS SDK, or build from an app bundle, which ships them"
+                s!"linking with the toolchain's own clang needs link stubs at {stubs} (the link-stubs binary, crates/editor-release-std), and there are none: set LEAN_CC to a compiler that links against the macOS SDK, or build from an app bundle, which ships them"
           let names := (← stubs.readDir).map (·.fileName)
           match stubLinkArgs stubs names (← IO.FS.readFile (stubs / "platform-version")) with
           | .ok args =>
@@ -1852,8 +1874,8 @@ set outside the bundle's `lean` reads them (`prebuiltRust`,
 
 It fetches each listed module's `oExport`, and so its `.olean`, `.ilean`
 and C file, and `glue.o`, so every file it lists is built. It builds no
-Rust: the archive must be built already. `tools/stage-bundle.sh` copies
-what it lists and decides nothing; which modules exist is Lake's
+Rust: the archive must be built already. The `stage-bundle` binary
+(`stageBundle`) copies what it lists and decides nothing; which modules exist is Lake's
 knowledge, and a module left out would be built into the bundle the first
 time a package imported it. -/
 package_facet editorShipped pkg : Array String := do
@@ -2030,7 +2052,8 @@ def requireArm64Mac : JobM Unit := do
         s!"the app bundle builds only on macOS on arm64 (this toolchain targets {Platform.target}); see `requireArm64Mac` in lakefile.lean"
 
 /-- The bundle's `CFBundleExecutable`: the app's launcher (`launcher`), which
-`tools/stage-bundle.sh` places at `Contents/MacOS/leanmacs`. -/
+the `stage-bundle` binary (`stageBundle`) places at
+`Contents/MacOS/leanmacs`. -/
 def appExecutable : String :=
   "leanmacs"
 
@@ -2300,10 +2323,10 @@ inductive AppStep where
   | moveIntoPlace
   deriving BEq, Inhabited
 
-/-- How `editorApp` assembles the bundle in `staging`, from the stage script
-`stager`, the launcher `launcher`, the set's editor `exe`, the toolchain
-`sysroot`, the list of shipped files `list`, the artwork `art` and the
-property list's text `plist`: the bundle staged, its `Info.plist` written,
+/-- How `editorApp` assembles the bundle in `staging`, from the
+`stage-bundle` binary `stager` (`stageBundle`), the launcher `launcher`,
+the set's editor `exe`, the toolchain `sysroot`, the list of shipped files
+`list`, the artwork `art` and the property list's text `plist`: the bundle staged, its `Info.plist` written,
 its icon made from the artwork in an iconset beside it, its extended
 attributes cleared, then the whole staged bundle signed, the last step
 that touches it, since a write after the signature breaks the seal, and
@@ -2450,11 +2473,11 @@ breaks the seal; and the renames into place come last. Whether `codesign`
 accepts the bundle is codesign's. -/
 #guard
   let steps :=
-    appSteps "/t/stage-bundle.sh" "/t/leanmacs" "/t/editor" "/t/sysroot" "/s/list" "/s/staging"
+    appSteps "/t/stage-bundle" "/t/leanmacs" "/t/editor" "/t/sysroot" "/s/list" "/s/staging"
       "/c/app/Leanmacs.png" "<plist/>"
   steps[0]? ==
       some
-        (.run "/t/stage-bundle.sh"
+        (.run "/t/stage-bundle"
           #["--launcher", "/t/leanmacs", "/s/staging/Leanmacs.app", "/t/editor", "/t/sysroot",
             "/s/list"]) &&
     steps.contains (.write "/s/staging/Leanmacs.app/Contents/Info.plist" "<plist/>") &&
@@ -2473,7 +2496,7 @@ anywhere but macOS on arm64 (`requireArm64Mac`).
 `pkg` is the set, which holds the bundle, its trace, its staging directory
 and its list of shipped files in its build directory. Everything else it
 reads is the core's, this package's, found in the workspace by name: the
-stage script, this lakefile, the version file and the artwork.
+`stage-bundle` binary, this lakefile, the version file and the artwork.
 
 It holds `Contents/MacOS/leanmacs`, the app's launcher (`launcher`), which is
 the bundle's `CFBundleExecutable` and starts the editor by exec with
@@ -2486,8 +2509,8 @@ the whole toolchain Lake runs on, which is the pinned one, the core and
 each default package with their sources and build output, the set's
 lakefile, the Rust archive and the link stubs, with the records
 `editor.core`, `editor.oleans` and `editor.build`, laid out by
-`tools/stage-bundle.sh` from what `editorShipped` lists, as `bundle-test`
-lays them out; `Contents/Info.plist`
+the `stage-bundle` binary (`stageBundle`) from what `editorShipped` lists, as
+`bundle-test` lays them out; `Contents/Info.plist`
 (`appInfoPlist`), with the version from `app/version` (`appVersionFile`,
 `parseAppVersion`, which fails the build on a malformed line) and the build
 ID and the commit from `LEANMACS_BUILD_ID` and `LEANMACS_COMMIT`
@@ -2508,7 +2531,7 @@ The trace mixes the executable's, the shipped list's (`editorShipped`: a
 hash of the place of each line, not of the path it is copied from, so a
 clone of the checkout elsewhere has the same trace; the list's job carries
 the trace of every module it lists),
-the stage script's, this lakefile's, the version file's and the artwork's traces with
+the stager's (`stageBundle`), this lakefile's, the version file's and the artwork's traces with
 the toolchain's, the platform's and the property list's, so the bundle is rebuilt, from nothing,
 only when one of them changed, or when the bundle is gone. The property
 list's trace is a hash of its text, which holds the build ID and the
@@ -2532,7 +2555,7 @@ package_facet editorApp pkg : FilePath := do
   let launcherJob ← launcher.fetch
   -- What the bundle ships of the set, built.
   let shippedJob ← fetch <| pkg.facet `editorShipped
-  let stager ← inputTextFile <| core.dir / ".." / "tools" / "stage-bundle.sh"
+  let stager ← stageBundle.fetch
   -- This file is the recipe, so a change to it rebuilds the bundle too.
   let recipe ← inputTextFile <| core.dir / "lakefile.lean"
   let versionJob ← inputTextFile <| core.dir / appVersionFile
