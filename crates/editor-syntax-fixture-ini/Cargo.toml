@@ -1,0 +1,19 @@
+[package]
+name = "editor-syntax-fixture-ini"
+version = "0.1.0"
+description = "A test fixture: a small INI grammar built as a native grammar library, for the syntax adapter's tests of grammars loaded at run time; never linked into the editor"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[build-dependencies]
+# The C compiler, found as the grammar crates' builds find it: the build
+# script asks `cc` for the compiler and its flags for this target and links
+# the generated parser and the fixture's exports as a shared library. Pinned
+# to the version already locked for tree-sitter's and the grammar crates'
+# builds (1.11.1, 2026-11-26), so it adds nothing to the graph. MIT or
+# Apache-2.0, used unmodified.
+cc = { version = "=1.11.1" }
+
+[lints]
+workspace = true

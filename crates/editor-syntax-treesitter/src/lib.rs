@@ -1,14 +1,15 @@
 //! The syntax port's real adapter: [`TreeSitter`], a [`Syntax`] over
 //! tree-sitter, with the Rust, JSON, Markdown, TOML and Lean grammars
-//! compiled in, and Markdown's inline grammar.
+//! compiled in, and Markdown's inline grammar; and the grammars registered
+//! on it at run time, each loaded from a native library.
 //!
-//! The port, its fake, its contract, the rule for what a range answers and
-//! the worker that reparses are `editor-syntax`'s. This crate is thin: each
-//! method of the port is one call of the library's, and the answer is
-//! turned into the port's plain data. No tree-sitter type is public: the
-//! parser, the tree and the query are wrapped in types of this crate whose
-//! fields are private, and no other crate depends on the library
-//! (`deny.toml`).
+//! The port, its fake, its contract, the rule for what a range answers, the
+//! worker that reparses and the decisions about a registration are
+//! `editor-syntax`'s. This crate is thin: each method of the port is one
+//! call of the library's, and the answer is turned into the port's plain
+//! data. No tree-sitter type is public: the parser, the tree and the query
+//! are wrapped in types of this crate whose fields are private, and no
+//! other crate depends on the library (`deny.toml`).
 //!
 //! # How grammars are loaded
 //!
@@ -16,28 +17,41 @@
 //! exactly, or, for Lean, which has no usable crates.io crate, upstream's
 //! own crate vendored unmodified under the repository's `vendor/`, and
 //! built the same way: its build compiles the generated parser's C with
-//! `cc` when Cargo builds this crate; the objects end up in the static library Lean
-//! links. Nothing is fetched, generated or loaded at run time, and the
-//! grammars are the private table `GRAMMARS`: a name, the language of the
-//! grammar's crate, its reparse policy, and the queries it ships, each
-//! with its kind.
+//! `cc` when Cargo builds this crate; the objects end up in the static
+//! library Lean links. These grammars are the private table `GRAMMARS`: a
+//! name, the language of the grammar's crate, its reparse policy, and the
+//! queries it ships, each with its kind.
 //!
-//! The other two ways were set aside (the decision is in
-//! `docs/design/README.md`'s table and `docs/design/rust-library.md`,
-//! "Syntax, as built"):
+//! **Native libraries, at run time.** A grammar the table lacks, or one
+//! that takes a compiled-in grammar's place, is registered
+//! ([`Syntax::register`]) from a shared library (`.dylib` on macOS, `.so`
+//! on Linux) exporting `tree_sitter_<name>`: the same generated C, linked
+//! as a library. This is how Emacs, Helix and Neovim load grammars. The
+//! module `native` opens it with `libloading`, whose types stay there,
+//! checks the language's ABI version against the range the pinned library
+//! accepts before any parser is made, and refuses as values a library that
+//! is not there, a file that will not open as one, a missing symbol and an
+//! ABI outside the range. A loaded library is never unloaded: a language,
+//! and every parser and tree of it, points into its code. The editor never
+//! finds, fetches or compiles a grammar: the library's path is named by the
+//! user's config or a package, and handed in. A registered grammar ships
+//! no query; its queries are read in Lean from beside its library.
 //!
-//! - **Native libraries**, loaded with `dlopen`: a second build product for
-//!   each grammar and platform, a search path, a check of the ABI when one
-//!   is loaded, a failure at run time ("grammar not found"), and bundling
-//!   into the app, for no gain while the set of grammars is fixed when the
-//!   library is built.
+//! Set aside (the decision is in `docs/design/README.md`'s table and
+//! `docs/design/rust-library.md`, "Syntax, as built"):
+//!
 //! - **WebAssembly grammars**, through the library's `wasm` feature: it
 //!   brings wasmtime, a JIT and hundreds of crates, and a `.wasm` build of
 //!   each grammar made or fetched. Its sandbox protects against a grammar
-//!   that is not trusted, and every grammar here is pinned and reviewed.
+//!   that is not trusted; a native grammar is the compiled C every other
+//!   editor loads, and parses at native speed.
+//! - **`tree-sitter-loader`**, which finds grammars in directories and
+//!   compiles their C with the machine's compiler: the editor never does
+//!   either.
 //!
 //! `deny.toml` bans `wasmtime` and `tree-sitter-loader` outright, so
-//! neither way enters the build unnoticed.
+//! neither enters the build unnoticed, and lets no crate but this one
+//! depend on `libloading`.
 //!
 //! # Where each query comes from
 //!
@@ -90,26 +104,33 @@
 //!
 //! # What each method forwards to
 //!
-//! - [`Syntax::reparse_policy`]: the grammar's policy in the table; none
-//!   when the grammar is not in it.
-//! - [`Syntax::register`]: refused as unsupported, with no file read: this
-//!   adapter loads no grammar at run time until native libraries do
-//!   (the roadmap `syntax-runtime-grammars`, phase 2), so its registration
-//!   check is `editor_syntax::contract::registration::check_unsupported`
-//!   (`tests/registration.rs`).
-//! - [`Syntax::parser`]: a new parser with the grammar's language set; none
-//!   when the grammar is not in the table, or the library refuses its
-//!   language (an ABI it does not speak).
+//! A grammar registered under a name is the one that name means from then
+//! on, a compiled-in grammar of the same name included; a parser opened
+//! before keeps the language it was opened with.
+//!
+//! - [`Syntax::grammars`]: the compiled-in names in the table's order, then
+//!   each registered name the table lacks (`editor_syntax::registry`).
+//! - [`Syntax::reparse_policy`]: the registered entry's policy, else the
+//!   grammar's policy in the table; none when the grammar is neither.
+//! - [`Syntax::register`]: the source's library loaded by `native`, off the
+//!   registry's lock, then the core's registry, which names it, keeps its
+//!   policy (whole when the source declares none) and replaces any entry of
+//!   the name; a refusal changes nothing.
+//! - [`Syntax::parser`]: a new parser with the grammar's language set, the
+//!   registered entry's or the table's; none when the grammar is neither,
+//!   or the library refuses its language (an ABI it does not speak).
 //! - [`Syntax::parse`]: the library's parse with a callback that hands it
 //!   the snapshot's chunks ([`Snapshot::chunk_at`]): the text is never
 //!   copied into one string.
 //! - [`Syntax::edit`]: the library's edit of a tree, with the edit's
 //!   fields and points carried over one for one.
-//! - [`Syntax::compile`]: the library's query, its refusal carried over
-//!   with its kind and offset.
-//! - [`Syntax::shipped_query`]: the query of that kind in the table, the
-//!   grammar crate's export (`HIGHLIGHTS_QUERY`, `INJECTIONS_QUERY`) or one
-//!   of `queries/`.
+//! - [`Syntax::compile`]: the library's query over the grammar's language,
+//!   the registered entry's or the table's, its refusal carried over with
+//!   its kind and offset.
+//! - [`Syntax::shipped_query`]: none for a registered name, a compiled-in
+//!   name it replaces included; else the query of that kind in the table,
+//!   the grammar crate's export (`HIGHLIGHTS_QUERY`, `INJECTIONS_QUERY`) or
+//!   one of `queries/`.
 //! - [`Syntax::captures`]: a query cursor set to the range, whose
 //!   predicates (`#eq?`, `#match?`) read the snapshot's chunks of a node.
 //!   The library answers every match that meets the range, captures
@@ -127,14 +148,21 @@
 //! # Tests
 //!
 //! `tests/contract.rs` holds the adapter to the port's contract, once for
-//! each grammar, over the fixtures checked in under the repository's
-//! `tests/syntax/` and a few texts written there. The unit tests here pin
-//! what the contract does not ask: a Rust function's name captured by a
-//! field, a predicate that reads text across two of the rope's chunks, and
-//! a query of a grammar that is not compiled in. That a grammar whose ABI
-//! the library refuses opens no parser is not tested: no such grammar can
-//! be built here honestly, and `contract::GRAMMARS` holds the case of one
-//! that opens.
+//! each grammar compiled in, over the fixtures checked in under the
+//! repository's `tests/syntax/` and a few texts written there, and once for
+//! the fixture INI grammar (`editor-syntax-fixture-ini`) registered from
+//! its native library and drawn with the highlights query beside it.
+//! `tests/registration.rs` holds it to the registration contract on that
+//! fixture library: a new grammar, one that overrides `json`, and one
+//! source for each refusal; and pins that a loaded grammar outlives the
+//! syntax it was registered on. `native`'s unit tests pin the ABI range
+//! with version numbers and the refusal of a relative path. The unit tests
+//! here pin what the contract does not ask: a Rust function's name captured
+//! by a field, a predicate that reads text across two of the rope's chunks,
+//! and a query of a grammar that is not compiled in.
+
+#![deny(unsafe_code)]
+#![deny(clippy::undocumented_unsafe_blocks)]
 
 use std::fmt;
 use std::ops::Range;
@@ -147,6 +175,8 @@ use editor_syntax::{
 };
 use editor_text::{InputEdit, Point, Snapshot};
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
+
+mod native;
 
 /// The adapter: tree-sitter, with the grammars compiled in (`json`,
 /// `rust`, `markdown`, `markdown_inline`, `toml` and `lean`), and the
@@ -346,10 +376,12 @@ impl Syntax for TreeSitter {
         self::grammar(grammar).map(|grammar| grammar.policy)
     }
 
-    fn register(&self, _: &GrammarSource) -> Result<GrammarName, RegistrationRefusal> {
-        // It loads no grammar at run time: every grammar is compiled in
-        // (the crate docs, "How grammars are loaded").
-        Err(RegistrationRefusal::Unsupported)
+    fn register(&self, source: &GrammarSource) -> Result<GrammarName, RegistrationRefusal> {
+        // The library is loaded before the lock is taken, so nothing that
+        // reads the grammars waits for a `dlopen`; the registry then
+        // decides the rest (`editor_syntax::registry`).
+        let loaded = native::load(source);
+        self.registry().register(source, |_| loaded)
     }
 
     fn parser(&self, grammar: &GrammarName) -> Option<TreeSitterParser> {

@@ -874,14 +874,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-syntax-fixture-ini"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "editor-syntax-treesitter"
 version = "0.1.0"
 dependencies = [
  "editor-syntax",
+ "editor-syntax-fixture-ini",
  "editor-text",
  "editor-wait",
+ "libloading",
  "tree-sitter",
  "tree-sitter-json",
+ "tree-sitter-language",
  "tree-sitter-lean",
  "tree-sitter-md",
  "tree-sitter-rust",

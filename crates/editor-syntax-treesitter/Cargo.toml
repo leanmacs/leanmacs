@@ -1,7 +1,7 @@
 [package]
 name = "editor-syntax-treesitter"
 version = "0.1.0"
-description = "The syntax port's real adapter, over tree-sitter, with the Rust, JSON, Markdown, Markdown inline, TOML and Lean grammars compiled in"
+description = "The syntax port's real adapter, over tree-sitter, with the Rust, JSON, Markdown, Markdown inline, TOML and Lean grammars compiled in, and native grammar libraries loaded at run time"
 edition.workspace = true
 license.workspace = true
 publish = false
@@ -23,25 +23,43 @@ editor-text = { path = "../editor-text" }
 # Its features. `std`, the default, is on: it is what `#match?`
 # predicates' `regex` needs. `wasm` is off and stays off: it brings
 # wasmtime, a JIT and hundreds of crates, to load grammars built as
-# WebAssembly, and grammars are compiled in here (the crate docs, "How
-# grammars are loaded"). `deny.toml` bans `wasmtime` outright.
+# WebAssembly, and WebAssembly grammars are set aside: a grammar loaded at
+# run time is a native library (the crate docs, "How grammars are loaded").
+# `deny.toml` bans `wasmtime` outright.
 #
-# `streaming-iterator`, which its query cursor iterates with, and
-# `tree-sitter-language`, the type a grammar crate hands its language in,
-# come in through it and are not dependencies here: the adapter names the
-# first through tree-sitter's re-export, and hands the second straight to
-# `Language::new`.
+# `streaming-iterator`, which its query cursor iterates with, comes in
+# through it and is not a dependency here: the adapter names it through
+# tree-sitter's re-export.
 #
 # Looked at on 2026-11-16 and set aside:
 #
 # - The `wasm` feature, above.
 # - `tree-sitter-loader` 0.x, which finds, builds and loads grammars from a
 #   directory at run time, compiling their C with the machine's compiler.
-#   Grammars are fixed when the library is built, so a loader buys
-#   nothing; `deny.toml` bans it outright.
+#   The editor never finds or compiles a grammar: a native library's path
+#   is handed in, and `src/native.rs` opens it (2026-11-26). `deny.toml`
+#   bans it outright.
 # - Our own parser: tree-sitter is the incremental parser the grammars
 #   exist for, and writing one is out of all proportion.
 tree-sitter = { version = "=0.27.2" }
+# The type a grammar's language function is handed to `Language::new` in.
+# Named here once, in `src/native.rs`, to wrap the function a native
+# grammar library exports (`LanguageFn::from_raw`): tree-sitter uses it but
+# does not re-export it. Pinned exactly to the version tree-sitter and the
+# grammar crates already lock (0.1.9, 2026-11-26), so it adds nothing to
+# the graph. MIT, used unmodified.
+tree-sitter-language = { version = "=0.1.9" }
+# Opening a native grammar library and finding its symbol: the `dlopen` and
+# `dlsym` wrapper (`LoadLibraryW` on Windows) the graph already builds, for
+# `ash`, `dlib`, `khronos-egl`, `wgpu-hal` and `x11rb`. ISC, compatible
+# with GPL-3.0-or-later, used unmodified. Its types stay in `src/native.rs`
+# and never cross the port, and `deny.toml` lets no other crate of the
+# workspace depend on it.
+#
+# Pinned exactly to 0.8.9 on 2026-11-26: the copy the resolved graph
+# already builds for those crates. 0.9.x is newer, but pinning it would add
+# a second copy for no API this needs (`Library::new`, `Library::get`).
+libloading = { version = "=0.8.9" }
 # The grammars, each compiled in: its crate's build compiles the generated
 # `parser.c` (and the grammar's `scanner.c`, if it has one) with `cc` when
 # Cargo builds this crate, and the objects end up in the static library
@@ -159,6 +177,10 @@ tree-sitter-lean = { path = "../../vendor/tree-sitter-lean", version = "=0.2.0" 
 [dev-dependencies]
 # The stopwatch the `round` example times a parse with.
 editor-wait = { path = "../editor-wait" }
+# The fixture grammar library, built for tests alone: `tests/registration.rs`
+# keeps the registration contract on it, and `tests/contract.rs` the syntax
+# contract on its grammar loaded at run time.
+editor-syntax-fixture-ini = { path = "../editor-syntax-fixture-ini" }
 
 [lints]
 workspace = true
