@@ -366,10 +366,22 @@ withdrawn. -/
 def quiescent (fake : Fake) : BaseIO Bool :=
   return (← fake.state.get).pending.isEmpty
 
+/-- The fake as a package's own fake of its service, for a stepped stage
+(`Stage.stepped`'s `packageFakes`): made over the stage's table and pump, so
+each of its completions is a step of the check's. -/
+def packageFake (fake : Fake) : Editor.Job.PackageFake where
+  name := serviceName
+  make completions answer :=
+    return { service := fake.serviceOver completions answer, quiescent := fake.quiescent }
+
 /-- Every request the fake was handed, with its session's model state as it
 arrived and the thread that handed it, oldest first. -/
 def log (fake : Fake) : BaseIO (Array (Request × Protocol.State × UInt64)) :=
   return (← fake.state.get).log
+
+/-- The session `number`, the first by default, as the fake holds it now. -/
+def session? (fake : Fake) (number : Nat := 1) : BaseIO (Option Session) :=
+  return (← fake.state.get).session? number
 
 /-- The trace of the protocol's model of the session `number`, the first by
 default. -/
