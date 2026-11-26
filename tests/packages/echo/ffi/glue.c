@@ -58,3 +58,32 @@ lean_obj_res echo_glue_take(uint64_t id) {
   lean_ctor_set(some, 0, pair);
   return lean_io_result_mk_ok(some);
 }
+
+// The crate takes over a streaming child a Lean job opened in the core's
+// process service, through `editor-service` alone, and reads it in Rust as
+// a request of its service (`rust/src/attach.rs`).
+bool echo_ffi_attach(uint64_t request, uint64_t child);
+bool echo_ffi_attach_take(uint64_t request, echo_raw_reply *out);
+
+// `Echo.Real.attach : UInt64 → UInt64 → IO Bool`
+lean_obj_res echo_glue_attach(uint64_t request, uint64_t child) {
+  return lean_io_result_mk_ok(lean_box(echo_ffi_attach(request, child)));
+}
+
+// `Echo.Real.attachTake : UInt64 → IO (Option (String × UInt32))`: the lines
+// read, joined by line feeds, and how many pulls it took.
+lean_obj_res echo_glue_attach_take(uint64_t request) {
+  echo_raw_reply raw;
+  if (!echo_ffi_attach_take(request, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *text =
+      lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
+  echo_ffi_free(raw.text, raw.text_len);
+  lean_object *pair = lean_alloc_ctor(0, 2, 0);
+  lean_ctor_set(pair, 0, text);
+  lean_ctor_set(pair, 1, lean_box_uint32(raw.checksum));
+  lean_object *some = lean_alloc_ctor(1, 1, 0);
+  lean_ctor_set(some, 0, pair);
+  return lean_io_result_mk_ok(some);
+}

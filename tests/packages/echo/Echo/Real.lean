@@ -33,6 +33,20 @@ took of it from the system's zlib, taken from the crate's service. -/
 @[extern "echo_glue_take"]
 opaque takeRaw (id : UInt64) : IO (Option (String × UInt32))
 
+/-- Hands the streaming child `child`, which a job opened in the core's
+process service, to the crate, which takes it over through `editor-service`
+alone, reads it in Rust as the request `request` of its service, and
+completes `request` once the child has ended or was cancelled. False when
+the take-over is refused or `request` is in use. -/
+@[extern "echo_glue_attach"]
+opaque attach (request child : UInt64) : IO Bool
+
+/-- What the attached request `request` read, once: the child's lines and a
+last line that says how it ended or that it was cancelled, joined by line
+feeds, and how many pulls it took. -/
+@[extern "echo_glue_attach_take"]
+opaque attachTake (request : UInt64) : IO (Option (String × UInt32))
+
 /-- The port over the crate's service. Its replies' checksums are the
 crate's, so the contract holds zlib's CRC-32 to the pure one
 (`Echo.checksum`). -/

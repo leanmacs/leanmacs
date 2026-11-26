@@ -1,6 +1,7 @@
 import Echo.Contract
 import EchoTest.Check
 import EchoTest.Linked.Echo.Real
+import EchoTest.Linked.Echo.Real.Attach
 import Editor.RealHost
 import Editor.Test.Linked.Services
 
@@ -18,8 +19,10 @@ not need.
 
 It starts the linked test kit's services and pump, runs the contract of the
 echo port against the Rust-backed binding over them
-(`EchoTest.Linked.echoRealChecks`, one check over one subject), and says
-so, counting the contract's properties.
+(`EchoTest.Linked.echoRealChecks`, one check over one subject), and the
+checks of a child the core's process service opened and the package's crate
+took over (`EchoTest.Linked.attachChecks`), and says so, counting the
+contract's properties.
 
 Its checks are a check set (`EchoTest.Linked.checks`, `Editor.CheckGroup`,
 `docs/dev-practices/real-thread-checks.md`, "How the set runs"):
@@ -35,12 +38,15 @@ modules, one a line, building nothing.
 def wiringSet.EchoTest.Linked : Editor.WiringSet :=
   .edge "its main starts the library's services and pump and hands them to the echo contract"
 
-/-- Every check of the linked test, over the completions of the services
-`main` starts: its check set (`Editor.CheckGroup`), the contract's one
-check in the group of `EchoTest/Linked/Echo/Real.lean`, of the wiring set. -/
-def EchoTest.Linked.checks : List (Editor.CheckGroup Editor.Job.Completions EchoTest.Check) :=
-  [.wired "EchoTest.Linked.Echo.Real" wiringSet.EchoTest.Linked.Echo.Real fun completions =>
-      EchoTest.Linked.echoRealChecks completions]
+/-- Every check of the linked test, over the services `main` starts: its
+check set (`Editor.CheckGroup`), the contract's one check in the group of
+`EchoTest/Linked/Echo/Real.lean`, and the take-over's checks in the group of
+`EchoTest/Linked/Echo/Real/Attach.lean`, both of the wiring set. -/
+def EchoTest.Linked.checks : List (Editor.CheckGroup Editor.Test.Linked.Services EchoTest.Check) :=
+  [.wired "EchoTest.Linked.Echo.Real" wiringSet.EchoTest.Linked.Echo.Real fun services =>
+      EchoTest.Linked.echoRealChecks services.completions,
+    .wired "EchoTest.Linked.Echo.Real.Attach" wiringSet.EchoTest.Linked.Echo.Real.Attach
+      fun services => EchoTest.Linked.attachChecks services]
 
 /-- Runs the checks `mode` selects from the check set
 (`Editor.CheckGroup.select`) over the services and
@@ -49,8 +55,7 @@ properties held, and that the pump ended once the queues were quit. The exit is 
 linked tests' is: a task may still be blocked in the library. -/
 private def EchoTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : IO UInt32 := do
   let services ← Editor.Test.Linked.Services.start
-  let failed ←
-    EchoTest.failures (Editor.CheckGroup.select mode EchoTest.Linked.checks services.completions)
+  let failed ← EchoTest.failures (Editor.CheckGroup.select mode EchoTest.Linked.checks services)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   if failed.isEmpty then

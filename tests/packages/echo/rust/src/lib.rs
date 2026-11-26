@@ -20,7 +20,12 @@
 //! over the real completer, the service [`SERVICE`], and the C functions
 //! Lean's glue calls are in [`ffi`], and `tests/wiring.rs` runs them over
 //! the process's completion queue.
+//!
+//! A request may also read a streaming child the core's process service
+//! opened, taken over through `editor-service` alone ([`attach`],
+//! [`Echo::attach`]): its answer is what it read ([`Echo::take_read`]).
 
+pub mod attach;
 pub mod ffi;
 pub mod zlib;
 
@@ -28,6 +33,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 
+use editor_service::stream::ChildStreams;
 use editor_service::{Completer, Service};
 
 /// The service, as the completion queue names it.
@@ -59,8 +65,17 @@ struct Request {
     /// Which start of the id this is, so a reply worked for a request that
     /// was cancelled cannot fill a later one with the same id.
     start: u64,
-    /// The reply, once it is ready.
-    reply: Option<Reply>,
+    /// Its answer, once it is ready.
+    reply: Option<Answer>,
+}
+
+/// What a request answers, once it is ready.
+#[derive(Debug)]
+enum Answer {
+    /// A started request's reply ([`Echo::start`]).
+    Echoed(Reply),
+    /// What an attached request read of its child ([`Echo::attach`]).
+    Read(attach::Read),
 }
 
 /// What the service holds.
@@ -119,6 +134,23 @@ impl<C: Completer + 'static> Echo<C> {
     /// cancelled, or when the system refuses a thread. It returns at once:
     /// the reply is worked on a thread of its own.
     pub fn start(&self, id: u64, text: &str) -> bool {
+        let text = text.to_owned();
+        self.begin(id, move || Answer::Echoed(Reply::to(&text)))
+    }
+
+    /// Reads the streaming child `streams`, taken over, as the request `id`
+    /// ([`attach::consume`]) on a worker of its own, as [`Echo::start`]
+    /// does, and returns whether it started: it does not while `id` is in
+    /// use, or when the system refuses a thread. The request is reported
+    /// once the child has ended or was cancelled; what it read is taken
+    /// with [`Echo::take_read`].
+    pub fn attach(&self, id: u64, streams: Box<dyn ChildStreams>) -> bool {
+        self.begin(id, move || Answer::Read(attach::consume(&*streams)))
+    }
+
+    /// Starts the request `id`, whose answer `work` makes on a worker of
+    /// its own.
+    fn begin(&self, id: u64, work: impl FnOnce() -> Answer + Send + 'static) -> bool {
         let start = {
             let mut state = self.shared.state();
             if state.requests.contains_key(&id) {
@@ -130,10 +162,9 @@ impl<C: Completer + 'static> Echo<C> {
             start
         };
         let shared = Arc::clone(&self.shared);
-        let text = text.to_owned();
         let worker = thread::Builder::new()
             .name("echo".into())
-            .spawn(move || shared.finish(id, start, Reply::to(&text)));
+            .spawn(move || shared.finish(id, start, work()));
         let Ok(worker) = worker else {
             self.shared.state().requests.remove(&id);
             return false;
@@ -176,15 +207,34 @@ impl<C: Completer + 'static> Echo<C> {
     /// not ready and for an id not in use.
     pub fn take(&self, id: u64) -> Option<Reply> {
         let mut state = self.shared.state();
-        state.requests.get(&id)?.reply.as_ref()?;
-        state.requests.remove(&id).and_then(|request| request.reply)
+        let Some(Answer::Echoed(_)) = state.requests.get(&id)?.reply else {
+            return None;
+        };
+        match state.requests.remove(&id)?.reply? {
+            Answer::Echoed(reply) => Some(reply),
+            Answer::Read(_) => None,
+        }
+    }
+
+    /// What the attached request `id` read, once it has read to its
+    /// child's end, and the request is no longer in use; `None`, changing
+    /// nothing, before then and for an id not in use or not attached.
+    pub fn take_read(&self, id: u64) -> Option<attach::Read> {
+        let mut state = self.shared.state();
+        let Some(Answer::Read(_)) = state.requests.get(&id)?.reply else {
+            return None;
+        };
+        match state.requests.remove(&id)?.reply? {
+            Answer::Read(read) => Some(read),
+            Answer::Echoed(_) => None,
+        }
     }
 }
 
 impl<C: Completer> Shared<C> {
-    /// Holds `reply` as the reply of the request `id` of the start `start`,
-    /// and reports it, unless that request was cancelled.
-    fn finish(&self, id: u64, start: u64, reply: Reply) {
+    /// Holds `reply` as the answer of the request `id` of the start
+    /// `start`, and reports it, unless that request was cancelled.
+    fn finish(&self, id: u64, start: u64, reply: Answer) {
         {
             let mut state = self.state();
             match state.requests.get_mut(&id) {
@@ -304,8 +354,30 @@ mod tests {
                 reply: None,
             },
         );
-        echo.shared.finish(2, 1, Reply::to("stale"));
+        echo.shared.finish(2, 1, Answer::Echoed(Reply::to("stale")));
         assert_eq!(echo.take(2), None);
+    }
+
+    #[test]
+    fn an_attached_request_reads_its_child_on_a_worker_and_is_taken_once_as_a_read() {
+        use editor_service::frame::Framing;
+        use editor_service::stream::StreamSource;
+        use editor_service::stream::fake::FakeSource;
+
+        let echo = echo();
+        let fake = FakeSource::new();
+        let child = fake.child(Framing::Lines, Framing::Lines, 64, false);
+        child.out(b"one\n").exit(0);
+        let streams = fake.take_over(child.id()).expect("taken over");
+
+        assert!(echo.attach(6, streams));
+        assert_eq!(reported(&echo, &[6]), [6]);
+
+        assert_eq!(echo.take(6), None, "not a reply");
+        let read = echo.take_read(6).expect("a read");
+        assert_eq!(read.text(), "one\n<exited 0>");
+        assert_eq!(echo.take_read(6), None, "taken once");
+        assert!(echo.start(6, "free again"));
     }
 
     #[test]

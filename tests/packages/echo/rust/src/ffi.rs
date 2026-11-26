@@ -17,7 +17,7 @@ use editor_service::buffer;
 use crate::{Echo, SERVICE};
 
 /// The process's echo service.
-static ECHO: LazyLock<Echo<&'static Service>> = LazyLock::new(|| Echo::new(&SERVICE));
+pub(crate) static ECHO: LazyLock<Echo<&'static Service>> = LazyLock::new(|| Echo::new(&SERVICE));
 
 /// A reply as it crosses the boundary.
 #[repr(C)]
