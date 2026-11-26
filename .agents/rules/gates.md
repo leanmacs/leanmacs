@@ -78,6 +78,17 @@ Anything else is not a gate step, however useful its output.
 - Prefer a gap in coverage to a fragile check. Name the gap, and cover it
   with a real test later.
 
+## A document is never evidence
+
+- Never write a document as proof: no inventory, table, ledger, or record
+  of what was checked or run, whether in an rdm item's body, a plan, a
+  commit message, or a doc.
+- Planning reads the code. The tests, read by a reviewer, are the
+  evidence. A passing gate is the dispatch flow's own run of `mise run
+  ci`, not something to record.
+- Such documents go stale, pin details, and give review endless surface,
+  the problem this rule exists to remove.
+
 ## A test is shown to bite by hand
 
 - To show a test bites, the implementer breaks the code by hand, sees the
