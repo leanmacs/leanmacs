@@ -94,8 +94,8 @@ pub enum Scenario {
     Megabytes,
     /// Writes `taken` and exits 0. Lines, no input.
     OneLine,
-    /// Writes nothing until it reads a line; then writes `went` if it was
-    /// `go`, and exits 0. Lines, with an input.
+    /// Writes nothing until it reads a line; then writes it back and exits
+    /// 0. Lines, with an input.
     AwaitsLine,
     /// Writes [`MESSAGES_WRITTEN`], each chunk a write, and exits 0.
     /// `Content-Length` on standard output, no input.
@@ -449,7 +449,7 @@ impl<G: Ground> Check<'_, G> {
             pending
                 && refused == Some(Refused::ReadPending)
                 && written
-                && lines_of(&all, Stream::Out) == [b"went".to_vec()]
+                && lines_of(&all, Stream::Out) == [b"go".to_vec()]
                 && last_end(&all) == Some(Ended::Exited { code: 0 }),
         )
     }

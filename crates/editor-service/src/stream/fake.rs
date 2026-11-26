@@ -564,7 +564,7 @@ fn scenario_steps(scenario: Scenario) -> Vec<Step> {
         Scenario::Numbered => vec![out(&super::contract::numbered()), exit(0)],
         Scenario::Megabytes => vec![out(&super::contract::megabyte_line()), exit(0)],
         Scenario::OneLine => vec![out(b"taken\n"), exit(0)],
-        Scenario::AwaitsLine => vec![Step::OnLine(b"go\n".to_vec(), b"went\n".to_vec()), exit(0)],
+        Scenario::AwaitsLine => vec![Step::OnLine(b"go\n".to_vec(), b"go\n".to_vec()), exit(0)],
         Scenario::Messages => {
             let mut steps: Vec<Step> = super::contract::MESSAGES_WRITTEN
                 .iter()

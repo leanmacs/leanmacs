@@ -49,6 +49,11 @@ rustix = { version = "=1.1.6", default-features = false, features = ["std", "pro
 libc = "=0.2.191"
 
 [dev-dependencies]
+# The stream port's contract (`editor_service::stream::contract`), which
+# `tests/stream_contract.rs` runs over the process service on real
+# processes. `deny.toml` gives `editor-service` no entry: any crate may
+# depend on it.
+editor-service = { path = "../editor-service" }
 # The typed time bounds the tests' waits and the contract's ground take.
 editor-wait = { path = "../editor-wait" }
 # The temporary directory the contract is checked in: one the test makes

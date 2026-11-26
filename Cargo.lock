@@ -588,6 +588,7 @@ name = "editor-process-std"
 version = "0.1.0"
 dependencies = [
  "editor-process",
+ "editor-service",
  "editor-wait",
  "libc",
  "rustix",

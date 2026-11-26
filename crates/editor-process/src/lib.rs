@@ -10,7 +10,10 @@
 //! editor asks, above the port: a run to its end, or a streaming child read
 //! and written a request at a time, framed and bounded ([`frame`]), each
 //! completed through a closure it is given, cancelled by killing the
-//! child's group, and every child killed and reaped at shutdown. The crate
+//! child's group, and every child killed and reaped at shutdown. A
+//! streaming child may be handed to a package's crate
+//! ([`service::Service::hand_off`]): the service is `editor-service`'s
+//! stream source, and [`stream_contract`] holds it to that port's contract. The crate
 //! depends on nothing of the editor's but the service conventions
 //! (`editor-service`, whose [`frame`] it re-exports) and the typed time
 //! bounds, and knows nothing about Lean.
@@ -85,12 +88,15 @@
 //! | A rule of the service (what a run comes to, what cancelling means) | [`service::Service`] | The service's unit tests, on the fake, and a service property of [`contract`] where a real process must show it |
 //! | Another variable no child may inherit from the editor | Beside [`APP_IDENTITY`], added to `unset` by [`Command::without_app_identity`], which the service applies to every command | The service's unit test `every_child_is_started_without_the_apps_identity_whatever_its_command_said` |
 //! | Another way for a test to set the fake up | A method of [`fake::FakeProcesses`] | The fake's tests |
+//! | A rule of a child handed to a consumer | The [`service`] module's `hand_off` | Its unit tests, on the fake, the orderings forced by its hooks; and a property of `editor_service::stream::contract`, run by `tests/stream_contract.rs` and `editor-process-std`'s on the service |
+//! | A scenario of the stream contract's | Its `/bin/sh -c` script and the fake's script in [`stream_contract::scripts`] | The stream contract, on the fake here and on real processes in `editor-process-std` |
 
 use std::path::PathBuf;
 
 pub mod contract;
 pub mod fake;
 pub mod service;
+pub mod stream_contract;
 
 /// How a streaming child's output is framed and bounded: plain data that
 /// lives in `editor-service`, so that a package's crate taking a child over
