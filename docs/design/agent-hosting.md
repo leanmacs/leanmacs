@@ -395,7 +395,9 @@ does everything that acts.
   session's end and the job's end, closed once; a record made
   while a write is in flight, which waits for the next write; a refused
   append that loses no record; a user's answer racing the policy's,
-  audited `refused`; silence; the queue's refusals and prompt; and closing
+  audited `refused`; silence; the queue's refusals and prompt; the prompt
+  answering the request it asked about after a withdrawal shifts the rows
+  above it, and refused once its own request is withdrawn; and closing
   the queue buffer. A
   conversation no view shows is read from `acp`'s store by the check's
   `test-probe-conversation`, so two conversations of one header are told

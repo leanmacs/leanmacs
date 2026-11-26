@@ -36,6 +36,12 @@ are told apart.
   answer, writes no record and waits on nothing but its session's `next`.
 - **The queue's refusals**, **an answer asked for** by the queue's prompt,
   and **closing the queue buffer**.
+- **The prompt while the queue changes** (`promptChangedChecks`): the
+  cursor on conversation 2's request, a cancel run while the prompt is
+  open, by the check's package `withdrawing`, withdraws conversation 1's
+  request above it, and the answer still goes to session 2 alone; or
+  withdraws the asked request itself, and the answer is refused as not
+  pending, none sent.
 
 None is of the wiring set: the root runs them in a plain group.
 -/
@@ -436,6 +442,121 @@ def writerChecks (context : HostContext) (packages : Array Package) : List Check
                 held == expected)
               s!"first {first}; held first {repr heldFirst}; second {second}; refused appends {refusedAppends}; orders {repr orders}; held {repr held}" }]
 
+/-- Starts `count` sessions of one project, as AC2 does two, and steps
+until each has parked ticket 1: each conversation prompted, then the marker
+file opened again and the next session started, and once the last is
+prompted the batches of all handled. -/
+def parkedIn (session : Session) (count : Nat) : IO Bool := do
+  unless ← started session do
+    return false
+  for _ in [1:count] do
+    unless ← exStepped session s!"{Acp.Conversation.promptName} {promptText}" do
+      return false
+    session.ask [.open opened]
+    session.step
+    unless ← exStepped session Acp.Conversation.startName do
+      return false
+  prompted session
+
+/-- The name of the command of `withdrawing`. -/
+def withdrawName : String :=
+  "test-withdraw"
+
+/-- A check's package whose `test-withdraw` cancels the turn of the
+conversation `number`, as `agent-cancel` from its buffer does, whatever
+view is focused: so a check withdraws that conversation's parked requests
+while a prompt holds the focus. -/
+def withdrawing (number : Nat) : Package :=
+  { name := "acp-test-withdraw"
+    setup :=
+      commandWith withdrawName fun _ => do
+        let some conversation ← Acp.Conversation.conversation? number | message "withdraw: none"
+        if conversation.turn.isSome then
+          discard <| Acp.Conversation.sendOrder Acp.Conversation.cancelName conversation .cancel }
+
+/-- The checks of the queue's prompt while the queue changes under it: the
+cursor on conversation 2's request, `agent-queue-answer` asks for an
+option, and before the answer is committed a cancel withdraws a request:
+conversation 1's, above it, so the rows shift, or the asked one itself.
+
+A view of the queue keeps its row across a rewrite, clamped to the text's
+last (`Acp.Generated.rewrite`). So the rows shift with three requests
+queued: once conversation 1's goes, the cursor's row is conversation 3's
+first, and an answer read from the cursor's row would go to session 3. With
+two, the clamped row would still be conversation 2's. -/
+def promptChangedChecks (context : HostContext) (packages : Array Package) : List Check :=
+  let asking (session : Session) (count : Nat) : IO Bool := do
+    unless ← parkedIn session count do
+      return false
+    unless ← exStepped session Acp.Conversation.queueName do
+      return false
+    unless ← exStepped session s!"{cursorToRequest} 2 1" do
+      return false
+    exStepped session Acp.Conversation.queueAnswerName
+  let answered (session : Session) (text : String) : IO Bool := do
+    session.commit text
+    for key in acceptKeys do
+      session.press key
+    unless ← session.handled do
+      return false
+    settledAfter session
+    return true
+  [{  name :=
+        "agent-queue-answer's prompt answers the request it asked about after the request above it is withdrawn while the prompt is open, its rows shifted, and no other session's"
+      run :=
+        withConversation context packages Fake.permissionRequest (extra := #[withdrawing 1])
+          fun session fake _ => do
+          unless ← asking session 3 do
+            return false
+          let asked := " | ".intercalate (← session.sceneLines).toList
+          session.ask [.run withdrawName]
+          settledAfter session
+          let shifted ← queueLines session
+          unless ← answered session "allow-once" do
+            return false
+          let answers ← answersOf fake
+          let orders :=
+            (← fake.log).filterMap fun (request, _, _) =>
+              match request with
+              | .send number order => some (number, order)
+              | _ => none
+          let after ← queueLines session
+          saw
+              (says asked "Answer 1 (allow-once, allow-session, reject): " &&
+                shifted ==
+                  #["permissions of example", "2 pending", "", requestRow 2] ++ requestBody ++
+                    #[requestRow 3] ++
+                    requestBody &&
+                answers == #[(2, .answer 1 "allow-once")] &&
+                orders.contains (1, .cancel) &&
+                after == #["permissions of example", "1 pending", "", requestRow 3] ++ requestBody)
+              s!"asked {asked}; shifted {shifted}; answers {repr answers}; orders {repr orders}; after {after}" },
+    { name :=
+        "agent-queue-answer's prompt, its request withdrawn while the prompt is open, is refused as not pending, and no answer is sent"
+      run :=
+        withConversation context packages Fake.permissionRequest (extra := #[withdrawing 2])
+          fun session fake _ => do
+          unless ← asking session 2 do
+            return false
+          session.ask [.run withdrawName]
+          settledAfter session
+          let withdrawn ← queueLines session
+          unless ← answered session "allow-once" do
+            return false
+          let echo ← session.echo
+          let answers ← answersOf fake
+          -- Read once the prompt is closed: the probe is typed on the ex
+          -- line, which a prompt open would take as its answer.
+          let two ← conversationText session 2
+          saw
+              (withdrawn ==
+                  #["permissions of example", "1 pending", "", requestRow 1] ++ requestBody &&
+                two.contains s!"{pendingRow} (withdrawn)" &&
+                says echo
+                  s!"{Acp.Conversation.queueAnswerName}: no permission request 1 is pending" &&
+                answers.isEmpty)
+              s!"withdrawn {withdrawn}; two {two}; echo {echo}; answers {repr answers}" }]
+
 /-- The checks of the supporting behaviour: silence, the queue's refusals and
 closing the queue buffer. -/
 def supportingChecks (context : HostContext) (packages : Array Package) : List Check :=
@@ -652,6 +773,7 @@ def permissionChecks (context : HostContext) (packages : Array Package) : List C
                   after == #["permissions of example", "nothing pending"])
                 s!"before {before}; installed {installed}; waiting {waiting}; shown {shown}; again {again}; answers {repr answers}; text {text}; after {after}" }] ++
     auditChecks context packages ++ closedOnceChecks context packages ++
-    writerChecks context packages ++ supportingChecks context packages
+    writerChecks context packages ++ supportingChecks context packages ++
+    promptChangedChecks context packages
 
 end AcpTest.Linked
