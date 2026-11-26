@@ -46,3 +46,6 @@ objc2-core-foundation = { version = "=0.3.2", default-features = false, features
 # `editor-render-wgpu` pins it; `deny.toml` lists this crate among its
 # wrappers.
 png = "=0.18.1"
+
+[lints]
+workspace = true

@@ -14,3 +14,6 @@ publish = false
 # The typed time bounds the service's readout (`Service::wait_held`), the
 # fake's waits and the contract's ground take; it depends on nothing.
 editor-wait = { path = "../editor-wait" }
+
+[lints]
+workspace = true

@@ -354,10 +354,10 @@ pub struct SystemDefaults(());
 impl SystemDefaults {
     /// The defaults of the user who runs this process. What they hold
     /// depends on the machine and the user, so no test calls it: the
-    /// crate's `clippy.toml` forbids it to them.
+    /// root `clippy.toml` forbids it to them.
     #[expect(
         clippy::new_without_default,
-        reason = "a `Default` would read this machine's defaults by a name the crate's `clippy.toml` does not forbid"
+        reason = "a `Default` would read this machine's defaults by a name the root `clippy.toml` does not forbid"
     )]
     pub fn new() -> Self {
         Self(())

@@ -12,6 +12,10 @@ use editor_launch::launch;
 use editor_launch::ports::{Outcome, World};
 use editor_launch_std::{StdClock, StdExec, StdFiles, StdPids, StdPlatform, StdSpawn, detach};
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the launcher binary's entry reads its own command line"
+)]
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     if args.first().is_some_and(|a| a == "--detach") {

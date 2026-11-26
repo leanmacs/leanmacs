@@ -915,8 +915,10 @@ mod tests {
         assert_eq!(Text::new().trace(0..0), Some(Vec::new()));
     }
 
-    // The range is the point of the test: it is one a caller can pass.
-    #[expect(clippy::reversed_empty_ranges)]
+    #[expect(
+        clippy::reversed_empty_ranges,
+        reason = "a backwards range is the point of the test: a caller can pass one"
+    )]
     #[test]
     fn a_range_that_is_not_two_positions_in_order_has_no_trace() {
         // "\nhXYllo\nwörld!": "ö" is the bytes 9 and 10.

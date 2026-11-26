@@ -22,6 +22,10 @@ use editor_render_wgpu::HeadlessRenderer;
 #[path = "../tests/common/mod.rs"]
 mod common;
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "an example's entry reads its own command line, which names the file it writes"
+)]
 fn main() -> ExitCode {
     let Some(path) = std::env::args().nth(1) else {
         eprintln!("usage: reference <path of the PNG file to write>");

@@ -1,0 +1,38 @@
+# A bite fixture of the Rust bans check (docs/dev-practices/the-gate.md,
+# "The Rust bans check"): a package set whose package `bans-peer`'s crate
+# breaks the rule a package's crate keeps, that it depends on
+# `editor-service` and on nothing else of the editor's: it depends on
+# `bans-base`'s crate, another package's. `bans-base`'s crate depends on
+# nothing, so the one banned edge here is that between the two packages.
+#
+# `mise run ffi-test` runs cargo-deny's bans over the crate the package-set
+# build generates from this set, with the `deny.toml` written beside it
+# (`rustDenyConfig` in lean/lakefile.lean), and requires cargo-deny's exit
+# status for a failed bans check, 2. It holds the package crates' entries
+# of that config: drop them, make them no-ops, or name a package crate as
+# a wrapper of another, and cargo-deny exits 0 here. Its sibling,
+# tests/rust-bans/ffi, holds the `editor-ffi` entry.
+#
+# Neither crate is a member of the root Cargo workspace (its globs do not
+# reach tests/rust-bans/), so the bad edge never enters the root graph, and
+# nothing compiles either crate: cargo-deny reads metadata alone. Neither
+# package holds Lean.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../tests/rust-bans/peer update --keep-toolchain
+# and commit lake-manifest.json.
+name = "rust-bans-peer"
+
+[[require]]
+name = "bans-peer"
+path = "bans-peer"
+
+[[require]]
+name = "bans-base"
+path = "bans-base"
+
+# The core, which defines the facet the check asks (`editorRustCrate`) and
+# holds `editor-ffi`, which the generated crate depends on.
+[[require]]
+name = "editor-core"
+path = "../../../lean"

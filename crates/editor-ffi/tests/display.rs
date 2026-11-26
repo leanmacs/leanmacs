@@ -128,7 +128,10 @@ fn rows_blocked(
 }
 
 /// [`rows_blocked`] of a view with a gutter `gutter` points wide.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one argument per argument of the C function it calls, as Lean passes them"
+)]
 fn rows_guttered(
     display: *const editor_ffi::display::Display,
     snapshot: *const Snapshot,
@@ -234,7 +237,6 @@ fn moved_guttered(
 
 /// Where a position is drawn through C: whether it is shown, and its x,
 /// its y and its row's height; or the status of its refusal.
-#[allow(clippy::too_many_arguments)]
 fn spot(
     display: *const editor_ffi::display::Display,
     snapshot: *const Snapshot,
@@ -257,7 +259,10 @@ fn spot(
 }
 
 /// [`spot`] in a view with the blocks `blocks` spell.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one argument per argument of the C function it calls, as Lean passes them"
+)]
 fn spot_blocked(
     display: *const editor_ffi::display::Display,
     snapshot: *const Snapshot,
@@ -276,7 +281,10 @@ fn spot_blocked(
 
 /// [`spot_blocked`] of a view whose padding is across, down, top and a
 /// gutter's width.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one argument per argument of the C function it calls, as Lean passes them"
+)]
 fn spot_guttered(
     display: *const editor_ffi::display::Display,
     snapshot: *const Snapshot,

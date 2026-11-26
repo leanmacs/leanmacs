@@ -10,3 +10,6 @@ publish = false
 # The typed time bounds the scripted platform's readout (`wait_parked`) and
 # the window contract's waits take: the one dependency, itself of none.
 editor-wait = { path = "../editor-wait" }
+
+[lints]
+workspace = true

@@ -130,7 +130,7 @@ echo "bundle-bench: the unchanged default set's build from the bundle: first $(s
 
 # 5. hello-init's install build.
 hello=$work/hello-init
-cp -R "$repo/tests/user-sets/hello-init" "$hello"
+cp -RL "$repo/tests/user-sets/hello-init" "$hello"
 rm -rf "$hello/.lake"
 sed "s|^path = \"../../../lean\"|path = \"$lean/lean\"|" "$repo/tests/user-sets/hello-init/lakefile.toml" >"$hello/lakefile.toml"
 sed "s|\"dir\": \"../../../lean\"|\"dir\": \"$lean/lean\"|" "$repo/tests/user-sets/hello-init/lake-manifest.json" >"$hello/lake-manifest.json"

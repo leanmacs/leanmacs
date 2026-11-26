@@ -27,6 +27,10 @@ use editor_release::ports::{Env, Invocation, Process, RunError};
 /// # Errors
 ///
 /// The first write that fails, with the file's path.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the real edge of the release core: it writes the prepared files the core decided on"
+)]
 pub fn write_prepared(out: &Path, prepared: &Prepared) -> io::Result<()> {
     for (name, text) in prepared.texts() {
         let path = out.join(name);
@@ -41,6 +45,10 @@ pub fn write_prepared(out: &Path, prepared: &Prepared) -> io::Result<()> {
 pub struct StdEnv;
 
 impl Env for StdEnv {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "`StdEnv` is the real `Env`: the process's environment is what it reads"
+    )]
     fn var(&self, name: &str) -> Option<OsString> {
         std::env::var_os(name)
     }
@@ -53,6 +61,10 @@ impl Env for StdEnv {
 pub struct StdProcess;
 
 impl Process for StdProcess {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "`StdProcess` is the real `Process`: it runs the invocation it is given"
+    )]
     fn run(&mut self, invocation: &Invocation) -> Result<Vec<u8>, RunError> {
         let mut command = Command::new(&invocation.program);
         command

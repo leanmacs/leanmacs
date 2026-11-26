@@ -29,6 +29,10 @@ fn the_std_adapters_keep_the_files_and_clock_contract() {
 /// contract's variables set and unset for it alone, and prints the names
 /// of the properties that fail.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the variable property runs in a real probe process, so the test's own environment is left as it was"
+)]
 fn the_std_platform_keeps_the_variable_contract() {
     let output = Command::new(env!("CARGO_BIN_EXE_launch-probe"))
         .arg("--contract-var")

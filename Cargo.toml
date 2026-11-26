@@ -24,3 +24,18 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 license = "GPL-3.0-or-later"
+
+# The lint levels every member takes (`[lints] workspace = true` in its
+# manifest; .agents/rules/structure.md, "Clippy's bans"), so they hold for
+# every run of clippy: the gate's, the pre-commit hook's over one crate, an
+# editor's. The bans themselves are the root `clippy.toml`'s, which says
+# where a site may opt out: `disallowed_methods` and `disallowed_types`
+# are errors whether or not warnings are, and an opt-out is an
+# `#[expect(..., reason = "...")]` at its site, since an outer `#[allow]`
+# and a mark without a reason are errors too. An `#[expect]` that no longer
+# covers a call is unfulfilled, which `-D warnings` fails.
+[workspace.lints.clippy]
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+disallowed_methods = "deny"
+disallowed_types = "deny"

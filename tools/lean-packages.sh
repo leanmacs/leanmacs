@@ -6,8 +6,7 @@
 #
 #   tools/lean-packages.sh [--dry-run] <package>...
 #
-# Run it in `lean/`. In order: the toolchain check; then, over the named
-# packages of the fixture set (tools/package-set.sh --only): the `test`
+# Run it in `lean/`. In order, over the named packages of the fixture set (tools/package-set.sh --only): the `test`
 # step, with the `cargo` that fails first on the PATH; the `build` step,
 # under the system's C compiler, which builds the set's editor and its
 # fixture harness first; the `fmt` step; and the `run` step, with
@@ -76,7 +75,6 @@ done
 
 # shellcheck disable=SC2086 # $only is words by design: names hold no blank.
 {
-  run sh ../tools/toolchain-check.sh
   run no-cargo sh ../tools/package-set.sh $only test ../tests/packages
   run system-cc sh ../tools/package-set.sh $only build ../tests/packages
   run sh ../tools/package-set.sh $only fmt ../tests/packages

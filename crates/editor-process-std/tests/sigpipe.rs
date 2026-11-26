@@ -25,6 +25,10 @@ const DEADLINE: HangGuard = HangGuard::on(
 );
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's own test on a real child process"
+)]
 fn a_write_to_an_input_the_child_closed_is_refused_with_sigpipe_at_its_default() {
     // SAFETY: setting a signal's disposition to its default is sound; no
     // handler is installed, and nothing else in this binary relies on it.

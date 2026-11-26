@@ -13,3 +13,6 @@ publish = false
 # editor a package's crate depends on (docs/design/packages.md, "Rust in a
 # package").
 [dependencies]
+
+[lints]
+workspace = true

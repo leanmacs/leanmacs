@@ -34,7 +34,7 @@ FROM debian@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b
 # `linux-window`: Mesa's Vulkan drivers, of which llvmpipe draws on the
 # CPU, and the Vulkan loader wgpu opens at run time. They are enough for a
 # surface on an X11 window as they are. The gate asks for no adapter
-# (`crates/editor-render-wgpu/clippy.toml` forbids it to tests), so it
+# (the root `clippy.toml` forbids it to tests), so it
 # runs the same with them there.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

@@ -244,10 +244,6 @@ pub fn completer_contract(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the completer's own tests: `RecordingCompleter::wait_for` is their subject"
-)]
 mod tests {
     use super::*;
     use std::sync::mpsc::{self, Receiver};
@@ -262,6 +258,16 @@ mod tests {
     /// A guard run out on purpose: the reports, too few of which are made.
     const TOO_FEW: HangGuard =
         HangGuard::held("the reports, too few of which are made", Duration::ZERO);
+
+    /// [`RecordingCompleter::wait_for`], the readout these tests are of: the
+    /// one place they call it.
+    fn wait_for(completer: &RecordingCompleter, count: usize, guard: HangGuard) -> bool {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "waits for `count` reports to be held, on `RecordingCompleter::wait_for`, the readout these tests are of"
+        )]
+        completer.wait_for(count, guard)
+    }
 
     /// Where each count [`RecordingCompleter::wait_for`] reads arrives.
     fn readings(completer: &RecordingCompleter) -> Receiver<usize> {
@@ -284,7 +290,7 @@ mod tests {
         let readings = readings(&completer);
         let waited = {
             let completer = Arc::clone(&completer);
-            thread::spawn(move || completer.wait_for(1, BOUND))
+            thread::spawn(move || wait_for(&completer, 1, BOUND))
         };
         assert_eq!(
             editor_wait::recv(&readings, BOUND),
@@ -310,11 +316,11 @@ mod tests {
     #[test]
     fn a_wait_for_reports_says_no_once_its_bound_has_passed_with_too_few() {
         let completer = RecordingCompleter::new();
-        assert!(!completer.wait_for(1, TOO_FEW));
+        assert!(!wait_for(&completer, 1, TOO_FEW));
         assert!(completer.complete(3));
-        assert!(completer.wait_for(1, TOO_FEW));
+        assert!(wait_for(&completer, 1, TOO_FEW));
         assert_eq!(completer.take(), [3]);
-        assert!(!completer.wait_for(1, TOO_FEW), "taken, it holds none");
+        assert!(!wait_for(&completer, 1, TOO_FEW), "taken, it holds none");
     }
 
     #[test]

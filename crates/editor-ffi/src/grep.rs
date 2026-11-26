@@ -24,7 +24,7 @@
 //! ([`RegexEngine`]) and the text's word class
 //! ([`editor_text::is_word_character`]), in a static made on its first use.
 //! That static is the one place in this crate's sources that makes the
-//! adapter: the crate's `clippy.toml` refuses its constructor everywhere
+//! adapter: the root `clippy.toml` refuses its constructor everywhere
 //! else, so the unit tests below run on the fake and read no file.
 //!
 //! An open buffer's text is handed in as a snapshot handle, which the start

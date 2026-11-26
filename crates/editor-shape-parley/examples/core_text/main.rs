@@ -14,7 +14,7 @@
 //! The gate builds it and never runs it: the font is the machine's.
 
 #[path = "../../tests/common/core_text.rs"]
-#[allow(dead_code, reason = "the example uses the parser, not the fixture")]
+#[expect(dead_code, reason = "the example uses the parser, not the fixture")]
 mod core_text;
 
 use std::process::ExitCode;
@@ -27,6 +27,10 @@ use core_text::{SENTENCE, at_scale, errors, places, worst};
 /// How far a pen place may be from Core Text's, in pixels.
 const BOUND: f64 = 0.125;
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "an example's entry reads its own command line, which names the files it compares"
+)]
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let [font, places_file, family] = &arguments[..] else {

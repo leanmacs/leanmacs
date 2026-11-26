@@ -31,6 +31,10 @@ const ID: &str = "20010203040506";
 const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
 /// Runs a program to success and returns its standard output.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's test on a real disk image, built and mounted in a temporary directory it owns"
+)]
 fn output(program: &str, args: &[&str], dir: Option<&Path>) -> String {
     let mut command = Command::new(program);
     command.args(args);
@@ -49,6 +53,10 @@ fn utf8(path: &Path) -> &str {
 }
 
 /// Whether anything is mounted at `point`, by `hdiutil info`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's test on a real disk image, built and mounted in a temporary directory it owns"
+)]
 fn mounted(point: &Path) -> bool {
     let info = output("hdiutil", &["info"], None);
     let canonical = point.canonicalize().unwrap_or_else(|_| point.to_owned());
@@ -59,6 +67,10 @@ fn mounted(point: &Path) -> bool {
 
 /// The image `<dir>/dist/Leanmacs-<ID>.dmg`, whose app is stamped with
 /// [`ID`], [`SHA`] and the core's tag `nightly-<ID>`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's test on a real disk image, built and mounted in a temporary directory it owns"
+)]
 fn image(dir: &Path) -> std::path::PathBuf {
     let contents = dir.join("stage").join("Leanmacs.app").join("Contents");
     fs::create_dir_all(&contents).expect("the staged bundle");
@@ -119,6 +131,10 @@ fn target() -> Target {
 
 #[test]
 #[ignore = "mounts a disk image, on macOS: mise run nightly-check"]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's test on a real disk image, built and mounted in a temporary directory it owns"
+)]
 fn prepare_checks_a_real_image_and_writes_the_five_files() {
     let dir = TempDir::new().expect("a temporary directory");
     let image = image(dir.path());

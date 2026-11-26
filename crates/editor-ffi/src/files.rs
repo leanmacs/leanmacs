@@ -89,7 +89,7 @@
 //! The process has one instance, over the machine's file system
 //! (`editor_fs_std::StdFs`), a `const`-initialised static like the timers'.
 //! That static is the one place in this crate's sources that makes the
-//! real file system: the crate's `clippy.toml` refuses its constructor
+//! real file system: the root `clippy.toml` refuses its constructor
 //! everywhere else, so the unit tests below run on the fake and make no
 //! file. Its thread, `editor-files`, starts with the first request.
 //!

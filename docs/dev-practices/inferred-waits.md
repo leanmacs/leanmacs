@@ -154,7 +154,8 @@ Rust too: a Rust check of the C API calls one only at an
 `#[expect(clippy::disallowed_methods, reason = "inferred-waits W<n>: …")]`
 that names its row, with the number made from a typed guard
 (`HangGuard::as_millis`). `tests/wait-lints/` calls each of them, and
-every other banned readout, so the gate sees each ban bite.
+every other banned readout a crate other than its owner can call, each
+under an `#[expect]` of its own, so the gate sees each ban bite.
 
 ## The rows
 
@@ -283,7 +284,7 @@ each of its rules is now a type, a Lean linter or a clippy lint:
 | Rust: `Instant::now() +`, `.elapsed()` | clippy bans `Instant::now`, which both need; a deadline is `HangGuard::start`, a measurement `Stopwatch` |
 | Rust: `is_finished()` or `try_wait()` in a `while` | clippy bans `JoinHandle::is_finished` and `Child::try_wait` |
 | The comment forms (`hang guard:`, `hang guard, run out on purpose:`, `real time under test:`) | the three constructors, `HangGuard.on`, `HangGuard.held` and `RealTime.under` (`HangGuard::on`, `::held`, `RealTime::under` in Rust), each naming its event, what it holds or its timing |
-| The files it scanned | the Lean linters are loaded, as a plugin, into every module of the core's libraries and of every package under `packages/` and `tests/packages/` (the library `Lint`, `lean/lakefile.lean`), and clippy runs over every target of every crate, under a config that holds the bans |
+| The files it scanned | the Lean linters are loaded, as a plugin, into every module of the core's libraries and of every package under `packages/` and `tests/packages/` (the library `Lint`, `lean/lakefile.lean`), and clippy runs over every target of every crate, under the root `clippy.toml`, which every crate reads |
 
 What each holds is pinned by a fixture that must fail: the `#guard_msgs`
 fixtures of `ModelTest/Lint/Wait.lean` and the modules under
@@ -291,6 +292,6 @@ fixtures of `ModelTest/Lint/Wait.lean` and the modules under
 `ConfigTest/Lint/Wait.lean` (and the rules they apply by
 `LintTest.lintWaitChecks`, `lake exe lint-test`), the `fail_if_success` examples of
 `ModelTest/Editor/Bound.lean`, `editor-wait`'s `compile_fail` doctests, and
-`tests/wait-lints/` under every clippy config (`the-gate.md`, "The wait
-lints").
+`tests/wait-lints/`, whose every banned call is under an `#[expect]` of its
+own (`the-gate.md`, "The wait lints").
 

@@ -72,8 +72,8 @@ pub struct NotifyWatch {
 
 impl NotifyWatch {
     /// The system's watch. Its users are the process's watch service and
-    /// this crate's contract test; the `clippy.toml` of `editor-watch` and
-    /// of `editor-ffi` keep it out of everything else.
+    /// this crate's contract test; the root `clippy.toml` keeps it out of
+    /// everything else.
     pub const fn system() -> Self {
         Self { _private: () }
     }
@@ -133,6 +133,10 @@ impl Watch for NotifyWatch {
 
 /// The canonical spelling of `directory`, once it is seen to be a
 /// directory that is there.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "`NotifyWatch` is the real watch: it asks the disk whether the directory is there before it watches it"
+)]
 fn checked(directory: &Path) -> Result<PathBuf, Refusal> {
     let refused = |kind, why: &str| {
         Refusal::new(kind, format!("cannot watch {}: {why}", directory.display()))

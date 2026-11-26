@@ -18,3 +18,6 @@ editor-search = { path = "../editor-search" }
 # The typed time bounds of the service's readout (`until_held_back`); it
 # depends on nothing.
 editor-wait = { path = "../editor-wait" }
+
+[lints]
+workspace = true

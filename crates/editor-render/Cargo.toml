@@ -16,3 +16,6 @@ editor-layout = { path = "../editor-layout" }
 # The typed time bounds the loop's readout (`RenderHandle::wait_resting`)
 # takes; it depends on nothing.
 editor-wait = { path = "../editor-wait" }
+
+[lints]
+workspace = true

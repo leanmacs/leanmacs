@@ -18,3 +18,6 @@ editor-release = { path = "../editor-release" }
 # exactly, as in `editor-fs-std`, whose manifest says why this library and
 # no other; `deny.toml` lists the crates that may depend on it.
 tempfile = { version = "=3.27.0", default-features = false }
+
+[lints]
+workspace = true

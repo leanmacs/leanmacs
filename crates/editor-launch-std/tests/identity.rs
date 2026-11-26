@@ -22,6 +22,10 @@ struct Fixture {
 }
 
 impl Fixture {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs the real launcher from outside a bundle, with the bundle and its records in a temporary directory the test owns"
+    )]
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         // The temporary directory is under a symbolic link (/var), and
@@ -68,6 +72,10 @@ impl Fixture {
 }
 
 /// Runs `program` and answers its standard output, with its pid.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs the real launcher from outside a bundle, with the bundle and its records in a temporary directory the test owns"
+)]
 fn run(program: &Path, args: &[&Path]) -> (String, u32) {
     let child = Command::new(program)
         .args(args)
@@ -106,6 +114,10 @@ fn a_cold_start_from_the_bundles_launcher_runs_the_bundles_editor_as_the_app() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs the real launcher from outside a bundle, with the bundle and its records in a temporary directory the test owns"
+)]
 fn an_editor_outside_the_bundle_handed_over_to_is_the_app_in_the_launchers_process() {
     let fixture = Fixture::new();
     let elsewhere = fixture.root.join("elsewhere/editor");

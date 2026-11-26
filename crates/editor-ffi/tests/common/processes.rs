@@ -2,9 +2,10 @@
 //! through the C function, a result taken through it, and a pull from the
 //! completion queue bounded by a deadline.
 
-// Each test binary uses its own part of this module: the streaming test
-// pulls the queue and takes no run's result.
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each test binary uses its own part of this module (the streaming test pulls the queue and takes no run's result), and `expect` would be unfulfilled in one that uses all of it"
+)]
 
 use std::mem::MaybeUninit;
 use std::path::Path;

@@ -286,7 +286,7 @@ impl WgpuRenderer {
     /// A renderer on an adapter of this machine, with no window.
     ///
     /// What it finds depends on the machine, so no test calls it: the
-    /// crate's `clippy.toml` forbids it to them, and its one caller is
+    /// root `clippy.toml` forbids it to them, and its one caller is
     /// the example `gpu`.
     pub fn on_this_machine(settings: Settings) -> Result<Self, NoAdapter> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -304,7 +304,7 @@ impl WgpuRenderer {
     /// offers nothing to configure it with.
     ///
     /// What it finds depends on the machine and needs a window, so no test
-    /// calls it: the crate's `clippy.toml` forbids it to them.
+    /// calls it: the root `clippy.toml` forbids it to them.
     ///
     /// # Safety
     ///

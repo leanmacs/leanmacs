@@ -123,6 +123,10 @@ fn run(clipboard: &SystemClipboard, arguments: &[String]) -> Option<bool> {
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "an example's entry reads its own command line"
+)]
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let clipboard = match open() {

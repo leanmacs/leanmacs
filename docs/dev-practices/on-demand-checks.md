@@ -1058,7 +1058,7 @@ This holds the real shaper over the fonts of this machine
 contract (`crates/editor-layout`, `shaper::contract`). What it finds
 depends on the fonts installed, so it is not part of the gate, which only
 builds it: every test of the adapter runs on the fixture fonts under
-`tests/fonts`, and the crate's `clippy.toml` forbids the system's fonts to
+`tests/fonts`, and the root `clippy.toml` forbids the system's fonts to
 them. It is the example of `crates/editor-shape-parley`
 (`examples/system.rs`). It prints the family the default font is shaped in
 and how many families the machine has, then either that all the

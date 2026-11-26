@@ -49,7 +49,7 @@ use triple_accel::levenshtein::{
 #[derive(Debug)]
 pub struct TripleAccel {
     /// Nothing: the field keeps the constructor the one way to make one,
-    /// which `editor-fuzzy`'s `clippy.toml` refuses its tests.
+    /// which the root `clippy.toml` refuses `editor-fuzzy`'s tests.
     _private: (),
 }
 
@@ -61,6 +61,10 @@ impl TripleAccel {
 }
 
 impl Default for TripleAccel {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "`Default` is the constructor by its other name, in the adapter that owns it"
+    )]
     fn default() -> Self {
         Self::new()
     }

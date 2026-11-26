@@ -1,9 +1,0 @@
-# Two blocks: which one is the copy is not for the script to guess.
-disallowed-methods = [
-  # BEGIN wait-bans
-  { path = "std::thread::sleep", reason = "the block's sleep" },
-  # END wait-bans
-  # BEGIN wait-bans
-  { path = "a::b::C::d", reason = "a readout" },
-  # END wait-bans
-]

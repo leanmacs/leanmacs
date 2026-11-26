@@ -7,7 +7,7 @@
 //! service down is for good. The child writes its own id and its
 //! grandchild's into FIFOs in a temporary directory the test makes and
 //! removes; the test reads each on a thread it joins, with `std::fs`, which
-//! the crate's `clippy.toml` refuses everywhere else, hence the one `expect`
+//! the root `clippy.toml` refuses everywhere else, hence the one `expect`
 //! below, and asks the system
 //! directly, with `kill(pid, 0)`, whether each is alive. The grandchild's
 //! end, which its new parent reaps, is waited for on the system's exit

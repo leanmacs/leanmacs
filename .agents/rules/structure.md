@@ -1,7 +1,8 @@
 # Module structure
 
-What a module may import, where the core's modules sit and which targets
-load the build's linters. Review holds a change to these rules; no gate
+What a module may import, where the core's modules sit, which targets
+load the build's linters, where a Rust crate's bans live and where a site
+may opt out of them, and how a Lake root reads the Lean pin. Review holds a change to these rules; no gate
 step checks them (`gates.md`). The Lean linters (the wait and real-host
 linters) and Lake's own resolution of `require`s stay automated, and
 rdm task `lean-structure-rules-tool` is where automated checking of the
@@ -124,3 +125,59 @@ See `docs/design/packages.md`, "The generated root", and
   to this.
 
 See `docs/dev-practices/the-gate.md`, "The wait lints".
+
+## Clippy's bans
+
+What clippy holds (the bans, the lint levels, a stale or reasonless mark)
+it holds by itself under `mise run lint`; these are the parts of the rule
+it cannot see.
+
+- Every ban lives in the root `clippy.toml`. No crate, and no fixture,
+  gets a `clippy.toml` of its own: clippy reads only the nearest one, so a
+  crate with its own would read none of the root's bans.
+- Every workspace member's `Cargo.toml` has `[lints] workspace = true`,
+  so the root `Cargo.toml`'s `[workspace.lints.clippy]` levels hold in it.
+  A package's crate (`tests/packages/*/rust`, `packages/*/rust`) too.
+- An opt-out from `disallowed_methods` is an `#[expect(…, reason = "…")]`
+  at its site: on the statement or `let` that makes the banned call, or on
+  the `fn` or `impl` whose call it is; never on a module or a crate, a
+  test module and a test file included: the wait bans are the same lint,
+  and a module's or crate's mark would silence them there. Its reason says
+  what the site waits for, or reaches, and why. A test module that calls
+  its readout again and again does so through one helper `fn`, whose
+  statement carries the mark. A mark on an `assert!` does nothing (lint
+  attributes on a macro's statement are unused), so bind the call with a
+  `let` first.
+- An item's mark never covers a wait. A banned wait inside an `fn` or an
+  `impl` that carries a `disallowed_methods` mark for the outside world, or
+  for another wait, has a statement-level
+  `#[expect(clippy::disallowed_methods, reason = "…")]` of its own, whose
+  reason is the wait's. Prefer a statement's mark to an item's in a
+  function that holds any wait.
+- An opt-out from `disallowed_types`, which bans no wait, may sit on a
+  crate only in a crate whose job is the real file system.
+- Each new wait-ban path that a crate other than its owner can call gets
+  one call in `tests/wait-lints/src/lib.rs`, under an `#[expect]` of its
+  own that covers that call alone.
+- Each `allow-invalid` ban has a call under an `#[expect]` that covers it
+  alone: at a site in the workspace, or, for an entry point no crate
+  calls, in `tests/wait-lints/src/lib.rs` (`unreached`). Clippy does not
+  refuse an `allow-invalid` path that resolves to nothing, so a ban with
+  no such call bans nothing and fails nothing. When the last site of one
+  goes, its call moves to the fixture.
+
+See the root `clippy.toml`'s header and
+`docs/dev-practices/the-gate.md`, "The wait lints".
+
+## The Lean pin
+
+- `lean/lean-toolchain` is the one pin. A new Lake root outside `lean/`
+  links its `lean-toolchain` to it with a relative symbolic link (`ln -s
+  <relative path>/lean/lean-toolchain lean-toolchain`) and never copies
+  it, so a bump of the pin changes one file.
+- A script or build step that carries such a directory out of the tree
+  dereferences the link (`cp -RL`, or the file's resolved path, as
+  `editorShipped` lists it), so what leaves holds the pin's text rather
+  than a link that dangles.
+
+See `docs/design/packages.md`, "The toolchain links".

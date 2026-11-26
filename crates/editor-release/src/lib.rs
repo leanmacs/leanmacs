@@ -20,10 +20,10 @@
 //!
 //! The crate touches nothing itself. It reads the environment through the
 //! [`ports::Env`] port and runs programs through the [`ports::Process`] port,
-//! and its `clippy.toml` refuses the calls that would reach either directly.
-//! Its tests run on the published fakes ([`fake`]), and [`contract`] is the
-//! check a real process adapter runs to show the fakes' answers are the
-//! system's. The adapters and the `leanmacs-release` binary are
+//! and the root `clippy.toml` refuses the calls that would reach either
+//! directly. Its tests run on the published fakes ([`fake`]), and
+//! [`contract`] is the check a real process adapter runs to show the
+//! fakes' answers are the system's. The adapters and the `leanmacs-release` binary are
 //! `editor-release-std`; the editor never links either crate (`deny.toml`).
 
 pub mod build_id;

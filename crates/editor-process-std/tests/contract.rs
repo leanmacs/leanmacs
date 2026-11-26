@@ -126,6 +126,10 @@ struct System {
 
 impl System {
     /// A new, empty directory of this test's own.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the adapter's contract check on real processes, its ground on real files in a temporary directory the test owns"
+    )]
     fn new() -> Self {
         let directory = tempfile::tempdir().expect("a temporary directory can be made");
         let root = fs::canonicalize(directory.path()).expect("the directory's own path resolves");
@@ -137,6 +141,10 @@ impl System {
 }
 
 impl Ground for System {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the adapter's contract check on real processes, its ground on real files in a temporary directory the test owns"
+    )]
     fn make_file(&self, path: &Path) -> Result<(), String> {
         fs::write(path, b"").map_err(|error| error.to_string())
     }
@@ -147,6 +155,10 @@ impl Ground for System {
     /// for the file, so the ground cannot make it a FIFO first: a read finds
     /// no file, an empty one or a partial number, and tries again. The
     /// result is decided by the line appearing, never by the time.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the adapter's contract check on real processes, its ground on real files in a temporary directory the test owns"
+    )]
     fn written(&self, path: &Path) -> Option<u32> {
         let end = DEADLINE.start();
         loop {
@@ -171,6 +183,10 @@ impl Ground for System {
         }
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the adapter's contract check on real processes, its ground on real files in a temporary directory the test owns"
+    )]
     fn exists(&self, path: &Path) -> bool {
         fs::symlink_metadata(path).is_ok()
     }
@@ -201,6 +217,10 @@ impl Ground for System {
         }
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the adapter's contract check on real processes, its ground on real files in a temporary directory the test owns"
+    )]
     fn escapes(&self) -> bool {
         let there = Path::new(contract::ESCAPE).is_file();
         if !there {
@@ -224,6 +244,10 @@ impl Ground for System {
 /// can find one in: running for the whole of a bound of zero, a zombie
 /// once killed and not yet reaped, and gone once reaped.
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a check of the contract's ground on real processes it starts itself"
+)]
 fn the_grounds_exit_wait_says_running_for_a_live_process_and_ended_for_a_zombie_and_a_reaped_one() {
     let mut child = std::process::Command::new("/bin/sleep")
         .arg("600")
@@ -251,6 +275,10 @@ fn the_grounds_exit_wait_says_running_for_a_live_process_and_ended_for_a_zombie_
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's contract check on real processes, its ground on real files in a temporary directory the test owns"
+)]
 fn the_adapter_keeps_the_process_ports_contract_on_real_processes_in_a_temporary_directory() {
     let system = System::new();
 
@@ -261,6 +289,10 @@ fn the_adapter_keeps_the_process_ports_contract_on_real_processes_in_a_temporary
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's contract check on real processes, its ground on real files in a temporary directory the test owns"
+)]
 fn a_regular_file_that_is_not_executable_is_denied_and_the_detail_names_the_program_and_the_directory()
  {
     let system = System::new();
@@ -282,6 +314,10 @@ fn a_regular_file_that_is_not_executable_is_denied_and_the_detail_names_the_prog
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's contract check on real processes, its ground on real files in a temporary directory the test owns"
+)]
 fn a_failure_that_is_neither_missing_nor_denied_is_failed() {
     let system = System::new();
     // A program name with a NUL byte cannot be handed to the system at all.

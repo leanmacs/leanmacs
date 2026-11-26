@@ -3,7 +3,7 @@
 //!
 //! On demand, never in the gate: what it finds depends on the machine's
 //! fonts. The gate builds this example and never runs it; every test of
-//! the crate runs on the fixture fonts, and `clippy.toml` forbids
+//! the crate runs on the fixture fonts, and the root `clippy.toml` forbids
 //! [`FontSet::system`] to them.
 //!
 //! It prints the family the default spec is shaped in and how many

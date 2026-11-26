@@ -234,7 +234,7 @@ fi
 
 if [ "$check" = c-glue ]; then
   glue=$work/c-glue
-  cp -R "$fixtures/c-glue" "$glue"
+  cp -RL "$fixtures/c-glue" "$glue"
   rm -rf "$glue/.lake"
   sed "s|^require «editor-core» from \".*|require «editor-core» from \"$lean/lean\"|" "$fixtures/c-glue/lakefile.lean" >"$glue/lakefile.lean"
   sed "s|\"dir\": \"../../../lean\"|\"dir\": \"$lean/lean\"|" "$fixtures/c-glue/lake-manifest.json" >"$glue/lake-manifest.json"

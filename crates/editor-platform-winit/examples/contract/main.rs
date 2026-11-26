@@ -93,6 +93,10 @@ static JUDGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::ne
 
 /// Prints `line`, then each of `resizes` on a line of its own, and ends the
 /// process with `status`, as the verdict.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the contract example ends the process with its verdict"
+)]
 fn verdict(line: &str, status: i32, resizes: &[Resize]) -> ! {
     JUDGED.store(true, Ordering::SeqCst);
     println!("{line}");
@@ -333,6 +337,10 @@ pub fn guard_exit(handler: extern "C" fn()) {
 
 fn main() {
     #[cfg(target_os = "macos")]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "an example's entry reads its own command line"
+    )]
     if std::env::args().nth(1).as_deref() == Some(pending::ARGUMENT) {
         pending::main();
     }

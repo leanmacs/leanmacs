@@ -55,51 +55,18 @@ description = "Check Rust formatting"
 run = "cargo fmt --all --check"
 
 [tasks.lint]
-description = "Clippy over every crate and target, warnings are errors; and the timed-wait bans bite under every clippy config (tests/wait-lints)"
+description = "Clippy over every crate and target, warnings are errors, under the root clippy.toml's bans; and the wait bans bite (tests/wait-lints)"
 run = [
+  # The lint levels are the root Cargo.toml's `[workspace.lints.clippy]`,
+  # and the bans the root clippy.toml's, which every crate reads.
   "cargo clippy --workspace --all-targets --locked -- -D warnings",
-  # The wait bans' copies (tools/wait-bans.sh): each crates/*/clippy.toml
-  # holds the root clippy.toml's block, from `# BEGIN wait-bans` to
-  # `# END wait-bans`, byte for byte; it prints each config that differs
-  # (`sh tools/wait-bans.sh write clippy.toml crates/*/clippy.toml` writes
-  # them again).
-  "sh tools/wait-bans.sh check clippy.toml crates/*/clippy.toml || { echo 'lint: the clippy.toml files above do not hold the wait-bans block of the root clippy.toml'; exit 1; }",
-  # And the bans bite: over the negative fixture tests/wait-lints, which
-  # calls each path of the block once, clippy must fail under the root
-  # config and under each crate's (`CLIPPY_CONF_DIR`, every
-  # crates/*/clippy.toml there is), and print "use of a disallowed method
-  # `<path>`" for every path the root's block bans, read from it
-  # (`tools/wait-bans.sh paths`), so a path added to the block that the
-  # fixture does not call fails here. A crate's own entry for a path of the
-  # block prints the same message. The fixture is read `--locked
-  # --offline`, its lock checked in (tests/wait-lints/Cargo.toml says how
-  # to seed it again), and builds into target/wait-lints/ alone, one
-  # directory for every config: clippy records `CLIPPY_CONF_DIR` and the
-  # config file it read in its dep-info, so a run under another config
-  # lints the fixture again and never replays an earlier run's messages
-  # (seen: under crates/editor-launch it adds `std::process::Command::new`,
-  # and the root's run after it does not). Output is shown only when the
-  # expectation fails.
-  '''
-  paths=$(sh tools/wait-bans.sh paths clippy.toml) || exit 1
-  set -- clippy.toml crates/*/clippy.toml
-  for conf; do
-    dir=$(cd "$(dirname "$conf")" && pwd)
-    status=0
-    out=$(CLIPPY_CONF_DIR="$dir" cargo clippy --offline --locked --color never \
-      --manifest-path tests/wait-lints/Cargo.toml --target-dir target/wait-lints \
-      -- -D warnings 2>&1) || status=$?
-    missing=
-    for path in $paths; do
-      printf '%s\n' "$out" | grep -qF "use of a disallowed method \`$path\`" || missing="$missing $path"
-    done
-    { test "$status" -ne 0 && test -z "$missing"; } || {
-      printf '%s\n' "$out"
-      echo "lint: under $conf, clippy over tests/wait-lints exited $status, and these bans did not bite:$missing"
-      exit 1
-    }
-  done
-  ''',
+  # The wait bans bite: the fixture tests/wait-lints calls each banned wait
+  # once, and each `allow-invalid` entry point no crate calls, each call
+  # under an `#[expect]` of its own, so this passes only while clippy
+  # refuses every one of them. It is a workspace of its own,
+  # read `--locked --offline` (its Cargo.toml says how to seed its lock
+  # again), and builds into target/wait-lints/ alone.
+  "cargo clippy --offline --locked --manifest-path tests/wait-lints/Cargo.toml --target-dir target/wait-lints -- -D warnings",
 ]
 
 [tasks.deny]
@@ -112,7 +79,7 @@ env = { RUSTDOCFLAGS = "-D rustdoc::broken_intra_doc_links" }
 run = "cargo doc --workspace --no-deps --document-private-items --locked"
 
 [tasks.test]
-description = "Rust unit, integration and doc tests, the decision of which crates the pre-commit hook's Rust step runs over (tools/rust-targets.sh), and the wait bans' one source (tools/wait-bans.sh)"
+description = "Rust unit, integration and doc tests, and the decision of which crates the pre-commit hook's Rust step runs over (tools/rust-targets.sh)"
 run = [
   "cargo test --workspace --locked",
   # What the pre-commit hook's Rust step runs for a staged change
@@ -144,29 +111,6 @@ run = [
   # outside the repository would fail here rather than be skipped.
   "n=0; f=$(mktemp) && trap 'rm -f \"$f\"' EXIT && sh tools/rust-targets.sh --print-graph > \"$f\" && root=$(git rev-parse --show-toplevel) && tab=$(printf '\\t') && while IFS=$tab read -r name dir deps; do out=$(sh tools/rust-targets.sh --lines \"$f\" --root \"$root\" \"${dir#\"$root\"/}/src/lib.rs\") && printf '%s\\n' \"$out\" | grep -qxF \"crate $name\" || { printf '%s\\n' \"$out\"; echo \"test: a file in the directory of $name does not reach $name\"; exit 1; }; n=$((n + 1)); done < \"$f\" && test \"$n\" -gt 0 || { echo \"test: the hook targets $n crates of the workspace\"; exit 1; }",
   "test \"$(sh tools/rust-targets.sh crates/editor-service/src/lib.rs | sort | tr '\\n' ' ')\" = 'crate echo-service crate editor-ffi crate editor-service ' || { sh tools/rust-targets.sh crates/editor-service/src/lib.rs; echo 'test: rust-targets did not reach editor-service and its dependents alone'; exit 1; }",
-  # The wait bans' one source (tools/wait-bans.sh), over the configs of
-  # tests/wait-bans/: `paths` gives the paths of the root's block alone, not
-  # its entry after the block; `check` passes a config whose block is the
-  # root's beside entries of its own, and names, exit 1, one whose block
-  # fell behind; `write` makes that one's block the root's and leaves its
-  # other lines be, in a temporary copy. A file with no block, an unclosed
-  # one or two, and a root whose block bans no path, are exit 2 with the
-  # reason. Output is shown only when it is not that.
-  '''
-  d=tests/wait-bans
-  sh tools/wait-bans.sh paths $d/root.toml | diff $d/paths-expected - || { echo "test: wait-bans paths gave otherwise"; exit 1; }
-  sh tools/wait-bans.sh check $d/root.toml $d/same.toml || { echo "test: wait-bans check refused a block that is the root's"; exit 1; }
-  status=0; out=$(sh tools/wait-bans.sh check $d/root.toml $d/same.toml $d/differs.toml) || status=$?
-  { test "$status" -eq 1 && test "$out" = $d/differs.toml; } || { printf '%s\n' "$out"; echo "test: wait-bans check exited $status on a block that fell behind"; exit 1; }
-  t=$(mktemp -d) && trap 'rm -rf "$t"' EXIT && cp $d/differs.toml "$t/" || exit 1
-  { sh tools/wait-bans.sh write $d/root.toml "$t/differs.toml" && diff $d/differs-written.toml "$t/differs.toml" && sh tools/wait-bans.sh check $d/root.toml "$t/differs.toml"; } || { echo "test: wait-bans write did not make the block the root's"; exit 1; }
-  for bad in unclosed none twice; do
-    status=0; out=$(sh tools/wait-bans.sh check $d/root.toml $d/bad/$bad.toml 2>&1) || status=$?
-    { test "$status" -eq 2 && printf '%s\n' "$out" | grep -qF "does not hold exactly one block"; } || { printf '%s\n' "$out"; echo "test: wait-bans check exited $status on tests/wait-bans/bad/$bad.toml"; exit 1; }
-  done
-  status=0; out=$(sh tools/wait-bans.sh paths $d/bad/no-path.toml 2>&1) || status=$?
-  { test "$status" -eq 2 && printf '%s\n' "$out" | grep -qF "bans no path"; } || { printf '%s\n' "$out"; echo "test: wait-bans paths exited $status on a block that bans no path"; exit 1; }
-  ''',
 ]
 
 # The model tests: editor logic run in Lean alone, against hand-written fakes
@@ -187,21 +131,10 @@ run = [
 # Lean's task pool, and the checks that hold the pool and count the threads
 # jobs wait from read it as Lean's runtime does (`Pool.expected`): they pass
 # under a bare `lake test` whatever the variable says.
-#
-# First, the toolchain check (tools/toolchain-check.sh;
-# docs/dev-practices/the-gate.md, "The toolchain check"): every Lake package
-# outside lean/ holds a copy of the pin, `lean-toolchain`, and each tracked
-# copy must equal lean/lean-toolchain. It is here because this is the first
-# task of the Lake chain, so a copy that fell behind fails before anything
-# is built. Its second line shows it bite: told the pin is another file
-# (the core's Lake manifest), it must name the formatter host's copy and
-# exit 1. Its output is shown only when it does not.
 [tasks.lean-test]
-description = "Check that every copy of the Lean pin equals lean/lean-toolchain (tools/toolchain-check.sh), then run the Lean model tests with `lake test` and the build's linters' checks with `lake exe lint-test`, and those of each package of the fixture set, the default packages (the shipped themes, the compile mode) among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
+description = "Run the Lean model tests with `lake test` and the build's linters' checks with `lake exe lint-test`, and those of each package of the fixture set, the default packages (the shipped themes, the compile mode) among them, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean and lean/ModelTest/; tools/package-set.sh)"
 dir = "lean"
 run = [
-  "sh ../tools/toolchain-check.sh",
-  "status=0; out=$(sh ../tools/toolchain-check.sh lake-manifest.json 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qxF tools/lean-fmt/lean-toolchain; } || { printf '%s\\n' \"$out\"; exit 1; }",
   # The stand-in for CI's elan that `user-sets-test` and `user-sets-check`
   # run under (tools/home-bound-toolchain.sh; docs/dev-practices/the-gate.md,
   # "The user sets test") cannot pass silently: its `lake` run with another
@@ -357,7 +290,7 @@ run = [
 # formatter from the host, which keeps the clone under lean/.lake/packages,
 # and `--root .` names the package it is run over, the core; the last line
 # of each task runs it over each package of the fixture set, each of which
-# holds the copy of the pin the formatter requires of a root. Both tasks wait
+# holds the link to the pin the formatter requires of a root. Both tasks wait
 # for `lean`, so two Lake builds never run in lean/ at once.
 [tasks.lean-fmt]
 description = "Check Lean formatting and lean-fmt's lints, over the core and each package of the fixture set; changes nothing"
@@ -565,19 +498,34 @@ run = [
   "f=../target/editor-rust/echo/native-static-libs && before=$(cat \"$f\") && rm \"$f\" && lake -d ../tests/packages build --wfail :editorRust && test \"$(cat \"$f\")\" = \"$before\" && grep -qw -- -lz \"$f\" || { echo \"ffi-test: building :editorRust did not write back $f\"; exit 1; }",
   # A package's crate depends on `editor-service` and on nothing else of
   # the editor's, held by cargo-deny's bans over the crate generated from
-  # the set, with the `deny.toml` written beside it, in which the generated
+  # the set (`lake -d <set> query :editorRustCrate`, which writes it under
+  # target/editor-rust/ and prints its directory, building nothing), with
+  # the `deny.toml` the build writes beside it, in which the generated
   # crate is the one crate allowed to depend on `editor-ffi` or on a
-  # package's crate (tools/rust-bans-check.sh;
-  # docs/dev-practices/the-gate.md, "The Rust bans check"). It holds of the
-  # fixture set and of the default set. And it bites: on tests/rust-bans,
-  # whose package `bans-ffi`'s crate depends on `editor-ffi` and
-  # `bans-peer`'s on `bans-ffi`'s, it must exit 1 with both crates
-  # explicitly banned. Its output is shown only when it does not. The check
-  # writes the generated crates under target/editor-rust/ and Lake's
-  # configuration in tests/rust-bans/**/.lake, which no other task reads.
-  "sh ../tools/rust-bans-check.sh ../tests/packages",
-  "sh ../tools/rust-bans-check.sh ../packages",
-  "status=0; out=$(sh ../tools/rust-bans-check.sh ../tests/rust-bans 2>&1) || status=$?; { test \"$status\" -eq 1 && printf '%s\\n' \"$out\" | grep -qF \"crate 'editor-ffi = 0.1.0' is explicitly banned\" && printf '%s\\n' \"$out\" | grep -qF \"crate 'bans-ffi = 0.1.0' is explicitly banned\"; } || { printf '%s\\n' \"$out\"; echo \"ffi-test: the Rust bans check exited $status on tests/rust-bans\"; exit 1; }",
+  # package's crate (docs/dev-practices/the-gate.md, "The Rust bans
+  # check"). It holds of the fixture set and of the default set, and passes
+  # by cargo-deny's exit status, offline: the crate's lock is seeded from
+  # the root's.
+  "dir=$(lake -d ../tests/packages query :editorRustCrate) && cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" -D unused-wrapper bans",
+  "dir=$(lake -d ../packages query :editorRustCrate) && cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" -D unused-wrapper bans",
+  # And the bans bite: over each bite set of tests/rust-bans, whose one
+  # bad edge the generated config must refuse, the same command must exit
+  # 2, cargo-deny's status when the bans check alone fails (a bit for each
+  # failed check, the bans' being 2; seen with cargo-deny 0.19.9). It runs
+  # without `-D unused-wrapper`, so a stale wrapper stays a warning and the
+  # one error left that the generated config can raise is a banned crate:
+  # with it, a config that named each package crate a wrapper of the
+  # others would still exit 2, for the wrappers it never meets. A config
+  # it cannot parse or a manifest it cannot load exits 1, and a missing
+  # config file, or bans that refuse nothing, exit 0, so none of them
+  # passes here. A command line cargo-deny refuses also exits 2, but this
+  # one's flags are those of the two steps above, which must exit 0. Its
+  # report is shown only when the status is not 2.
+  # - tests/rust-bans/ffi, whose package's crate depends on `editor-ffi`,
+  #   holds rustDenyConfig's `editor-ffi` entry (lean/lakefile.lean).
+  # - tests/rust-bans/peer, whose package `bans-peer`'s crate depends on
+  #   `bans-base`'s, holds its entries for the package crates.
+  "for s in ffi peer; do dir=$(lake -d ../tests/rust-bans/$s query :editorRustCrate) || exit 1; status=0; out=$(cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" bans 2>&1) || status=$?; test \"$status\" -eq 2 || { printf '%s\\n' \"$out\"; echo \"ffi-test: cargo-deny exited $status over tests/rust-bans/$s, not 2, its status when the bans refuse a crate\"; exit 1; }; done",
   # The package graph the pre-commit hook decides over
   # (tools/hook-targets.sh; the facet `editorPackageGraph`;
   # docs/dev-practices/the-gate.md, "The pre-commit hook"). On the fixture

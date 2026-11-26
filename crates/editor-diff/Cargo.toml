@@ -12,3 +12,6 @@ publish = false
 # over lines. The library that matches lines is behind the port, in
 # `editor-diff-imara`.
 [dependencies]
+
+[lints]
+workspace = true

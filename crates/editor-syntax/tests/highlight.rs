@@ -10,11 +10,6 @@
 //! held is let go on every path, a failed assertion included, by a drop
 //! guard ([`Release`]) that drops before the scope joins its threads.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "the session's own integration tests: they wait for a delivery on `Session::wait_for` and `Session::wait_exact`, their subject"
-)]
-
 use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -29,8 +24,8 @@ use editor_syntax::fake::{GRAMMAR, Parens, ParensParser, ParensQuery, ParensTree
 use editor_syntax::highlight::{self, Highlighter};
 use editor_syntax::inject::Language;
 use editor_syntax::{
-    Capture, GrammarName, Handle, Latest, Node, QueryError, QueryKind, Session, Source, Syntax,
-    Worker,
+    Capture, GrammarName, Handle, Latest, Node, Parsed, QueryError, QueryKind, Session, Source,
+    Syntax, Worker,
 };
 use editor_text::{InputEdit, Revision, Snapshot, Text};
 
@@ -44,6 +39,20 @@ const BOUND: HangGuard = HangGuard::on(
 
 /// The worker's idle interval. Its clock never moves, so no refresh runs.
 const REFRESH_AFTER: Duration = Duration::from_millis(500);
+
+/// [`Session::wait_for`], the session's readout: the one place these tests
+/// call it.
+fn wait_for<S: Syntax>(
+    session: &Session<S>,
+    revision: Revision,
+    guard: HangGuard,
+) -> Option<Arc<Parsed<S::Tree>>> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "waits for a delivery of `revision` or a newer one, on the session's readout `Session::wait_for`: the highlights are read only once it is delivered"
+    )]
+    session.wait_for(revision, guard)
+}
 
 /// `mutex`, locked, poisoned or not.
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -259,7 +268,7 @@ fn the_round_takes_the_state_lock_only_briefly() {
         // Revision 0 is delivered with the gate open.
         handle.touch(&session, first.revision());
         assert!(
-            session.wait_for(first.revision(), BOUND).is_some(),
+            wait_for(&session, first.revision(), BOUND).is_some(),
             "revision 0 was not delivered"
         );
         assert_eq!(drawn(&syntax, &session, &first), Some(fresh(&first)));
@@ -317,7 +326,7 @@ fn the_round_takes_the_state_lock_only_briefly() {
         // are now a fresh highlight's.
         drop(release);
         assert!(
-            session.wait_for(third.revision(), BOUND).is_some(),
+            wait_for(session, third.revision(), BOUND).is_some(),
             "revision 2 was not delivered once the parse was let go"
         );
         assert_eq!(drawn(syntax, session, &third), Some(fresh(&third)));

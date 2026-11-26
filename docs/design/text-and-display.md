@@ -826,7 +826,7 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
 | The file port's fake | `crates/editor-text/src/fs/fake.rs` |
 | The file port's contract, its ground, and the fakes that break it | `crates/editor-text/src/fs/contract.rs` |
 | Loading a file and saving a snapshot over the port, the stamp, a directory's listing, the line endings, and the fixtures | `crates/editor-text/src/file.rs`, with its properties in `tests/properties/files.rs` and its costs in `tests/snapshot_cost.rs` |
-| The lists that keep the logic's tests off the disk | `crates/editor-text/clippy.toml`, `crates/editor-ffi/clippy.toml`, `deny.toml` |
+| The lists that keep the logic's tests off the disk | `clippy.toml` (the root's, which every crate reads), `deny.toml` |
 | The file port's adapter over `std::fs`, held to the contract | `crates/editor-fs-std/` |
 | The file service behind the completion queue, and its wiring test on real files | `crates/editor-ffi/src/files.rs`, `crates/editor-ffi/tests/files.rs` |
 | A document made from a snapshot, as a handle | `editor_ffi_document_from_snapshot` in `crates/editor-ffi/src/document.rs` |

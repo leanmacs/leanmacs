@@ -1899,9 +1899,9 @@ guide quotes.
   on with `warningAsError`, as the core does, and names default targets.
   `echo`'s is Lean, because a TOML lakefile cannot declare a target that
   compiles C, `moreLinkObjs`, or the crate's target; so are those of the
-  two packages of `tests/rust-bans/`, which declare a crate and hold no
-  Lean. A
-  package's test driver is not a default target, as the core's
+  three packages of the Rust bans check's bite sets (`tests/rust-bans/`),
+  which declare a crate and hold no Lean. A package's test
+  driver is not a default target, as the core's
   `model-test` is not: `mise run lean` links with the system compiler,
   which a TOML lakefile has no flags for.
 - **The fixtures are hermetic.** They are checked in and build into their
@@ -1922,8 +1922,9 @@ interface packages of the default set (`project-api`, `vc-api`,
 `at-point-api`), the fixture
 set, each fixture package (`echo` among them), the writing guide's
 example package (`docs/packages/word-count/`), the empty set, the
-user-side link's set and its package, the Rust bans check's set
-(`tests/rust-bans/`) and its two packages, and the formatter's host.
+user-side link's set and its package, the Rust bans check's two bite sets
+(`tests/rust-bans/ffi`, `tests/rust-bans/peer`) and their three packages,
+and the formatter's host.
 
 - **A set's manifest holds path entries only.** With it present, a
   dependency the manifest does not hold fails the build (`dependency … not
@@ -1947,18 +1948,29 @@ user-side link's set and its package, the Rust bans check's set
   <package>` runs it over any package ([the-gate.md](../dev-practices/the-gate.md),
   "Formatting").
 
-### The toolchain copies
+### The toolchain links
 
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
-`lean/` holds a copy of it** (the default set and its forty-three packages,
-the twenty-five default packages and the eighteen interface packages, the fixture set and its three packages, the
-writing guide's example package `word-count`, the empty set, the user-side link's set and its package, the Rust bans check's
-set and its two packages, and the formatter's host): `lean-fmt` refuses a root with no
-`lean-toolchain`, and elan reads the file when Lake is run in that
-directory. `tools/toolchain-check.sh`, first in `lean-test`, fails when a
-tracked copy differs from the pin, naming it. A bump of the pin
-(`AGENTS.md`, "Toolchains") changes every copy in the same commit.
+`lean/` links its `lean-toolchain` to it**, a relative symbolic link (the
+default set and its forty-three packages, the twenty-five default
+packages and the eighteen interface packages, the fixture set and its
+four packages, the writing guide's example package `word-count`, the
+empty set, the user-side link's set and its package, the Rust bans
+check's two bite sets and their three packages, the user sets' fixtures,
+and the formatter's host): `lean-fmt` refuses a root with no
+`lean-toolchain`, and elan reads the file, through the link, when Lake is
+run in that directory. So there is no copy to fall behind, and a bump of
+the pin (`AGENTS.md`, "Toolchains") changes one file. A new Lake root
+links its `lean-toolchain` the same way and never copies it
+(`.agents/rules/structure.md`, "The Lean pin").
+
+Where such a directory leaves the tree, the link would dangle, so what
+leaves carries the pin's text: the bundle's shipped files list each
+package's `lean-toolchain` by the file it resolves to (`editorShipped`),
+and the scripts that copy a fixture package elsewhere (`git_core_copy` in
+`tools/core-repo.sh`, `tools/bundle-sets.sh`, `tools/bundle-bench.sh`)
+copy with `cp -RL`, which follows it.
 
 ## User package sets
 
@@ -3076,11 +3088,12 @@ parents under `wrappers = []` and fails a wrapper it never meets under
 `-D unused-wrapper`, so the root cannot say "only the generated crate". The
 generator writes a `deny.toml` beside the generated crate in which the
 generated crate is the one wrapper of `editor-ffi` and of each package
-crate, and `tools/rust-bans-check.sh <set dir>` runs cargo-deny's bans over
-it. `ffi-test` runs it on the fixture set and the default set, and on
-`tests/rust-bans/`, a set of two packages whose crates depend on
-`editor-ffi` and on each other, where it must fail with both "explicitly
-banned".
+crate, and `ffi-test` runs cargo-deny's bans over it, for the fixture set
+and the default set, passing by cargo-deny's exit status. It shows them
+bite over `tests/rust-bans/`: two sets, one whose package's crate depends
+on `editor-ffi` and one whose package's crate depends on another
+package's, where cargo-deny must exit 2, its status when the bans refuse a
+crate (`docs/dev-practices/the-gate.md`, "The Rust bans check").
 
 ### Behind a port, so it stays replaceable
 

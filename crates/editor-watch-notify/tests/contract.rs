@@ -26,7 +26,7 @@ const DEADLINE: HangGuard = HangGuard::on(
 );
 
 /// The real clock: monotonic, beginning the first time it is read. The
-/// watch crate has no real clock of its own, and its `clippy.toml` forbids
+/// watch crate has no real clock of its own, and the root `clippy.toml` forbids
 /// one; this test needs one so that the service's window passes in real
 /// time.
 #[derive(Debug, Default, Clone)]
@@ -51,10 +51,18 @@ impl Clock for Monotonic {
 struct System;
 
 impl Ground for System {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the contract's ground changes real files, in a temporary directory the test owns"
+    )]
     fn write(&self, path: &Path, bytes: &[u8]) {
         std::fs::write(path, bytes).expect("the check's directory is written");
     }
 
+    #[expect(
+        clippy::disallowed_types,
+        reason = "the contract's ground changes real files, in a temporary directory the test owns"
+    )]
     fn write_times(&self, path: &Path, times: usize) {
         use std::io::Write as _;
         let mut file = std::fs::OpenOptions::new()
@@ -68,14 +76,26 @@ impl Ground for System {
         }
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the contract's ground changes real files, in a temporary directory the test owns"
+    )]
     fn make_dir(&self, path: &Path) {
         std::fs::create_dir(path).expect("the check's directory is made");
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the contract's ground changes real files, in a temporary directory the test owns"
+    )]
     fn rename(&self, from: &Path, to: &Path) {
         std::fs::rename(from, to).expect("the check's file is renamed");
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the contract's ground changes real files, in a temporary directory the test owns"
+    )]
     fn remove(&self, path: &Path) {
         std::fs::remove_file(path).expect("the check's file is removed");
     }
@@ -92,6 +112,10 @@ impl Ground for System {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's contract check: the real watch is what it holds to the port"
+)]
 fn the_adapter_keeps_the_watch_ports_contract_on_real_files_in_a_temporary_directory() {
     let dir = tempfile::tempdir().expect("a temporary directory");
 

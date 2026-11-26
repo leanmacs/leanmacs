@@ -19,6 +19,10 @@ fn word(c: char) -> bool {
 }
 
 /// Writes `bytes` at `relative` under `root`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's own tests write real files, in a temporary directory each test owns"
+)]
 fn write(root: &Path, relative: &str, bytes: &[u8]) {
     let path = root.join(relative);
     if let Some(parent) = path.parent() {
@@ -45,6 +49,10 @@ fn naive(bytes: &[u8], needle: &str) -> Vec<(usize, usize, usize)> {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's own tests: the real walk is what they check"
+)]
 fn every_match_under_the_root_honouring_ignore_files() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let root = dir.path();
@@ -119,6 +127,10 @@ fn every_match_under_the_root_honouring_ignore_files() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's own tests: the real walk is what they check"
+)]
 fn the_walk_goes_by_name_not_by_the_spelling_of_the_path() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     for path in ["a-c", "a/b", "a0", "B"] {
@@ -140,6 +152,10 @@ fn the_walk_goes_by_name_not_by_the_spelling_of_the_path() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's own tests: the real walk is what they check"
+)]
 fn holds_is_asked_once_a_row_across_the_readers_blocks() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     // Far more than one block of the reader's buffer.
@@ -171,6 +187,10 @@ fn holds_is_asked_once_a_row_across_the_readers_blocks() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's own tests: the real walk is what they check"
+)]
 fn a_file_with_a_nul_past_the_first_block_is_binary_and_none_of_its_rows_is_visited() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let mut bytes = "needle\n".repeat(100_000).into_bytes();

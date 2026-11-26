@@ -36,11 +36,19 @@ fn main() {
     );
     let contract = contract::run();
     let compared = compare::run();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "an example's entry exits with its outcome"
+    )]
     std::process::exit(if contract && compared { 0 } else { 1 });
 }
 
 #[cfg(not(target_os = "macos"))]
 fn main() {
     eprintln!("check: Core Text is on macOS alone");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "an example's entry exits with its outcome"
+    )]
     std::process::exit(2);
 }

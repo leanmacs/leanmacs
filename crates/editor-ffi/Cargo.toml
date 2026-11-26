@@ -33,7 +33,8 @@ editor-platform-winit = { path = "../editor-platform-winit" }
 # The real clipboard, for the same reason: Lean's window mode opens the
 # desktop's clipboard through it (`editor_ffi_clipboard_system`), and
 # every test is on the port's memory clipboard. Through it the static
-# library Lean links holds arboard. `clippy.toml` marks the one call that
+# library Lean links holds arboard. The root `clippy.toml` refuses the call
+# that opens it but at the one site marked here
 # opens it; `deny.toml` lets no other crate depend on it.
 editor-platform-arboard = { path = "../editor-platform-arboard" }
 # Text storage: the text behind a document handle, and its snapshots; and
@@ -49,7 +50,8 @@ editor-layout = { path = "../editor-layout" }
 # machine (`editor_ffi_display_new_font`), which Lean's `ffi-test` draws
 # the shipped themes' pictures with. Through it the static library Lean
 # links holds Parley. No test here calls the system constructor;
-# `clippy.toml` marks its one call of the machine's fonts. `deny.toml`
+# the root `clippy.toml` refuses it but at its one marked call of the
+# machine's fonts. `deny.toml`
 # lists this crate among its wrappers.
 editor-shape-parley = { path = "../editor-shape-parley" }
 # The render loop: this is the crate that starts the render thread, turns
@@ -66,22 +68,22 @@ editor-render = { path = "../editor-render" }
 # `editor_ffi_picture_to_png`), so Lean's `ffi-test` can compare the
 # shipped themes' pictures with their reference images. Through it the
 # static library Lean links holds wgpu and png. No test here makes a
-# renderer on a window; `clippy.toml` forbids its window constructor to
-# them. It is also the example `window`'s. `deny.toml` lists this crate
-# among its wrappers.
+# renderer on a window; the root `clippy.toml` forbids its window
+# constructor to them. It is also the example `window`'s. `deny.toml`
+# lists this crate among its wrappers.
 editor-render-wgpu = { path = "../editor-render-wgpu" }
 # The rasteriser port's Core Text adapter: on macOS the process's window,
 # and the example `window`, hand it to the wgpu renderer (and the example
 # to the headless renderer it compares with), so their glyphs are Core
 # Text's own (`src/window.rs`, `window_rasteriser`). It builds on every
 # platform, its macOS parts behind `cfg`. Its one reading of the user's
-# preferences is marked in `clippy.toml`; `deny.toml` lists this crate as
-# its one wrapper.
+# preferences is marked against the root `clippy.toml`; `deny.toml` lists
+# this crate as its one wrapper.
 editor-raster-coretext = { path = "../editor-raster-coretext" }
 # The real file system, for the process's file service. This is the crate
 # that wires the library together, so it is the one that links the adapter;
-# `clippy.toml` here keeps the adapter out of everything but that one static
-# and the wiring test.
+# the root `clippy.toml` keeps the adapter out of everything but that one
+# static and the wiring test.
 editor-fs-std = { path = "../editor-fs-std" }
 # Fuzzy matching: the ranking rule and the locating rule, which the two C
 # functions of `src/fuzzy.rs` ask, and the Scorer and Searcher ports they
@@ -130,7 +132,7 @@ editor-diff-imara = { path = "../editor-diff-imara" }
 editor-process = { path = "../editor-process" }
 # The real processes, for the process's process service. This is the crate
 # that wires the library together, so it is the one that links the adapter;
-# `clippy.toml` here keeps the adapter out of everything but that one
+# the root `clippy.toml` keeps the adapter out of everything but that one
 # static. Through it the static library Lean links holds rustix.
 editor-process-std = { path = "../editor-process-std" }
 # The watch service: the Watch port, its fake and its contract, the
@@ -139,7 +141,7 @@ editor-process-std = { path = "../editor-process-std" }
 editor-watch = { path = "../editor-watch" }
 # The real watch, for the process's watch service. This is the crate that
 # wires the library together, so it is the one that links the adapter;
-# `clippy.toml` here keeps the adapter out of everything but that one
+# the root `clippy.toml` keeps the adapter out of everything but that one
 # static. Through it the static library Lean links holds notify.
 editor-watch-notify = { path = "../editor-watch-notify" }
 # The grep service: the Files port, its fake and its contract, the rule of
@@ -148,10 +150,10 @@ editor-watch-notify = { path = "../editor-watch-notify" }
 editor-grep = { path = "../editor-grep" }
 # The real files, walked and read with ripgrep's libraries, for the
 # process's grep service. This is the crate that wires the library
-# together, so it is the one that links the adapter; `clippy.toml` here
-# keeps the adapter out of everything but that one static. Through it the
-# static library Lean links holds ignore and grep-searcher, which have no
-# system dependency.
+# together, so it is the one that links the adapter; the root
+# `clippy.toml` keeps the adapter out of everything but that one static.
+# Through it the static library Lean links holds ignore and grep-searcher,
+# which have no system dependency.
 editor-grep-ripgrep = { path = "../editor-grep-ripgrep" }
 # The editor's restart: the exec and CoreFoundation's main bundle
 # (`src/launch.rs`), forwarded to the launcher's own adapters so the editor
@@ -196,3 +198,6 @@ test = true
 [[test]]
 name = "main_thread"
 harness = false
+
+[lints]
+workspace = true

@@ -29,3 +29,6 @@ editor-fuzzy = { path = "../editor-fuzzy" }
 #   a search that is fast over a window of 32 KiB is what the library is
 #   for.
 triple_accel = "=0.4.0"
+
+[lints]
+workspace = true

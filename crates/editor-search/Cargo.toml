@@ -11,3 +11,6 @@ publish = false
 # tested on the port's literal fake and on engines written in its tests.
 # The library that matches is behind the port, in `editor-search-regex`.
 [dependencies]
+
+[lints]
+workspace = true

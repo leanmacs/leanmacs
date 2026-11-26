@@ -9,11 +9,19 @@ use editor_fuzzy::contract;
 use editor_fuzzy_nucleo::NucleoScorer;
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's contract check: the library is what it holds to the port"
+)]
 fn the_nucleo_scorer_keeps_the_scorer_ports_contract() {
     assert_eq!(contract::check(&mut NucleoScorer::new()), [""; 0]);
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's contract check: the library is what it holds to the port"
+)]
 fn a_scorer_that_has_answered_other_questions_keeps_the_contract() {
     use editor_fuzzy::Scorer;
 

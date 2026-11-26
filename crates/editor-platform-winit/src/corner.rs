@@ -75,7 +75,6 @@ pub(crate) struct Shape {
 /// day with the themed title bar, whose content view extends under the
 /// title bar: the insets read left 78, right 16, top 32 and bottom 0, and
 /// [`reach`] gives 16, so every resize said `corner 16` again.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) const FALLBACK_POINTS: u32 = 16;
 
 /// The corner clearance of a window that reads as `shape`, in whole
@@ -95,12 +94,9 @@ pub(crate) fn clearance(shape: Shape) -> u32 {
 
 /// `points` rounded up to a whole number of points, saturating at the
 /// largest a `u32` holds. Only a finite reading above 0 is given here.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn points_up(points: f64) -> u32 {
     // A reading is a few tens of points; one past `u32::MAX` is held to it.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let whole = points.ceil().min(f64::from(u32::MAX)) as u32;
-    whole
+    points.ceil().min(f64::from(u32::MAX)) as u32
 }
 
 /// The system's reading of how far in the corners of the window whose
@@ -138,7 +134,13 @@ pub(crate) fn system(view: std::ptr::NonNull<std::ffi::c_void>) -> Option<f64> {
 /// themed title bar read left 78, right 16, top 32 and bottom 0, where the
 /// standard one had read left 16, right 16, top 0 and bottom 0. The nearer
 /// side is the corners'.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(
+    all(not(target_os = "macos"), not(test)),
+    expect(
+        dead_code,
+        reason = "off macOS its one caller outside the tests, the system's reading, is not built"
+    )
+)]
 fn reach(left: f64, right: f64) -> Option<f64> {
     let reach = left.min(right);
     reach.is_finite().then_some(reach)

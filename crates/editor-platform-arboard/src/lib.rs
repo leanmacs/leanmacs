@@ -34,8 +34,8 @@
 //! The gate (`mise run ci`) reads and writes no clipboard: a real one is
 //! the desktop's, and a test leaves the machine as it found it. What it
 //! covers here is how arboard's answers become the port's, on values built
-//! in the tests. [`SystemClipboard::open`] is forbidden to tests by this
-//! crate's `clippy.toml`.
+//! in the tests. [`SystemClipboard::open`] is forbidden to tests by the
+//! root `clippy.toml`.
 
 use std::panic;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -53,7 +53,7 @@ impl SystemClipboard {
     /// The clipboard of the desktop this process runs on, or why it cannot
     /// be reached: no display, or on Linux a session with no X server.
     ///
-    /// What it finds is the desktop's own, so no test calls it: the crate's
+    /// What it finds is the desktop's own, so no test calls it: the root
     /// `clippy.toml` forbids it to them.
     ///
     /// It does not panic. arboard's open does, on Linux, when the system

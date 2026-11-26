@@ -58,6 +58,10 @@ static RETURNED: AtomicBool = AtomicBool::new(false);
 static FAILED: AtomicBool = AtomicBool::new(false);
 
 /// Prints why the process fails and ends it with status 1.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the contract example ends the process with its verdict"
+)]
 fn fail(reason: &str) -> ! {
     FAILED.store(true, Ordering::SeqCst);
     println!("window-contract: FAILED: {reason}");
@@ -142,6 +146,10 @@ fn steps(platform: &impl Platform, record: &Record) -> Result<(), String> {
 /// for on that event, and a process that never ends is killed at the
 /// bound. The child is shared under a lock the reader takes only once the
 /// output has ended, so the kill finds it free.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the example judges a run of itself, a real child process it starts"
+)]
 pub fn judge() -> Result<(), String> {
     let program = std::env::current_exe()
         .map_err(|error| format!("the example's own path could not be read: {error}"))?;

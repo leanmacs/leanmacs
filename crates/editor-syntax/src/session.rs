@@ -849,10 +849,6 @@ impl<S: Syntax> Session<S> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the session's own tests: `Session::wait_for` and `Session::wait_exact` are their subject"
-)]
 pub(crate) mod tests {
     use std::sync::Weak;
 
@@ -868,6 +864,34 @@ pub(crate) mod tests {
     /// A guard run out at once, on purpose: a read of what is delivered
     /// now, with no wait for a delivery not yet made.
     const AT_ONCE: HangGuard = HangGuard::held("a delivery not yet made", Duration::ZERO);
+
+    /// [`Session::wait_for`], one of the readouts these tests are of: the
+    /// one place they call it.
+    fn wait_for<S: Syntax>(
+        session: &Session<S>,
+        revision: Revision,
+        guard: HangGuard,
+    ) -> Option<Arc<Parsed<S::Tree>>> {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "reads the delivery of `revision` or a newer one, on `Session::wait_for`, one of the readouts these tests are of"
+        )]
+        session.wait_for(revision, guard)
+    }
+
+    /// [`Session::wait_exact`], one of the readouts these tests are of: the
+    /// one place they call it.
+    fn wait_exact<S: Syntax>(
+        session: &Session<S>,
+        revision: Revision,
+        guard: HangGuard,
+    ) -> Option<Arc<Parsed<S::Tree>>> {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "reads an exact delivery of `revision` or a newer one, on `Session::wait_exact`, one of the readouts these tests are of"
+        )]
+        session.wait_exact(revision, guard)
+    }
 
     /// A text behind a lock, as a document holds one, read as a source.
     pub(crate) struct TextSource(pub(crate) Weak<Mutex<Text>>);
@@ -1232,7 +1256,7 @@ pub(crate) mod tests {
         assert!(fixture.delivered_is_fresh());
         assert_eq!(fixture.olds().last(), Some(&None));
         assert_eq!(fixture.delivered(), [Revision::new(0), revision, revision]);
-        assert!(fixture.session.wait_exact(revision, AT_ONCE).is_some());
+        assert!(wait_exact(&fixture.session, revision, AT_ONCE).is_some());
     }
 
     #[test]
@@ -1241,7 +1265,7 @@ pub(crate) mod tests {
         fixture.session.parse_once(&fixture.syntax);
         let revision = fixture.replace(5..5, " c");
         fixture.session.parse_once(&fixture.syntax);
-        assert!(fixture.session.wait_exact(revision, AT_ONCE).is_none());
+        assert!(wait_exact(&fixture.session, revision, AT_ONCE).is_none());
 
         assert_eq!(
             fixture.session.refresh_once(&fixture.syntax),
@@ -1251,7 +1275,7 @@ pub(crate) mod tests {
         assert_eq!(fixture.olds().len(), 3);
         assert_eq!(fixture.olds().last(), Some(&None));
         assert_eq!(fixture.delivered(), [Revision::new(0), revision]);
-        let exact = fixture.session.wait_exact(revision, AT_ONCE);
+        let exact = wait_exact(&fixture.session, revision, AT_ONCE);
         assert_eq!(exact.map(|parsed| parsed.revision), Some(revision));
     }
 
@@ -1338,38 +1362,18 @@ pub(crate) mod tests {
     #[test]
     fn waiting_for_an_exact_tree_waits_for_a_whole_parse_of_the_revision() {
         let fixture = Fixture::new("(a b)");
-        assert!(
-            fixture
-                .session
-                .wait_exact(Revision::new(0), AT_ONCE)
-                .is_none()
-        );
+        assert!(wait_exact(&fixture.session, Revision::new(0), AT_ONCE).is_none());
         // The first round parses whole: its tree is exact.
         fixture.session.parse_once(&fixture.syntax);
-        assert!(
-            fixture
-                .session
-                .wait_exact(Revision::new(0), AT_ONCE)
-                .is_some()
-        );
+        assert!(wait_exact(&fixture.session, Revision::new(0), AT_ONCE).is_some());
         // An incremental delivery is not, until a refresh finds it so.
         let revision = fixture.replace(5..5, " c");
         fixture.session.parse_once(&fixture.syntax);
-        assert!(
-            fixture
-                .session
-                .wait_exact(Revision::new(0), AT_ONCE)
-                .is_none()
-        );
+        assert!(wait_exact(&fixture.session, Revision::new(0), AT_ONCE).is_none());
         fixture.session.refresh_once(&fixture.syntax);
-        assert!(fixture.session.wait_exact(revision, AT_ONCE).is_some());
+        assert!(wait_exact(&fixture.session, revision, AT_ONCE).is_some());
         // Not past what has been parsed.
-        assert!(
-            fixture
-                .session
-                .wait_exact(Revision::new(2), AT_ONCE)
-                .is_none()
-        );
+        assert!(wait_exact(&fixture.session, Revision::new(2), AT_ONCE).is_none());
     }
 
     #[test]
@@ -1575,21 +1579,11 @@ pub(crate) mod tests {
     fn waiting_for_a_revision_answers_the_delivered_result_once_it_reaches_it() {
         let fixture = Fixture::new("(a)");
 
-        assert!(
-            fixture
-                .session
-                .wait_for(Revision::new(0), AT_ONCE)
-                .is_none()
-        );
+        assert!(wait_for(&fixture.session, Revision::new(0), AT_ONCE).is_none());
         fixture.session.parse_once(&fixture.syntax);
-        let parsed = fixture.session.wait_for(Revision::new(0), AT_ONCE);
+        let parsed = wait_for(&fixture.session, Revision::new(0), AT_ONCE);
         assert_eq!(parsed.map(|parsed| parsed.revision), Some(Revision::new(0)));
-        assert!(
-            fixture
-                .session
-                .wait_for(Revision::new(1), AT_ONCE)
-                .is_none()
-        );
+        assert!(wait_for(&fixture.session, Revision::new(1), AT_ONCE).is_none());
     }
 
     /// The captures of every atom and list, in `range` of `snapshot`, as
@@ -1925,19 +1919,9 @@ pub(crate) mod tests {
         fixture.session.parse_once(&fixture.syntax);
         inject(&fixture.session);
 
-        assert!(
-            fixture
-                .session
-                .wait_for(Revision::new(0), AT_ONCE)
-                .is_none()
-        );
+        assert!(wait_for(&fixture.session, Revision::new(0), AT_ONCE).is_none());
         fixture.session.parse_once(&fixture.syntax);
-        assert!(
-            fixture
-                .session
-                .wait_for(Revision::new(0), AT_ONCE)
-                .is_some()
-        );
+        assert!(wait_for(&fixture.session, Revision::new(0), AT_ONCE).is_some());
     }
 
     #[test]
@@ -1994,12 +1978,7 @@ pub(crate) mod tests {
         );
         assert_eq!(fixture.delivered(), [Revision::new(0)]);
         // And a wait for the revision is not held up by the injections.
-        assert!(
-            fixture
-                .session
-                .wait_for(Revision::new(0), AT_ONCE)
-                .is_some()
-        );
+        assert!(wait_for(&fixture.session, Revision::new(0), AT_ONCE).is_some());
 
         // A language set again with the same layers: nothing new either.
         let text = Fixture::new("(a) b");

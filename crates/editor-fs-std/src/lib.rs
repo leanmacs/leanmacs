@@ -54,7 +54,7 @@
 //!
 //! [`StdFs::system`] is the one way to make one, so that the real file
 //! system has a name a lint can refuse where it does not belong
-//! (`crates/editor-ffi/clippy.toml`).
+//! (the root `clippy.toml`).
 //!
 //! Unix only: permission bits, and syncing a directory, are
 //! `std::os::unix`. Anywhere else the crate does not compile, as the
@@ -74,6 +74,11 @@
 //! Nothing here calls `editor_text::file`: what a load and a save do is
 //! that crate's rule, pinned there on the fake. The one test that runs the
 //! real logic over this adapter is `editor-ffi`'s wiring test.
+
+#![expect(
+    clippy::disallowed_types,
+    reason = "`StdFs` is the real file system: `std::fs`'s types are what it adapts"
+)]
 
 #[cfg(not(unix))]
 compile_error!(
@@ -126,6 +131,10 @@ fn refusal(error: &io::Error) -> FsError {
     FsError::new(kind, error.to_string())
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "`StdFs` is the real file system: `std::fs` is what it adapts"
+)]
 impl Fs for StdFs {
     fn stat(&self, path: &Path) -> Result<Option<Stat>, FsError> {
         match fs::metadata(path) {

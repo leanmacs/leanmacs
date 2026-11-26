@@ -11,3 +11,6 @@ publish = false
 # `leanmacs-release` binary are `editor-release-std`. The editor never
 # links either (deny.toml).
 [dependencies]
+
+[lints]
+workspace = true

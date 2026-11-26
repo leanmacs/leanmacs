@@ -20,9 +20,9 @@
 //! - [`FontSet::system`] is the fonts of the machine, for the editor: the
 //!   default family is the system's monospace family, and fallback is by
 //!   script and for emoji as fontique finds the system's. No test calls
-//!   it (`clippy.toml`). Its check is on demand, `mise run shaper-system`:
-//!   the example `examples/system.rs` holds a shaper over it to the port's
-//!   contract and says which family the default is.
+//!   it (the root `clippy.toml`). Its check is on demand, `mise run
+//!   shaper-system`: the example `examples/system.rs` holds a shaper over
+//!   it to the port's contract and says which family the default is.
 //!
 //! # How a text is shaped
 //!

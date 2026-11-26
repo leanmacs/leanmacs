@@ -9,11 +9,6 @@
 //! Nothing sleeps. The consumer sends each revision it is handed on a
 //! channel, and the test waits on it, or on the session, with a bound.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "the session's own integration tests: they wait for a delivery on `Session::wait_for` and `Session::wait_exact`, their subject"
-)]
-
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread;
@@ -41,6 +36,34 @@ const BOUND: HangGuard = HangGuard::on(
 
 /// The worker's idle interval.
 const REFRESH_AFTER: Duration = Duration::from_millis(500);
+
+/// [`Session::wait_for`], the session's readout: the one place these tests
+/// call it.
+fn wait_for<S: Syntax>(
+    session: &Session<S>,
+    revision: Revision,
+    guard: HangGuard,
+) -> Option<Arc<Parsed<S::Tree>>> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "waits for a delivery of `revision` or a newer one, on the session's readout `Session::wait_for`: what is delivered is what the tests check"
+    )]
+    session.wait_for(revision, guard)
+}
+
+/// [`Session::wait_exact`], the session's readout: the one place these
+/// tests call it.
+fn wait_exact<S: Syntax>(
+    session: &Session<S>,
+    revision: Revision,
+    guard: HangGuard,
+) -> Option<Arc<Parsed<S::Tree>>> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "waits for an exact delivery of `revision` or a newer one, on the session's readout `Session::wait_exact`: what is delivered is what the tests check"
+    )]
+    session.wait_exact(revision, guard)
+}
 
 /// A text behind a lock, as a document holds one.
 struct TextSource(Weak<Mutex<Text>>);
@@ -142,7 +165,7 @@ fn the_loop_refreshes_a_quiet_text_once_the_clock_passes_the_interval_and_it_is_
         let _stop = Stop(&handle);
         handle.touch(&session, Revision::new(0));
         assert!(
-            session.wait_for(Revision::new(0), BOUND).is_some(),
+            wait_for(&session, Revision::new(0), BOUND).is_some(),
             "the text was not parsed"
         );
         let revision = {
@@ -152,26 +175,24 @@ fn the_loop_refreshes_a_quiet_text_once_the_clock_passes_the_interval_and_it_is_
         };
         handle.touch(&session, revision);
         assert!(
-            session.wait_for(revision, BOUND).is_some(),
+            wait_for(&session, revision, BOUND).is_some(),
             "the edit was not delivered"
         );
         // The edit's incremental reparse is delivered, and not yet known
         // to be exact: the clock has not moved.
         assert!(
-            session
-                .wait_exact(
-                    revision,
-                    HangGuard::held("an exact tree not yet delivered", Duration::ZERO)
-                )
-                .is_none()
+            wait_exact(
+                &session,
+                revision,
+                HangGuard::held("an exact tree not yet delivered", Duration::ZERO)
+            )
+            .is_none()
         );
 
         clock.advance(500);
         handle.wake();
         assert_eq!(
-            session
-                .wait_exact(revision, BOUND)
-                .map(|parsed| parsed.revision),
+            wait_exact(&session, revision, BOUND).map(|parsed| parsed.revision),
             Some(revision),
             "the quiet text was not refreshed"
         );
@@ -213,7 +234,7 @@ fn the_loop_parked_until_a_deadline_refreshes_the_text_when_it_passes_with_no_wa
         let _stop = Stop(&handle);
         handle.touch(&session, Revision::new(0));
         assert!(
-            session.wait_for(Revision::new(0), BOUND).is_some(),
+            wait_for(&session, Revision::new(0), BOUND).is_some(),
             "the text was not parsed"
         );
         let revision = {
@@ -226,9 +247,7 @@ fn the_loop_parked_until_a_deadline_refreshes_the_text_when_it_passes_with_no_wa
         // the refresh's deadline, and the deadline's passing alone ends
         // the park.
         assert_eq!(
-            session
-                .wait_exact(revision, BOUND)
-                .map(|parsed| parsed.revision),
+            wait_exact(&session, revision, BOUND).map(|parsed| parsed.revision),
             Some(revision),
             "the loop did not wake by itself for the refresh's deadline"
         );

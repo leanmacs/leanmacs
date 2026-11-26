@@ -3,8 +3,10 @@
 //! compiled into the test, so no test reads a file when it runs and none
 //! uses a font of the machine it runs on.
 
-// Each test binary uses its own part of this module.
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each test binary uses its own part of this module, and `expect` would be unfulfilled in one that uses all of it"
+)]
 
 use editor_layout::shaper::{
     FontId, FontRun, FontSpec, Length, ShapeInput, ShapedLine, Shaper, VisualLine,

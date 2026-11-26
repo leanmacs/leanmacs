@@ -22,6 +22,10 @@ use tempfile::TempDir;
 
 /// Runs git in `repo` with a config and identity of the test's own, and
 /// returns its standard output.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the adapter's test runs real git in a temporary repository it owns"
+)]
 fn git(repo: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")

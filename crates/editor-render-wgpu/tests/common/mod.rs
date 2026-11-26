@@ -10,8 +10,10 @@
 //! repository's root, compiled in: no file is read when a test runs, and
 //! no font of the machine is used.
 
-// Each test binary and each example uses its own part of this module.
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each test binary and each example uses its own part of this module, and `expect` would be unfulfilled in one that uses all of it"
+)]
 
 use std::ops::Range;
 

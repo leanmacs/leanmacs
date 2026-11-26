@@ -130,6 +130,10 @@ pub unsafe extern "C" fn editor_ffi_fuzzy_rank(
 
 /// The ranking of the candidates `words` and `strings` spell against
 /// `pattern`, by the real scorer. `None` when they spell none.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the real scorer is made in one place, the process's fuzzy service"
+)]
 fn ranked(pattern: &str, words: &[u8], strings: &[u8]) -> Option<Vec<usize>> {
     let strings = std::str::from_utf8(strings).ok()?;
     let candidates = candidates(words, strings)?;
@@ -143,6 +147,10 @@ fn ranked(pattern: &str, words: &[u8], strings: &[u8]) -> Option<Vec<usize>> {
 /// The span of `text` that `pattern` is located at, `near` the byte offset
 /// where it is expected and within `max_errors` byte edits, by the real
 /// searcher. `None` when there is none, and when either is not UTF-8.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the real searcher is made in one place, the process's fuzzy service"
+)]
 pub fn located(pattern: &[u8], text: &[u8], near: usize, max_errors: u32) -> Option<ByteRange> {
     let pattern = std::str::from_utf8(pattern).ok()?;
     let text = std::str::from_utf8(text).ok()?;

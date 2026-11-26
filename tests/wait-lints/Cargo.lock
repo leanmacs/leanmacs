@@ -2714,6 +2714,7 @@ dependencies = [
  "editor-syntax",
  "editor-text",
  "editor-wait",
+ "parley",
 ]
 
 [[package]]

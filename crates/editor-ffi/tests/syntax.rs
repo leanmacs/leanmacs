@@ -9,11 +9,6 @@
 //! wait for a delivery blocks on the session with a bound, and nothing
 //! sleeps.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "the syntax service's wiring tests: they wait for an exact delivery on its readout `Syntaxes::settle_exact` before they compare it with a fresh parse"
-)]
-
 use std::mem::MaybeUninit;
 use std::slice;
 use std::time::Duration;
@@ -98,7 +93,12 @@ fn refresh_at_once() {
 /// ([`refresh_at_once`]).
 fn delivered_is_fresh(document: &Document) -> bool {
     let snapshot = Snapshot::of(document);
-    if !syntaxes().settle_exact(&snapshot, BOUND) {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "waits for an exact tree of the document's text as it is now, on `Syntaxes::settle_exact`: it is compared with a fresh parse only once it is delivered"
+    )]
+    let settled = syntaxes().settle_exact(&snapshot, BOUND);
+    if !settled {
         return false;
     }
     let text = document.snapshot();

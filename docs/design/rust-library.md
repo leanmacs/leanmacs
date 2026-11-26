@@ -684,10 +684,10 @@ file with a watch yet: a change is found when a save is asked for.
   (`Job.Services.fileWorked`).
 - **How the tests are kept off the disk.** `editor-text`'s tests, and the
   service's unit tests, run on the fake. That is held by the gate, not by
-  review: a `clippy.toml` beside each of the two crates lists `std::fs`,
-  the disk-asking methods of `Path`, the working and temporary directory,
-  `Command::new` and the adapter's constructor as disallowed
-  (`editor-text`'s also the clocks), and `deny.toml` keeps `tempfile` and
+  review: the root `clippy.toml` lists `std::fs`, the disk-asking methods
+  of `Path`, the working and temporary directory, `Command::new`, the
+  clocks and the adapter's constructor as disallowed in every crate, the
+  adapter and the one static that makes it marked, and `deny.toml` keeps `tempfile` and
   the adapter out of `editor-text`. Two places are marked as exceptions,
   both in `editor-ffi`: the process's file service, and the one wiring test
   over real files, which asserts bytes in and bytes out. What the lists
@@ -762,7 +762,7 @@ C functions are `crates/editor-ffi/src/watches.rs`.
   until the earliest deadline of a batch with a read pending, or until
   `Service::wake`. A test advances the manual clock and wakes the service,
   then waits for the completion with a deadline: no test sleeps for a fixed
-  time. The crate's `clippy.toml` refuses `std::fs`, the `Path` methods
+  time. The root `clippy.toml` refuses `std::fs`, the `Path` methods
   that ask the disk, the machine's clocks and the adapter's constructor,
   so its tests run on the fake and the manual clock.
 - **The fake** (`editor_watch::fake::FakeWatch`) is a file system in memory
@@ -958,7 +958,7 @@ C functions are `crates/editor-ffi/src/watches.rs`.
   `editor_watch::clock::Clock` for `timers::Monotonic`, so the window is
   measured on the job clock; the static has a `Monotonic` of its own, not
   the timer service's instance, since only intervals matter.
-  `NotifyWatch::system` is on `crates/editor-ffi/clippy.toml`'s list, with
+  `NotifyWatch::system` is on the root `clippy.toml`'s list, with
   the static its one caller, so the unit tests run on the fake.
 
   | Function | Does |
@@ -1059,7 +1059,7 @@ the app bundle's `CFBundleExecutable` (`docs/design/lean-runtime.md`,
   the launcher on macOS on every exec of an editor), and `watch::watch`
   (the record gone: 0; the process ended with the record there: the
   candidate marked failed and the launcher exec'd again; 60 s over: a
-  `SIGKILL` first). The core's `clippy.toml` refuses `std::fs`,
+  `SIGKILL` first). The root `clippy.toml` refuses `std::fs`,
   `std::process` and `std::env`.
 - **The fakes** (`fake`): files that are a map, a clock that moves only when
   waited on, processes that end on a script on the same clock, starts and
@@ -2004,7 +2004,7 @@ cross, in `editor-ffi`; and in Lean, `ffi-test`'s `grepChecks`, the job
 port's `grepProperties` against the model, the fake and the real service,
 and `contract-test`'s `grepChecks` and `projectSearchChecks`.
 
-`crates/editor-grep/clippy.toml` holds the crate's tests, the rule's and
+The root `clippy.toml` holds the crate's tests, the rule's and
 the service's among them, to the fake: no `std::fs`, no `Path` method that
 asks the disk, no clock of the machine's, and not the adapter's
 constructor.

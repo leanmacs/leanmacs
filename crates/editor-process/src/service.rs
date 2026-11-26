@@ -2711,10 +2711,6 @@ mod tests {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the service's own streaming tests: `Service::wait_held` is their subject"
-)]
 mod streaming {
     use std::sync::mpsc::{self, Receiver, TryRecvError};
     use std::time::Duration;
@@ -3248,12 +3244,22 @@ mod streaming {
         }
     }
 
+    /// [`Service::wait_held`], the readout these tests are of: the one place
+    /// they call it.
+    fn wait_held(service: &Service<FakeProcesses>, child: u64, guard: HangGuard) -> bool {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "waits for the child's readers to park on its bound, on `Service::wait_held`, the readout these tests are of"
+        )]
+        service.wait_held(child, guard)
+    }
+
     /// Whether the readers of `child` come to be parked on its bound, on
     /// the park itself ([`Service::wait_held`]).
     fn comes_to_be_held(service: &Service<FakeProcesses>, child: u64) -> bool {
         // hang guard: a reader's park on the bound; only a hang reaches the
         // bound, and the check then fails as a hang.
-        service.wait_held(child, DEADLINE)
+        wait_held(service, child, DEADLINE)
     }
 
     /// Has `service` call `held` each time a streaming child's reader is
@@ -3311,7 +3317,7 @@ mod streaming {
 
         let waited = {
             let service = service.clone();
-            thread::spawn(move || service.wait_held(1, DEADLINE))
+            thread::spawn(move || wait_held(&service, 1, DEADLINE))
         };
         assert_eq!(
             editor_wait::recv(&readings, DEADLINE),
@@ -3339,7 +3345,7 @@ mod streaming {
         let (service, _completed) = service(&fake);
         let readings = held_readings(&service);
 
-        assert!(!service.wait_held(1, DEADLINE));
+        assert!(!wait_held(&service, 1, DEADLINE));
 
         assert_eq!(
             readings.try_recv(),
@@ -3365,8 +3371,12 @@ mod streaming {
         assert!(comes_to_be_held(&service, 1));
 
         // The child is already held, so neither wait blocks.
-        assert!(service.wait_held(1, DEADLINE.with_bound(Duration::MAX)));
-        assert!(service.wait_held(1, DEADLINE.with_bound(Duration::from_millis(u64::MAX))));
+        assert!(wait_held(&service, 1, DEADLINE.with_bound(Duration::MAX)));
+        assert!(wait_held(
+            &service,
+            1,
+            DEADLINE.with_bound(Duration::from_millis(u64::MAX))
+        ));
         assert!(service.cancel(1));
         assert!(flushed(&service, &completed));
     }

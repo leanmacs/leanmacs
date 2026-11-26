@@ -22,3 +22,6 @@ parley = "=0.13.0"
 # is more than cargo. With it the library is opened at run time, and only
 # when the system's fonts are asked for.
 fontique = { version = "=0.13.0", features = ["fontconfig-dlopen"] }
+
+[lints]
+workspace = true

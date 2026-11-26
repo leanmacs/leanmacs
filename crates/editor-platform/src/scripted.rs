@@ -485,10 +485,6 @@ impl Platform for ScriptedPlatform {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the scripted platform's own tests: `ScriptedPlatform::wait_parked` is their subject"
-)]
 mod tests {
     use super::*;
     use crate::menu::{Action, Item, Menu, Submenu};
@@ -521,6 +517,16 @@ mod tests {
     /// A guard run out on purpose, at once: the run is not parked, and the
     /// wait says so without waiting.
     const UNPARKED: HangGuard = HangGuard::held("the run, which is not parked", Duration::ZERO);
+
+    /// [`ScriptedPlatform::wait_parked`], the readout these tests are of:
+    /// the one place they call it.
+    fn wait_parked(platform: &ScriptedPlatform, guard: HangGuard) -> bool {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "waits for the run to park for its close, on `ScriptedPlatform::wait_parked`, the readout these tests are of"
+        )]
+        platform.wait_parked(guard)
+    }
 
     /// A run in progress on a thread of its own.
     struct Running {
@@ -590,7 +596,7 @@ mod tests {
         /// has not parked by the hang guard.
         fn parked(&self) -> bool {
             assert!(
-                self.platform.wait_parked(PARKS),
+                wait_parked(&self.platform, PARKS),
                 "the run parks to wait for its close"
             );
             self.inputs.try_recv().is_err()
@@ -731,13 +737,13 @@ mod tests {
         readings
     }
 
-    /// `platform.wait_parked(PARKS)` on a thread of its own: where its
+    /// `wait_parked(&platform, PARKS)` on a thread of its own: where its
     /// answer arrives.
     fn start_wait(platform: &Arc<ScriptedPlatform>) -> Receiver<bool> {
         let (answer, answered) = mpsc::channel();
         let platform = Arc::clone(platform);
         thread::spawn(move || {
-            let _ = answer.send(platform.wait_parked(PARKS));
+            let _ = answer.send(wait_parked(&platform, PARKS));
         });
         answered
     }
@@ -785,18 +791,18 @@ mod tests {
         });
         assert_eq!(run.next(1), [opened()]);
         assert!(
-            platform.wait_parked(PARKS),
+            wait_parked(&platform, PARKS),
             "the run parks to wait for a close"
         );
 
         platform.request(Request::EnterFullscreen);
         assert!(
-            !platform.wait_parked(UNPARKED),
+            !wait_parked(&platform, UNPARKED),
             "a report queued unparks the run, whether it has woken yet or not"
         );
         hold.reached("its report of the resize");
         assert!(
-            !platform.wait_parked(UNPARKED),
+            !wait_parked(&platform, UNPARKED),
             "a run that is reporting is not parked"
         );
         let waited = start_wait(&platform);
@@ -830,7 +836,7 @@ mod tests {
 
         assert_eq!(run.next(1), [Input::Resized(opened_size(true))]);
         assert!(
-            platform.wait_parked(PARKS.with_bound(Duration::MAX)),
+            wait_parked(&platform, PARKS.with_bound(Duration::MAX)),
             "a bound past what the clock can count is no bound"
         );
         platform.close();
@@ -842,25 +848,25 @@ mod tests {
         let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
         let run = start(&platform, COMPOSING);
         assert_eq!(run.next(1), [opened()]);
-        assert!(platform.wait_parked(PARKS));
+        assert!(wait_parked(&platform, PARKS));
 
         platform.close();
         assert!(
-            !platform.wait_parked(UNPARKED),
+            !wait_parked(&platform, UNPARKED),
             "a run asked to close waits no more, whether it has woken yet or not"
         );
         assert_eq!(run.result(), Ok(()));
-        assert!(!platform.wait_parked(UNPARKED));
+        assert!(!wait_parked(&platform, UNPARKED));
     }
 
     #[test]
     fn wait_parked_says_no_once_its_bound_has_passed_and_at_once_for_a_platform_that_cannot_open() {
-        assert!(!ScriptedPlatform::new(Vec::new()).wait_parked(UNPARKED));
+        assert!(!wait_parked(&ScriptedPlatform::new(Vec::new()), UNPARKED));
 
         let failing = Arc::new(ScriptedPlatform::failing("no display"));
         let readings = readings_awaited(&failing);
         assert!(start(&failing, COMPOSING).result().is_err());
-        assert!(!failing.wait_parked(PARKS), "its runs never park");
+        assert!(!wait_parked(&failing, PARKS), "its runs never park");
         assert_eq!(
             readings.try_recv(),
             Err(mpsc::TryRecvError::Empty),

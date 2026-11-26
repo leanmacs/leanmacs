@@ -64,6 +64,10 @@ fn rank_through_c(pattern: &str, words: &[u8], strings: &[u8]) -> (u64, Vec<u8>)
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the wiring test compares the C function with the ranking rule over the real scorer the service makes"
+)]
 fn candidates_are_ranked_through_c_as_the_ranking_rule_ranks_them() {
     let candidates = ["wq", "edit", "w"];
     let expected = editor_fuzzy::rank(&mut NucleoScorer::new(), "w", &candidates);
@@ -149,6 +153,10 @@ fn locate_through_c(pattern: &str, text: &str, near: usize, max_errors: u32) -> 
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the wiring test compares the C function with the locating rule over the real searcher the service makes"
+)]
 fn a_pattern_is_located_through_c_as_the_locating_rule_locates_it() {
     let text = "let total = sum(values);\nlet totl = 0;\n";
     let expected =

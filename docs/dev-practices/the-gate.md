@@ -188,8 +188,7 @@ Space; or what a window shows between two sizes
 seen"). `mise run lint` forbids to
 tests the calls that open a clipboard, that make a renderer on a window
 and, in `editor-ffi` as in the shaper's adapter, that read the machine's
-fonts (`crates/editor-platform-arboard/clippy.toml`,
-`crates/editor-render-wgpu/clippy.toml`, `crates/editor-ffi/clippy.toml`).
+fonts (the root `clippy.toml`, which every crate reads).
 
 The Rust half needs no Lean toolchain: `mise run test` (`cargo test
 --workspace`) builds and tests every crate with Cargo alone. Text storage
@@ -215,7 +214,7 @@ Loading and saving a file, listing a directory and making one are tested
 there too, and make no real file: the
 logic (`crates/editor-text/src/file.rs`) reaches a file system only through
 a port the crate defines, and its tests run on the port's published fake,
-which `mise run lint` holds them to (`crates/editor-text/clippy.toml`). The
+which `mise run lint` holds them to (the root `clippy.toml`). The
 port's real adapter, over `std::fs`, is a crate of its own
 (`crates/editor-fs-std`) whose tests hold it to the port's contract in a
 temporary directory they make and remove: a directory made with its
@@ -235,7 +234,7 @@ tests rest on in each. They are compiled into the tests, so no test reads
 a file when it runs, and a font set made of them has the system's fonts
 off: a letter no fixture font has comes out as the primary fixture's
 missing glyph, on any machine. `mise run lint` holds the adapter's tests
-to that (`crates/editor-shape-parley/clippy.toml`: no file, no
+to that (the root `clippy.toml`: no file, no
 environment variable, and no call that asks for the system's fonts). One
 file runs layout over the real adapter, for the wiring alone
 (`crates/editor-shape-parley/tests/layout.rs`). A text's own spans (a
@@ -267,7 +266,7 @@ nearest, earliest, longest, and never one that cuts a character) is tested
 on the published fake, `Scan`, and on searchers that answer canned spans;
 the port's contract, `contract::check_searcher`, against an exhaustive
 oracle, is tested on `Scan` and on searchers written to break each of its
-properties. The crate's `clippy.toml` refuses the clocks, every file of
+properties. The root `clippy.toml` refuses the clocks, every file of
 the disk and both adapters' constructors in all of it. The searcher's real
 adapter, over `triple_accel` (`crates/editor-fuzzy-triple-accel`), is held
 to that contract, which sweeps generated texts from a fixed seed, and to
@@ -334,7 +333,7 @@ Child processes are tested there too. The service that runs a command
 to its end, cancels it and shuts down (`crates/editor-process`) reaches
 processes only through the `Processes` port it defines, and its tests run
 on the port's published fake, which `mise run lint` holds them to
-(`crates/editor-process/clippy.toml`). The port's contract is tested
+(the root `clippy.toml`). The port's contract is tested
 there on the fake and on fakes written to break each rule. The port's
 real adapter (`crates/editor-process-std`) is held to the same contract
 on real processes, every one `/bin/sh` or another absolute path, in a
@@ -360,7 +359,7 @@ owns each watch (`crates/editor-watch`) reach a file system only through
 the `Watch` port the crate defines, and time only through its `Clock`, and
 their tests run on the port's published fake, a file system in memory, and
 on the manual clock, which `mise run lint` holds them to
-(`crates/editor-watch/clippy.toml`: no `std::fs`, no `Path` method that
+(the root `clippy.toml`: no `std::fs`, no `Path` method that
 asks the disk, no clock of the machine's, and not the adapter's
 constructor). The port's contract, the service's properties among them, is
 tested there on the fake and on fakes written to break each rule of the
@@ -383,7 +382,7 @@ only `editor-ffi` depends on the adapter.
 Project search is tested there too. The port of the files under a root
 (`crates/editor-grep`) is tested on its published fake, a tree in memory,
 which `mise run lint` holds the crate's tests to
-(`crates/editor-grep/clippy.toml`: no `std::fs`, no `Path` method that
+(the root `clippy.toml`: no `std::fs`, no `Path` method that
 asks the disk, no clock of the machine's, and not the adapter's
 constructor). The port's contract is tested there on the fake and on
 implementations written to break each rule. The rule of which matches a
@@ -410,7 +409,7 @@ deny` holds that only the adapter depends on the libraries, and that only
 cross, which are refused, how a delivery and each refusal cross, and a
 start read from words run on a service over the fake; and `mise run lint`
 refuses the adapter's constructor anywhere in that crate but the process's
-one service (`crates/editor-ffi/clippy.toml`). `ffi-test`'s grep checks
+one service (the root `clippy.toml`). `ffi-test`'s grep checks
 (`FfiTest.grepChecks`) start a search through the C functions in a
 temporary directory, with an open buffer's snapshot in place of a file and
 an ignored file left out, read its deliveries from the real completion
@@ -530,7 +529,7 @@ needs none. What it checks:
 What it cannot check, and so does not claim: what a GPU draws. wgpu has
 no software renderer of its own, so a machine with no GPU and no driver
 has no adapter, and no test asks for one: `mise run lint` forbids the
-call that does (`crates/editor-render-wgpu/clippy.toml`). The validation
+call that does (the root `clippy.toml`). The validation
 is not everything either: a vertex attribute of the wrong type is
 refused, and one with too few components is not. The picture a real GPU
 draws is compared with the reference image by tasks of their own, outside
@@ -2255,29 +2254,42 @@ about 20 s, under both thresholds. The numbers are in the rdm task
 ## The Rust bans check
 
 ```sh
-cd lean && sh ../tools/rust-bans-check.sh ../tests/packages
+cd lean && dir=$(lake -d ../tests/packages query :editorRustCrate) &&
+  cargo deny --offline --manifest-path "$dir/Cargo.toml" check \
+    --config "$dir/deny.toml" -D unused-wrapper bans
 ```
 
 Part of `mise run ffi-test`. A package's crate depends on `editor-service`
 and on nothing else of the editor's, so neither on `editor-ffi` nor on
 another package's crate. The root `deny.toml` cannot hold that, since
-nothing in the root graph depends on either (its header says why), so the
-check runs cargo-deny's bans over the crate the package-set build generates
-from the set (`lake -d <set dir> query :editorRustCrate`), with the
-`deny.toml` the build writes beside it: the generated crate is the one
+nothing in the root graph depends on either (its header says why), so
+cargo-deny's bans run over the crate the package-set build generates from
+the set (`lake -d <set dir> query :editorRustCrate`, which writes it and
+prints its directory), with the `deny.toml` the build writes beside it
+(`rustDenyConfig` in `lean/lakefile.lean`): the generated crate is the one
 wrapper of `editor-ffi` and of each package crate, and
 `editor-release-std` is banned. Offline, bans alone, stale wrappers errors.
 
-- **It holds of the fixture set and of the default set**: exit 0 on each.
-- **It bites**: on `tests/rust-bans/`, a set that requires the core and two
-  packages whose crates are no members of the root workspace, `bans-ffi`,
-  which depends on `editor-ffi`, and `bans-peer`, which depends on
-  `bans-ffi`'s crate, it must exit 1 with `crate 'editor-ffi = 0.1.0' is
-  explicitly banned` and `crate 'bans-ffi = 0.1.0' is explicitly banned`.
-  Nothing compiles those crates: cargo-deny reads metadata.
-- It exits 2 for a command line it does not take and when Lake fails the
-  query. It writes the generated crates under `target/editor-rust/` and
-  Lake's configuration in the sets' `.lake`, which no other task reads.
+- **It holds of the fixture set and of the default set**: `ffi-test` runs
+  it on each, and passes by cargo-deny's exit status.
+- **It bites**: `ffi-test` runs it, without `-D unused-wrapper`, over the
+  two bite sets of `tests/rust-bans/`, each with one edge the rule
+  refuses, and requires exit status 2 from each, cargo-deny's status when
+  the bans check alone fails (a bit for each failed check, the bans' being
+  2; seen with cargo-deny 0.19.9). `ffi`, whose package `bans-ffi`'s crate
+  depends on `editor-ffi`, holds the config's `editor-ffi` entry; `peer`,
+  whose package `bans-peer`'s crate depends on `bans-base`'s, which
+  depends on nothing, holds the package crates' entries. Drop either kind
+  of entry, make it a no-op, or name each package crate a wrapper of the
+  others, and that set's run exits 0, so the step fails. A stale wrapper
+  stays a warning there: as an error it would fail the bans, and give 2,
+  for a config that refuses nothing. A config cargo-deny cannot parse or a
+  manifest it cannot load exits 1, and a missing config file exits 0, so
+  neither passes. Neither set's crates are members of the root workspace,
+  so the bad edges never enter the root graph, and nothing compiles them:
+  cargo-deny reads metadata.
+- It writes the generated crates under `target/editor-rust/` and Lake's
+  configuration in the sets' `.lake`, which no other task reads.
 
 ## The wait lints
 
@@ -2358,61 +2370,55 @@ lint`, never a script over source text:
   a reviewer rule (`.agents/rules/structure.md`, "Lint plugins"), not a
   gate step. A package written as a user's, as `docs/packages/word-count`
   and `tests/user-link/package` are, names no plugin.
-- **Rust, by clippy** (`mise run lint`): the root `clippy.toml`, which
-  governs every crate with none of its own, holds the block, from a line
-  `# BEGIN wait-bans` to a line `# END wait-bans`, that bans through
-  `disallowed-methods` the raw timed primitives (`thread::sleep`,
-  `sleep_ms`, `park_timeout`, `park_timeout_ms`, `yield_now`,
-  `Receiver::recv_timeout`, `Condvar::wait_timeout`, `wait_timeout_ms`,
-  `wait_timeout_while`, `JoinHandle::is_finished`, `Child::try_wait`,
-  `Instant::now`), the readout waits and the C functions Lean calls to
-  wait, whose bound is a number of milliseconds; `editor-wait`'s
-  `HangGuard`, `recv`, `wait_while`, `Deadline`, `Stopwatch` and
-  `RealTime::sleep` take their place, and a Rust check of a C function
-  makes its number from a guard (`HangGuard::as_millis`). An
-  `#[expect(clippy::disallowed_methods, reason = …)]`, which fails once
-  stale, is at each named site the root `clippy.toml` lists; at a check
-  that waits through a C function its reason names the row of
-  `inferred-waits.md`.
-- **One source** (`tools/wait-bans.sh`): clippy reads only the first
-  `clippy.toml` it finds walking up from a crate, so each
-  `crates/*/clippy.toml` holds a copy of the root's block, which `sh
-  tools/wait-bans.sh write clippy.toml crates/*/clippy.toml` writes.
-  `mise run lint` fails, naming each, while a copy differs from the
-  root's block by a byte (`tools/wait-bans.sh check`), and `mise run test`
-  pins the script over the configs of `tests/wait-bans/`.
+- **Rust, by clippy** (`mise run lint`): the root `clippy.toml`, the
+  workspace's one, which every crate reads (no crate has one of its own),
+  bans through `disallowed-methods` the raw timed primitives
+  (`thread::sleep`, `sleep_ms`, `park_timeout`, `park_timeout_ms`,
+  `yield_now`, `Receiver::recv_timeout`, `Condvar::wait_timeout`,
+  `wait_timeout_ms`, `wait_timeout_while`, `JoinHandle::is_finished`,
+  `Child::try_wait`, `Instant::now`), the readout waits and the C
+  functions Lean calls to wait, whose bound is a number of milliseconds;
+  `editor-wait`'s `HangGuard`, `recv`, `wait_while`, `Deadline`,
+  `Stopwatch` and `RealTime::sleep` take their place, and a Rust check of a
+  C function makes its number from a guard (`HangGuard::as_millis`). The
+  same file bans the outside world a core reaches only through its ports
+  (real files, the machine's directories and environment, processes, the
+  wall clock, each adapter's real constructor), in every crate.
+- **An opt-out is an `#[expect]` with a reason, at its site**: the root
+  `Cargo.toml`'s `[workspace.lints.clippy]`, which every member takes
+  (`[lints] workspace = true`), denies `disallowed_methods`,
+  `disallowed_types`, `allow_attributes` and
+  `allow_attributes_without_reason`, so an `#[allow]` or a mark without a
+  reason fails the lint, and an `#[expect(clippy::disallowed_methods,
+  reason = …)]` that no longer covers a banned call is unfulfilled, which
+  `-D warnings` fails. At a check that waits through a C function its
+  reason names the row of `inferred-waits.md`. A `disallowed_methods`
+  opt-out sits at its site: on the statement or `let` that makes the call,
+  or on the `fn` or `impl` whose call it is, never on a module or a crate,
+  a test module or file included, since the wait bans are the same lint. A
+  test module that waits on its readout again and again calls it through
+  one helper `fn`, whose statement carries the mark. **An item's
+  mark never covers a wait**: a banned wait inside an `fn` or `impl` that
+  carries a mark for the outside world has a statement-level `#[expect]`
+  of its own, whose reason is the wait's. These scope rules are a
+  reviewer's (`.agents/rules/structure.md`, "Clippy's bans"); the root
+  `clippy.toml`'s header says where the marks are.
 - **It bites**: `mise run lint` runs clippy over `tests/wait-lints/`, a
-  crate outside the workspace (its own lock, read `--locked --offline`)
-  that calls each path of the block once, under the root config and under
-  each `crates/*/clippy.toml` (`CLIPPY_CONF_DIR`), into
-  `target/wait-lints/`; every run must fail and print "use of a disallowed
-  method `<path>`" for each path the root's block bans, read from it
-  (`tools/wait-bans.sh paths`), its output shown only when it does not. So
-  a path added to the block that the fixture does not call fails the gate.
-  The pre-commit hook's Rust step does not run it.
-
-## The toolchain check
-
-```sh
-sh tools/toolchain-check.sh
-```
-
-First in `mise run lean-test`. `lean/lean-toolchain` is the pin every task
-reads, and each Lake root outside `lean/` holds a copy of it: the default
-set, the fixture set, each fixture package, the writing guide's example
-package, the empty set, the user-side link's set and its package, and the
-formatter's host
-([packages.md](../design/packages.md), "The toolchain copies"). The check
-compares every tracked file named `lean-toolchain` with the pin, byte for
-byte, prints each that differs and exits 1.
-
-- **The copies are the tracked ones** (`git ls-files`), so Lake's fetched
-  packages are never looked at. `git add` a new copy before running it.
-- **The gate sees it bite.** `lean-test` runs it again with another
-  reference file, the core's Lake manifest, and requires exit 1 with the
-  formatter host's copy named.
-- **It refuses to pass for no reason.** A reference it cannot read, a
-  failing `git`, and a tree with no copy other than the pin are exit 2.
+  crate outside the workspace (its own lock, read `--locked --offline`,
+  into `target/wait-lints/`) that calls each banned wait a crate other
+  than its owner can call, once, each call under an
+  `#[expect(clippy::disallowed_methods)]` of its own that names the path
+  it shows. Clippy over it passes, by its exit status, only while every
+  one of those bans bites: one that stopped biting leaves its expectation
+  unfulfilled. A wait ban added to the root `clippy.toml` gets its call
+  there (a reviewer rule). So does each `allow-invalid` entry point that
+  no crate of the workspace calls (`parley::FontContext::new`,
+  `fontique::Collection::load_system_fonts` and `load_fonts_from_paths`,
+  in `unreached`): clippy does not refuse an `allow-invalid` path that
+  resolves to nothing, so such a ban bites only while an `#[expect]`
+  covers a call of it, and every other `allow-invalid` ban has one at its
+  site in the workspace. The pre-commit hook's Rust step does not run
+  it.
 
 ## Formatting
 
@@ -2446,7 +2452,7 @@ over the core and then over each package of the fixture set
   `lake -d ../tools/lean-fmt update --keep-toolchain` in `lean/`.
 - **It writes a cache in the root it is given**, `.lean-fmt-cache`, which
   git ignores in any directory, and it refuses a root with no
-  `lean-toolchain`, which is one reason every package holds a copy of the
+  `lean-toolchain`, which is one reason every package holds a link to the
   pin.
 - **A package's headless fixtures are excluded** by a `lean-fmt.toml` in
   the package (`exclude = ["tests/**"]`): a config file is a module of a
