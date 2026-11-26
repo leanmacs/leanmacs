@@ -35,6 +35,9 @@ inductive PermissionState where
   | withdrawn
   /-- The client's answer, this option's id, was taken. -/
   | answered (optionId : String)
+  /-- Its session ended with it pending, so the protocol's close answered
+  it: the agent ended, the session was stopped or its buffer closed. -/
+  | closed
   deriving DecidableEq, Repr, Inhabited
 
 /-- How much of the context window a session uses, of how much, and what it

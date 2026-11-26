@@ -139,7 +139,7 @@ def recordsOf (project : String) (conversation : Conversation) (batch : Batch) (
       | some (_, answer) => #[asked, .decided conversation.number ticket policy (answer.map (·.id))]
       | none => #[asked]
     | .withdrawn ticket => #[.withdrawn conversation.number ticket]
-    | .ended how => closedRecords conversation (endedReason (Acp.Conversation.describeEnding how))
+    | .ended how => closedRecords conversation (endedReason how.describe)
     | _ => #[]
 
 end Acp.Permissions

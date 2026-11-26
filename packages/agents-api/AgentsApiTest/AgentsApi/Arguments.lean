@@ -27,7 +27,8 @@ def fullCall : ToolCall :=
 
 /-- One event of every kind, and of each optional field both ways. -/
 def everyEvent : Array Event :=
-  #[.chunk (some "msg-1") "Done.", .chunk none "", .toolCall Contract.call, .toolCall fullCall,
+  #[.chunk (some "msg-1") "Done.", .chunk none "", .userChunk (some "msg-u1") "Read notes.txt.",
+    .userChunk none "", .toolCall Contract.call, .toolCall fullCall,
     .permission 1 (some 1) fullCall Contract.options, .permission 2 none Contract.second #[],
     .withdrawn 2, .usage 1200 200000 (some ("0.01", "USD")), .usage 1200 200000 none,
     .title "Example title", .mode "mode-ask", .turnEnded 1 "end_turn", .ended (.exited 0),

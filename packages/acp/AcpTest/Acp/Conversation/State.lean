@@ -114,6 +114,7 @@ def stateChecks : List Check :=
                 .permission 1 (some 1) Contract.call Contract.options .pending,
                 .permission 2 none Contract.second #[] .withdrawn,
                 .permission 3 (some 1) Contract.call Contract.options (.answered "allow"),
+                .permission 4 (some 1) Contract.call Contract.options .closed,
                 .turnEnded 1 "end_turn", .note "session stopped"]
             unfolded := #["call-edit-1"], turn := some 2, awaiting := true
             ended := some "stopped" }

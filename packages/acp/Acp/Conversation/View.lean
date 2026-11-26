@@ -21,8 +21,8 @@ name, built from this one with a field changed if it likes
   two spaces: its text, or a diff as its path and then the change
   (`Acp/Conversation/Diff.lean`), indented by two more.
 - **A permission request**: `? permission <ticket>: <title> [<option
-  names>]`, followed by ` (withdrawn)` or ` (answered <option name>)` once
-  it is.
+  names>]`, followed by ` (withdrawn)`, ` (answered <option name>)` or
+  ` (closed)` once it is.
 - **The end of a turn**: `-- turn <n>: <stop reason>`. **A note**:
   `-- <text>`.
 - **A queued request**, as the queue of a project's pending requests lists
@@ -86,6 +86,7 @@ def permissionRow (ticket : Nat) (call : ToolCall) (options : Array PermissionOp
     match state with
     | .pending => ""
     | .withdrawn => " (withdrawn)"
+    | .closed => " (closed)"
     | .answered optionId =>
       let chosen :=
         (options.find? fun (option : PermissionOption) => option.id == optionId).map

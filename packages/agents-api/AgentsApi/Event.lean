@@ -3,7 +3,8 @@
 
 The events a session with a coding agent produces, as plain data in the
 editor's own terms (`docs/design/agent-hosting.md`, "ACP"), whatever
-protocol the implementation speaks: a chunk of the agent's reply, a tool
+protocol the implementation speaks: a chunk of the agent's reply or of the
+user's message, a tool
 call with its updates already merged, a permission request parked under a
 ticket, its withdrawal on a cancel, the session's usage, title and mode,
 the end of a prompt turn, and the session's own end.
@@ -78,11 +79,24 @@ inductive Ending where
   | protocolError (words : String)
   deriving DecidableEq, Repr, Inhabited
 
+/-- How a session's ending is said, as a conversation notes it and the agent
+table keeps it. -/
+def Ending.describe : Ending → String
+  | .exited code => s!"the agent exited {code}"
+  | .signalled signal => s!"the agent was ended by signal {signal}"
+  | .lineTooLong => "a line of the agent's was too long"
+  | .failed words => s!"a read of the agent failed: {words}"
+  | .protocolError words => s!"the agent broke the protocol: {words}"
+
 /-- One thing a session produced. -/
 inductive Event where
   /-- A chunk of the agent's reply, with the agent's id of the message it is
   part of, when it gave one. -/
   | chunk (messageId? : Option String) (text : String)
+  /-- A chunk of a message of the user's, with the agent's id of the message
+  it is part of, when it gave one: what a loaded session replays of its
+  history (`Request.load`), and what an agent may echo of a prompt. -/
+  | userChunk (messageId? : Option String) (text : String)
   /-- A tool call, whole, with every update so far merged in. -/
   | toolCall (call : ToolCall)
   /-- The agent asks permission for `call`, parked under `ticket` in the turn

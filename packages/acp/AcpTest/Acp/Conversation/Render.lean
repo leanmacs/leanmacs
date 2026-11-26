@@ -75,7 +75,7 @@ def renderChecks : List Check :=
               rowOf defaultView unfolded "nobody" == none)
             s!"{lines}, first {first}, rows {rows}" },
     { name :=
-        "a permission request shows its options and where it stands, answered by its option's name"
+        "a permission request shows its options and where it stands, answered by its option's name, withdrawn or closed"
       run := do
         let asked :=
           example1.applyBatch
@@ -83,13 +83,15 @@ def renderChecks : List Check :=
               events :=
                 #[.permission 1 (some 1) Contract.call Contract.options,
                   .permission 2 (some 1) Contract.second Contract.options,
-                  .permission 3 (some 1) Contract.second Contract.options, .withdrawn 2] }
-        let lines := (render defaultView (asked.answered 1 Contract.allow)).1
+                  .permission 3 (some 1) Contract.second Contract.options,
+                  .permission 4 (some 1) Contract.second Contract.options, .withdrawn 2] }
+        let lines := (render defaultView ((asked.answered 1 Contract.allow).settle 4 .closed)).1
         saw
-            (lines.extract 5 8 ==
+            (lines.extract 5 9 ==
               #["? permission 1: Edit notes.txt [Allow, Reject] (answered Allow)",
                 "? permission 2: Edit notes.txt again [Allow, Reject] (withdrawn)",
-                "? permission 3: Edit notes.txt again [Allow, Reject]"])
+                "? permission 3: Edit notes.txt again [Allow, Reject]",
+                "? permission 4: Edit notes.txt again [Allow, Reject] (closed)"])
             s!"{lines}" },
     { name := "a line feed in a line a view gives is split into rows, and the map keeps its size"
       run := do

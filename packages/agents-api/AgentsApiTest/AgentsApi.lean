@@ -7,7 +7,8 @@ import Editor.Config.Packages
 
 `agentsApiChecks`: the service's request vocabulary read back as it was
 written, a malformed request refused, the agent registration point a
-choice by name, and a refusal's words (`Refusal.describe`). The test
+choice by name, a refusal's words (`Refusal.describe`) and a session's
+ending's (`Ending.describe`). The test
 driver's root, `AgentsApiTest/Model.lean`, runs them.
 -/
 
@@ -92,6 +93,18 @@ def agentsApiChecks : List Check :=
         let said :=
           [Refusal.describe (.child child), Refusal.describe (.service (.refused "no events")),
             Refusal.describe (.service (.noSuchService "agents"))]
-        saw (said == [child.describe, "refused: no events", "no service agents"]) s!"{said}" }]
+        saw (said == [child.describe, "refused: no events", "no service agents"]) s!"{said}" },
+    { name := "a session's ending is said in words, each kind its own"
+      run := do
+        let said :=
+          [Ending.describe (.exited 0), Ending.describe (.signalled 9),
+            Ending.describe .lineTooLong, Ending.describe (.failed "gone"),
+            Ending.describe (.protocolError "bad")]
+        saw
+            (said ==
+              ["the agent exited 0", "the agent was ended by signal 9",
+                "a line of the agent's was too long", "a read of the agent failed: gone",
+                "the agent broke the protocol: bad"])
+            s!"{said}" }]
 
 end AgentsApiTest

@@ -150,14 +150,6 @@ def settle (conversation : Conversation) (ticket : Nat) (state : PermissionState
           if held == ticket then .permission held turn call options state else item
         | _ => item }
 
-/-- How a session's ending is said. -/
-def describeEnding : Ending → String
-  | .exited code => s!"the agent exited {code}"
-  | .signalled signal => s!"the agent was ended by signal {signal}"
-  | .lineTooLong => "a line of the agent's was too long"
-  | .failed words => s!"a read of the agent failed: {words}"
-  | .protocolError words => s!"the agent broke the protocol: {words}"
-
 /-- `conversation` after the session's event `event` (the module docs). -/
 def apply (conversation : Conversation) : Event → Conversation
   | .chunk id text =>
@@ -170,6 +162,7 @@ def apply (conversation : Conversation) : Event → Conversation
             | .message held before => .message held (before ++ text)
             | _ => item }
     | none => conversation.push (.message id text)
+  | .userChunk _ _ => conversation
   | .toolCall call =>
     match
       conversation.items.findIdx? fun item =>
@@ -189,7 +182,7 @@ def apply (conversation : Conversation) : Event → Conversation
     if conversation.turn == some turn then { conversation with turn := none } else conversation
   | .ended how =>
     { conversation with
-      ended := some (describeEnding how), turn := none }
+      ended := some how.describe, turn := none }
 
 /-- `conversation` after each event of `batch`, in order. -/
 def applyBatch (conversation : Conversation) (batch : Batch) : Conversation :=
@@ -296,6 +289,7 @@ def ofLeaves? : Value → Option (List Argument)
 def stateArguments : PermissionState → List Argument
   | .pending => [.str "pending"]
   | .withdrawn => [.str "withdrawn"]
+  | .closed => [.str "closed"]
   | .answered optionId => [.str "answered", .str optionId]
 
 /-- An item as arguments: its kind's word, then its fields. -/
@@ -331,6 +325,8 @@ where
         some (permission .pending, rest)
       | .str "withdrawn" :: rest =>
         some (permission .withdrawn, rest)
+      | .str "closed" :: rest =>
+        some (permission .closed, rest)
       | .str "answered" :: .str optionId :: rest =>
         some (permission (.answered optionId), rest)
       | _ =>

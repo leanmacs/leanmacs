@@ -77,6 +77,7 @@ def pausingAgent : Process.StreamScript :=
 /-- An event in a word or three, as the record command says it. -/
 def said : AgentsApi.Event → String
   | .chunk _ _ => "chunk"
+  | .userChunk _ _ => "userChunk"
   | .toolCall call => s!"toolCall {call.id} {call.status}"
   | .permission ticket _ _ _ => s!"permission {ticket}"
   | .withdrawn ticket => s!"withdrawn {ticket}"

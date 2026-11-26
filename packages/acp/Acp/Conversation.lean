@@ -249,7 +249,7 @@ def sessionWork (agents : Array Agent) (arguments : List Argument) : Work := fun
       | .ok batch =>
         post { command := eventsName, arguments := .nat number :: batch.toArguments }
         if let some how := endingOf batch then
-          return endedCommand number (Conversation.describeEnding how)
+          return endedCommand number how.describe
         sleep batchPause
     return endedCommand number s!"no end after {takeLimit} batches"
 

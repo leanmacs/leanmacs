@@ -189,6 +189,7 @@ def Ending.take? : List Argument → Option (Ending × List Argument)
 /-- An event as arguments: its kind's word, then its fields. -/
 def Event.toArguments : Event → List Argument
   | .chunk messageId? text => .str "chunk" :: optionalString messageId? ++ [.str text]
+  | .userChunk messageId? text => .str "userChunk" :: optionalString messageId? ++ [.str text]
   | .toolCall call => .str "toolCall" :: call.toArguments
   | .permission ticket turn call options =>
     .str "permission" :: Arguments.permission ticket turn call options
@@ -205,6 +206,10 @@ def Event.take? : List Argument → Option (Event × List Argument)
     let (messageId?, rest) ← optionalString? rest
     let .str text :: rest := rest | none
     return (.chunk messageId? text, rest)
+  | .str "userChunk" :: rest => do
+    let (messageId?, rest) ← optionalString? rest
+    let .str text :: rest := rest | none
+    return (.userChunk messageId? text, rest)
   | .str "toolCall" :: rest => do
     let (call, rest) ← ToolCall.take? rest
     return (.toolCall call, rest)
