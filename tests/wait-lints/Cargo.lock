@@ -640,8 +640,10 @@ version = "0.1.0"
 dependencies = [
  "editor-syntax",
  "editor-text",
+ "libloading",
  "tree-sitter",
  "tree-sitter-json",
+ "tree-sitter-language",
  "tree-sitter-lean",
  "tree-sitter-md",
  "tree-sitter-rust",
