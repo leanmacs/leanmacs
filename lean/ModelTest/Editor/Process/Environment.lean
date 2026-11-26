@@ -13,6 +13,8 @@ import Editor.Process.Model
 import Editor.Program
 import Editor.Text
 import Editor.Text.Model
+import EnvironmentApiTest.Fake
+import EnvironmentApiTest.Model
 import ModelTest.Check
 
 /-!
@@ -29,6 +31,7 @@ says what each shows.
 namespace ModelTest
 
 open Editor
+open EnvironmentApiTest
 
 /-- What `mise env --json` prints, in its layout: one name a line, indented
 two spaces, with a `PATH` of 400 characters. -/
@@ -54,30 +57,6 @@ def refusesVariables (text : String) (why : String) : Bool :=
 def failedEntry (failure : Process.Failure) (stamps : Array (Option File.Stamp) := #[]) :
     Process.Entry :=
   { stamps, found := .failed failure }
-
-/-- The variables of `bytes` read as `NAME=value` lines: the fake sources'
-output, which is no JSON, so the core is seen composing sources it does not
-name. -/
-def keyValues (bytes : ByteArray) : Except String (Array (String × String)) := do
-  let some text := String.fromUTF8? bytes | throw "it is not UTF-8"
-  ((text.splitOn "\n").filter (!·.isEmpty)).toArray.mapM fun line =>
-      match line.splitOn "=" with
-      | [name, value] => pure (name, value)
-      | _ => throw s!"the line {line} is not NAME=value"
-
-/-- `variables` written as `NAME=value` lines, which `keyValues` reads. -/
-def linesOf (variables : Array (String × String)) : String :=
-  String.join (variables.toList.map fun (name, value) => s!"{name}={value}\n")
-
-/-- A source the core does not name: `name`, run at `path` with no arguments
-in the directory it is given, over the environment so far, printing
-`NAME=value` lines; its result kept by the stamps of `stampNames`. -/
-def fakeSource (name : String) (path : System.FilePath) (stampNames : Array String := #[]) :
-    Process.Source :=
-  { name, program := .at path
-    command := fun executable directory environment =>
-      { program := executable.toString, directory, environment }
-    parse := keyValues, output := "NAME=value lines", stampNames }
 
 /-- The names of mise's config files, the mise source's stamp names, written
 out. -/
@@ -367,23 +346,6 @@ def processEnvironmentChecks : List Check :=
             foundOf (.error .noSuchProcess) == .failed (.refused .noSuchProcess) &&
             foundOf (.error (.timedOut 5000)) == .failed (.timedOut 5000)) }]
 
-/-- The requests `job` makes when it runs against the job port's model from
-`model`, in order. -/
-def requestsOf {α : Type} (job : JobM α) (model : JobModel) : Array JobRequest :=
-  go 10000 job.run model #[]
-where
-  /-- The requests of `program` from `model`, with `fuel` steps at most. -/
-  go : Nat → Program jobPort (Except String α) → JobModel → Array JobRequest → Array JobRequest
-    | 0, _, _, seen => seen
-    | _, .done _, _, seen => seen
-    | fuel + 1, .step request next, model, seen =>
-      let (reply, after) := JobModel.handle request model
-      go fuel (next reply) after (seen.push request)
-
-/-- A run that ends with the status 0 and prints `stdout`. -/
-def printed (stdout : String) : Except ProcessError Process.Ran :=
-  .ok { exit := .code 0, stdout := stdout.toUTF8, stderr := .empty }
-
 /-- The command the lookup checks start in `/p/d`: a bare `lake`, with a
 variable of its own set and one unset. -/
 def lakeBuild : Process.Command :=
@@ -433,14 +395,6 @@ def lookupModel (setting : Process.Setting) (host : Process.Host) (files : FileM
         { command := mergedOf (movedTo lakeBuild directory), reply := printed "built" },
         { command := movedTo lakeBuild directory, reply := printed "built inherited" }]
   { files, processes := { scripts }, environments := { host, sources := setting.sources host } }
-
-/-- A run of `command` that the model answers. -/
-def runsOn (command : Process.Command) : JobM Bool := do
-  return (← Process.run command 1000) matches .ok _
-
-/-- Runs `job` on the model, and gives the model after it. -/
-def after {α : Type} (job : JobM α) (model : JobModel) : JobModel :=
-  (job.runModel model).2
 
 /-- The checks of a child's environment on the models (AC 1 to 5 of
 `docs/design/concurrency.md`, "A child's environment, as built"): each runs

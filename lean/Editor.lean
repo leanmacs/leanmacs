@@ -7,6 +7,7 @@ import Editor.Quit
 import Editor.Text.Word
 import Editor.UndoTree.Theorems
 import Editor.Vocabulary
+import EnvironmentApi
 
 /-!
 # The editor

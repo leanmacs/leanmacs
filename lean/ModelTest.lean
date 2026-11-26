@@ -149,6 +149,7 @@ import ModelTest.Editor.Watch.Model
 import ModelTest.Editor.Window
 import ModelTest.Editor.WindowCheck
 import ModelTest.Editor.Workspace
+import ModelTest.EnvironmentApi
 import ModelTest.FilesApi
 import ModelTest.Lint.RealHost
 import ModelTest.Lint.RealHost.Contract
@@ -1616,6 +1617,8 @@ def checks : List Check :=
     excerptViewedChecks ++
     jsonChecks ++
     filesApiChecks ++
+    environmentRegistryChecks ++
+    environmentApiChecks ++
     gutterCarryChecks ++
     gutterTrackChecks ++
     boundChecks
