@@ -4,6 +4,7 @@ import Editor.Completion.AtPoint
 import Editor.Completion.Style
 import Editor.Highlight
 import Editor.Language
+import Editor.Language.Grammar
 import Editor.Mode
 
 /-!
@@ -518,6 +519,10 @@ structure Loop.Registered where
   /-- The language table, in precedence order (`Language.forPath`): config's
   entries, then the compiled ones it did not replace by name. -/
   languages : List Language := []
+  /-- The grammars config declares (`defineGrammar`, `Editor/Setup.lean`),
+  each owner's over the earlier owners' by name: which languages' trees
+  wait for the registration's answers (`Language.Grammar.treeOf`). -/
+  grammars : List Language.Grammar := []
   /-- The completion source registered under a name, for a prompt that asks
   for it by name (`ControlRequest.askSource`). `none` for a name no source is
   registered under. -/

@@ -22,6 +22,7 @@ import Editor.Job
 import Editor.Job.Model
 import Editor.Key.Notation
 import Editor.Language
+import Editor.Language.Grammar
 import Editor.Language.IndentUnit
 import Editor.Layout
 import Editor.Mode
@@ -817,6 +818,53 @@ def setupChecks : List Check :=
                 some "the language `toml` cannot be meant: its file name pattern `a/b` holds `/`" &&
               refusal (defineLanguage { toml with patterns := [] }) == none)
         | _, _ => pure false },
+    { name :=
+        "a setup's grammar declaration giving only a name and a library path is collected with the symbol tree_sitter_<name> and the query directory queries/ beside the library"
+      run :=
+        match Config.Registrations.ofSetup (defineGrammar "ini" "/opt/grammars/libtree-sitter-ini.so"),
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.grammars ==
+                #[{ name := "ini"
+                    source :=
+                      { library := "/opt/grammars/libtree-sitter-ini.so"
+                        symbol := "tree_sitter_ini", policy := none }
+                    queries := "/opt/grammars/queries" }] &&
+              plain.grammars.isEmpty)
+        | _, _ => pure false },
+    { name :=
+        "a setup's grammar declaration giving a symbol, a query directory and a policy is collected with those"
+      run :=
+        let setup : SetupM Unit :=
+          defineGrammar "conf" "/opt/grammars/libconf.so" (symbol := "conf")
+            (queries := "/other/conf-queries") (policy := ReparsePolicy.incremental)
+        match Config.Registrations.ofSetup setup with
+        | .ok collected =>
+          pure
+            (collected.grammars ==
+              #[{ name := "conf"
+                  source :=
+                    { library := "/opt/grammars/libconf.so", symbol := "conf"
+                      policy := some .incremental }
+                  queries := "/other/conf-queries" }])
+        | .error _ => pure false },
+    { name :=
+        "a setup that declares a grammar name twice, a symbol that registers another name, or a relative library or query directory is refused with a message that names it"
+      run :=
+        let twice : SetupM Unit := do
+          defineGrammar "ini" "/a/libini.so"
+          defineGrammar "ini" "/b/libini.so"
+        pure
+          (refusal twice == some "the grammar `ini` is declared twice" &&
+            refusal (defineGrammar "c-sharp" "/g/libcs.so" (symbol := "tree_sitter_c_sharp")) ==
+              some
+                "the grammar `c-sharp`'s symbol `tree_sitter_c_sharp` registers the grammar `c_sharp`: a grammar is declared under the name its symbol registers" &&
+            refusal (defineGrammar "ini" "grammars/libini.so") ==
+              some "the grammar `ini`'s library `grammars/libini.so` is not an absolute path" &&
+            refusal (defineGrammar "ini" "/g/libini.so" (queries := "queries")) ==
+              some "the grammar `ini`'s query directory `queries` is not an absolute path" &&
+            refusal (defineGrammar "ini" "/g/libini.so") == none) },
     { name :=
         "a setup's syntax refresh delay is collected, a setup that sets none has none, and one that sets it twice is refused with a message that says so"
       run :=

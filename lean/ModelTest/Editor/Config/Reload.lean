@@ -25,6 +25,7 @@ import Editor.Invocation
 import Editor.Job
 import Editor.Key.Notation
 import Editor.Language
+import Editor.Language.Grammar
 import Editor.Layout
 import Editor.Loop
 import Editor.Menu
@@ -764,6 +765,27 @@ def reloadChecks : List Check :=
               ["rust", "json", "markdown", "toml", "lean"] &&
             rustOf kept == some mine &&
             rustOf bare == some Language.rust) },
+    { name :=
+        "an installed reload puts config's grammar declarations in the registry beside its languages: the loop is told the ini language with the declared grammar ini as its Mode.SyntaxTree.grammar, and the ini declaration; a rejected reload keeps them, and a config that declares none clears them"
+      run :=
+        let ini : Language :=
+          { name := "ini", patterns := [.extension "ini"], syntaxTree := { grammar := "ini" } }
+        let setup : SetupM Unit := do
+          defineGrammar "ini" "/opt/grammars/libtree-sitter-ini.so"
+          defineLanguage ini
+        let start : ModelState :=
+          { registry := ({} : Config.Registry).replaceLanguages .compiled Language.shipped }
+        let (loaded, _) := reduceFrom start [.requested, .finished (accepted ["a"] setup)]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let declared := [Language.Grammar.declare "ini" "/opt/grammars/libtree-sitter-ini.so"]
+        let grammarOf (state : ModelState) : Option String :=
+          (state.registry.registered.languages.find? (·.name == "ini")).map (·.syntaxTree.grammar)
+        let told (state : ModelState) : List Language.Grammar := state.registry.registered.grammars
+        pure
+          (told start == [] && grammarOf loaded == some "ini" && told loaded == declared &&
+            grammarOf kept == some "ini" && told kept == declared && grammarOf bare == none &&
+            told bare == []) },
     { name :=
         "an installed reload puts config's syntax refresh delay in the registry, which tells the loop of it; a rejected reload leaves it, and a config that sets none goes back to none"
       run :=

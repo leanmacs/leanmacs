@@ -54,7 +54,7 @@ holds, each named after `name`, and a style default for the category
 command given its call, a store with a command over it and its codec
 across a restart, a job, a key
 binding of `keys` to the plain command, a name for the prefix `C-c`, a mode, an ex name, a
-face, a theme, a segment, a language, a completion
+face, a theme, a segment, a language, a grammar declaration, a completion
 source, style and display, an at-point source and a use of it, a menu,
 and a value at an extension point (`Tagged`). -/
 def everyKind (name : String) (keys : String := "C-c p") : Package :=
@@ -76,6 +76,7 @@ def everyKind (name : String) (keys : String := "C-c p") : Package :=
       defineLanguage
           { name := s!"{name}-language", patterns := [.extension name]
             syntaxTree := { grammar := name } }
+      defineGrammar name s!"/grammars/{name}/libtree-sitter-{name}.so"
       defineSource (.ofTexts s!"{name}-source" s!"{name}-pick" #["a"])
       defineStyle (.keeping s!"{name}-style" fun _ _ => true)
       defineDisplay (Completion.Display.plain s!"{name}-display")
@@ -144,7 +145,7 @@ def packageChecks : List Check :=
         let (state, refused) := packaged #[one, two]
         pure
           (refused.isEmpty && one.owner == { name := "one" } && two.owner == { name := "two" } &&
-            state.registry.ownersByKind.size == 18 &&
+            state.registry.ownersByKind.size == 19 &&
             state.registry.ownersByKind.all
               (fun owners => owners.toList.eraseDups == [one.owner, two.owner]) &&
             state.registry.entries.map (·.owner.name) ==
@@ -313,12 +314,12 @@ def packageChecks : List Check :=
               stored once "counter" == none &&
               (runs once "bump").map (·.2.texts.contents) == some #["was 5"] },
     { name :=
-        "a host handed no package starts from a registry that holds no command, binding, mode, ex name, job, source, menu or extension value: no entry of any of the eighteen kinds a package of every kind fills, no menu bar, no theme, no store's cell, no package's name, and nothing refused"
+        "a host handed no package starts from a registry that holds no command, binding, mode, ex name, job, source, menu or extension value: no entry of any of the nineteen kinds a package of every kind fills, no menu bar, no theme, no store's cell, no package's name, and nothing refused"
       run :=
         let (state, refused) := packaged #[]
         let (full, _) := packaged #[everyKind "one"]
         pure
-          (refused.isEmpty && state.packages == #[] && state.registry.ownersByKind.size == 18 &&
+          (refused.isEmpty && state.packages == #[] && state.registry.ownersByKind.size == 19 &&
             state.registry.ownersByKind.all (·.isEmpty) &&
             full.registry.ownersByKind.all (!·.isEmpty) &&
             state.registry.entries.isEmpty &&

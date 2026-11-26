@@ -11,6 +11,7 @@ import Editor.Face
 import Editor.Job
 import Editor.Key.Notation
 import Editor.Language
+import Editor.Language.Grammar
 import Editor.Layout
 import Editor.Menu
 import Editor.Mode
@@ -468,6 +469,24 @@ Config's entries are matched before the shipped ones. Defining a language
 name twice, or a pattern that is empty or holds `/`, is refused; a reload's
 languages hold from the next file opened.
 
+Config declares a grammar loaded from a native library at run time with
+`defineGrammar` (`Editor/Language/Grammar.lean`), and a language names it
+as it names a compiled-in one:
+
+```lean
+def setup : SetupM Unit := do
+  defineGrammar "python" "/opt/grammars/libtree-sitter-python.dylib"
+  defineLanguage { name := "python", patterns := [.extension "py"], syntaxTree := { grammar := "python" } }
+```
+
+The symbol defaults to `tree_sitter_<name>` and the query directory to
+`queries/` beside the library; `(symbol := "python")`,
+`(queries := "/opt/python-queries")` and `(policy := .incremental)` give
+others. A declaration whose symbol registers another name, a library or a
+query directory that is not absolute, and a name declared twice are
+refused. Each install registers the declared grammars in a job, and the
+buffers of their languages are highlighted once it answers.
+
 Config declares a workspace root with `workspace`, for a directory that is
 not a repository, or to split one, with the name of the project it belongs
 to if it gives one (`Editor/Workspace.lean`):
@@ -662,6 +681,9 @@ inductive SetupRequest where
   for, how its text is parsed and drawn, and its indent unit
   (`Editor/Language.lean`). -/
   | language (language : Language)
+  /-- Declare `grammar`, a grammar loaded from a native library at run time,
+  by the name languages name it with (`Editor/Language/Grammar.lean`). -/
+  | grammar (grammar : Language.Grammar)
   /-- Register `source` as a completion source, by its name
   (`Editor/Completion.lean`). -/
   | source (source : Completion.Source)
@@ -732,6 +754,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .shellTimeLimit _ => Unit
   | .syntaxRefreshDelay _ => Unit
   | .language _ => Unit
+  | .grammar _ => Unit
   | .source _ => Unit
   | .style _ => Unit
   | .useStyle .. => Unit
@@ -1252,6 +1275,22 @@ opened. The editor refuses the `setup` for a language name defined twice,
 and for a pattern no file name can be meant by (`Language.problems`). -/
 def defineLanguage (language : Language) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.language language))
+
+/-- Declares the grammar `name`, loaded from the native library at
+`library`: its language exported under `symbol`, `tree_sitter_<name>` when
+none is given; its queries read from `queries`, the directory `queries/`
+beside the library when none is given; registered with `policy`, or
+`whole` (`Editor/Language/Grammar.lean`). A language names it by `name`.
+Refuses the `setup` for a symbol that registers another name and for a
+library or query directory that is not absolute (`Language.Grammar.problem?`),
+and for a name declared twice. -/
+def defineGrammar (name : String) (library : System.FilePath) (symbol : Option String := none)
+    (queries : Option System.FilePath := none) (policy : Option ReparsePolicy := none) :
+    SetupM Unit := do
+  let grammar := Language.Grammar.declare name library symbol queries policy
+  if let some problem := grammar.problem? then
+    throw problem
+  ExceptT.lift (Program.request (port := setupPort) (.grammar grammar))
 
 /-- The message a workspace root is refused with when it is not absolute. -/
 def relativeWorkspace (root : System.FilePath) : String :=

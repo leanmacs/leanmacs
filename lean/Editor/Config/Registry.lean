@@ -237,6 +237,16 @@ loop is told the table (`registered`).
 A `setup` that defines a language name twice, or a language with a pattern
 no file name can be meant by (`Language.problems`), is refused.
 
+A grammar declaration (`Editor/Language/Grammar.lean`) is held by owner the
+same way, in a `GrammarEntry`, replaced as a set (`replaceGrammars`); the
+table (`grammarTable`) is each owner's declarations over the earlier
+owners' by name (`Language.Grammar.over`). Only config declares
+(`defineGrammar`), and a later phase's packages add entries with no new
+mechanism. The loop is told the table (`registered`), and each install
+registers the whole of it (`Editor/Config/Reload.lean`). A `setup` that
+declares a grammar name twice is refused; the problems of one declaration
+(`Language.Grammar.problem?`) refuse it in `defineGrammar` itself.
+
 ## Sources
 
 A completion source (`Completion.Source`, `Editor/Completion.lean`) is held
@@ -578,6 +588,15 @@ structure LanguageEntry where
   language : Language
   deriving DecidableEq, Repr
 
+/-- A grammar entry of the registry: a grammar declaration and who
+declared it. -/
+structure GrammarEntry where
+  /-- Who declared it. -/
+  owner : Owner
+  /-- The declaration. -/
+  grammar : Language.Grammar
+  deriving DecidableEq, Repr
+
 /-- A source entry of the registry: a completion source and who registered
 it. -/
 structure SourceEntry where
@@ -672,6 +691,8 @@ structure Registry where
   segments : Array SegmentEntry := #[]
   /-- The language entries. -/
   languages : Array LanguageEntry := #[]
+  /-- The grammar entries. -/
+  grammars : Array GrammarEntry := #[]
   /-- Where a child's environment comes from, as config set it; `none` when
 it did not, which a host reads as `auto`. -/
   environment : Option Process.Setting := none
@@ -1193,6 +1214,29 @@ def languageTable (registry : Registry) : List Language :=
       Language.over ((registry.languages.filter (·.owner == owner)).map (·.language)).toList table)
     []
 
+/-- `registry` with every grammar entry of `owner` removed and `grammars`
+added as its grammar entries, in their order. -/
+def replaceGrammars (registry : Registry) (owner : Owner) (grammars : Array Language.Grammar) :
+    Registry :=
+  { registry with
+    grammars :=
+      registry.grammars.filter (·.owner != owner) ++
+        grammars.map fun grammar => { owner, grammar } }
+
+/-- The grammar table: each owner's declarations, in order, over the
+owners' before it (`Language.Grammar.over`), so a name a later owner
+declares replaces an earlier owner's declaration of it. -/
+def grammarTable (registry : Registry) : List Language.Grammar :=
+  let owners :=
+    registry.grammars.foldl
+      (fun owners entry => if owners.contains entry.owner then owners else owners.push entry.owner)
+      #[]
+  owners.foldl
+    (fun table owner =>
+      Language.Grammar.over ((registry.grammars.filter (·.owner == owner)).map (·.grammar)).toList
+        table)
+    []
+
 /-- The mode called `name`: the latest entry of that name. -/
 def mode? (registry : Registry) (name : String) : Option Mode :=
   (registry.modes.findRev? (·.mode.name == name)).map (·.mode)
@@ -1282,7 +1326,7 @@ def unknownAtPoints (registry : Registry) : Array String :=
 /-- Who registered each entry, kind by kind: the owners of the commands, of
 the jobs, of the key bindings, of the prefix names, of the modes, of the ex
 bindings, of the faces, of the themes, of the segments, of the languages,
-of the completion sources, styles and
+of the grammars, of the completion sources, styles and
 displays, of the at-point sources, of their uses, of the menus, of the
 store codecs and of the values at extension points, each in the entries'
 order. A registry nothing is registered in has none. -/
@@ -1290,7 +1334,8 @@ def ownersByKind (registry : Registry) : Array (Array Owner) :=
   #[registry.entries.map (·.owner), registry.jobs.map (·.owner), registry.bindings.map (·.owner),
     registry.prefixNames.map (·.owner), registry.modes.map (·.owner), registry.ex.map (·.owner),
     registry.faces.map (·.owner), registry.themes.map (·.owner), registry.segments.map (·.owner),
-    registry.languages.map (·.owner), registry.sources.map (·.owner), registry.styles.map (·.owner),
+    registry.languages.map (·.owner), registry.grammars.map (·.owner),
+    registry.sources.map (·.owner), registry.styles.map (·.owner),
     registry.displays.map (·.owner), registry.atPoints.map (·.owner),
     registry.atPointUses.map (·.owner), registry.menus.map (·.owner), registry.codecs.map (·.1),
     registry.extensions.map (·.owner)]
@@ -1309,7 +1354,8 @@ config's workspace roots and the config generation, for the finder;
 config's workspace listers, for what lists a workspace's files;
 config's display rules, for a command that displays a buffer; config's
 shell time limit, for `:!`; the language table (`languageTable`), for a
-file's open and a mode's entry; and the
+file's open and a mode's entry; the grammar table (`grammarTable`), for
+which languages' trees wait for the registration's answers; and the
 completion source registered under a name (`source?`) and the names of
 those registered in a category (`sourcesIn`), for a prompt that asks for
 them; and the codec a store is kept across a restart with (`codec?`), with
@@ -1328,7 +1374,7 @@ def registered (registry : Registry) : Loop.Registered :=
     workspaceListers := registry.workspaceListers
     generation := registry.generation, displayRules := registry.displayRules
     shellTimeLimit := registry.shellTimeLimit, syntaxRefreshDelay := registry.syntaxRefreshDelay
-    languages := registry.languageTable
+    languages := registry.languageTable, grammars := registry.grammarTable
     sources := registry.source?, categorySources := registry.sourcesIn
     atPoint := registry.atPoint?, atPointNames := registry.atPointNames
     codec? := fun name => (registry.codec? name).map fun (owner, codec) => (owner.name, codec)
@@ -1418,6 +1464,8 @@ they were made: one at most, in a `setup` that is not refused. -/
   syntaxRefreshDelays : Array Nat := #[]
   /-- The languages, in the order they were defined. -/
   languages : Array Language := #[]
+  /-- The grammar declarations, in the order they were made. -/
+  grammars : Array Language.Grammar := #[]
   /-- The completion sources, in the order they were defined. -/
   sources : Array Completion.Source := #[]
   /-- The completion styles, in the order they were defined. -/
@@ -1587,6 +1635,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((), { collected with syntaxRefreshDelays := collected.syntaxRefreshDelays.push milliseconds })
   | .language language, collected =>
     ((), { collected with languages := collected.languages.push language })
+  | .grammar grammar, collected =>
+    ((), { collected with grammars := collected.grammars.push grammar })
   | .source source, collected => ((), { collected with sources := collected.sources.push source })
   | .style style, collected => ((), { collected with styles := collected.styles.push style })
   | .useStyle category name, collected =>
@@ -1628,6 +1678,11 @@ def workspaceTwice (root : System.FilePath) : String :=
 refused with: one root, or one project. -/
 def workspaceListerTwice (scope : Workspace.ListerScope) : String :=
   s!"a workspace lister is declared twice for {scope.describe}"
+
+/-- What a `setup` that declares the grammar `name` twice is refused
+with. -/
+def grammarTwice (name : String) : String :=
+  s!"the grammar `{name}` is declared twice"
 
 /-- What a `setup` that defines the completion source `name` twice is
 refused with. -/
@@ -1689,7 +1744,7 @@ auto-reload set twice, a workspace root declared twice, the shell time limit set
 mode with a problem under any scheme (`Mode.problems`), of which the first
 is named, a language name defined twice, a language with a pattern no
 file name can be meant by (`Language.problems`), of which the first is
-named, a completion source defined twice (`sourceTwice`), a completion
+named, a grammar name declared twice (`grammarTwice`), a completion source defined twice (`sourceTwice`), a completion
 style defined twice (`styleTwice`), the style of a category, or the
 default style, chosen twice (`styleChosenTwice`), a completion display
 defined twice (`displayTwice`), or the display of a category, or the
@@ -1782,6 +1837,8 @@ def problem? (collected : Registrations) : Option String := do
   for language in collected.languages do
     if let some problem := language.problems.head? then
       return s!"the language `{language.name}` cannot be meant: {problem}"
+  if let some name := repeated? (collected.grammars.map (·.name)) then
+    return grammarTwice name
   if let some name := repeated? (collected.sources.map (·.name)) then
     return sourceTwice name
   if let some name := repeated? (collected.styles.map (·.name)) then
@@ -1870,7 +1927,7 @@ end Registrations
 
 /-- `registry` with what `owner` registered replaced by what `registrations`
 holds of the kinds an owner holds: its commands, jobs, key bindings, prefix
-names, modes, ex bindings, faces, themes, segments, languages,
+names, modes, ex bindings, faces, themes, segments, languages, grammars,
 completion sources, styles and displays, at-point sources
 and their uses, menus, store codecs and values at extension points. Every
 other owner's entries are left, and so is
@@ -1890,7 +1947,8 @@ def Registry.replaceOwned (registry : Registry) (owner : Owner) (registrations :
                           owner registrations.faces |>.replaceThemes
                         owner registrations.themes |>.replaceSegments
                       owner registrations.segments |>.replaceLanguages
-                    owner registrations.languages |>.replaceSources
+                    owner registrations.languages |>.replaceGrammars
+                    owner registrations.grammars |>.replaceSources
                   owner registrations.sources |>.replaceStyles
                 owner registrations.styles |>.replaceDisplays
               owner registrations.displays |>.replaceAtPoints

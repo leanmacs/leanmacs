@@ -294,6 +294,11 @@ show:
   config's `<leader> f f` binding runs on the scheme's leader and then
   `f f` while config sets no leader, and on `\ f f` once a reload sets the
   leader to `\`, when the scheme's leader no longer runs it;
+- `grammarSetupChecks`: config's grammar declarations through the real
+  elaborator: one by name and library alone is built with the symbol
+  `tree_sitter_<name>` and the query directory `queries/` beside the
+  library, one with a symbol, a query directory and a policy with those,
+  and a language naming the first with it as its grammar;
 - `hintChecks`: the key hints through a host of the test scheme: after a
   reload, a config's prefix name and a binding's description are in the
   scene's `hint` lines after the scheme's leader and after the leader and
@@ -518,6 +523,7 @@ def checks : List (CheckGroup Context Check) :=
         stageMakerChecks context ++
         benchWaitChecks ++
         leaderChecks context ++
+        grammarSetupChecks context ++
         hintChecks context ++
         keyHintChecks context ++
         defaultConfigChecks context ++
