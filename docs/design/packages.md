@@ -1875,7 +1875,7 @@ guide quotes.
 | `tests/packages/greeting-api/` | The interface package `greeting-api` (`keywords = ["editor-interface"]`): the name `greeting-reply` (`GreetingApi.replyName`) and every name it declares (`GreetingApi.names`); in its test library, the fake `GreetingApiTest.fake` and the contract check `GreetingApiTest.contractChecks`, and its test driver, which holds the fake to the contract and shows the contract refuse a package that lacks or misspells the name. It has no entry module and registers nothing |
 | `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
-| `tests/packages/echo/` | The Lake package `echo`, which holds Rust ("Rust in a package", below): its crate `echo-service` (`rust/`), its glue (`ffi/glue.c`), the port of its service with a pure model, a contract and the Rust-backed binding, its test driver (`EchoTest/Model.lean`) and its linked test (`EchoTest/Linked.lean`). Its crate also takes over a streaming child a job opened, through `editor-service`'s stream source alone (`rust/src/attach.rs`, bound as `Echo.Real.attach` and `attachTake`), which the linked test's wiring module `EchoTest/Linked/Echo/Real/Attach.lean` runs. It registers no package |
+| `tests/packages/echo/` | The Lake package `echo`, which holds Rust ("Rust in a package", below): its crate `echo-service` (`rust/`), its glue (`ffi/glue.c`), the port of its service with a pure model, a contract and the Rust-backed binding, its test driver (`EchoTest/Model.lean`) and its linked test (`EchoTest/Linked.lean`). Its crate also takes over a streaming child a job opened, through `editor-service`'s stream source alone (`rust/src/attach.rs`, bound as `Echo.Real.attach` and `attachTake`), which the linked test's wiring module `EchoTest/Linked/Echo/Real/Attach.lean` runs. It registers the package `echo`: the jobs and commands `echo-say` and `echo-attach`, `echo-attach-cancel`, and its service, which a running job reaches through the runner's package port (`Package.services`; "Behind a port, so it stays replaceable", below) |
 | `docs/packages/word-count/` | The Lake package `word-count`, the example the guide to writing a package ([writing-a-package.md](../packages/writing-a-package.md)) quotes: the command `word-count` (`WordCount.lean`), its entry module, its test driver (`WordCountTest/Model.lean`, which runs `WordCountTest/WordCount.lean`) and three fixtures: `count`, the command compiled in; `as-config`, the same code as a config file; and `from-config`, a config that imports the package's module. It has no linked test |
 
 - **A package outside the core is built by the package-set build and its
@@ -3104,8 +3104,57 @@ test driver runs the contract against the model, and its linked test
 against the binding over the linked test kit's table of waits and
 completion pump, where each request completes through the completion
 queue. Its port holds no Rust, so splitting it out later is a move of
-modules. No command uses its service: a package cannot add a service to
-the job runner's `Job.Services` yet, which is the ACP roadmap's.
+modules.
+
+**How a package adds a service a running job reaches.** A package lists
+the services it brings in its record, `Package.services`
+(`lean/Editor/Package.lean`), each a `PackageService`
+(`lean/Editor/PackageService.lean`): a name, and a start, a take, a cancel
+and a flush over the runner's waits. The program's edge hands every
+package's to the job runner by name (`Headless.shipped`,
+`Job.Services.packages`), as it wires every real adapter; a check hands
+the runner the fake (`Job.FakePackageService`, through `Stage.stepped`'s
+`packages` on a stepped host) and nothing reads `Package.services` there.
+
+- **Not an extension point.** A service is an `IO` adapter. A value
+  registered through `setup` (`Extension.add`) can come from config and is
+  replaced by a reload, so it would give config a way to run arbitrary IO
+  on a job's thread, and the runner's table would need re-syncing at every
+  install, a new race between an install and a job's request. Packages,
+  and the crate linked into the executable, are fixed for a host's life,
+  so a service never comes or goes at a reload either way.
+- **The request is plain data, the reply a `Dynamic`.** A job asks with
+  `PackageService.ask` (or `askAs`, typed), a `JobRequest.package`
+  carrying a `PackageRequest`: the service's name, an operation and plain
+  `Argument`s, the vocabulary a command starts a job with. The reply is
+  `Except PackageError Dynamic`: the package's binding makes a value of a
+  named type of its own that derives `TypeName`, and the package's typed
+  wrapper reads it back, as an extension point's values travel
+  ([extension-points.md](extension-points.md), "How the values travel");
+  the core needs no codec. A reply of another type, which only a second
+  service of the same name could give, is refused, never a crash. A
+  service the runner was not given is `noSuchService` at once, with no
+  wait, as a child the job does not hold is `noSuchProcess`.
+- **A package's wait is a service wait.** It keeps its job's unit, and a
+  cancel withdraws it at every package service (`Handle.drop`), so a
+  package's service keeps nothing of a cancelled job's request
+  ([concurrency.md](concurrency.md), "A package's service is a request a
+  job awaits").
+- **The port has a fake and a contract.** `JobContract.packageProperties`
+  (`lean/Editor/Job/Contract.lean`) runs on a rig against the job model's
+  `JobModel.packages`, against the runner over the fake (`model-test`,
+  `ModelTest.packageServiceChecks`), and against the runner over a
+  package's own crate.
+
+`echo` is the proof. Its library adapts its port to the runner's
+(`Echo.jobService`, `Echo/Job.lean`) and registers it over the binding
+(`Echo.Real.service`), with the jobs `echo-say` and `echo-attach`
+(`Echo/Packages.lean`). Its linked test runs `echo-say` through the
+headless host stepped on the check's thread with the service's fake
+(`EchoTest/Linked/Echo/Packages.lean`), the package properties and a
+running job's `say` over the real crate (the wiring module
+`EchoTest/Linked/Echo/Real/Job.lean`), and the two forced orders of a
+cancel of a job that handed its child to the crate.
 
 The port is phrased in the editor's terms, not the crate's. For ACP the
 crate holds the JSON-RPC connection on its own threads and hands Lean
@@ -3250,7 +3299,7 @@ and the core's Lake package registers no `Package`.
 | The editor API and what is proved of it: `Editor.Api`, `Editor.Api.Theorems`, `Editor.UndoTree`, `Editor.UndoTree.Theorems` | 4 | core | yes |
 | The job runner's protocol, a pure transition system the runner decides its steps with (`docs/design/concurrency.md`, "The runner's protocol, modelled"), and what is proved of it: `Editor.Job.Protocol`, `Editor.Job.Protocol.Theorems` | 2 | core | no |
 | The composite port and a command: `Editor.Command`, `Editor.Command.Append`, `Editor.Command.Call`, `Editor.Command.Control`, `Editor.Command.Registry`, `Editor.Program` | 6 | core | yes |
-| The ports: `Editor.Clipboard`, `Editor.Diff`, `Editor.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Job.Pump`, `Editor.Process`, `Editor.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 15 | core | yes |
+| The ports: `Editor.Clipboard`, `Editor.Diff`, `Editor.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Job.Pump`, `Editor.PackageService`, `Editor.Process`, `Editor.Process.Environment`, `Editor.SyntaxTree`, `Editor.Text`, `Editor.Watch` | 16 | core | yes |
 | The word under the cursor, over the text port: `Editor.Text.Word` | 1 | core | yes |
 | The typed time bounds every bounded wait takes, a hang guard or real time under test, the marks of the inferred waits, which the wait linters read to refuse one outside its modules (`docs/design/concurrency.md`, "What a test may still wait on time for"; `docs/dev-practices/inferred-waits.md`), the marks of the real hosts and services with the declaration of a module of the wiring set, which the real-host linter reads to refuse one outside it, and a root's check set (`CheckGroup`) and window scenarios (`Scenario`), from which the gate and the stress loop select the wiring set and which the wiring-set linter holds complete (`docs/dev-practices/real-thread-checks.md`). The linters themselves are the library `Lint` (`lean/Lint/Wait.lean`, `lean/Lint/RealHost.lean`, `lean/Lint/Wiring.lean`), outside the core: they import `Lean`, so the build loads them as a plugin and no module imports them: `Editor.Bound`, `Editor.InferredWait`, `Editor.RealHost` | 3 | core | yes |
 | The setup port, packages, extension points and stores: `Editor.Extension`, `Editor.Json`, `Editor.Package`, `Editor.Setup`, `Editor.Store`, `Editor.Store.Codec`, `Editor.Value` | 7 | core | yes |

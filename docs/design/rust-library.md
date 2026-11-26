@@ -415,11 +415,19 @@ that holds the process's one process service provides it:
   line and the exit, in one pull.
 - **Who owns the session.** The child stays named for the job that opened
   it, and the runner cancels every child a job holds when the job ends, so
-  the opening job must live as long as the session, or the hand-off must
-  move the child out of the job's set. That, and a running Lean job
-  awaiting a package's completion, is phase 3's, not built: a package
-  cannot add a service to the job runner's `Job.Services` yet
+  the opening job lives as long as the session: a session is one
+  long-lived job, which opens the child, hands it to the crate and waits
+  on the crate's events through a package's service
   ([packages.md](packages.md), "Behind a port, so it stays replaceable").
+  Moving the child out of the job's set is not built. Cancelling the job
+  withdraws its package wait at the crate first, then ends the child, and
+  the crate's consumer, blocked in a pull, is answered `Cancelled`, its
+  last event; the crate posts no completion for a request withdrawn first
+  ([concurrency.md](concurrency.md), "A long-lived job owns a handed-over
+  child"). The fixture `echo` shows it: its job `echo-attach` and the
+  forced orders of its cancel on the stepped host
+  (`EchoTest/Linked/Echo/Packages.lean`), and the crate's lib test of an
+  attach cancelled while its consumer is held in a pull.
 - **Threads.** Each child keeps its waiter, two readers and its writer,
   and the consumer adds its own: for ACP one thread that runs the
   protocol's connection (the SDK's future under a plain `block_on`, no

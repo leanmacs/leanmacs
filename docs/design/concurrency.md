@@ -905,6 +905,19 @@ and changes on disk:
   not hold is `noSuchSearch`, answered at once, and a search does not
   outlive its job. `project-search` posts each delivery to the editor as a
   command of its own (`packages/project-search/ProjectSearch/Run.lean`).
+- **A package's service is a request a job awaits** (`lean/Editor/PackageService.lean`):
+  `PackageService.ask` names a service a package brought
+  (`Package.services`), an operation and plain arguments, and waits for
+  the service's reply, a `Dynamic` the package's typed wrapper reads back
+  (`askAs`), or a refusal as a value. The program's edge hands the runner
+  every package's services by name (`Headless.shipped`,
+  `Job.Services.packages`); a service it was not given is `noSuchService`
+  at once, with no wait. The wait is a service wait: it keeps the job's
+  unit, the service completes it through the completion queue as the
+  core's do, and a cancel withdraws it at every package service
+  (`Handle.drop`), so the service keeps nothing of it and posts no
+  completion for it. The fixture `echo`'s crate is the proof
+  ([packages.md](packages.md), "Behind a port, so it stays replaceable").
 - **No request carries a promise.** A request is plain data; how a wait is
   completed is the runner's business. A snapshot of editor state arrives as
   a further request of this port, each with a reply type, a
@@ -1572,6 +1585,7 @@ run waits on its own flush, handle or wait, never on a count or the idle.
 | Grep, `Job.Greps` | `FakeFiles`' grep side, in the same step mode, through `Services.greps` | `Stage.stepped` | `Editor/Job/Contract.lean` (`grepProperties`), `FlushContract` | `ModelTest.fileFailures` (stepped), `flushContractChecks` (the stepped grep rig) | `ContractTest.fileFailures`, `flushContractChecks` (`realGreps`, the grep flush) |
 | Processes, `Job.Processes` | `FakeProcesses` with `answer := .onStep pump`, through `Services.processes` | `Stage.stepped`, over the check's `ProcessModel` | `Editor/Job/Contract.lean` (`processProperties`, the stream properties among them), `FlushContract` | `ModelTest.processFailures` (its stepped run), `flushContractChecks` (the stepped process rig) | `ContractTest.processFailures`, `flushContractChecks` (`realProcesses`, each job's outcome; the held child only a cancel ends) |
 | File watches, `Job.FileWatches` | `FakeFileWatches` with `answer := .onStep pump`, through `Services.fileWatches` (still `outside`: a job in a parked `next` holds no unit) | the stage's own (`Stage.new`), answering on the check's `change` | `Editor/Job/Contract.lean` (`fileWatchProperties`), `FlushContract` | `ModelTest.fileWatchFailures` (its stepped run, the processes stepped beside it), `flushContractChecks` (the stepped watch rig) | `ContractTest.fileWatchFailures`, `flushContractChecks` (`realFileWatches`, each job's outcome, the watch flush) |
+| A package's service, `PackageService` (`Editor/PackageService.lean`) | `Job.FakePackageService` (`Editor/Job/Fake.lean`) over the package's pure model, `answer := .onStep pump`, through `Services.packages`; a hand-off of a child to the crate (`Spec.handOff`) taken from the process fake (`FakeProcesses.handOff`) | `Stage.stepped`'s `packages`, over each spec handed (`SteppedServices.packages`) | `Editor/Job/Contract.lean` (`packageProperties`, on a `PackageRig`) | `ModelTest.packageServiceChecks` (the model and the stepped fake), `fakeHandOffChecks` (the hand-off's refusals and end, after `editor_service::stream`'s contract) | echo's `EchoTest/Linked/Echo/Real/Job.lean` (`Echo.Real.service`, each job's outcome, the flush) |
 | Syntax service (its deliveries), behind `Collaborators.syntaxTree` | `FakeSyntaxService` (`Editor/SyntaxTree/Fake.lean`), its handler the stage's syntax tree, made over a stage by `Stage.fakeSyntaxService`, each step posting `parsed` to the stage's memory queue; the questions' answers stay the model's | `Stage.fakeSyntaxService`, recorded with a stepped stage's fakes | `Editor/SyntaxTree/DeliveryContract.lean` | `ModelTest.syntaxDeliveryChecks`; the fake's `learn`, highlight, injection and detach by `ModelTest.syntaxFakeChecks`; the maker on a stepped host, its step's `parsed` taken by the loop, by `ConfigTest.stageMakerChecks` | `ContractTest.syntaxDeliveryChecks` (`RealSyntaxTree`, `Ffi.syntaxSettle` of its own snapshot); the `parsed` event on the library's queue by `FfiTest.syntaxChecks` |
 
 A host check gets every one of them in one call: `Stage.stepped`
@@ -2360,6 +2374,43 @@ As built (`lean/Editor/Job/Table.lean`, `lean/Editor/Job/Jobs.lean`):
   of it happens on the editor thread, so there is no race to close.
 - **A runtime that ends cancels every job.**
 
+**A long-lived job owns a handed-over child** (acp-agents phase 3). A
+streaming child stays named for the job that opened it
+(`Handle.children`), and `Handle.conclude` ends every child the job still
+holds, however the job ends. A child handed to a package's crate
+(`editor_service::stream::take_over`, [rust-library.md](rust-library.md),
+"Handing a streaming child to a package's crate, as built") is no
+exception: moving it out of the job's set is not built. So a session is one
+long-lived job: it opens the child, hands it to the crate through a
+request of the package's service, and waits on that service until the
+session ends; ending or cancelling the job ends the child. A cancel goes in
+this order:
+
+1. the runner withdraws the job's package wait (`Handle.cancel` →
+   `Handle.withdraw` → `Handle.drop` → the service's `cancel`), so the crate
+   drops the request and will post no completion for it;
+2. the job concludes and ends the child (`Handle.conclude` →
+   `endChildren` → `Processes.cancel`);
+3. the child's streams are abandoned, so the crate's consumer, blocked in a
+   pull, is answered `Cancelled`: the crate's last event, which it sees.
+
+The request was withdrawn first, so the crate keeps nothing and posts
+nothing ("a request cancelled first gets none"); a completion it posted
+just before, already on the queue, finds no wait and is dropped. How a
+session's end is shown in the conversation is the ACP roadmap's phase 4: a
+job cannot post once it is cancelled. Pinned on the stepped host with the
+service's fake and the process fake's hand-off (`FakeProcesses.handOff`)
+by `EchoTest/Linked/Echo/Packages.lean`'s two forced orders: (a) the
+consumer held, the job's wait withdrawn at the service before the process
+fake's kill of the child, whose consumer then reads `one` and `cancelled`;
+(b) the child exited by itself and its completion handed to the pump but
+not stepped when the cancel comes, which drops it, the fake keeping no
+reply and the late kill a no-op. Each was seen to bite by hand, as phase 2's
+orders were: (a) fails when `endChildren` is taken out of
+`Handle.conclude`, (b) when `Handle.drop` stops cancelling at the package
+services. The crate's own lib test holds its consumer in a pull while the
+request and then the child are cancelled, and sees no completion.
+
 **In tests, a host, its loop and its queued work end inside a bracket**
 (deterministic-test-concurrency phase 3), so that nothing a test creates
 outlives it (AGENTS.md, "Deterministic concurrency in tests"):
@@ -2640,6 +2691,17 @@ each theorem's axioms pinned in the module so another fails the build:
 - `loopEnd_settles_cancelled`: after loop-end every cancelled job is
   `done`: its wake-up has been handled and its unit given back, and nothing
   can undo that.
+- `JobState.serve_keeps_unit` and `JobState.wake_waiting_keeps_unit`: a
+  service wait keeps its job's unit, since neither the `serve` that records
+  it nor the `wake` of the `waiting` job moves the count.
+
+**A package's wait is a service wait.** A package's service
+(`JobRequest.package`) needs no kind of its own: its wait is `.service`,
+asked, served and woken as a file's is, so every theorem above covers it,
+and the two just above say it keeps its unit. Its traces are runs of the
+model: stepped over the fake package service, a wait completed and one
+cancelled (`ModelTest.protocolContractChecks`), and over echo's crate on
+real threads (`EchoTest/Linked/Echo/Real/Job.lean`).
 
 `run_iff_Run` proves the executable replay (`Protocol.run`) sound and
 complete for runs, and `checker_agrees` ties the decidable checker the model
