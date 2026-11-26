@@ -16,9 +16,9 @@ model scripts nothing; and nothing of the output is scrubbed.
 
 A fixture whose script names a file has a **setup** (`Setup.core`, keyed by
 the script's path from the repository's root). A fixture whose run reaches
-a package's processes has one its Lake package declares
-(`<P>Test.FixtureSetups`), which the package-set build hands the harness
-after the core's (`Editor/Test/Fixture/Main.lean`), so a package's command
+a package's processes has one its Lake package's fixture support declares
+(`<P>Test.FixtureSupport`, `Editor/Test/Fixture/Support.lean`), which the
+harness takes after the core's (`Support.merge`), so a package's command
 lines stay its own. It declares:
 
 - the model directory the script's `@DIR@` stands for (`directory`), and
@@ -32,7 +32,7 @@ lines stay its own. It declares:
 - another config directory, from the repository's root, in place of the
   one discovery found (`config`), as the default config's fixture runs
   against the shipped `config/default` (its setup is the workspace
-  package's, `WorkspaceTest.FixtureSetups`).
+  package's, `WorkspaceTest.FixtureSupport`).
 
 The harness refuses (`refusal?`), naming the fixture: a script that holds a
 placeholder (`@FILE@`, `@DIR@` or any other `@…@`) it has no setup for; a

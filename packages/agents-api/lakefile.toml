@@ -1,0 +1,73 @@
+# The interface package of agents (docs/design/extension-points.md, "Three
+# layers"; docs/design/agent-hosting.md, "ACP"): the plain events a session
+# with a coding agent produces, the orders a client gives it, the agent
+# registration point `AgentsApi.Agent`, and the package service `agents`
+# through which a running job opens a session, waits for its events and
+# sends it orders, with the typed wrappers a job asks it through; and the
+# permission policy point `AgentsApi.PermissionPolicy`, whose default asks;
+# and the agent table, a project's sessions with their attention and
+# activity, the pure reducer over their events and the project's store it
+# is kept in (`AgentsApi/Table.lean`).
+# Its test library publishes the protocol's rules as a pure model with their
+# theorems (`AgentsApiTest/Protocol.lean`,
+# `AgentsApiTest/Protocol/Theorems.lean`), the theorem that no policy
+# invents an answer (`AgentsApiTest/AgentsApi/Policy/Theorems.lean`), the
+# theorems that activity never feeds attention
+# (`AgentsApiTest/AgentsApi/Table/Theorems.lean`), the
+# fake of the service built on that model (`AgentsApiTest/Fake.lean`) and
+# the contract every implementation is held to
+# (`AgentsApiTest/Contract.lean`). It registers no behaviour: the package
+# `acp` (packages/acp/) implements the service.
+#
+# It is an interface package: it declares the keyword `editor-interface`
+# below, so another package may import its modules, and the three-layer
+# rule reads that keyword (.agents/rules/structure.md).
+#
+# It is opt-in (docs/design/packages.md, "The module map"): the default set
+# (packages/lakefile.toml) does not require it, and only the fixture set
+# (tests/packages/lakefile.toml) does, beside `acp`, whose crate needs the
+# user's own Cargo.
+#
+# - `AgentsApi` is the package's library: `AgentsApi.lean` and the modules
+#   under `AgentsApi/`.
+# - `AgentsApiTest` holds what it publishes for other packages' tests, as the
+#   owner of a port publishes its fake and its contract check (AGENTS.md,
+#   "Testing with hand-written mocks"), its own tests, and the root of its
+#   linked test (`AgentsApiTest/Linked.lean`), which runs a session through
+#   the headless host stepped on the check's thread, over the fake; and its
+#   fixture support (`AgentsApiTest/FixtureSupport.lean`), the fake handed
+#   to a set's stepped fixture harness, which only that harness's generated
+#   root imports.
+# - `agents-api-test` is its test driver (`lake test`), rooted at
+#   `AgentsApiTest/Model.lean`. It is no default target, as the core's
+#   `model-test` is not.
+#
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/agents-api update --keep-toolchain
+# then the same for every package and set that reaches this package
+# (packages/acp, tests/packages), and commit each lake-manifest.json.
+name = "agents-api"
+keywords = ["editor-interface"]
+testDriver = "«agents-api-test»"
+defaultTargets = ["AgentsApi", "AgentsApiTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/lintShared"]
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "AgentsApi"
+
+[[lean_lib]]
+name = "AgentsApiTest"
+globs = ["AgentsApiTest.+"]
+
+[[lean_exe]]
+name = "agents-api-test"
+root = "AgentsApiTest.Model"

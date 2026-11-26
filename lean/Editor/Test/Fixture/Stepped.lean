@@ -24,7 +24,9 @@ A run's collaborators are the CLI's (`Headless.shippedOver`, over the set's
 packages, input scheme and config base, the real elaborator and the
 fixture's config directory), with every background collaborator a fake
 the run steps: the fake scheduler and pump, the file fake over the setup's
-model and the process fake over its runs (`SteppedServices`), a fresh fake
+model, the process fake over its runs, and each package fake the set's
+fixture supports bring (`Harness.fakes`, `Editor/Test/Fixture/Support.lean`),
+made afresh, as the run's package services (`SteppedServices`), a fresh fake
 clock and watches, the recording journal with no state directory, and the
 syntax service's fake posting its deliveries to the run's memory queue.
 The matcher and the snapshot reads are the real ones. The display is the
@@ -76,8 +78,13 @@ structure Harness (scheme : InputScheme) where
 already: none for the set's harness, whose runs share `latest` over the
 real elaborator of the toolchain and the `.olean` directories. -/
   elaborator : Option (Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle) := none
-  /-- The setups of the fixtures that declare one. -/
+  /-- The setups of the fixtures that declare one: the core's, then those of
+  the set's packages' fixture supports (`Support.merge`). -/
   setups : Array (String × Setup) := Setup.core
+  /-- The packages' own fakes of their services, which the set's packages'
+  fixture supports bring (`Support.fakes`): each run makes each afresh, as
+  its stage's package services. -/
+  fakes : Array Job.PackageFake := #[]
   /-- Where the report's lines go. -/
   say : String → IO Unit := IO.println
 
@@ -167,7 +174,9 @@ def runStepped {scheme : InputScheme} (harness : Harness scheme) (fixture : Part
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
   let snapshots := Job.realSnapshots published.reader
-  let services ← SteppedServices.new completions clock watches snapshots held model setup.processes
+  let services ←
+    SteppedServices.new completions clock watches snapshots held model setup.processes
+        (packageFakes := harness.fakes)
   let memory ← Headless.Queue.Memory.new
   let journal ← Headless.RecordingJournal.new (snapshots := some snapshots)
   let parsed : Ffi.Event :=

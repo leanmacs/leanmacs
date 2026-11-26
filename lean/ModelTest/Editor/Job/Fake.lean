@@ -9,8 +9,11 @@ import ModelTest.Check
 What the fakes of the job runner's services promise of themselves, beside
 the contracts they keep (`ModelTest.fileFailures` and the other stepped
 runs, `flushContractChecks`, `handleContractChecks`, `pumpContractChecks`):
-`jobFakeChecks`. The root module `ModelTest` runs them; its module doc says
-what each shows.
+`jobFakeChecks`, and the fake process service's hand-off of a child to a
+package's crate (`FakeProcesses.handOff`), `fakeHandOffChecks`, each named
+after the property of `editor_service::stream`'s contract it mirrors
+(`REFUSED_TAKEN`, `REFUSED_READ_PENDING`, `REFUSED_NO_SUCH_CHILD`). The
+root module `ModelTest` runs them; its module doc says what each shows.
 -/
 
 namespace ModelTest
@@ -69,6 +72,7 @@ def processesOrder : FakeProcesses.Order → String
   | .flush id => s!"flush {id}"
   | .withdraw id => s!"withdraw {id}"
   | .kill id => s!"kill {id}"
+  | .handOff id => s!"handOff {id}"
 
 /-- An order of a fake watch service's log, as a check compares it. -/
 def watchesOrder : FakeFileWatches.Order → String
@@ -319,5 +323,117 @@ def filesHoldingCheck : Check :=
 def jobFakeChecks : List Check :=
   [handedAfterEmptyStepCheck, filesLogCheck, filesStartsArrivedCheck, processesLogCheck,
     watchesLogCheck, clockAtReadCheck, filesLearnCheck, filesHoldingCheck]
+
+/-- The command a hand-off check starts as a streaming child, writing
+`one` and then pausing until it is killed. -/
+def pausingChild : Process.StreamScript :=
+  { command := { program := "/bin/pausing", directory := "/" }
+    steps := #[.write .out "one\n".toUTF8, .pause 1000000000] }
+
+/-- The command a hand-off check starts as a streaming child that writes
+`one` and `two` and exits 3 before it is handed over. -/
+def exitedChild : Process.StreamScript :=
+  { command := { program := "/bin/exited", directory := "/" }
+    steps := #[.write .out "one\ntwo".toUTF8], exit := .code 3 }
+
+/-- A fake process service over the two hand-off commands, answering at
+once, and a child of `script` started in it: the service, the table and the
+child's number. -/
+def startedChild (script : Process.StreamScript) : BaseIO (FakeProcesses × Completions × UInt64) :=
+  do
+  let completions ← Completions.new
+  let processes ← FakeProcesses.new completions { streams := #[pausingChild, exitedChild] }
+  let (child, _) ← completions.register
+  let start := ProcessRequest.start script.command { bound := 64, input := true }
+  processes.processes.start child start
+  discard <| processes.processes.take child start
+  return (processes, completions, child)
+
+/-- A recorder of what a hand-off's `onEnd` is told, with the thread that
+told it. -/
+def endRecorder :
+    BaseIO
+      (IO.Ref (Array (FakeProcesses.Handed × UInt64)) × (FakeProcesses.Handed → BaseIO Unit)) :=
+  do
+  let told ← IO.mkRef #[]
+  return (told, fun handed => do
+      told.modify (·.push (handed, ← IO.getTID)))
+
+/-- The checks of the fake process service's hand-off of a child to a
+package's crate (`FakeProcesses.handOff`): its refusals, named after the
+Rust contract's properties, the job's reach of a child handed over, and how
+a handed child's end is told. -/
+def fakeHandOffChecks : List Check :=
+  [{  name := "REFUSED_TAKEN: a second hand-off of a child handed over is refused as taken"
+      run := do
+        let (processes, _, child) ← startedChild pausingChild
+        let (_, onEnd) ← endRecorder
+        let first ← processes.handOff child onEnd
+        let second ← processes.handOff child onEnd
+        return (first matches .ok ()) && (second matches .error .taken) },
+    { name :=
+        "REFUSED_READ_PENDING: a child with a job's read pending is refused until the read is withdrawn"
+      run := do
+        let (processes, completions, child) ← startedChild pausingChild
+        processes.holdCompletions
+        let (read, _) ← completions.register
+        processes.processes.start read (.read ⟨child.toNat⟩)
+        let (_, onEnd) ← endRecorder
+        let pending ← processes.handOff child onEnd
+        processes.processes.cancel read
+        let withdrawn ← processes.handOff child onEnd
+        return (pending matches .error .readPending) && (withdrawn matches .ok ()) },
+    { name :=
+        "REFUSED_NO_SUCH_CHILD: an unknown child, and one whose last delivery was taken, is no such child"
+      run := do
+        let (processes, _, child) ← startedChild exitedChild
+        let (_, onEnd) ← endRecorder
+        let unknown ← processes.handOff 999 onEnd
+        let first ← processes.handOff child onEnd
+        let again ← processes.handOff child onEnd
+        return (unknown matches .error .noSuchChild) && (first matches .ok ()) &&
+            (again matches .error .noSuchChild) },
+    { name := "after a hand-off the job's read, write and close of the child are noSuchProcess"
+      run := do
+        let (processes, completions, child) ← startedChild pausingChild
+        let (_, onEnd) ← endRecorder
+        discard <| processes.handOff child onEnd
+        let take (request : ProcessRequest) : BaseIO request.Reply := do
+          let (id, _) ← completions.register
+          processes.processes.start id request
+          processes.processes.take id request
+        let read ← take (.read ⟨child.toNat⟩)
+        let write ← take (.write ⟨child.toNat⟩ "x".toUTF8)
+        let close ← take (.closeInput ⟨child.toNat⟩)
+        return (read matches .error .noSuchProcess) && (write matches .error .noSuchProcess) &&
+            (close matches .error .noSuchProcess) &&
+            (← processes.waiting) == 0 },
+    { name :=
+        "a kill of a child handed over tells its consumer, on the killing thread, the lines it had not taken and cancelled, once, and forgets it"
+      run := do
+        let thread ← IO.getTID
+        let (processes, _, child) ← startedChild pausingChild
+        let (told, onEnd) ← endRecorder
+        discard <| processes.handOff child onEnd
+        let before ← told.get
+        processes.processes.cancel child
+        processes.processes.cancel child
+        let after ← told.get
+        let log := (← processes.log).map (processesOrder ·.1)
+        return before.isEmpty && after == #[({ lines := #["one"], ended := .cancelled }, thread)] &&
+            (← processes.handed).isEmpty &&
+            log == #[s!"start {child}", s!"handOff {child}", s!"kill {child}"] },
+    { name :=
+        "a child that exited before its hand-off still gives its consumer its lines and its exit, at the hand-off"
+      run := do
+        let thread ← IO.getTID
+        let (processes, _, child) ← startedChild exitedChild
+        let (told, onEnd) ← endRecorder
+        let handed ← processes.handOff child onEnd
+        processes.processes.cancel child
+        return (handed matches .ok ()) &&
+            (← told.get) == #[({ lines := #["one", "two"], ended := .exited (.code 3) }, thread)] &&
+            ((← processes.log).map (processesOrder ·.1)) ==
+              #[s!"start {child}", s!"handOff {child}"] }]
 
 end ModelTest

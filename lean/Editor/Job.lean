@@ -3,6 +3,7 @@ import Editor.Diff
 import Editor.File
 import Editor.FileWatch
 import Editor.Grep
+import Editor.PackageService
 import Editor.Process
 import Editor.Process.Environment
 
@@ -87,6 +88,15 @@ A job reaches the environments its host shares through one request,
 the setting config chose, what it resolved to, and each directory's cached
 lookup. The process operations ask it before they start a child, so a
 child gets its directory's environment (`Process.prepared`).
+
+A job reaches a service a package brings through one request, `package`,
+which carries a `PackageRequest` (`Editor/PackageService.lean`): the
+service's name, an operation and plain arguments. It waits, as a load
+does, and replies with the service's reply, a `Dynamic` the package's typed
+wrapper reads back (`PackageService.askAs`), or a refusal, an
+`Except PackageError`. A service the runner was not given is answered
+`noSuchService` at once. A cancelled job's package wait is withdrawn at the
+service, as every wait is.
 
 No request carries a promise or a handle: a request is plain data. How a wait
 is completed is the runner's business (`Editor/Job/Runner.lean`), not
@@ -204,6 +214,15 @@ does not hold is `noSuchSnapshot` at once, as a diff's source is.
 Withdrawing a wait tells the grep service too, and ending a job cancels its
 searches (`Handle.endGreps`).
 
+A package's service is the sixth: `JobRequest.package`, whose requests are
+`PackageRequest`s (`Editor/PackageService.lean`), so a package's new
+operation is its own and not a constructor anywhere. Its model is
+`JobModel.packages`, a `PackageModel`; its fake is `FakePackageService`,
+and its real implementations are the packages' own, which a package
+registers in its record (`Package.services`) and the program's edge hands
+the runner (`Job.Services.packages`). Withdrawing a wait tells every
+package service too. Its contract is `JobContract.packageProperties`.
+
 The matcher is the last, and answers at once: `JobRequest.fuzzy`, whose
 requests are `FuzzyRequest`s, so a new question of the matcher is a
 constructor of the fuzzy port and not of this one. Its model answers with
@@ -282,6 +301,9 @@ inductive JobRequest where
   table holds it now: answered at once, `none` for an id that names no
   snapshot or one that was released. -/
   | snapshot (id : SnapshotId)
+  /-- Ask a package's service (`Editor/PackageService.lean`), and wait for
+  its reply. -/
+  | package (request : PackageRequest)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: the clock's reading for `now`,
@@ -299,6 +321,7 @@ def JobRequest.Reply : JobRequest → Type
   | .post _ => Unit
   | .fuzzy request => Except String request.Reply
   | .snapshot _ => Option String
+  | .package _ => PackageReply
 
 /-- The job port: `JobRequest` and the reply to each request. -/
 abbrev jobPort : Port :=
@@ -629,6 +652,29 @@ taken, and, in the last, how it ended. -/
 def Grep.next (search : Grep.Id) : JobM (Except GrepError Grep.Delivery) :=
   ExceptT.lift (Program.request (port := jobPort) (.grep (.next search)))
 
+/-- Asks the package service `request` names, and waits for its reply: the
+`Dynamic` its binding made, or why it did not answer. A service the runner
+was not given is `noSuchService`, at once. A cancelled job's wait is
+withdrawn at the service. -/
+def PackageService.ask (request : PackageRequest) : JobM PackageReply :=
+  ExceptT.lift (Program.request (port := jobPort) (.package request))
+
+/-- Asks as `PackageService.ask` does, and reads the reply back as `α`, the
+service's own reply type: a reply of another type, which only a service
+that shares another's name gives, is refused, never a crash. -/
+def PackageService.askAs (α : Type) [TypeName α] (request : PackageRequest) :
+    JobM (Except PackageError α) := do
+  match ← PackageService.ask request with
+  | .ok reply =>
+    match reply.get? α with
+    | some value =>
+      return .ok value
+    | none =>
+      return .error
+          (.refused s!"the reply of {request.service}'s {request.operation} is of another type")
+  | .error refusal =>
+    return .error refusal
+
 namespace Job
 
 /-- How a job ended. -/
@@ -926,6 +972,29 @@ example : True := by
 
 example : True := by
   fail_if_success exact (fun (_ : TextM Unit) => True.intro) (post { command := "x" })
+  trivial
+
+/-! A request of a package's service is a job's, and it is not a command: a
+command cannot wait on a package's service. Seen to bite once by hand:
+offered at `JobM PackageReply` inside the first `fail_if_success` check,
+the module stops building. -/
+
+example : True :=
+  (fun (_ : JobM PackageReply) => True.intro)
+    (PackageService.ask { service := "x", operation := "y" })
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : EditorM PackageReply) => True.intro)
+        (PackageService.ask { service := "x", operation := "y" })
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : TextM PackageReply) => True.intro)
+        (PackageService.ask { service := "x", operation := "y" })
   trivial
 
 /-! A wait is not a command: alone, and after a text request in a `do` block.

@@ -54,6 +54,13 @@ pub extern "C" fn echo_ffi_cancel(id: u64) -> bool {
     ECHO.cancel(id)
 }
 
+/// Asks for `id` to be completed on the completion queue once every echo
+/// request started before has been ([`Echo::flush`]).
+#[unsafe(no_mangle)]
+pub extern "C" fn echo_ffi_flush(id: u64) {
+    ECHO.flush(id);
+}
+
 /// Takes the reply to the request `id` ([`Echo::take`]): returns whether
 /// there was one, and if so fills `out` with it.
 ///

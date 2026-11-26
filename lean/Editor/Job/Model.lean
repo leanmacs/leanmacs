@@ -3,6 +3,7 @@ import Editor.FileWatch.Model
 import Editor.Fuzzy.Model
 import Editor.Grep.Model
 import Editor.Job
+import Editor.PackageService
 import Editor.Process.Model
 
 /-!
@@ -71,6 +72,10 @@ here.
   `JobModel.fuzzyRefusal` is set, with an error, `fuzzy: ` and the refusal,
   as the runner answers a service that threw. A test sets it, as it sets
   the files.
+- A package request is answered at once, without moving the clock, by the
+  model of package services (`JobModel.packages`, a `PackageModel`): its
+  reply, or `noSuchService` for a service it does not know, which by
+  default is every one. A test sets it, as it sets the files.
 
 The model's clock is exact, where a real clock only promises "not before".
 So the contract of the port (`Editor/Job/Contract.lean`) holds inequalities
@@ -106,7 +111,11 @@ structure JobModel where
   then answered `fuzzy: ` and this, as an error. `none` answers with the
   fuzzy model. -/
   fuzzyRefusal : Option String := none
-  deriving DecidableEq
+  /-- The package services the job reaches: each request's reply. By
+  default the model knows none, so every package request is
+  `noSuchService`. It is a function, so the model has no decidable
+  equality; a check compares what it reads of it. -/
+  packages : PackageModel := PackageModel.none
 
 namespace JobModel
 
@@ -148,6 +157,7 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
     | some refusal => (.error s!"fuzzy: {refusal}", model)
     | none => (.ok (FuzzyModel.handle request ()).1, model)
   | .snapshot id, model => ((model.files.snapshots[id.index]?).join.map (·.contents), model)
+  | .package request, model => (model.packages.answer request, model)
 
 /-- The model once the job has ended: every streaming child it started is
 ended (`ProcessModel.endAll`), as the runner cancels them, every watch

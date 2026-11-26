@@ -905,6 +905,19 @@ and changes on disk:
   not hold is `noSuchSearch`, answered at once, and a search does not
   outlive its job. `project-search` posts each delivery to the editor as a
   command of its own (`packages/project-search/ProjectSearch/Run.lean`).
+- **A package's service is a request a job awaits** (`lean/Editor/PackageService.lean`):
+  `PackageService.ask` names a service a package brought
+  (`Package.services`), an operation and plain arguments, and waits for
+  the service's reply, a `Dynamic` the package's typed wrapper reads back
+  (`askAs`), or a refusal as a value. The program's edge hands the runner
+  every package's services by name (`Headless.shipped`,
+  `Headless.packageServices`, `Job.Services.packages`); a service it was not given is `noSuchService`
+  at once, with no wait. The wait is a service wait: it keeps the job's
+  unit, the service completes it through the completion queue as the
+  core's do, and a cancel withdraws it at every package service
+  (`Handle.drop`), so the service keeps nothing of it and posts no
+  completion for it. The fixture `echo`'s crate is the proof
+  ([packages.md](packages.md), "Behind a port, so it stays replaceable").
 - **No request carries a promise.** A request is plain data; how a wait is
   completed is the runner's business. A snapshot of editor state arrives as
   a further request of this port, each with a reply type, a
@@ -1572,6 +1585,8 @@ run waits on its own flush, handle or wait, never on a count or the idle.
 | Grep, `Job.Greps` | `FakeFiles`' grep side, in the same step mode, through `Services.greps` | `Stage.stepped` | `Editor/Job/Contract.lean` (`grepProperties`), `FlushContract` | `ModelTest.fileFailures` (stepped), `flushContractChecks` (the stepped grep rig) | `ContractTest.fileFailures`, `flushContractChecks` (`realGreps`, the grep flush) |
 | Processes, `Job.Processes` | `FakeProcesses` with `answer := .onStep pump`, through `Services.processes` | `Stage.stepped`, over the check's `ProcessModel` | `Editor/Job/Contract.lean` (`processProperties`, the stream properties among them), `FlushContract` | `ModelTest.processFailures` (its stepped run), `flushContractChecks` (the stepped process rig) | `ContractTest.processFailures`, `flushContractChecks` (`realProcesses`, each job's outcome; the held child only a cancel ends) |
 | File watches, `Job.FileWatches` | `FakeFileWatches` with `answer := .onStep pump`, through `Services.fileWatches` (still `outside`: a job in a parked `next` holds no unit) | the stage's own (`Stage.new`), answering on the check's `change` | `Editor/Job/Contract.lean` (`fileWatchProperties`), `FlushContract` | `ModelTest.fileWatchFailures` (its stepped run, the processes stepped beside it), `flushContractChecks` (the stepped watch rig) | `ContractTest.fileWatchFailures`, `flushContractChecks` (`realFileWatches`, each job's outcome, the watch flush) |
+| A package's service, `PackageService` (`Editor/PackageService.lean`) | `Job.FakePackageService` (`Editor/Job/Fake.lean`) over the package's pure model, `answer := .onStep pump`, through `Services.packages`; a hand-off of a child to the crate (`Spec.handOff`) taken from the process fake (`FakeProcesses.handOff`) | `Stage.stepped`'s `packages`, over each spec handed (`SteppedServices.packages`) | `Editor/Job/Contract.lean` (`packageProperties`, on a `PackageRig`) | `ModelTest.packageServiceChecks` (the model and the stepped fake), `fakeHandOffChecks` (the hand-off's refusals and end, after `editor_service::stream`'s contract) | echo's `EchoTest/Linked/Echo/Real/Job.lean` (`Echo.Real.service`, each job's outcome, the flush) |
+| A package's service with state of its own, `PackageService` | a package's own fake (`Job.PackageFake`, `Editor/Job/Fake.lean`), made over the stepped services' table and pump (`FakeAnswer.onStep`), which may hold a request until an order of the check's, or of another job, makes its reply, as a session's long-poll `next` does (`agents-api`'s `AgentsApiTest.Fake.packageFake`) | `Stage.stepped`'s `packageFakes` (`SteppedServices.packageFakes`), whose `quiescent` the stage's own joins | the package's own (`agents-api`'s `AgentsApiTest/Contract.lean`) | `ConfigTest.packageFakeChecks` (a counter written in the check); `agents-api`'s `AgentsApiTest/Linked/AgentsApi/Session.lean` (AC3) | `acp`'s `AcpTest/Linked/Acp/Real/Contract.lean` and `Real/Session.lean` |
 | Syntax service (its deliveries), behind `Collaborators.syntaxTree` | `FakeSyntaxService` (`Editor/SyntaxTree/Fake.lean`), its handler the stage's syntax tree, made over a stage by `Stage.fakeSyntaxService`, each step posting `parsed` to the stage's memory queue; the questions' answers stay the model's | `Stage.fakeSyntaxService`, recorded with a stepped stage's fakes | `Editor/SyntaxTree/DeliveryContract.lean` | `ModelTest.syntaxDeliveryChecks`; the fake's `learn`, highlight, injection and detach by `ModelTest.syntaxFakeChecks`; the maker on a stepped host, its step's `parsed` taken by the loop, by `ConfigTest.stageMakerChecks` | `ContractTest.syntaxDeliveryChecks` (`RealSyntaxTree`, `Ffi.syntaxSettle` of its own snapshot); the `parsed` event on the library's queue by `FfiTest.syntaxChecks` |
 
 A host check gets every one of them in one call: `Stage.stepped`
@@ -2360,6 +2375,143 @@ As built (`lean/Editor/Job/Table.lean`, `lean/Editor/Job/Jobs.lean`):
   of it happens on the editor thread, so there is no race to close.
 - **A runtime that ends cancels every job.**
 
+**A long-lived job owns a handed-over child** (acp-agents phase 3). A
+streaming child stays named for the job that opened it
+(`Handle.children`), and `Handle.conclude` ends every child the job still
+holds, however the job ends. A child handed to a package's crate
+(`editor_service::stream::take_over`, [rust-library.md](rust-library.md),
+"Handing a streaming child to a package's crate, as built") is no
+exception: moving it out of the job's set is not built. So a session is one
+long-lived job: it opens the child, hands it to the crate through a
+request of the package's service, and waits on that service until the
+session ends; ending or cancelling the job ends the child. A cancel goes in
+this order:
+
+1. the runner withdraws the job's package wait (`Handle.cancel` →
+   `Handle.withdraw` → `Handle.drop` → the service's `cancel`), so the crate
+   drops the request and will post no completion for it;
+2. the job concludes and ends the child (`Handle.conclude` →
+   `endChildren` → `Processes.cancel`);
+3. the child's streams are abandoned, so the crate's consumer, blocked in a
+   pull, is answered `Cancelled`: the crate's last event, which it sees.
+
+The request was withdrawn first, so the crate keeps nothing and posts
+nothing ("a request cancelled first gets none"); a completion it posted
+just before, already on the queue, finds no wait and is dropped.
+
+**A session's long poll, and how its end is shown** (acp-agents phase 4).
+A session's job loops on `agents-api`'s `next`, a package wait that is a
+long poll: it completes once the session holds an event, and the crate's
+flush does not wait for it, as echo's does not wait for an attach. Orders
+come from other jobs (`send`), so a prompt does not hold the session job,
+and an answer to a permission request goes out while the prompt is
+pending. When the agent ends by itself, the crate puts `ended` last in the
+final batch, which the session job reads, and a later `next` is refused.
+When the session job is cancelled, the order above holds: the runner
+withdraws its `next` first, then ends the child, and the crate posts
+nothing for the withdrawn wait; the job's own outcome, `cancelled`, is the
+end the editor sees, since a job cannot post once it is cancelled. Inside
+the crate a cancel of the turn (`Order.cancel`) answers every parked
+permission request of the turn `cancelled` and posts each `withdrawn`
+before it sends `session/cancel`. The orders are proved on the protocol's
+model (`agents-api`'s `AgentsApiTest/Protocol/Theorems.lean`), forced on
+the stepped host over the fake, a package's own fake
+(`AgentsApiTest/Linked/AgentsApi/Session.lean`), and in the crate's
+`LocalPool` tests. A long poll holds its job's unit of the host's
+activity for the session's life, as a service wait does, so a real host's
+headless `settle` would not settle while a session is open; the stepped
+host judges a wait at the rest of its fakes and never reads the activity
+count, so a stepped `settle` settles with a session open, and no check of
+phase 5 runs a session on a real host (rdm task
+`acp-session-outside-mark-for-next` marks the long poll outside before one
+does).
+
+**A conversation's job posts once a batch, paced by the job clock**
+(acp-agents phase 5; `packages/acp/Acp/Conversation.lean`). The
+conversation's session job posts each batch `next` answers, everything the
+service held when it was taken, as one invocation (`agent-events`, its
+events written as arguments by `agents-api`'s `AgentsApi/Arguments.lean`),
+so one editor-queue event, one turn and one published scene; then it
+sleeps `batchPause`, 50 ms, on the job clock (`sleep`, a wait on the timer
+service: the fake clock on a stepped host, which only a check or a
+script's `advance` moves), as compile's run does. So it takes at most once
+a pause, and what the agent sends meanwhile waits in the service for the
+next take. On a stepped host every event queued between two turns is in
+one take, into a parked `next` or across the pause; on a real host each
+take is one turn and one scene. A post cannot wait until the loop has
+handled it, so a take cannot include what arrives after it; nothing here
+promises more than that, per take. Pinned on the stepped host
+(`packages/acp/AcpTest/Linked/Acp/Conversation.lean`, AC3: a thousand
+events in ten pieces, both ways, one memory-queue event and one scene).
+
+**The stall watchdog: one keyed job armed once, judged by a generation**
+(acp-agents phase 7; `packages/agents-api/AgentsApi/Table.lean` decides,
+`packages/acp/Acp/Table.lean` carries it out). A working agent silent
+past `AgentRecord.stallTimeout` is of unknown activity. Its watchdog is
+one job, `agent-stall`, keyed `agent-stall <id>` and carrying the
+record's generation (`heard`) it was armed at, that waits on the job
+clock (`waitUntil`; the fake clock on a stepped host) until a deadline:
+the timeout after it starts, or the deadline its last verdict gave. It is
+armed once while the agent works, not again for each batch: restarting a
+keyed job for each batch would cancel one job a batch, each cancel a turn
+of the loop, and the conversation's one-scene-a-batch property above
+would not hold. Each batch instead stamps the record with the job clock's
+time the session job put on its post (`.heardAt`). At its deadline the
+job's command, on the loop, carries out the pure `AgentRecord.verdict` of
+the record as it is then: `.stalled` at the armed generation when nothing
+was heard since; armed again for the last batch's timeout when one came
+since and that is still ahead; otherwise `.stalled` at the last batch's
+generation; nothing once the agent no longer works. The reducer ignores a
+`.stalled` that is stale or comes when the agent no longer works; an
+agent that stops working has its watchdog cancelled by its key. The
+verdict is pinned as a pure function (`AgentsApiTest/AgentsApi/Table.lean`)
+and on the stepped host by advancing the fake clock to one millisecond
+under each deadline and then to it (`AcpTest/Linked/Acp/Table.lean`,
+AC2).
+
+**A load's history is queued before its open completes** (acp-agents phase
+7; `packages/acp/rust/src/session.rs`). The agent replays a loaded
+session's history as notifications before it answers `session/load`; the
+crate posts them, merged, before `Opened`, and the service holds the
+events of a session still opening, so the session job's first `next`
+after the open takes the whole history in one batch. An open refused
+because its session ended first marks the session abandoned, so its held
+history is freed rather than kept for a `next` that cannot come.
+
+**The permission audit log's writer** (acp-agents phase 6;
+`packages/acp/Acp/Permissions.lean`). Every permission request and its
+answer are appended to `<state>/agents/permissions.log` through the job
+port's file requests. Records are made on the editor thread, in the order
+things happen, and queued in an outbox kept in an unscoped store. One job
+at a time, `agent-audit`, takes the outbox's lines as one text, makes the
+log's directory and appends the text, and returns the file service's
+answer as a value; its command drops the lines it wrote and hands the next
+lines to a new job, and on a refusal keeps every line for the next
+record's job and says it once until a write lands. The outbox's rules are
+pure (`packages/acp/Acp/Permissions/Outbox.lean`) and pinned by
+`outboxChecks`. So the appends reach the file service in the order the
+records were made, though jobs run on a pool: two append jobs at once
+could land out of order, and a keyed job would cancel an older one and
+lose its records, so it is neither. The outbox and a
+write in flight live through a reload, the store being unscoped and the
+job a package's. Pinned on the stepped host by the orders the file fake
+was handed (`packages/acp/AcpTest/Linked/Acp/Permissions.lean`, AC4), and
+by a forced order there: the file fake holds the first write's completion
+while the user answers, and the answer's record starts no second job and
+goes in the write that follows the first.
+Pinned on the stepped host with the
+service's fake and the process fake's hand-off (`FakeProcesses.handOff`)
+by `EchoTest/Linked/Echo/Packages.lean`'s two forced orders: (a) the
+consumer held, the job's wait withdrawn at the service before the process
+fake's kill of the child, whose consumer then reads `one` and `cancelled`;
+(b) the child exited by itself and its completion handed to the pump but
+not stepped when the cancel comes, which drops it, the fake keeping no
+reply and the late kill a no-op. Each was seen to bite by hand, as phase 2's
+orders were: (a) fails when `endChildren` is taken out of
+`Handle.conclude`, (b) when `Handle.drop` stops cancelling at the package
+services. The crate's own lib test holds its consumer in a pull while the
+request and then the child are cancelled, and sees no completion.
+
 **In tests, a host, its loop and its queued work end inside a bracket**
 (deterministic-test-concurrency phase 3), so that nothing a test creates
 outlives it (AGENTS.md, "Deterministic concurrency in tests"):
@@ -2640,6 +2792,17 @@ each theorem's axioms pinned in the module so another fails the build:
 - `loopEnd_settles_cancelled`: after loop-end every cancelled job is
   `done`: its wake-up has been handled and its unit given back, and nothing
   can undo that.
+- `JobState.serve_keeps_unit` and `JobState.wake_waiting_keeps_unit`: a
+  service wait keeps its job's unit, since neither the `serve` that records
+  it nor the `wake` of the `waiting` job moves the count.
+
+**A package's wait is a service wait.** A package's service
+(`JobRequest.package`) needs no kind of its own: its wait is `.service`,
+asked, served and woken as a file's is, so every theorem above covers it,
+and the two just above say it keeps its unit. Its traces are runs of the
+model: stepped over the fake package service, a wait completed and one
+cancelled (`ModelTest.protocolContractChecks`), and over echo's crate on
+real threads (`EchoTest/Linked/Echo/Real/Job.lean`).
 
 `run_iff_Run` proves the executable replay (`Protocol.run`) sound and
 complete for runs, and `checker_agrees` ties the decidable checker the model

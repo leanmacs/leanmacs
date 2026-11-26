@@ -135,6 +135,7 @@ import ModelTest.Editor.TabBar
 import ModelTest.Editor.Test.Fixture.CommandLine
 import ModelTest.Editor.Test.Fixture.Discover
 import ModelTest.Editor.Test.Fixture.Setup
+import ModelTest.Editor.Test.Fixture.Support
 import ModelTest.Editor.Test.Jobs
 import ModelTest.Editor.Text
 import ModelTest.Editor.Text.Contract
@@ -709,8 +710,10 @@ The job system is tested here with no Rust library:
   `LEAN_NUM_THREADS` when it is set, else the machine's), and hold that many
   tasks at once with `Pool.holdAll`, each start an event, never a window;
 - `jobModelChecks`: the job port's pure model (`Editor/Job/Model.lean`), its
-  clock and its cancellation, and what only the model's exact clock can
-  show: that a timer does not drift;
+  clock and its cancellation, what only the model's exact clock can
+  show: that a timer does not drift, and a package request answered by the
+  model's packages, a service it does not know `noSuchService`, and a reply
+  of another type than the one `PackageService.askAs` asks for refused;
 - `protocolChecks`: the job runner's protocol as a pure transition system
   (`Editor/Job/Protocol.lean`): each transition enabled and refused as its
   row of the table says, a replay renaming each job's number to its place
@@ -761,7 +764,10 @@ The job system is tested here with no Rust library:
   cancelled job is not done, and recorded once it is. The park property (`parkHolds`): a job held just after
   it gave its unit back for its sleep is in a wait the cancel made there
   withdraws, on the runner over the fakes and on the model, and is in none
-  on the protocol before the runner-park fix (`PreFix`). Each waits on the
+  on the protocol before the runner-park fix (`PreFix`). A package's wait
+  that completes, and one cancelled, each stepped over the fake package
+  service, record a trace that asks a `service` wait and replays on the
+  model breaking no invariant. Each waits on the
   fake recorder's events and the jobs' `finishedRan`, and holds a thread on
   a promise, so they run after the checks that count pool threads;
 - `flushContractChecks`: the services' flush contract
@@ -784,7 +790,7 @@ The job system is tested here with no Rust library:
   with none; another round when the count is 0 but moved or a wait is due;
   and otherwise a block on the count's next change, or the hang at the
   guard. A host that keeps no count is never idle. Each is a pure verdict;
-- `fixtureDiscoverChecks`, `fixtureSetupChecks` and
+- `fixtureDiscoverChecks`, `fixtureSetupChecks`, `supportChecks` and
   `fixtureCommandLineChecks`: the headless fixture harness's pure parts
   (`Editor/Test/Fixture/`, `docs/dev-practices/headless-mode.md`, "How the
   gate runs a fixture"): discovery over a tree written by hand (a script
@@ -793,7 +799,9 @@ The job system is tested here with no Rust library:
   a fixture with no config refused), the path helpers; the setups' defaults,
   placeholders, substitution and scrubbing, the model a setup makes, the
   after-checks over it, the harness's refusals and the lines compared as
-  the shell's diff sees them; and the harness's command line;
+  the shell's diff sees them; a package's fixture support merged after
+  the core's setups, its fakes gathered, and a script two declare a setup
+  of refused; and the harness's command line;
 - `checkGroupChecks` (`ModelTest/Editor/RealHost.lean`): a root's check set
   as data (`Editor.CheckGroup`): a normal run runs every group in order; a
   wiring run takes each module of the wiring set once, in the order its
@@ -851,6 +859,17 @@ The job system is tested here with no Rust library:
   reading thread; and the file service learns a published snapshot a save
   or a diff names through its reader when it takes the request, and tells
   its holding hook of each load's text and each release;
+- `fakeHandOffChecks`: the fake process service's hand-off of a child to
+  a package's crate (`FakeProcesses.handOff`, `Editor/Job/Fake.lean`),
+  each check named after the property of `editor_service::stream`'s
+  contract it mirrors: a second hand-off refused as taken
+  (`REFUSED_TAKEN`), a child with a read pending refused until the read is
+  withdrawn (`REFUSED_READ_PENDING`), an unknown child and one whose end
+  was taken refused as no such child (`REFUSED_NO_SUCH_CHILD`); the job's
+  read, write and close of a child handed over `noSuchProcess`; a kill
+  telling the consumer, on the killing thread, the lines not taken and
+  `cancelled`; and a child that exited before its hand-off still giving
+  its lines and its exit;
 - `journalContractChecks`: the contract of the session journal's port
   (`Editor/Headless/Journal/Contract.lean`) on its recording fake
   (`RecordingJournal`), held by not stepping it, and the fake's own
@@ -875,6 +894,18 @@ The job system is tested here with no Rust library:
   process wait withdraws it, which is how the library comes to kill the
   child, and a runner with no process service refuses as a value. They
   start no process;
+- `packageServiceChecks`: the runner's package services
+  (`JobRequest.package`, `Editor/PackageService.lean`) on the fake
+  (`FakePackageService`), stepped on the check's thread over the fake
+  scheduler and pump (`ModelTest/Support/Packages.lean`): a request
+  reaches the service it names on the check's thread and completes on a
+  step, read back typed; one of a service the runner was not given is
+  `noSuchService` at once, asking no wait; one the service does not take
+  has its wait finished by the runner and is refused; a cancel in a
+  package wait withdraws it at the service; a flush completes behind the
+  request held before it; and the package properties
+  (`JobContract.packageProperties`) hold of the model and of the stepped
+  fake;
 - `fileRunnerChecks`, and one check among `runnerChecks`: the runner's file
   waits, on the fake of the file service (`Job.FakeFiles`,
   `Editor/Job/Fake.lean`): a file wait holds no thread, cancelling
@@ -1405,6 +1436,7 @@ def checks : List Check :=
     pumpContractChecks ++
     schedulerContractChecks ++
     jobFakeChecks ++
+    fakeHandOffChecks ++
     syntaxDeliveryChecks ++
     syntaxFakeChecks ++
     queueContractChecks ++
@@ -1413,6 +1445,7 @@ def checks : List Check :=
     restVerdictChecks ++
     fixtureDiscoverChecks ++
     fixtureSetupChecks ++
+    supportChecks ++
     checkGroupChecks ++
     fixtureCommandLineChecks ++
     tableChecks ++
@@ -1425,6 +1458,7 @@ def checks : List Check :=
     fileWatchRunnerChecks ++
     grepModelChecks ++
     grepRunnerChecks ++
+    packageServiceChecks ++
     setupChecks ++
     setupHintChecks ++
     registryChecks ++

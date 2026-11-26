@@ -9,7 +9,7 @@ import WorkspaceTest.Workspace.Lister
 import WorkspaceTest.Workspace.Modes
 import WorkspaceTest.Workspace.Projects
 import WorkspaceTest.Workspace.Reach
-import WorkspaceTest.WorkspaceTest.FixtureSetups
+import WorkspaceTest.WorkspaceTest.FixtureSupport
 
 /-!
 # The test driver of the package `workspace`
@@ -26,8 +26,8 @@ Each test module mirrors the module it tests: the checks of
 of the finder's contract (`WorkspaceTest/Finder/Contract.lean`, with its
 pure model `WorkspaceTest/Finder/Model.lean`) in
 `WorkspaceTest/Workspace/Contract.lean`; those of the package's fixture
-setups (`WorkspaceTest/FixtureSetups.lean`) in
-`WorkspaceTest/WorkspaceTest/FixtureSetups.lean`. They run on the workspace's test
+support (`WorkspaceTest/FixtureSupport.lean`) in
+`WorkspaceTest/WorkspaceTest/FixtureSupport.lean`. They run on the workspace's test
 kit (`WorkspaceTest/Kit.lean`), the finder checks' driver
 (`WorkspaceTest/Support/FindFile.lean`) and the core's kit. They were the
 core's (`ModelTest.<name>`) while the workspaces were modules of the core,
@@ -103,8 +103,8 @@ them.
   turning none on, no marker job with no contribution, a cached directory's
   second file searched with no git run, and the marker order's round
   trip;
-- `fixtureSetupChecks`: the package's fixture setups
-  (`WorkspaceTest/FixtureSetups.lean`), pure: the default config's
+- `fixtureSupportChecks`: the package's fixture support
+  (`WorkspaceTest/FixtureSupport.lean`), pure: the default config's
   fixture runs the shipped config in an empty working directory, where the
   finder's default source with no workspace finds nothing, its lister and
   filter answered as in an empty directory.
@@ -124,7 +124,7 @@ def WorkspaceTest.checks : List WorkspaceTest.Check :=
     WorkspaceTest.findInProjectChecks ++
     WorkspaceTest.reachChecks ++
     WorkspaceTest.workspaceModesChecks ++
-    WorkspaceTest.fixtureSetupChecks
+    WorkspaceTest.fixtureSupportChecks
 
 /-- Runs the checks and the contracts' failure lists, and prints each that
 failed; the exit status is 1 when one did. -/

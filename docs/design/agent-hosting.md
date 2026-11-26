@@ -67,6 +67,516 @@ package `agents-api`; decided by the owner, 2026-11-23):**
 - Permission policy and presentation.
 - Everything in the agent table.
 
+### The ACP client, as built (acp-agents phase 4)
+
+Two packages, both opt-in: **`agents-api`** (`packages/agents-api/`), the
+interface, and **`acp`** (`packages/acp/`), its implementation, whose crate
+`acp-service` (`packages/acp/rust/`) runs the SDK. The default set requires
+neither (owner decision, 2026-11-26): `acp`'s crate needs Cargo, which the
+app never ships, and the bundle ships the core's prebuilt archive alone. A
+user who wants them adds both to their own set and builds `acp`'s crate
+with their own Cargo, which the package-set build asks for
+(`cargoRequired`); the fixture set (`tests/packages/`) requires them, so
+the gate covers them. Loading a package's native library at run time is
+later work (rdm:task/packages-load-native-libraries-at-run-time).
+
+- **The port is a package service, `agents`** (`AgentsApi.serviceName`),
+  whose vocabulary and reply types `agents-api` owns
+  (`AgentsApi/Request.lean`): `open` hands the service a streaming child a
+  job opened (`AgentsApi.Job.open` starts the agent's command with its
+  input piped and each stream bounded at `AgentsApi.lineBound`) with the
+  session's directory and MCP servers, and answers the session (`Opened`:
+  the service's number for it, the agent's session id, the mode and the
+  modes); `load` (phase 7) does the same for a session the agent holds in
+  its own store, named by its id, whose history the agent replays as its
+  first events (`AgentsApi.Job.load`); `next` waits for the session's next
+  events (`Batch`); `send` hands it an order from any job (`Sent`). `acp` registers the service
+  through `Package.services`, as echo does; consumers import
+  `agents-api` alone, and nothing imports `acp`.
+- **A session is one long-lived job** that opens it and loops on `next`;
+  the session's child is that job's, so it ends with it. `next` is a long
+  poll: a flush of the service does not wait for it, and a second `next` of
+  a session while one is pending is refused at its start. A prompt does not
+  block: `send (.prompt text)` is answered once the prompt is on its way,
+  with its turn, and the turn's end is an event, so an answer to a
+  permission request goes out while the prompt is pending.
+- **The plain events** (`AgentsApi/Event.lean`): a chunk of the reply
+  with its message id; a chunk of the user's message with its id (phase
+  7: what a load replays); a tool call, whole, its updates merged (the fields
+  present change the held call, and content and locations replace the
+  held ones, so a diff is replaced, never appended); a permission request
+  parked under a ticket in its turn, with the agent's options; a ticket
+  withdrawn by a cancel; usage, with the cost's amount as decimal text;
+  the title; the mode; a turn's end with its stop reason; and the
+  session's end, its last event. Dropped: the commands list, the
+  configuration options, thought chunks, plans, every `_meta`, the agent's
+  standard error, and `auth/status_update` and `_auth/status_update`,
+  which the session registers no handler for, so the SDK ignores them and
+  nothing formats them; the crate installs no logger.
+- **The orders** (`AgentsApi/Order.lean`): `prompt`, `cancel`, `setMode`
+  and `answer ticket optionId`. A cancel answers every parked request of
+  the current turn `cancelled` (posting `withdrawn`), marks the turn
+  cancelled, so a later request of it is answered `cancelled` at once and
+  posted withdrawn, and then sends `session/cancel`. An answer goes
+  straight to the parked `Responder` from the caller's thread, under the
+  tickets' lock; a second answer, or one to a ticket never asked, is
+  refused. A response whose id matches no request the client sent is
+  dropped by the SDK, routed to nobody, and the session goes on.
+- **What the client offers and sends**: `initialize` offers no `fs` and no
+  `terminal` (the SDK's defaults); nothing in the crate sends
+  `session/set_mode`, `session/set_config_option` or `CLAUDE_CONFIG_DIR` by
+  itself, and `AgentsApi.Agent` has no field for a mode or for Claude's
+  config. `setMode` exists because the protocol has it, and goes out only
+  when a caller orders it.
+- **Across the C boundary** the crate's replies are text that `acp` alone
+  defines (`rust/src/event.rs`; one event a line, a kind word and
+  tab-separated escaped `name=value` fields), which `Acp/Codec.lean` reads
+  into `agents-api`'s types; both are pinned on the same golden lines. A
+  line that does not read is a refusal, never a panic. Not JSON, which
+  would need a JSON reader no package's library may import; not glue that
+  builds Lean objects, which would put every field in C.
+- **The line bound** is sixteen mebibytes a stream (`AgentsApi.lineBound`).
+  The adapter's largest observed line is 27,490 bytes and a whole-file
+  edit about three times the file, so this takes files of about 5 MB. A
+  line past it ends the session (`ended lineTooLong`): skipping a JSON-RPC
+  line could drop a response and leave a request waiting for ever, while
+  ending is safe and seen.
+- **How a session's end is shown**: when the agent ends by itself, the
+  crate puts `ended how` last in the final batch, and a later `next` is
+  refused; when the session job is cancelled, the runner withdraws its
+  `next` first, the crate posts nothing, and the job's own outcome,
+  `cancelled`, is the end the editor sees. An `open` withdrawn before its
+  reply is taken leaves a session no job knows the number of, so the
+  crate drops its link, which ends the session once it is open, and frees
+  its state at that end rather than holding its events for a `next` that
+  cannot come. A session whose job is cancelled with no request of it in
+  flight, between two `next`s, is not yet freed: the crate never hears of
+  that cancel, and holds its last events. The conversation's pause between
+  takes (below) makes this the usual way `agent-stop` and a closed buffer
+  end a session; what is held is at most one pause's events, freed at the
+  process's exit (rdm task `acp-session-cancelled-between-nexts-keeps-tail`).
+  Phase 7 left it open: fixing it is a release request of the service, with
+  a contract property, the fake, the crate, the binding and a job on every
+  stop path, which none of that phase's criteria needed, and the leak is
+  bounded. Its one lifecycle change in the crate frees the queued history
+  of a load whose open was refused, which would otherwise leak every time.
+- **The protocol's rules are proved** on a pure model in `agents-api`'s
+  test library (`AgentsApiTest/Protocol.lean`,
+  `AgentsApiTest/Protocol/Theorems.lean`): every response answers exactly
+  one outstanding request, every parked request is answered exactly once,
+  and after a cancel no permission request of that turn is pending. The
+  fake of the service (`AgentsApiTest/Fake.lean`) keeps its bookkeeping
+  with the model's step, and the contract (`AgentsApiTest/Contract.lean`)
+  holds the fake and the crate to the same properties.
+- **Tests**: the crate's session runs on a `LocalPool` its tests step over
+  a scripted transport; the replay of three hand-written fixtures
+  (`rust/tests/fixtures/`) pins what the client sends and the events it
+  produces; a session over the fake runs on the stepped host
+  (`AgentsApiTest/Linked/AgentsApi/Session.lean`); and `acp`'s linked test
+  runs the contract and a whole session on the real crate over a scripted
+  agent executable, a POSIX `sh` script that exits 0 only if it read
+  exactly the lines it expects (`AcpTest/ScriptedAgent.lean`).
+
+### Sessions and the conversation, as built (acp-agents phase 5)
+
+The conversation is `acp`'s (`packages/acp/Acp/Conversation.lean` and the
+modules under `Acp/Conversation/`), written over the editor API and
+`agents-api` alone, so `acp`'s tests run it with no Rust; how each item is
+shown is `agents-api`'s extension point. `acp` no longer registers the
+service alone: its setup (`Acp.setup`) registers what follows.
+
+- **Claude Code's adapter is registered by `acp`** (`Acp.claudeCode`,
+  `Acp/ClaudeCode.lean`): `claude-agent-acp` with no arguments, the
+  editor's environment as it is (nothing cleared, set or unset, so no
+  `CLAUDE_CONFIG_DIR`) and no MCP server, named `claude-code`, the name the
+  commands start (`Acp.defaultAgent`). Not a default package: `acp` and
+  `agents-api` stay out of the default set (owner decision, 2026-11-26),
+  and only an ACP implementation can drive the adapter, so the registration
+  is the default exactly when `acp` is in the user's set. Config replaces
+  it by registering an `AgentsApi.Agent` of that name.
+- **The commands**: `agent-start [root]` starts a session in one of the
+  focused buffer's project's workspaces (the one whose root the text names,
+  or the buffer's own), refusing a buffer with no workspace, a location
+  where commands cannot run and an agent nobody registered;
+  `agent-prompt [text]` sends a prompt, or asks for one, refusing before
+  the session is open and while a prompt is on its way or a turn is in
+  flight; `agent-answer <ticket> <option-id>` answers a pending permission
+  request with an option it offered, and sends nothing otherwise, the one
+  path the queue's answer shares ("Permissions, as built");
+  `agent-cancel` cancels the turn in flight; `agent-stop` cancels the
+  session's job by its key, ending its child; and `agent-toggle`, the
+  mode's `toggle`, folds or unfolds the tool call on the cursor's row. Each
+  but the last has an ex name. **No command, job or handler sends
+  `session/set_mode` or a configuration option**: the session keeps the
+  mode the user's Claude settings give it, and the buffer shows the mode
+  the session reports, from `session/new` and each `current_mode_update`.
+- **One post a batch.** The session job (`agent-session`, registered over
+  `AgentsApi.Agent`) opens the session, posts it, and loops on `next`:
+  each batch, everything the service held when it was taken, is **one**
+  post of `agent-events`, so one editor-queue event, one turn of the loop
+  and one published scene. After each post the job sleeps
+  `Acp.Conversation.batchPause`, 50 ms, on the job clock (JobM's `sleep`,
+  as compile's run does): the library's timers in the editor, the fake
+  clock on a stepped host. So, per take: on a stepped host every event
+  queued between two turns, into a parked `next` or across a pause, is in
+  one batch; on a real host the job takes at most once a pause, about
+  twenty posts a second a session, each carrying everything since the last
+  take, never one event a post. A post cannot wait until the loop has
+  handled it, so no take can include what arrives after it; that holds
+  per take, and is all the docs promise. Each order goes out from a job of
+  its own (`agent-send`), whose reply its command applies.
+- **The conversation's state is a store** (`Acp.Conversation.store`, in
+  the unscoped store, so it survives a reload of config; a restart drops
+  it on purpose, and a resumed session's items come back from the agent,
+  "The agent table and resume, as built" below), and the buffer's text is regenerated from it after each
+  change (`Acp/Conversation/State.lean`, `Render.lean`): a chunk joins the
+  message of its id, a tool call replaces the item of its id whole, so the
+  pre-run diff of the edit's own strings is replaced by the whole file's,
+  a permission request is pending until the service withdraws it or acp's
+  answer to it is taken, both final, and a turn's end marks no ticket.
+- **The buffer** is read-only, named `*agent: <agent> <label>*`, in the
+  session's workspace and the major mode `agent-conversation` (`toggle`,
+  and the localleader's `p`, `c` and `k`), and shown where the display
+  rules say for the opener `agent-start`. It is ordinary buffer text, so
+  evil's motions and search work in it. A view whose cursor is on the last
+  line follows the end; every other keeps its row. Closing it stops the
+  session (`BuffersApi.Closing`).
+- **How each item is shown is a choice** (`AgentsApi.ConversationView`,
+  `AgentsApi/View.lean`): a structure of pure functions, one an item kind,
+  chosen by the name `default`; `acp` registers its default view
+  (`Acp.Conversation.defaultView`) and config replaces it by registering
+  one of that name, built from it with a field changed if it likes. The
+  default prints the header (agent and root, title, mode, usage), `> ` and
+  the prompt, the message's text, a tool call folded as `[+] <kind>:
+  <title> (<status>) <location>`, unfolded with its content, a diff as its
+  path and its middle with two lines of context
+  (`Acp/Conversation/Diff.lean`: the shared head and tail dropped, linear,
+  right for the adapter's diffs; a hunked review is the review interface's
+  later work), a permission request with its options and where it stands,
+  and a turn's end. A field's line feeds are split into rows, so the map
+  of rows `agent-toggle` reads stays true.
+- **Tests**: the pure parts in `acp-test`; the commands on the stepped host
+  over `agents-api`'s fake in `acp`'s linked test
+  (`AcpTest/Linked/Acp/Conversation.lean`: the reply, tool call and final
+  diff; no `setMode` and the registration's command as the child's; a
+  thousand events in one turn and one scene; an answer and a cancel forced
+  in both orders); and the headless fixture
+  `packages/acp/tests/headless/conversation/`, run stepped only, since
+  through the CLI it would start the user's real adapter. It gets its
+  service fake and its setup from the packages' fixture supports
+  (`AgentsApiTest/FixtureSupport.lean`, `AcpTest/FixtureSupport.lean`;
+  `docs/dev-practices/headless-mode.md`, "A package's fixtures"). No check
+  of this phase runs a session on a real host, so the mark that a parked
+  `next` holds no activity unit is not needed yet (rdm task
+  `acp-session-outside-mark-for-next`, before a conversation runs on a real
+  host in a check or a CLI fixture).
+
+### Permissions, as built (acp-agents phase 6)
+
+What "Permissions" below asks for, in `agents-api` and `acp`. The
+interface declares the policy and how a queued request is shown; `acp`
+does everything that acts.
+
+- **The policy cannot invent an answer.** `AgentsApi.PermissionPolicy`
+  (`packages/agents-api/AgentsApi/Policy.lean`) is a choice by name, the
+  latest registered under `default` winning, so config's replaces the
+  package's. Its `decide` maps a `PermissionRequest` (the agent, the
+  root, the agent's session id, the ticket, the turn, the tool call and
+  the offered options) to a `Decision request`: `ask`, or `choose` with a
+  `Fin request.options.size`, an index into that request's own options.
+  There is no constructor that takes an option or an id. The theorem
+  `answer_offered` (`AgentsApiTest/AgentsApi/Policy/Theorems.lean`)
+  states that every policy's answer is none or an offered option, by that
+  type alone, with its axioms pinned by `#print axioms`; `lake build`
+  checks it. Config writes a policy with `Decision.ofKind` or
+  `Decision.ofId`, which choose the first offered option of a protocol
+  kind or an id and ask when none is offered, so it writes no proof.
+- **The default asks.** `acp` registers `PermissionPolicy.ask` under
+  `default`, and the reader falls back to it when nobody registered one.
+- **When it runs.** Once, as a batch is applied (`agent-events`): each
+  permission request the batch leaves pending, of a conversation that has
+  not ended, is decided (`Acp/Permissions/Policy.lean`). A choice is sent
+  by `agent-send` as the indexed option's own id, with the origin
+  `policy`; an `ask` sends nothing, and the request waits in the queue. A
+  request still pending after a reload or a change of policy is not
+  decided again: it stays the user's. A policy's answer and the user's can
+  race for one ticket while the policy's send is queued; the protocol
+  takes the first and refuses the second, which is noted and audited
+  `refused`.
+- **Silence is normal.** A session whose mode resolves permissions itself
+  never asks: its batches decide nothing, send nothing and write nothing,
+  its queue says `nothing pending`, and nothing in `acp` waits on a
+  request.
+- **The queue.** One buffer a project, `*agent permissions: <project>*`
+  (`agent-queue`, from any buffer of the project; read-only, the major
+  mode `agent-permissions`, in the workspace of the buffer it was opened
+  from). It is derived from the conversations on every redraw
+  (`Acp/Permissions/Queue.lean`), never kept apart: every pending request
+  of every conversation of the project that has not ended, by
+  conversation number and then by place, so oldest session first and
+  then oldest request. A strict arrival order across sessions would need
+  a stamp on each request in the conversation store; phase 7 kept this
+  order, since pending requests die with the agent's process and never
+  cross a restart. Its text is
+  `permissions of <project>`, `<k> pending` or `nothing pending`, then
+  each request as the view's `queued` field lists it: by default
+  `? <agent> in <root>, conversation <n>, ticket <t>: <title>`, the raw
+  input, the call's content as an unfolded call shows it (so a diff is its
+  path and its change), and `options: <id> (<name>), …`. Two sessions
+  number their tickets apart, so a request is named by its conversation
+  and its ticket together, never by the ticket alone.
+- **Answering from the queue.** `agent-queue-answer [option-id]` (the
+  mode's localleader `a`) answers the request on the cursor's row, or asks
+  `Answer <ticket> (<ids>): `, the prompt's continuation carrying the
+  conversation and the ticket, so a queue that changed while the prompt
+  was open still answers the request it asked about. It and `agent-answer`
+  share one path (`answerTicket`), which refuses a ticket that is not
+  pending and an option the request did not offer.
+- **A reload loses nothing.** The pending request is an item of its
+  conversation in `acp`'s unscoped store, which a reload leaves; the queue
+  is derived from it; the queue buffers' numbers and the audit's outbox
+  are unscoped stores too; and the session job is a package's, which an
+  install does not cancel.
+- **The audit log.** `<state>/agents/permissions.log`, under the host's
+  state directory (`EditorState.stateDirectory`: `XDG_STATE_HOME` or
+  `HOME`, never a checkout), one file for the editor, each record naming
+  its project, root, agent, the agent's session id, conversation and
+  ticket. With no state directory nothing is logged. One record a line,
+  as the crate's lines: a kind word, then tab-separated `name=value`
+  fields, each value escaped (`Acp.Codec.escape`), so `Acp.Codec.split`
+  reads a line back (`Acp/Permissions/Audit.lean`). In the order things
+  happen: `asked` (the request whole: title, kind, raw input, each content
+  item, each option), `decided` (the policy's name and `ask` or the chosen
+  id), `answered` (with `by=user` or `by=policy`), `refused` (with the
+  service's words, `AgentsApi.Refusal.describe`), `withdrawn` (a cancel
+  answered it `cancelled`) and `closed` (its conversation ended with it
+  pending: the session's end, `agent-stop`, or its buffer closed). So
+  every request has an answer record. `closed` is written once, by
+  whatever ends the conversation first: the batch that holds the session's
+  end (`recordsOf`), the session job's own end when no such batch came (a
+  refused `next`), `agent-stop` or the buffer's close; each later one finds
+  the conversation ended and writes nothing. The batch closes the tickets
+  itself because `agent-stop`'s cancel drops the job's finished command, so
+  a stop typed between the batch and the job's end would otherwise leave
+  them unclosed. There is no time stamp: the job
+  port has no wall clock, and the order of the lines is the order of the
+  events.
+- **The writer.** Records go to an outbox in an unscoped store, whose
+  rules are pure (`Acp/Permissions/Outbox.lean`); when no write is in
+  flight its lines are handed to one job, `agent-audit`, which makes the
+  log's directory and appends the text, and returns the result as a
+  value. Its command drops what it wrote and starts the next. So appends
+  reach the file service one at a time and in order
+  ([concurrency.md](concurrency.md), "The permission audit log's writer").
+- **A refused write loses no record.** A refusal of the log (a directory
+  where it should be, permission denied, a full disk), or a job that
+  cannot start, keeps the lines in the outbox, and the next record's write
+  carries them, oldest first, so the log is whole once it can be written
+  again. It is tried once a record, never in a loop, and said once until a
+  write lands: `agent audit log: <path> not written: <reason>; <n> records
+  kept, tried again with the next record`. Dropping the lines and saying
+  the loss would leave a gap in a log whose point is that every request
+  and its answer are in it, for a failure that is often passing. Kept
+  lines live as long as the store, so an editor that quits before a write
+  lands loses them; the message said so while it ran.
+- **Why it is safe.** The only order sent for the log is an append, after
+  a make of its directory: nothing saves over it, removes it or reads it.
+  A record holds what the queue shows the user (title, raw input, diff,
+  options) and identifiers; no environment, no Claude configuration, no
+  `_meta`, no standard error and nothing of the auth notifications, which
+  the crate drops before Lean sees them. A raw input may hold what the
+  agent typed into a tool call, a shell command's arguments included,
+  which is what the user is shown when asked. The file is the user's,
+  under their state directory, with the file service's default
+  permissions. It grows without bound for now (rdm task for rotation).
+- **An ended session's pending tickets** leave the queue, are audited
+  `closed` once, and are labelled `(closed)` in its conversation buffer
+  (`PermissionState.closed`, phase 7). The session's own end in a batch is
+  applied without closing them, so the batch's audit still reads them
+  pending and writes the one `closed` record; the command settles them
+  after (`Conversation.closePending`).
+- **Tests**: the theorem and `policyChecks` in `agents-api`; the
+  decisions, the queue and the records' golden lines in `acp-test`
+  (`AcpTest/Acp/Permissions/`); and on the stepped host over
+  `agents-api`'s fake (`AcpTest/Linked/Acp/Permissions.lean`): two
+  sessions' requests in one queue, answered from it by session; a request
+  across a reload; the log's orders to the file fake for an answer from
+  the queue, a policy's answer, a withdrawal, `agent-stop`, the agent's
+  own exit and the buffer's close; a stop typed between the batch of the
+  session's end and the job's end, closed once; a record made
+  while a write is in flight, which waits for the next write; a refused
+  append that loses no record; a user's answer racing the policy's,
+  audited `refused`; silence; the queue's refusals and prompt; the prompt
+  answering the request it asked about after a withdrawal shifts the rows
+  above it, and refused once its own request is withdrawn; and closing
+  the queue buffer. A
+  conversation no view shows is read from `acp`'s store by the check's
+  `test-probe-conversation`, so two conversations of one header are told
+  apart.
+
+### The agent table and resume, as built (acp-agents phase 7)
+
+The agent table (below) in `agents-api` and `acp`. Two stores, joined by
+the agent's id:
+
+- **The agent table** is the durable record, one a project, in the
+  project's store: `AgentsApi.Table.store`, the cell `agents-table`
+  (`packages/agents-api/AgentsApi/Table.lean`), declared in the interface
+  as `shell-api` declares `shell-history`, so both front ends can write it
+  and rdm:task/global-attention-system can read it without importing
+  `acp`. `acp` registers its codec (`Table.keep`), so it is kept across a
+  restart. A record holds identity, workspace, attention and activity,
+  never a transcript.
+- **The conversation store** stays unscoped (phase 5): the live view of a
+  session running in this process. A restart drops it on purpose: keeping
+  items would be a copy of the transcript. A resumed session's items come
+  back from the agent through `session/load`.
+- **The id the editor mints is the conversation's number**: `agent-start`
+  mints one past the largest id of any project's table and any held
+  conversation (`Acp.Table.mint`), so a kept id is never reused, and a
+  resumed conversation takes its record's id back.
+
+**The reducer** (`AgentRecord.apply`, `Table.apply`) is pure, over a
+`TableEvent`, a mandatory agent id and a `Change`: one of the session's
+typed events, or a step of the client's (prompted, the prompt's reply, an
+answer taken, opened, resumed, resuming, seen, the watchdog's verdict,
+stopped). Identity is the minted `id`, the provider's `sessionId`, and
+`AgentRecord.name`, the title's first line cut at 60 characters, or
+`<agent> <id>`.
+
+- **Attention** reads only the pending tickets, the prompt on its way, the
+  turn in flight and the unread mark: `waiting`, else `working`, else
+  `finished` (unread), else `idle`. **Activity** is the tool calls neither
+  completed nor failed, or `unknown` once stalled. Activity never feeds
+  attention: `attention_ignores_activity` and `stalled_keeps_attention` are
+  proved (`AgentsApiTest/AgentsApi/Table/Theorems.lean`).
+- **Unread** is set by a turn's or the session's end and cleared by a visit
+  or a prompt only; a focus-based read is rdm:task/global-attention-system's.
+- **A replayed history** (`replaying`, from `.resumed` to the next prompt)
+  adds no work: nothing of a dead process is in flight.
+- **Turn numbers belong to one process**: the crate numbers a connection's
+  turns from 1, so `.opened` and `.resumed` start the record afresh
+  (`AgentRecord.fresh`), its last ended turn forgotten; otherwise a resumed
+  session's turn 1 would read as ended and the agent as idle while it
+  works.
+- **Across a restart** (`afterRestart`, the codec's keep, applied as the
+  index is written) a record loses what died with its process (tickets,
+  prompt, turn, work, stall, replay, generation), is marked unread when it
+  was waiting or working, and says `the editor restarted` when it had no
+  ending.
+- **A visit that resumes** forgets the ending (`.resuming`), so a load the
+  agent refuses is recorded as the session's end: `the session did not
+  resume: <words>`.
+
+**The stall watchdog**: what it decides is the pure core's
+(`AgentsApi/Table.lean`), so a second front end shares it; acp's
+`Acp/Table.lean` only carries it out. It watches an agent while it works
+and has not stalled (`AgentRecord.watched`): one job, `agent-stall`, keyed
+`agent-stall <id>`, armed at the record's generation (`heard`, the count
+of events heard), waits on the job clock until `AgentRecord.stallTimeout`
+(120 000 ms) from its start. It is armed once, not again for each batch,
+so a stream of batches starts no jobs and costs no turns. At its deadline
+its command carries out `AgentRecord.verdict`, a pure function of the
+record, the generation it was armed at and the deadline: nothing once the
+agent is not watched; `.stalled` at the armed generation when nothing was
+heard since; armed again for `stallTimeout` after the last batch
+(`heardAt`, the job clock's time the session job stamps on each batch,
+taken in as `.heardAt`) when one came since and that is still ahead; and
+otherwise `.stalled` at the last batch's generation. The reducer takes
+`.stalled` only at the record's own generation and while it is watched.
+The timeout is a constant: making it config's is later work.
+
+**The agents list**: `agent-list` shows the focused buffer's project's
+sessions in one read-only buffer, `*agents: <project>*`, in the mode
+`agent-list`, ordered by attention (waiting, finished and unread, working,
+idle), then id (`Acp/Table/List.lean`). Each row is the view's `listed`
+field (`ConversationView.listed`), by default
+`<id> <name>: <attention>, <activity> — <agent> in <root>`, then
+`, session <id>`, and `, not running; ended: <reason>` when no session of
+its id runs. Its text is derived on every redraw: after each table change
+and each conversation update.
+
+**Resume: `session/load`, never `session/resume`.** The phase asks for the
+history to be shown; `session/resume` returns none, so showing history
+after it would need the editor's own copy of the transcript. `session/load`
+has the agent replay its own store as `session/update` notifications
+before it answers, so the editor keeps only the session id. Both are stable
+in schema 1.21.2, so no `unstable_*` feature is on. An agent that does not
+advertise `loadSession` is refused (`the agent does not offer
+session/load`), with no fallback. A load sends nothing else: no
+`session/new`, `session/set_mode` or `session/set_config_option`, and no
+`CLAUDE_CONFIG_DIR`; its `cwd` is the record's workspace root and its MCP
+servers the registration's. The crate posts the history, a user's chunks
+among them (`Event.userChunk`), before `opened`; the conversation shows a
+user's chunk only while replaying, as a prompt.
+
+**Visiting** is `agent-visit [id]`, from the list's row (localleader `o`)
+or by id: the core has no buffer-visit hook, and a conversation buffer is
+not restored. It shows the conversation of that id when one holds a
+buffer; otherwise, when the record has a session id, it makes a
+conversation of the record's id and resumes the session in it, loaded once
+on the first visit; a load the agent refused is retried by the next visit
+in its buffer; a record that never opened is refused
+(`Acp/Table/Visit.lean`). Nothing loads a session at a restore or when the
+list is shown.
+
+**Tests**: AC1's table of events, the watchdog's verdict, the order, the
+name, the restart's keep and the tree in `agents-api-test` (`AgentsApiTest/AgentsApi/Table.lean`),
+and the two theorems; the list, the visit and the replayed user's message
+in `acp-test`; and on the stepped host (`AcpTest/Linked/Acp/Table.lean`):
+the stall on the fake clock, not one millisecond before; the list's order
+and a visit's reorder; the table read back after a restart over the
+journal's recording fake, two hosts in turn
+(`AcpTest/Linked/Support/Restart.lean`), and an agent started after it
+minted an id past the kept records'; a session loaded on its first
+visit with its history shown, once; a refused load retried. The restart
+check's second host restores before any reload, so acp's codec, which its
+packages register, meets the cell at the restore, and its `keep` gives
+each record's ending. The crate's `session/load` is held in Rust: the
+request it sends, the history (a user's chunks among it) posted in order
+before `opened`, and an agent with no `loadSession` refused
+(`rust/src/session/tests.rs`), and the replay of `load.jsonl` against
+`load.events` (`rust/tests/replay.rs`). `agents-api`'s contract holds the
+fake and the crate, over the scripted agent (`AcpTest/ScriptedAgent.lean`),
+to a load whose first events are the history in order, the user's chunk
+first, and to a refused load. No test drives the built editor through a
+restart: the real journal and index are the core's to test, and acp's side
+of the restart is the stepped check above.
+
+### Upgrading the SDK
+
+The SDK is pinned exactly (`agent-client-protocol = "=5.5.1"`, which pins
+its schema at `=1.21.2`), and only `acp-service` may depend on it
+(`deny.toml`). To upgrade: bump the pin, run `cargo test -p acp-service`,
+and treat any change to a `tests/fixtures/*.events` file, or a failed
+replay, as a change of wire shape to review.
+
+The replay fixtures are hand-written and synthetic: the repository is
+public, and no recorded transcript is committed, verbatim or scrubbed
+(owner decision, 2026-11-26). They reproduce the shapes of the adapter
+0.110.0, as a local recording kept out of the repository showed them, and
+of the schema for what that recording lacks (a cancel,
+`current_mode_update`), with placeholder values only
+(`rust/tests/fixtures/README.md`).
+
+- **What they catch**: a change in how the SDK reads or writes the shapes
+  they hold: a renamed or newly required field, an unknown field or
+  method refused (`name`, `_meta`, the auth notifications), a changed id
+  or outcome encoding, or a change in what our client sends.
+- **`load.jsonl`** (phase 7) holds a `session/load` of `sess-0001`: the
+  history the agent replays as `session/update` notifications before its
+  answer (a user's chunk, a reply chunk, a completed tool call and the
+  title), which the client posts before `opened`. The spike never ran a
+  load, so its shapes are the schema's, not a recording's.
+- **What they do not catch**: a change in what the adapter sends. They are
+  frozen at the adapter's shapes of 0.110.0 and, being hand-written, can be
+  wrong where their author misread a shape. A new update kind, a renamed
+  adapter field or a new auth flow goes unnoticed until someone runs the
+  real adapter. When the SDK or the adapter changes, compare a fresh local
+  recording, kept out of the repository, with the fixtures' shapes by
+  hand, and update the fixtures with placeholder values only. Phase 5's
+  dogfooding is the first run against the live adapter.
+
 ### What ACP does not cover
 
 | Gap | How it is filled |
@@ -89,8 +599,10 @@ below).
 
 A time-boxed spike checked the SDK, the stream hand-off and what Claude
 Code's adapter sends. Its code and the scrubbed transcripts are on the
-spike's branch under `spike/` (not landed); the transcripts are to seed
-the client's fixture tests. Each fact says how it is known.
+spike's branch under `spike/` (not landed). The transcripts were to seed
+the client's fixture tests; the owner decided on 2026-11-26 that no
+recorded transcript is committed, so the fixtures are hand-written
+("Upgrading the SDK"). Each fact says how it is known.
 
 **The SDK** (read in the source of 5.5.1 and on crates.io; the stream point
 proved by running code):
@@ -98,7 +610,7 @@ proved by running code):
 | | |
 |---|---|
 | Crates | `agent-client-protocol` 5.5.1 (2026-11-21), the connection, from github.com/agentclientprotocol/rust-sdk; it pins the wire types, `agent-client-protocol-schema`, exactly (`=1.21.2`) and re-exports them as `agent_client_protocol::v1::schema`, which is how they are to be named. Its `-derive` crate comes with it; `-rmcp`, `-conductor`, `-http` and others are separate and not needed |
-| Licence | Apache-2.0 for the three crates it pulls in; the rest of its normal tree is MIT, Apache-2.0, Zlib, Unlicense OR MIT and Unicode-3.0. All are compatible with the editor's GPL-3.0-or-later. `deny.toml` checks bans only, no licences, so nothing in the gate would catch a change |
+| Licence | Apache-2.0 for the three crates it pulls in; the rest of its normal tree is MIT, Apache-2.0, Zlib, Unlicense OR MIT and Unicode-3.0. All are compatible with the editor's GPL-3.0-or-later. `deny.toml` checks bans only: checking licences waits on the owner's call on MPL-2.0 (`nucleo-matcher`, already in the tree), so acp-agents phase 4 checked the SDK's licences by hand and filed a task. Advisories, run by hand once then (`cargo deny check advisories`, which needs the network, so no gate step): none in the SDK's tree; the one finding, RUSTSEC-2026-0192 (`ttf-parser` unmaintained), comes through winit |
 | Edition, MSRV | 2024, `rust-version = 1.88.0` |
 | Runtime | None. No default features; tokio is a dev-dependency only. The connection is one future the caller polls (`futures::executor::block_on` on a plain thread in the spike); its tasks run inside that future. Everything is `Send`; no `spawn_local`, no `LocalSet` |
 | Streams it did not open | Yes. `connect_with` takes any transport: `ByteStreams` over futures-io `AsyncRead`/`AsyncWrite`, `Lines` over a `Sink<String>` and a `Stream` of lines, or a channel of frames. The spike fed `Lines` from a plain thread doing blocking reads, as a consumer pulling a handed-over child would, and wrote through another plain thread |
@@ -264,6 +776,9 @@ buffer name, so it could not change.
 Activity never feeds attention. An agent can be idle in the conversation
 while a background task runs, and the list should say so.
 
+As built, in `agents-api` and `acp`: "The agent table and resume, as built
+(acp-agents phase 7)", above.
+
 **Ingress is typed.** Every update is an event with a mandatory agent id,
 whether it came from ACP, from a hook callback on the local listener, or
 from a terminal escape sequence. `edmacs` took updates through shell
@@ -301,13 +816,17 @@ The design that satisfies both:
 A pending request is compiled Lean state, so a config reload while a
 request is waiting loses nothing.
 
+As built, in `agents-api` and `acp`: "Permissions, as built (acp-agents
+phase 6)", above.
+
 ## Sessions and workspaces
 
 - **Sessions do not die with a window.** Agent records persist
   independently of window layout. After a restart, sessions are listed and
   resumed lazily on first visit, using the agent's own session store rather
   than a copy of its transcript. "Restore agents" and "restore window
-  layout" are separate features.
+  layout" are separate features. As built: "The agent table and resume, as
+  built (acp-agents phase 7)", above.
 - **One worktree, one branch, one agent per task** is the pattern nearly
   every orchestration tool uses. Worktree lifecycle is Lean, over git:
   the version-control interface's `addWorktree` and `removeWorktree`
@@ -334,8 +853,8 @@ multi-agent dashboard raised awareness and throughput but not confidence in
 the output (read through a secondary summary only). So the agents list and
 notifications are necessary and cheap, and they are not where the value is.
 
-- The agents list orders by attention (rdm:roadmap/acp-agents builds it,
-  phase 7).
+- The agents list orders by attention (built in rdm:roadmap/acp-agents
+  phase 7: "The agent table and resume, as built", above).
 - A notification fires when an agent starts waiting or finishes, by rules
   in Lean. This is rdm:task/global-attention-system's, not
   rdm:roadmap/acp-agents'; the agent table keeps attention as data for it
@@ -411,20 +930,22 @@ pins that with the mode off no watch is open; the phase is
   Claude Code's adapter does: from the tool call's final diff and its
   `_meta` patch, reconciled with the buffer as an external change. Whether
   the adapter can be made to use `fs/write_text_file` is unchecked.
-- **The line bound** for an agent's stream: a line is about three times
-  the largest file an edit touches, and a line past the bound ends the
-  agent ([rust-library.md](rust-library.md), "Handing a streaming child to
-  a package's crate, as built").
+- **The line bound** for an agent's stream: decided, sixteen mebibytes,
+  and a line past it ends the session ("The ACP client, as built";
+  [rust-library.md](rust-library.md), "The bound for ACP").
 - **The user's Claude settings**: decided 2026-11-23, no longer open. The
   editor uses the host's Claude settings as they are, with no session mode
   and no config of its own ("The ACP spike", "The user's environment leaks
   in").
 - **Non-standard notifications** (`auth/status_update`,
-  `_auth/status_update`) carry account details; the client should ignore
-  them and never log them unscrubbed.
-- **Keeping up with the SDK**: four major versions in five months. Who
-  upgrades it, and how the fixture transcripts catch a change of wire
-  shape, is open.
+  `_auth/status_update`) carry account details: decided, the client drops
+  them before anything formats them ("The ACP client, as built").
+- **Keeping up with the SDK**: four major versions in five months.
+  Answered for the SDK's side: the exact pin and the replay of the
+  hand-written fixtures catch a change in how it reads or writes the
+  shapes they hold ("Upgrading the SDK"). Still open: noticing a change in
+  what the adapter sends, which only a run against the live adapter shows;
+  no recurring check of it is planned.
 - **A detached supervisor**: should agent processes be children of the
   editor, or of a small separate process that outlives it, as VS Code now
   does? Persisted records plus resume may be enough at first.

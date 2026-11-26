@@ -19,7 +19,8 @@ def modelSubject : IO Echo.Contract.Subject := do
   return {
       echo := model.echo
       fresh := next.modifyGet fun id => (id, id + 1)
-      completed := model.completed }
+      completed := model.completed
+      endedNow := model.completed }
 
 /-- The checks of the model, each with what must hold as a sentence: every
 property of the contract, then the model's own. -/

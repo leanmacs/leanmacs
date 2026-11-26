@@ -4,13 +4,13 @@ import Editor.Test.Jobs
 import Workspace.FindFile
 import Workspace.Lister
 import WorkspaceTest.Check
-import WorkspaceTest.FixtureSetups
+import WorkspaceTest.FixtureSupport
 
 /-!
-# Model tests: `WorkspaceTest/FixtureSetups.lean`
+# Model tests: `WorkspaceTest/FixtureSupport.lean`
 
-The model tests of the workspace package's fixture setups:
-`fixtureSetupChecks`. The test driver's root, `WorkspaceTest/Model.lean`,
+The model tests of the workspace package's fixture support:
+`fixtureSupportChecks`. The test driver's root, `WorkspaceTest/Model.lean`,
 runs them; its module doc says what each shows.
 -/
 
@@ -20,12 +20,12 @@ open Editor
 open Editor.Test
 open Editor.Test.Fixture
 
-/-- The checks of the workspace package's fixture setups, each pure. -/
-def fixtureSetupChecks : List Check :=
+/-- The checks of the workspace package's fixture support, each pure. -/
+def fixtureSupportChecks : List Check :=
   [{  name :=
         "the default config's fixture runs the shipped config/default in an empty working directory, where the finder's default source with no workspace finds nothing: its fallback lister and its filter are answered as in an empty directory"
       run := do
-        let setup := Setup.of "tests/headless/default-config/script" FixtureSetups.setups
+        let setup := Setup.of "tests/headless/default-config/script" FixtureSupport.support.setups
         let lister := Workspace.Lister.fallback
         let (outcome, _) :=
           modelled

@@ -40,12 +40,17 @@ adapters link Lean's frontend".
 
 - The executable's host modules import no feature module. The host modules
   are everything a generated set root, or the fixture harness's root,
-  imports apart from the entry modules (`….EditorPackage`), with what
-  those import. A feature module is an entry module or a module an entry
-  module imports directly.
+  imports apart from the entry modules (`….EditorPackage`) and the fixture
+  support modules (`<P>Test.FixtureSupport`), with what those import. A
+  feature module is an entry module or a module an entry module imports
+  directly.
 - The host is handed its packages as a value, by the executable's root,
   and names none of them. An entry module imports package modules and
   nothing else.
+- A package's fixture support module (`<P>Test.FixtureSupport`) is a test
+  module of its package: it may import what a test module may, and only
+  the fixture harness's generated root imports it, never the editor's root
+  (`docs/dev-practices/headless-mode.md`, "How the gate runs a fixture").
 
 See `docs/design/lean-runtime.md`, "Packages".
 

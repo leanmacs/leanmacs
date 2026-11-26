@@ -26,6 +26,9 @@ structure Subject where
   /-- Whether the request `id` has completed, waited for within the
   subject's patience. -/
   completed : UInt64 → IO Bool
+  /-- Whether the request `id` has completed by now, read once and not
+  waited for. -/
+  endedNow : UInt64 → IO Bool
 
 /-- One property of the port. -/
 structure Property where
@@ -79,6 +82,20 @@ def properties : List Property :=
       holds := fun subject => do
         let id ← subject.fresh
         return !(← subject.echo.cancel id) && (← subject.echo.take id) == none },
+    { name := "a flush completes, and a request started before it has completed by then"
+      holds := fun subject => do
+        let (id, ok) ← started subject "before"
+        let flush ← subject.fresh
+        subject.echo.flush flush
+        let flushed ← subject.completed flush
+        let before ← subject.endedNow id
+        let taken ← subject.echo.take id
+        return ok && flushed && before && taken == some (Reply.to "before") },
+    { name := "an attach of a child nobody opened is refused, and its take answers none"
+      holds := fun subject => do
+        let id ← subject.fresh
+        let attached ← subject.echo.attach id 0xFFFFFFFFFFFF
+        return !attached && (← subject.echo.attachTake id) == none },
     { name := "sixteen requests in flight each complete and take their own text"
       holds := fun subject => do
         let texts := (List.range 16).map fun i => s!"request {i}"

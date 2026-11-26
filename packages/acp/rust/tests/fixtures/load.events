@@ -1,0 +1,6 @@
+user	message=msg-u1	text=Read notes.txt.
+chunk	message=msg-1	text=Done.
+toolCall	id=call-edit-1	title=Edit notes.txt	kind=edit	status=completed	location.path=/work/example/notes.txt	diff.path=/work/example/notes.txt	diff.old=Example notes.\nold words\n	diff.new=Example notes.\nnew words\n	rawInput={"file_path":"/work/example/notes.txt","old_string":"old words","new_string":"new words","replace_all":false}
+title	text=Example title
+opened	session=0	sessionId=sess-0001	mode=mode-ask	mode.id=mode-ask	mode.name=Ask	mode.description=Asks before it acts.	mode.id=mode-auto	mode.name=Auto	mode.description=Acts on its own.
+ended	how=exited	code=0

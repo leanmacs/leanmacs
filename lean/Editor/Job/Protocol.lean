@@ -29,6 +29,11 @@ wait it recorded, which the canceller withdraws. A job cancelled while it is
 `asking` has recorded nothing: it withdraws its own wait in its `park` or
 `serve` step, and keeps its unit until it is `done`.
 
+A package's wait (`JobRequest.package`) is a `service` wait, as a file's or
+a process's is: no kind of its own, so every theorem covers it, and
+`JobState.serve_keeps_unit` and `JobState.wake_waiting_keeps_unit` say it
+keeps its job's unit.
+
 ## The transitions
 
 | Transition | Enabled when | Effect |

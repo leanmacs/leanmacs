@@ -34,12 +34,13 @@ def nothingExpected : String :=
 context's packages, the test scheme and `setups`, its report kept in
 `said`. -/
 def fixtureHarness (context : Context) (repository : System.FilePath) (said : IO.Ref (Array String))
-    (setups : Array (String × Setup) := #[]) : IO (Harness TestScheme.scheme) := do
+    (setups : Array (String × Setup) := #[]) (packages : Array Package := #[])
+    (fakes : Array Job.PackageFake := #[]) : IO (Harness TestScheme.scheme) := do
   return {
-      packages := context.packages, base := #[`Editor], sysroot := context.sysroot
+      packages := context.packages ++ packages, base := #[`Editor], sysroot := context.sysroot
       oleans := context.oleanDirs.map (·.toString), repository := repository.toString
       latest := ← IO.mkRef none, files := ← Config.Elaborate.ModuleFiles.temporary
-      elaborator := some context.elaborator, setups
+      elaborator := some context.elaborator, setups, fakes
       say := fun line => said.modify (·.push line) }
 
 /-- Writes `files`, each a path under `repository` and its text, making the
@@ -57,17 +58,110 @@ def writeFixtures (repository : System.FilePath) (files : List (String × String
 /-- Runs the harness over the root `tests` of fixtures written from `files`
 (`writeFixtures`) in a temporary directory: its exit status and its report. -/
 def runFixtures (context : Context) (files : List (String × String))
-    (setups : Array (String × Setup) := #[]) : IO (UInt32 × Array String) :=
+    (setups : Array (String × Setup) := #[]) (packages : Array Package := #[])
+    (fakes : Array Job.PackageFake := #[]) : IO (UInt32 × Array String) :=
   IO.FS.withTempDir fun repository => do
     writeFixtures repository files
     let said ← IO.mkRef #[]
-    let harness ← fixtureHarness context repository said setups
+    let harness ← fixtureHarness context repository said setups packages fakes
     let status ← runRoots harness (realTree repository.toString) #["tests"]
     return (status, ← said.get)
+
+/-- The name of the package service the probe asks. -/
+def probeService : String :=
+  "probe"
+
+/-- The job the probe's script spawns: it asks the service `probe` once,
+and fails, saying so, when the service refuses or there is none. -/
+def probeJob : String :=
+  "probe-ask"
+
+/-- What the service `probe` answers. -/
+structure ProbeReply where
+  /-- What it says. -/
+  word : String := "pong"
+  deriving TypeName
+
+/-- A package of the check's own whose one job asks the service `probe`
+(`probeJob`). -/
+def probePackage : Package :=
+  { name := "probe"
+    setup :=
+      job probeJob
+        (fun _ => do
+          match ← PackageService.ask { service := probeService, operation := "ping" } with
+          | .ok _ =>
+            return ()
+          | .error error =>
+            throw s!"{probeService}: {repr error}")
+        fun _ => pure () }
+
+/-- A package's own fake of the service `probe`: its `ping` completes at
+once and is answered `()`; with `holds`, it is never completed and a
+withdrawal keeps it, so the fake is left holding it. -/
+def probeFake (holds : Bool := false) : Job.PackageFake :=
+  { name := probeService
+    make := fun completions answer => do
+      let pending ← IO.mkRef (#[] : Array UInt64)
+      return {
+          service :=
+            { name := probeService
+              start := fun id _ => do
+                pending.modify (·.push id)
+                unless holds do
+                  answer.complete completions id
+                return true
+              take := fun id _ => do
+                pending.modify (·.filter (· != id))
+                return .ok (.mk ({} : ProbeReply))
+              cancel := fun id => do
+                unless holds do
+                  pending.modify (·.filter (· != id))
+              flush := fun id => answer.complete completions id }
+          quiescent := return (← pending.get).isEmpty } }
+
+/-- The probe's script: the job spawned, and the host settled. -/
+def probeScript : String :=
+  s!"spawn {probeJob}\nsettle\n"
+
+/-- What `probeScript` prints when the service answers. -/
+def probeExpected : String :=
+  s!"spawn {probeJob}: job 1\njob 1 {probeJob}: ok\n"
 
 /-- The checks of the harness's stepped runs. -/
 def fixtureRunChecks (context : Context) : List Check :=
   [{  name :=
+        "a harness handed a package fake answers a fixture whose job asks that service, from a fake made for the run"
+      run := do
+        let files := [("tests/a/script", probeScript), ("tests/a/expected", probeExpected)]
+        let (status, said) ←
+          runFixtures context files (packages := #[probePackage]) (fakes := #[probeFake])
+        saw (status == 0 && said.contains "fixture-test: tests/a/script: stepped, as expected")
+            s!"status={status} said={said}" },
+    { name :=
+        "a fixture run whose package fake is left holding a request fails as unquiet, naming the fake"
+      run := do
+        let files := [("tests/a/script", probeScript), ("tests/a/expected", probeExpected)]
+        let (status, said) ←
+          runFixtures context files (packages := #[probePackage]) (fakes := #[probeFake true])
+        saw
+            (status == 1 &&
+              said.any fun line =>
+                line.startsWith
+                    "fixture-test: tests/a/script: the run left its fakes holding work: " &&
+                  (line.splitOn s!"the package fake {probeService} holds a request").length > 1)
+            s!"status={status} said={said}" },
+    { name :=
+        "with no fake of the service, the same fixture's job is refused it, and its output is not its expected file"
+      run := do
+        let files := [("tests/a/script", probeScript), ("tests/a/expected", probeExpected)]
+        let (status, said) ← runFixtures context files (packages := #[probePackage])
+        saw
+            (status == 1 &&
+              said.contains
+                s!"fixture-test: tests/a/script: its output is not its expected file: line 2 differs: expected \"job 1 {probeJob}: ok\", got \"job 1 {probeJob}: failed: {probeService}: Editor.PackageError.noSuchService \\\"{probeService}\\\"\"")
+            s!"status={status} said={said}" },
+    { name :=
         "a fixture whose stepped output is its expected file passes, said with its count line, and the run leaves the fakes quiescent and the library's editor queue as it was"
       run := do
         let before ← Ffi.queued .editor

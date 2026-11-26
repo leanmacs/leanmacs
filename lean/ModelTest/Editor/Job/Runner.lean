@@ -23,13 +23,14 @@ import Editor.Test.Models
 import Editor.Text
 import Editor.Text.Model
 import ModelTest.Check
+import ModelTest.Support.Packages
 
 /-!
 # Model tests: `Editor/Job/Runner.lean`
 
 The model tests of `Editor/Job/Runner.lean`: `waitChecks`, `runnerChecks`,
-`fileRunnerChecks`, `fileWatchRunnerChecks`, `grepRunnerChecks` and
-`activityRunnerChecks`. `fileWatchRunnerChecks` are the runner's watch waits
+`fileRunnerChecks`, `fileWatchRunnerChecks`, `grepRunnerChecks`,
+`packageServiceChecks` and `activityRunnerChecks`. `fileWatchRunnerChecks` are the runner's watch waits
 on the fake of the watch service, and `activityRunnerChecks` the runner's
 activity accounting over a count of each check's own. The root module
 `ModelTest` runs them; its module doc says what each shows.
@@ -1029,6 +1030,130 @@ def saw (holds : Bool) (observed : String) : IO Bool := do
   unless holds do
     throw <| IO.userError s!"saw {observed}"
   return true
+
+/-- The subject of the package properties over the service that counts:
+the count after 4, and the count after 9. -/
+def countSubject : JobContract.PackageSubject :=
+  { service := countService, request := countAfter 4, answers := countIs 5
+    other := countAfter 9, otherAnswers := countIs 10 }
+
+/-- The model of the service that counts as a package property's rig: each
+job run on the job model with it. -/
+def countModelRig : JobContract.PackageRig :=
+  { name := "the job model of the service that counts", subject := countSubject
+    run := fun job => pure (job.runModel { packages := countModel }).1 }
+
+/-- The checks of the runner's package services on the fake
+(`Job.FakePackageService`), stepped on the check's thread over the fake
+scheduler and pump (`PackageStepped`): a request reaches the service named
+and completes on a step; an unknown name and a request the service does not
+take start nothing; a cancel withdraws at the service; a flush waits for
+what it covers; and the package properties, on the model and the stepped
+fake. -/
+def packageServiceChecks : List Check :=
+  [{  name :=
+        "a job's package request reaches the service it names on the check's thread, completes on the pump's step, and is read back typed"
+      run := do
+        let thread ← IO.getTID
+        let stepped ← PackageStepped.new countSpec
+        let handle ←
+          stepped.spawn do
+              let .ok counted ← PackageService.askAs CountReply (countAfter 41) | return false
+              return counted.value == 42
+        stepped.toWaits
+        let handedBefore ← stepped.pump.handed
+        let ended ← stepped.toEnd handle
+        let log ← stepped.fake.log
+        let threads ← stepped.pump.finishedThreads
+        let kinds :=
+          log.map fun (order, _) =>
+            match order with
+            | .start _ request => s!"start {request.operation}"
+            | .take _ => "take"
+            | _ => "other"
+        saw
+            (ended == .finished true && handedBefore == 1 && kinds == #["start next", "take"] &&
+              log.all (·.2 == thread) &&
+              threads.all (· == thread) &&
+              (← stepped.fake.quiescent))
+            s!"ended {repr ended}, handed {handedBefore}, log {kinds}" },
+    { name :=
+        "a request to a service the runner was not given is noSuchService at once: no wait asked, nothing started, nothing handed"
+      run := do
+        let stepped ← PackageStepped.new countSpec
+        let ended ←
+          stepped.run do
+              return (← PackageService.ask { countAfter 1 with service := "elsewhere" }) matches
+                  .error (.noSuchService "elsewhere")
+        let trace ← stepped.recorder.trace
+        let asked := trace.any (· matches .ask ..)
+        saw
+            (ended == .finished true && !asked && (← stepped.fake.log).isEmpty &&
+              (← stepped.pump.handed) == 0)
+            s!"ended {repr ended}, trace {repr trace}" },
+    { name :=
+        "a request the service does not take has its wait finished by the runner and is answered refused"
+      run := do
+        let spec : Job.FakePackageService.Spec :=
+          { countSpec with
+            handOff := some { child := fun _ => some 99, reply := fun _ => .mk (CountReply.mk 0) } }
+        let stepped ←
+          PackageStepped.new spec (some fun completions => Job.FakeProcesses.new completions)
+        let ended ←
+          stepped.run do
+              return (← PackageService.ask (countAfter 1)) matches .error (.refused _)
+        saw
+            (ended == .finished true && (← stepped.fake.quiescent) &&
+              (← stepped.completions.waiting) == 0)
+            s!"ended {repr ended}" },
+    { name :=
+        "a job cancelled in its package wait has the wait withdrawn at the service, ends cancelled, and the fake then holds nothing"
+      run := do
+        let stepped ← PackageStepped.new countSpec
+        stepped.fake.holdCompletions
+        let handle ←
+          stepped.spawn do
+              discard <| PackageService.ask (countAfter 1)
+              return true
+        stepped.toWaits
+        let waiting ← stepped.fake.waiting
+        handle.cancel
+        let ended ← stepped.toEnd handle
+        stepped.fake.letGo
+        stepped.pump.stepAll
+        let withdrawn := (← stepped.fake.log).filter (·.1 matches .withdraw _)
+        saw
+            (waiting == 1 && ended == .cancelled && withdrawn.size == 1 &&
+              (← stepped.fake.quiescent) &&
+              (← stepped.pump.quiescent))
+            s!"waiting {waiting}, ended {repr ended}, withdrawn {withdrawn.size}" },
+    { name :=
+        "a package service's flush is completed behind the request held before it, and a flush of a service the runner was not given at once"
+      run := do
+        let stepped ← PackageStepped.new countSpec
+        stepped.fake.holdCompletions
+        let (id, wait) ← stepped.completions.register
+        let started ← stepped.fake.service.start id (countAfter 1)
+        let flushed ← stepped.services.flushed (.package countService)
+        let early ← IO.hasFinished flushed
+        stepped.fake.letGo
+        stepped.pump.stepAll
+        let requestEnded ← wait.isResolved
+        discard <| stepped.fake.service.take id (countAfter 1)
+        let absent ← stepped.services.flushed (.package "elsewhere")
+        saw
+            (started && !early && (← IO.hasFinished flushed) && flushed.get == .completed &&
+              requestEnded &&
+              (← IO.hasFinished absent) &&
+              absent.get == .completed &&
+              (← stepped.fake.quiescent))
+            s!"started {started}, early {early}, request ended {requestEnded}" },
+    { name :=
+        "the package properties hold of the job model of a service and of the runner over its fake, stepped"
+      run := do
+        let failed ←
+          JobContract.packageFailures [countModelRig, PackageStepped.rig countSpec countSubject]
+        saw failed.isEmpty s!"{failed}" }]
 
 /-- What `recorded` notes: an entry for each step, the count it left and the
 thread that made it, and a promise each entry resolves (and replaces), so a

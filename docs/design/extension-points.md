@@ -232,7 +232,29 @@ extension points is:
 - **A choice** uses one value, by name (`named`), as Emacs uses
   `completing-read-function` and as the editor uses `useStyle`. The latest
   registration of a name wins, so config's value replaces a package's value
-  of the same name.
+  of the same name. `agents-api`'s agent registration point,
+  `AgentsApi.Agent`, is one (`AgentsApi.Agent.named`, the pure choice
+  `AgentsApi.Agent.choose`): an agent is chosen by its name, and config's
+  agent of a name replaces a package's. Its fields are everything a session
+  is started with (the program, its arguments, its environment and the MCP
+  servers), and none for a session mode or the agent's own configuration
+  ([agent-hosting.md](agent-hosting.md), "The ACP client, as built").
+  `agents-api`'s `AgentsApi.ConversationView` is another
+  (`ConversationView.named`, the pure choice `ConversationView.choose`):
+  how each item of a conversation is shown, chosen by the name `default`,
+  which `acp` registers and config replaces with a view of that name
+  ([agent-hosting.md](agent-hosting.md), "Sessions and the conversation,
+  as built"); its `queued` field lists a pending permission request as the
+  queue of a project's requests shows it, and its `listed` field a session
+  of the agent table as a project's agents list shows it
+  ([agent-hosting.md](agent-hosting.md), "The agent table and resume, as
+  built"). `agents-api`'s
+  `AgentsApi.PermissionPolicy` is a third (`PermissionPolicy.named`, which
+  falls back to the policy that asks, and the pure choice
+  `PermissionPolicy.choose`): what answers a permission request, chosen by
+  the name `default`, whose type admits only one of the request's own
+  options or "ask" ([agent-hosting.md](agent-hosting.md), "Permissions, as
+  built").
 
 ### How the values travel
 

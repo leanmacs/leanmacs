@@ -1,16 +1,18 @@
 import Editor.Completion.Filtering
 import Editor.Process.Model
-import Editor.Test.Fixture.Setup
+import Editor.Test.Fixture.Support
 import Workspace.FindFile
 import Workspace.Lister
 
 /-!
-# The workspace package's fixture setups
+# The workspace package's fixture support
 
-What the headless fixture harness gives the fixtures whose runs reach the
-workspace package's processes (`Editor/Test/Fixture/Setup.lean`): the
-package-set build hands `setups` to the harness of every set that holds
-this Lake package, after the core's own (`fixturesRootSource` in
+What the workspace package brings to the stepped fixture harness of a set
+that holds it (`Editor.Test.Fixture.Support`,
+`lean/Editor/Test/Fixture/Support.lean`): the setups of the fixtures whose
+runs reach its processes. The package-set build finds this module by its
+name and only the fixture harness's root imports it, handing `support` to
+the harness after the core's setups (`fixturesRootSource` in
 `lean/lakefile.lean`; `docs/dev-practices/headless-mode.md`, "How the gate
 runs a fixture").
 
@@ -21,11 +23,11 @@ lines are built here from the package's own (`Lister.fallback`,
 `FindFile.filtering`) and the core's (`Completion.Filtering.filterFor`),
 so the lister stays defined in `Workspace/Lister.lean` alone.
 
-Pinned by `WorkspaceTest.fixtureSetupChecks`
-(`WorkspaceTest/WorkspaceTest/FixtureSetups.lean`).
+Pinned by `WorkspaceTest.fixtureSupportChecks`
+(`WorkspaceTest/WorkspaceTest/FixtureSupport.lean`).
 -/
 
-namespace WorkspaceTest.FixtureSetups
+namespace WorkspaceTest.FixtureSupport
 
 open Editor
 open Editor.Test.Fixture
@@ -51,4 +53,8 @@ def setups : Array (String × Setup) :=
       { config := some "config/default", directory := some "/d", workingDirectory := "/d/cwd"
         workingEntries := #[], processes := emptyListing "/d/cwd" })]
 
-end WorkspaceTest.FixtureSetups
+/-- The workspace package's fixture support: its setups. -/
+def support : Support :=
+  { name := "workspace", setups }
+
+end WorkspaceTest.FixtureSupport

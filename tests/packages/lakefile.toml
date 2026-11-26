@@ -49,6 +49,25 @@ path = "echo"
 name = "default-set"
 path = "../../packages"
 
+# `agents-api` is the interface package of agents (packages/agents-api/), and
+# `acp` its implementation over the Agent Client Protocol's Rust SDK
+# (packages/acp/), whose crate the package-set build links into this set's
+# editor through the one Rust archive it generates from the set. Both are
+# opt-in first-party packages, which the default set leaves out because
+# `acp`'s crate needs the user's own Cargo (packages/lakefile.toml's
+# header): this set requires them so that every package step covers them.
+# They come after the default set, so they register after the default
+# packages: `acp` binds ex names, and the default packages' fixtures, which
+# this set's harness runs too, list the ex names in registration order as
+# the default set's editor does.
+[[require]]
+name = "agents-api"
+path = "../../packages/agents-api"
+
+[[require]]
+name = "acp"
+path = "../../packages/acp"
+
 # The example package of the guide to writing a package
 # (docs/packages/writing-a-package.md), kept beside the guide that quotes it:
 # required here so that every package step covers it.

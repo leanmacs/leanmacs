@@ -1,3 +1,4 @@
+import Editor.PackageService
 import Editor.Setup
 
 /-!
@@ -28,13 +29,24 @@ def package : Package :=
   settings only config chooses. What is refused, and what a package's
   `useStyleFor` means, is in `Editor/Config/Packages.lean`.
 
-A package is plain data in `Type`: its `setup` is a program over the setup
-port, which holds no `IO`. So an array of packages can be a field of what a
-host is handed, and a test reads what a package registers with no host
+A package is data in `Type`: its `setup` is a program over the setup port,
+which holds no `IO`. So an array of packages can be a field of what a host
+is handed, and a test reads what a package registers with no host
 (`Package.registered`).
 
-This module imports the setup port alone, so that a package's module needs
-nothing of the config session.
+- **What services it brings** (`services`): the ports a running job reaches
+  through `JobRequest.package` (`Editor/PackageService.lean`), usually over
+  the package's own crate. They are `IO` adapters, so they are not
+  registered through `setup` or an extension point, which config can
+  reach and a reload replaces: the program's edge hands them to the job
+  runner (`Headless.shipped`), for the host's whole life, as it wires
+  every real adapter (`docs/design/packages.md`, "Behind a port, so it
+  stays replaceable"). A test hands the runner a fake in their place
+  (`Job.FakePackageService`), and reads nothing here.
+
+This module imports the setup port and the package-service port alone, so
+that a package's module needs nothing of the config session or the job
+runner.
 -/
 
 namespace Editor
@@ -49,5 +61,9 @@ structure Package where
   /-- What the package registers: a program over the setup port, as
   config's `setup` is. -/
   setup : SetupM Unit
+  /-- The services the package brings, which a running job asks by name
+  (`PackageService.ask`): wired into the job runner at the program's edge,
+  never through `setup`. None by default. -/
+  services : Array PackageService := #[]
 
 end Editor

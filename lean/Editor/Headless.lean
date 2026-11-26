@@ -4268,6 +4268,16 @@ def reportedEnvironments (state : IO.Ref Process.Environments) (source : UInt64)
     (queue : Queue := Queue.library) : Job.Environments :=
   Job.sharedEnvironments state fun text => discard <| queue.post { source, code := 0, text }
 
+/-- The package services the packages `packages` bring (`Package.services`),
+by name: the edge where a package's real adapters meet the runner.
+`shipped` gives its runner these, and a package's linked test gives the
+runner of its checks over its crate the same (echo's,
+`EchoTest/Linked/Echo/Real/Job.lean`), so a package that stops bringing its
+service, or an edge that stops handing the packages' services on, fails
+there. -/
+def packageServices (packages : Array Package) : Job.PackageServices :=
+  Job.PackageServices.of (packages.flatMap (·.services))
+
 /-- The mark of `shipped`: it runs a real background service (`Editor/RealHost.lean`). -/
 def shipped.realHost : RealHost :=
   .service
@@ -4278,8 +4288,8 @@ mode's and the window mode's, which run the input scheme `scheme`, with
 registers: `shippedOver` the library's timer service,
 file service, process service, watch service and diff service for the
 jobs, the library's matcher (`Fuzzy.real`), which the loop's match jobs ask,
-and the environments they share for the mode `host` (`reportedEnvironments`).
-Config is elaborated on `base`, which every caller names (`shippedOver`).
+the environments they share for the mode `host` (`reportedEnvironments`),
+and the services the packages bring (`packageServices`). Config is elaborated on `base`, which every caller names (`shippedOver`).
 
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
@@ -4321,7 +4331,8 @@ def shipped (scheme : InputScheme) (packages : Array Package) (base : Array Lean
         diffs := Job.realDiffs completions published.reader held refusedDiffs
         greps := Job.realGreps completions published.reader held greps
         environments := reportedEnvironments environments 4 Queue.library, fuzzy := Fuzzy.real
-        snapshots := Job.realSnapshots published.reader } published held files stateDirectory
+        snapshots := Job.realSnapshots published.reader
+        packages := packageServices packages } published held files stateDirectory
   return { collaborators with clock }
 
 /-- What generates the lakefile and the toolchain file of the config

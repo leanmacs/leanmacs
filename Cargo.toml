@@ -7,11 +7,12 @@
 # (docs/design/packages.md, "Rust in a package"): a package's crate is a
 # member so that the root lock holds its versions, which the crate the
 # package-set build generates is built against, and so that the gate's
-# fmt, clippy, doc, test and cargo-deny cover it. Only the fixture set's
-# packages hold Rust yet. A glob that matches nothing fails to load, so a
-# default package (`packages/`) that comes to hold a crate adds
-# `"packages/*/rust"` here.
-members = ["crates/*", "tests/packages/*/rust"]
+# fmt, clippy, doc, test and cargo-deny cover it. The fixture set's packages
+# hold Rust (`tests/packages/*/rust`), and so do the first-party packages
+# under `packages/` that a user opts into, `acp` among them, which no
+# default package requires (`packages/*/rust`). A glob that matches nothing
+# fails to load.
+members = ["crates/*", "tests/packages/*/rust", "packages/*/rust"]
 # A vendored crate (vendor/README.md) is a path dependency, not a member: its
 # dev-dependencies never enter the lock (the Lean grammar's `tree-sitter 0.25`
 # would conflict with the pinned library's `links`), and the gate's clippy, doc

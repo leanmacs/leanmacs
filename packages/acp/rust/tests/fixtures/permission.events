@@ -1,0 +1,15 @@
+opened	session=0	sessionId=sess-0001	mode=mode-ask	mode.id=mode-ask	mode.name=Ask	mode.description=Asks before it acts.	mode.id=mode-auto	mode.name=Auto	mode.description=Acts on its own.
+usage	used=1100	size=200000
+toolCall	id=call-edit-1	title=Edit	kind=edit	status=pending	rawInput={}
+toolCall	id=call-edit-1	title=Edit notes.txt	kind=edit	status=pending	location.path=/work/example/notes.txt	rawInput={"file_path":"/work/example/notes.txt"}
+toolCall	id=call-edit-1	title=Edit notes.txt	kind=edit	status=pending	location.path=/work/example/notes.txt	rawInput={"file_path":"/work/example/notes.txt","old_string":"old words"}
+toolCall	id=call-edit-1	title=Edit notes.txt	kind=edit	status=pending	location.path=/work/example/notes.txt	diff.path=/work/example/notes.txt	diff.old=old words	diff.new=new words	rawInput={"replace_all":false,"file_path":"/work/example/notes.txt","old_string":"old words","new_string":"new words"}
+permission	ticket=1	turn=1	id=call-edit-1	title=Edit notes.txt	kind=edit	status=pending	location.path=/work/example/notes.txt	diff.path=/work/example/notes.txt	diff.old=old words	diff.new=new words	rawInput={"file_path":"/work/example/notes.txt","old_string":"old words","new_string":"new words","replace_all":false}	option.id=allow-once	option.name=Allow	option.kind=allow_once	option.id=allow-always	option.name=Always allow	option.kind=allow_always	option.id=reject-once	option.name=Reject	option.kind=reject_once
+toolCall	id=call-edit-1	title=Edit notes.txt	kind=edit	status=pending	location.path=/work/example/notes.txt	location.line=2	diff.path=/work/example/notes.txt	diff.old=Example notes.\nold words\n	diff.new=Example notes.\nnew words\n	rawInput={"file_path":"/work/example/notes.txt","old_string":"old words","new_string":"new words","replace_all":false}
+usage	used=1250	size=200000
+toolCall	id=call-edit-1	title=Edit notes.txt	kind=edit	status=completed	location.path=/work/example/notes.txt	location.line=2	diff.path=/work/example/notes.txt	diff.old=Example notes.\nold words\n	diff.new=Example notes.\nnew words\n	rawInput={"file_path":"/work/example/notes.txt","old_string":"old words","new_string":"new words","replace_all":false}
+chunk	message=msg-1	text=Changed old words 
+chunk	message=msg-1	text=to new words.
+usage	used=1300	size=200000	cost.amount=0.0123	cost.currency=USD
+turnEnded	turn=1	stopReason=end_turn
+ended	how=exited	code=0

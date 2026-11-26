@@ -413,7 +413,11 @@ stores whose owner registered a codec (`Store.keptAcrossRestart`,
 [lean-runtime.md](lean-runtime.md), "Persistence across a restart"), and a
 restore puts the table back before any buffer is attached, so a restored
 file buffer finds its workspace. Of the shipped stores, `shell-history`
-and `vc-review` opt in; the others hold buffer numbers or a run in
+and `vc-review` opt in, and so, in a set that holds the opt-in `acp`,
+does the agent table, `agents-table`, a project store whose records lose
+at the index's write what died with their sessions' processes
+([agent-hosting.md](agent-hosting.md), "The agent table and resume, as
+built"); the others hold buffer numbers or a run in
 flight, or are per run, and start empty. The directory cache is not kept:
 the next run asks again. The unscoped store
 is read with `Workspace.Table.getUnscoped` and written with

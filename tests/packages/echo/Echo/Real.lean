@@ -1,4 +1,5 @@
 import Echo
+import Echo.Job
 
 /-!
 # The Rust-backed binding of the echo port
@@ -15,7 +16,9 @@ links no glue and needs no Rust.
 A request's completion is posted by the crate's service on the editor's
 completion queue, with the request's id as its code, so a request started
 under an id from the editor's table of waits (`Editor.Job.Completions`)
-completes when the editor's pump ends that wait.
+completes when the editor's pump ends that wait. `Echo.Real.service` is
+that port as the job runner's package service (`Echo.jobService`), which
+the package registers (`Echo/Packages.lean`).
 -/
 
 namespace Echo.Real
@@ -45,7 +48,12 @@ opaque attach (request child : UInt64) : IO Bool
 last line that says how it ended or that it was cancelled, joined by line
 feeds, and how many pulls it took. -/
 @[extern "echo_glue_attach_take"]
-opaque attachTake (request : UInt64) : IO (Option (String × UInt32))
+opaque attachTakeRaw (request : UInt64) : IO (Option (String × UInt32))
+
+/-- Asks the crate's service to complete `id` on the completion queue once
+every echo request started before has completed or been cancelled. -/
+@[extern "echo_glue_flush"]
+opaque flush (id : UInt64) : IO Unit
 
 /-- The port over the crate's service. Its replies' checksums are the
 crate's, so the contract holds zlib's CRC-32 to the pure one
@@ -54,5 +62,13 @@ def real : Service where
   start := start
   cancel := cancel
   take id := return (← takeRaw id).map fun (text, checksum) => { text, checksum }
+  attach := attach
+  attachTake id := return (← attachTakeRaw id).map fun (text, pulls) => { text, pulls }
+  flush := flush
+
+/-- The crate's service as the job runner's package service, which the
+package registers: echo's port over the binding (`Echo.jobService`). -/
+def service : Editor.PackageService :=
+  Echo.jobService real
 
 end Echo.Real
