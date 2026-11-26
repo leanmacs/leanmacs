@@ -25,6 +25,14 @@ name, built from this one with a field changed if it likes
   ` (closed)` once it is.
 - **The end of a turn**: `-- turn <n>: <stop reason>`. **A note**:
   `-- <text>`.
+- **A listed session**, as a project's agents list shows it, one row:
+  `<id> <name>: <attention>, <activity> — <agent> in <root>`, the
+  attention `waiting`, `finished, unread`, `working` or `idle`, the
+  activity `nothing in flight`, `<k> in flight (<title>, …)` or `activity
+  unknown`; then `, session <id>` once it has one, and, when no session of
+  its id runs, `, not running` and `; ended: <reason>` when it ended.
+- **A user's message** replayed from a loaded session's history is shown
+  as a prompt is.
 - **A queued request**, as the queue of a project's pending requests lists
   it: `? <agent> in <root>, conversation <n>, ticket <t>: <title>`, then
   `  input: <raw input>` (`(none)` when the agent sent none), each item of
@@ -104,6 +112,29 @@ def queuedLines (conversation : Nat) (request : PermissionRequest) : Array Strin
     request.call.content.flatMap contentLines ++
     #[s!"  options: {options}"]
 
+/-- An attention's words, as a listed session says it. -/
+def attentionWords : Attention → String
+  | .waiting => "waiting"
+  | .finished => "finished, unread"
+  | .working => "working"
+  | .idle => "idle"
+
+/-- An activity's words, as a listed session says it. -/
+def activityWords : Activity → String
+  | .unknown => "activity unknown"
+  | .items work =>
+    if work.isEmpty then "nothing in flight"
+    else s!"{work.size} in flight ({", ".intercalate (work.toList.map (·.title))})"
+
+/-- A listed session's row (the module docs). -/
+def listedRow (record : AgentRecord) (running : Bool) : String :=
+  let root := ((record.location.root?).map (·.toString)).getD record.location.describe
+  let session := (record.sessionId.map fun id => s!", session {id}").getD ""
+  let stopped :=
+    if running then ""
+    else ", not running" ++ (record.ended.map fun reason => s!"; ended: {reason}").getD ""
+  s!"{record.id} {record.name}: {attentionWords record.attention}, {activityWords record.activity} — {record.agent} in {root}{session}{stopped}"
+
 /-- How `acp` shows a conversation (the module docs). -/
 def defaultView : ConversationView where
   name := ConversationView.defaultName
@@ -119,5 +150,6 @@ def defaultView : ConversationView where
   turnEnded turn stopReason := #[s!"-- turn {turn}: {stopReason}"]
   note text := #[s!"-- {text}"]
   queued := queuedLines
+  listed record running := #[listedRow record running]
 
 end Acp.Conversation

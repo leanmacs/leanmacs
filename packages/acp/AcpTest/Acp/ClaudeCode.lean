@@ -72,7 +72,7 @@ def claudeCodeChecks : List Check :=
               (policy.map (·.answer request)) == some none)
             s!"agents {repr agents}, views {views.size}, policies {policies.size}" },
     { name :=
-        "acp's package registers alone with nothing refused: its session and queue commands, its jobs agent-session, agent-send and agent-audit, the mode agent-conversation, whose toggle is agent-toggle, and the mode agent-permissions, whose localleader a answers"
+        "acp's package registers alone with nothing refused: its session, queue and agents list commands, its jobs agent-session, agent-send, agent-audit and agent-stall, the codec of the agent table, the mode agent-conversation, whose toggle is agent-toggle, the mode agent-permissions, whose localleader a answers, and the mode agent-list, whose localleader o visits"
       run := do
         let (state, refused) : Config.State Unit Unit × Array String :=
           Config.State.ofPackages #[conversationPackage]
@@ -81,11 +81,16 @@ def claudeCodeChecks : List Check :=
           [Acp.Conversation.startName, Acp.Conversation.promptName, Acp.Conversation.answerName,
             Acp.Conversation.cancelName, Acp.Conversation.stopName, Acp.Conversation.toggleName,
             Acp.Conversation.openedName, Acp.Conversation.eventsName, Acp.Conversation.queueName,
-            Acp.Conversation.queueAnswerName]
+            Acp.Conversation.queueAnswerName, Acp.Conversation.listName, Acp.Conversation.visitName]
         saw
             (refused.isEmpty && commands.all (fun name => (registry.find? name).isSome) &&
-              [Acp.Conversation.sessionJob, Acp.Conversation.sendJob, Acp.Permissions.auditJob].all
+              [Acp.Conversation.sessionJob, Acp.Conversation.sendJob, Acp.Permissions.auditJob,
+                    Acp.Table.stallJob].all
                 (fun name => registry.jobs.any (·.registration.name == name)) &&
+              conversationPackage.registered.codecs.any (·.name == AgentsApi.Table.store.name) &&
+              (registry.modes.any fun entry =>
+                entry.mode.name == Acp.Table.modeName &&
+                  entry.mode.locals == [("o", Acp.Conversation.visitName)]) &&
               (registry.modes.any fun entry =>
                 entry.mode.name == Acp.Conversation.modeName &&
                   entry.mode.roles == [(Role.toggle, Acp.Conversation.toggleName)]) &&

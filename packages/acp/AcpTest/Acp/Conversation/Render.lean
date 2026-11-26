@@ -93,6 +93,12 @@ def renderChecks : List Check :=
                 "? permission 3: Edit notes.txt again [Allow, Reject]",
                 "? permission 4: Edit notes.txt again [Allow, Reject] (closed)"])
             s!"{lines}" },
+    { name := "a user's message replayed from a loaded history is shown as a prompt is"
+      run := do
+        let lines :=
+          (render defaultView
+              { example1 with items := #[.userMessage (some "msg-u1") "Read notes.txt."] }).1
+        saw (lines[5]? == some "> Read notes.txt.") s!"{lines}" },
     { name := "a line feed in a line a view gives is split into rows, and the map keeps its size"
       run := do
         let view := { defaultView with message := fun text => #[s!"one\n{text}"] }

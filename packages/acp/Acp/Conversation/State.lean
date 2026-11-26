@@ -11,7 +11,11 @@ each thing that happens to it changes it, pure (`docs/design/agent-hosting.md`,
 "Sessions and the conversation, as built"):
 
 - **The session's events** (`Conversation.apply`, `applyBatch`): a chunk
-  is appended to the message of its id, a tool call replaces the item of
+  is appended to the message of its id, and a user's chunk to the user's
+  message of its id, but only while a loaded history is replayed
+  (`replaying`, from a loaded open to the next prompt): a live turn's prompt
+  is already shown by `prompted`, so an agent that echoes it shows nothing
+  twice; a tool call replaces the item of
   its id whole (an update's diff replaces the held one, never appends to
   it), a permission request is added pending, its withdrawal marks it
   withdrawn, the usage, title and mode are kept, the end of a turn is added
@@ -59,6 +63,9 @@ inductive Item where
   | turnEnded (turn : Nat) (stopReason : String)
   /-- A note of the client's: a refusal, the session's start or end. -/
   | note (text : String)
+  /-- A message of the user's replayed from a loaded session's history, its
+  chunks joined, with the agent's id for it when it gave one. -/
+  | userMessage (id : Option String) (text : String)
   deriving DecidableEq, Repr, Inhabited
 
 end Acp.Conversation
@@ -102,6 +109,9 @@ structure Conversation where
   awaiting : Bool := false
   /-- How its session ended, once it has. -/
   ended : Option String := none
+  /-- Whether a loaded session's history is being replayed: from its open
+  by a load until the next prompt. -/
+  replaying : Bool := false
   deriving DecidableEq, Repr
 
 namespace Conversation
@@ -141,6 +151,19 @@ def messageOf? (conversation : Conversation) : Option String → Option Nat
     | some (.message none _) => some (conversation.items.size - 1)
     | _ => none
 
+/-- The index of the last user's message of `id`, when the user's chunk of
+`id` continues it, as `messageOf?` finds an agent's message. -/
+def userMessageOf? (conversation : Conversation) : Option String → Option Nat
+  | some id =>
+    lastIndex? conversation.items fun item =>
+      match item with
+      | .userMessage (some held) _ => held == id
+      | _ => false
+  | none =>
+    match conversation.items.back? with
+    | some (.userMessage none _) => some (conversation.items.size - 1)
+    | _ => none
+
 /-- `conversation` with the ticket `ticket` moved to `state`, when it is
 pending: both other states are final. -/
 def settle (conversation : Conversation) (ticket : Nat) (state : PermissionState) : Conversation :=
@@ -164,7 +187,18 @@ def apply (conversation : Conversation) : Event → Conversation
             | .message held before => .message held (before ++ text)
             | _ => item }
     | none => conversation.push (.message id text)
-  | .userChunk _ _ => conversation
+  | .userChunk id text =>
+    if !conversation.replaying then conversation
+    else
+      match conversation.userMessageOf? id with
+      | some index =>
+        { conversation with
+          items :=
+            conversation.items.modify index fun item =>
+              match item with
+              | .userMessage held before => .userMessage held (before ++ text)
+              | _ => item }
+      | none => conversation.push (.userMessage id text)
   | .toolCall call =>
     match
       conversation.items.findIdx? fun item =>
@@ -190,15 +224,20 @@ def apply (conversation : Conversation) : Event → Conversation
 def applyBatch (conversation : Conversation) (batch : Batch) : Conversation :=
   batch.events.foldl apply conversation
 
-/-- `conversation` once its session is open, as `opened` says. -/
-def opened (conversation : Conversation) (opened : Opened) : Conversation :=
+/-- `conversation` once its session is open, as `opened` says: `loaded`
+when it was loaded from the agent's store, whose history is then
+replayed. -/
+def opened (conversation : Conversation) (opened : Opened) (loaded : Bool := false) :
+    Conversation :=
   { conversation with
     session := some opened.session, sessionId := some opened.sessionId, mode := opened.mode
-    modes := opened.modes }
+    modes := opened.modes, replaying := loaded }
 
-/-- `conversation` with the prompt `text` handed to the service. -/
+/-- `conversation` with the prompt `text` handed to the service: a replay
+of a loaded history is over. -/
 def prompted (conversation : Conversation) (text : String) : Conversation :=
-  { (conversation.push (.prompt text none)) with awaiting := true }
+  { (conversation.push (.prompt text none)) with
+    awaiting := true, replaying := false }
 
 /-- Whether the turn `turn` has ended in `conversation`. -/
 def turnOver (conversation : Conversation) (turn : Nat) : Bool :=
@@ -311,6 +350,7 @@ def itemArguments : Item → List Argument
     .str "permission" :: Arguments.permission ticket turn call options ++ stateArguments state
   | .turnEnded turn stopReason => [.str "turnEnded", .nat turn, .str stopReason]
   | .note text => [.str "note", .str text]
+  | .userMessage id text => .str "userMessage" :: Arguments.optionalString id ++ [.str text]
 
 /-- The item `arguments` are, wholly. -/
 def item? (arguments : List Argument) : Option Item :=
@@ -344,6 +384,10 @@ where
     | .str "turnEnded" :: .nat turn :: .str stopReason :: rest =>
       some (.turnEnded turn stopReason, rest)
     | .str "note" :: .str text :: rest => some (.note text, rest)
+    | .str "userMessage" :: rest => do
+      let (id, rest) ← Arguments.optionalString? rest
+      let .str text :: rest := rest | none
+      return (.userMessage id text, rest)
     | _ => none
 
 /-- An optional value as a tree: null, or the value's tree. -/
@@ -374,7 +418,7 @@ def encode (conversation : Conversation) : Value :=
       ("items", .list (conversation.items.toList.map fun item => leaves (itemArguments item))),
       ("unfolded", .list (conversation.unfolded.toList.map .str)),
       ("turn", optional .nat conversation.turn), ("awaiting", .bool conversation.awaiting),
-      ("ended", optional .str conversation.ended)]
+      ("ended", optional .str conversation.ended), ("replaying", .bool conversation.replaying)]
 
 /-- A natural number's tree. -/
 def nat? : Value → Option Nat
@@ -415,9 +459,18 @@ def decode : Value → Option Conversation
     let turn ← optional? nat? (field fields "turn")
     let .bool awaiting := field fields "awaiting" | none
     let ended ← optional? str? (field fields "ended")
+    -- A tree written before the field was added holds none: not replaying.
+    let replaying ←
+      match field fields "replaying" with
+      | .null =>
+        some false
+      | .bool value =>
+        some value
+      | _ =>
+        none
     return {
         number, agent, location, buffer, session, sessionId, mode, modes, title, usage, items,
-        unfolded, turn, awaiting, ended }
+        unfolded, turn, awaiting, ended, replaying }
   | _ => none
 
 end Conversation

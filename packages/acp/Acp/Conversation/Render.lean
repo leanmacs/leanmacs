@@ -29,6 +29,7 @@ def itemLines (view : ConversationView) (conversation : Conversation) : Item →
   | .permission ticket _ call options state => view.permission ticket call options state
   | .turnEnded turn stopReason => view.turnEnded turn stopReason
   | .note text => view.note text
+  | .userMessage _ text => view.prompt text
 
 /-- The text of `conversation` as `view` shows it, a line a row, and for each
 row the id of the tool call it shows, if any (the module docs). -/

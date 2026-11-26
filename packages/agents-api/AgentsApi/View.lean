@@ -22,8 +22,9 @@ A reader splits any line feed a field's line holds, so a view cannot break
 the reader's map of rows.
 
 Besides the conversation's own items, it shows a permission request as the
-queue of a project's pending requests lists it (`queued`), so config
-restyles a queued request as it restyles a conversation's item.
+queue of a project's pending requests lists it (`queued`), and a session
+of the agent table as a project's agents list shows it (`listed`), so
+config restyles them as it restyles a conversation's item.
 -/
 
 namespace AgentsApi
@@ -95,6 +96,10 @@ structure ConversationView where
   the queue of a project's pending requests lists it: the tool call's
   title, its input, its diff and its options. -/
   queued : (conversation : Nat) → (request : PermissionRequest) → Array String
+  /-- A session of the agent table, as a project's agents list shows it:
+  its record (`AgentsApi/Table.lean`) and whether a session of its id runs
+  in this process. -/
+  listed : (record : AgentRecord) → (running : Bool) → Array String
   deriving TypeName
 
 namespace ConversationView

@@ -8,6 +8,8 @@ import AcpTest.Acp.Permissions.Outbox
 import AcpTest.Acp.Permissions.Policy
 import AcpTest.Acp.Permissions.Queue
 import AcpTest.Acp.Service
+import AcpTest.Acp.Table.List
+import AcpTest.Acp.Table.Visit
 
 /-!
 # The test driver of the package `acp`
@@ -38,7 +40,11 @@ test modules and runs their checks:
 - `auditChecks`: the audit log's records, each a golden line, escaped and
   read back, in event order (`Acp/Permissions/Audit.lean`);
 - `outboxChecks`: the audit log's outbox, one write at a time, each
-  dropping exactly the lines it held (`Acp/Permissions/Outbox.lean`).
+  dropping exactly the lines it held (`Acp/Permissions/Outbox.lean`);
+- `listChecks`: a project's agents list, its order by attention, each
+  row's words, its header and its map of rows (`Acp/Table/List.lean`,
+  the default view's `listed`);
+- `visitChecks`: what a visit of an agent does (`Acp/Table/Visit.lean`).
 
 The service over the real crate, with `agents-api`'s contract, is the
 linked test's (`AcpTest/Linked.lean`).
@@ -52,7 +58,9 @@ def AcpTest.checks : List AcpTest.Check :=
     AcpTest.permissionPolicyChecks ++
     AcpTest.queueChecks ++
     AcpTest.auditChecks ++
-    AcpTest.outboxChecks
+    AcpTest.outboxChecks ++
+    AcpTest.listChecks ++
+    AcpTest.visitChecks
 
 /-- Runs the checks and prints each that failed; the exit status is 1 when
 one did. -/

@@ -5,6 +5,8 @@ import Acp.Conversation.Store
 import Acp.Conversation.View
 import Acp.Generated
 import Acp.Permissions
+import Acp.Table
+import Acp.Table.Visit
 import BuffersApi
 import Editor.Api
 import Editor.Command.Call
@@ -51,10 +53,11 @@ buffer shows the mode the session reports.
 ## The jobs, and one post a batch
 
 The session job (`agent-session`, registered over `AgentsApi.Agent` so its
-work sees the registered agents) opens the session, posts `agent-opened`,
-and loops on `next`: each batch, everything the service held when it was
-taken, becomes **one** post of `agent-events`, so one turn of the loop and
-one scene; after each post it waits `batchPause` on the job clock (`sleep`,
+work sees the registered agents) opens the session, or loads it given a
+session id, posts `agent-opened` with whether it loaded, and loops on
+`next`: each batch, everything the service held when it was taken,
+becomes **one** post of `agent-events`, stamped with the job clock's time
+for the stall watchdog, so one turn of the loop and one scene; after each post it waits `batchPause` on the job clock (`sleep`,
 the fake clock on a stepped host), so a session posts at most about twenty
 times a second, each post carrying everything since the last take. It
 ends on the session's end or a refusal, noting how. Each order goes out
@@ -74,6 +77,31 @@ conversation (`BuffersApi.Closing`).
 
 The conversations are kept in an unscoped store (`store`,
 `Acp/Conversation/Store.lean`), so they survive a reload of config.
+
+## The agent table, the list and resume
+
+Every session is a record of its project's agent table
+(`AgentsApi/Table.lean`; `Acp/Table.lean`), kept in the project's store
+across a restart. `agent-start` mints its id (`Acp.Table.mint`), which is
+its conversation's number, and adds its record; the commands feed it
+the session's opening, each batch's events, each prompt, its reply, each
+answer taken and each stop, so its attention and activity follow the
+session. A stall watchdog marks a working agent silent past
+`Acp.Table.stallTimeout` as of unknown activity.
+
+- **`agent-list`** shows the agents list of the focused buffer's project,
+  its sessions ordered by attention (`Acp/Table/List.lean`), in one buffer
+  made if none is open, where the display rules say for the opener
+  `agent-list`; it refuses a buffer with no workspace.
+- **`agent-visit [id]`** visits the agent the text names, or the one on
+  the cursor's row of an agents list (the list mode's localleader `o`):
+  it shows its conversation's buffer, or, when this process holds none, as
+  after a restart, makes one and resumes the session with the protocol's
+  session load from the agent's own store, its history replayed into the
+  buffer; or says it never opened a session (`Acp/Table/Visit.lean`). A
+  visit marks the agent seen. A load is made once, on the first visit;
+  one the agent refused is tried again by the next visit, in its buffer.
+  Nothing loads a session at a restart or when the list is shown.
 
 ## The queue, the policy and the audit log
 
@@ -155,6 +183,14 @@ def queueName : String :=
 def queueAnswerName : String :=
   "agent-queue-answer"
 
+/-- The name of the command that shows a project's agents list. -/
+def listName : String :=
+  "agent-list"
+
+/-- The name of the command that visits an agent. -/
+def visitName : String :=
+  "agent-visit"
+
 /-- The name of the conversation buffer's major mode. -/
 def modeName : String :=
   "agent-conversation"
@@ -193,6 +229,7 @@ def update (number : Nat) (change : Conversation → Conversation) : EditorM Uni
   save changed
   redraw changed
   Permissions.redrawQueues
+  Acp.Table.redrawLists
 
 /-- Records in the audit log that `conversation`'s pending tickets are
 closed, for `reason`, unless it has ended already: whoever ends a
@@ -217,6 +254,7 @@ conversation has ended already (`closeTickets`): the batch of its end, or
 def endedCommand (number : Nat) (how : String) : EditorM Unit := do
   if let some conversation← conversation? number then
     closeTickets conversation (Permissions.endedReason how)
+  Acp.Table.change number #[.stopped how]
   update number fun conversation =>
       { conversation.closePending with
             ended := conversation.ended.orElse fun _ => some how, turn := none }.noted
@@ -230,24 +268,43 @@ def endingOf (batch : Batch) : Option Ending :=
     | _ => none
 
 /-- The session job (the module docs): opens the session of the agent named
-in its arguments among `agents`, in its root, posts it, and posts each
-batch, waiting `batchPause` on the job clock after each. -/
+in its arguments among `agents`, in its root, or, given a session id, loads
+that session from the agent's own store; posts it, and posts each batch,
+waiting `batchPause` on the job clock after each. -/
 def sessionWork (agents : Array Agent) (arguments : List Argument) : Work := fun _ => do
-  let [.nat number, .str name, .str root] := arguments
-    | throw s!"{sessionJob}: its arguments are not a conversation, an agent and a root"
+  let (number, name, root, sessionId?) ←
+    match arguments with
+    | [.nat number, .str name, .str root] =>
+      pure (number, name, root, none)
+    | [.nat number, .str name, .str root, .str sessionId] =>
+      pure (number, name, root, some sessionId)
+    | _ =>
+      throw
+          s!"{sessionJob}: its arguments are not a conversation, an agent, a root and maybe a session"
   let some agent := Agent.choose agents name
     | return endedCommand number s!"no agent named {name}"
-  match ← AgentsApi.Job.open agent root with
+  let reply ←
+    match sessionId? with
+    | none =>
+      AgentsApi.Job.open agent root
+    | some sessionId =>
+      AgentsApi.Job.load agent root sessionId
+  match reply with
   | .error refusal =>
-    return endedCommand number s!"the session did not open: {refusal.describe}"
+    let failed :=
+      if sessionId?.isSome then "the session did not resume" else "the session did not open"
+    return endedCommand number s!"{failed}: {refusal.describe}"
   | .ok opened =>
-    post { command := openedName, arguments := .nat number :: opened.toArguments }
+    post
+        { command := openedName,
+          arguments := .nat number :: .bool sessionId?.isSome :: opened.toArguments }
     for _ in [0:takeLimit] do
       match ← AgentsApi.Job.next opened.session with
       | .error refusal =>
         return endedCommand number refusal.describe
       | .ok batch =>
-        post { command := eventsName, arguments := .nat number :: batch.toArguments }
+        post
+            { command := eventsName, arguments := .nat number :: .nat (← now) :: batch.toArguments }
         if let some how := endingOf batch then
           return endedCommand number how.describe
         sleep batchPause
@@ -263,6 +320,15 @@ def sentCommand (number : Nat) (origin : Permissions.Origin) (order : Order)
     Permissions.audit #[.answered number ticket optionId origin]
   | .answer ticket optionId, .error refusal =>
     Permissions.audit #[.refused number ticket optionId origin refusal.describe]
+  | _, _ =>
+    pure ()
+  match order, reply with
+  | .prompt _, .ok sent =>
+    Acp.Table.change number #[.sent sent.turn]
+  | .prompt _, .error _ =>
+    Acp.Table.change number #[.sent none]
+  | .answer ticket _, .ok _ =>
+    Acp.Table.change number #[.answered ticket]
   | _, _ =>
     pure ()
   update number fun conversation =>
@@ -289,9 +355,10 @@ def sendWork (arguments : List Argument) : Work := fun _ => do
 
 /-- `agent-opened`: the conversation and its opened session. -/
 def openedCommand (call : Call) : EditorM Unit := do
-  let .nat number :: rest := call.arguments | return
+  let .nat number :: .bool loaded :: rest := call.arguments | return
   let some opened := Opened.ofArguments? rest | return
-  update number (·.opened opened)
+  update number (·.opened opened loaded)
+  Acp.Table.change number #[if loaded then .resumed opened.sessionId else .opened opened.sessionId]
 
 /-- Starts `agent-send` with `order` for `conversation`'s session, given by
 `origin`, or says under `name` that it is not open. Whether it started. -/
@@ -312,9 +379,11 @@ def sendOrder (name : String) (conversation : Conversation) (order : Order)
 applied; each request it leaves pending decided by the policy and audited,
 and a chosen answer sent (the module docs). -/
 def eventsCommand (call : Call) : EditorM Unit := do
-  let .nat number :: rest := call.arguments | return
+  let .nat number :: .nat time :: rest := call.arguments | return
   let some batch := Batch.ofArguments? rest | return
   update number (·.applyBatch batch)
+  Acp.Table.heard number time
+  Acp.Table.change number (batch.events.map .event)
   let some conversation ← conversation? number | return
   let policy ← PermissionPolicy.named
   let decided := Permissions.decisions policy conversation batch
@@ -370,8 +439,9 @@ def startCommand (call : Call) : EditorM Unit := do
       return
   let some agent ← Agent.named defaultAgent | message s!"{startName}: no agent named {defaultAgent}"
   let state ← editorState
-  let number := ((← conversations).foldl (fun most held => max most held.number) 0) + 1
+  let number ← Acp.Table.mint
   let started : Conversation := { number, agent := agent.name, location := workspace.location }
+  discard <| Acp.Table.add { id := number, agent := agent.name, location := workspace.location }
   let started := started.noted s!"starting {agent.name} in {started.root}"
   let .ok id ←
     createBuffer (state.freeName s!"*agent: {agent.name} {workspace.label}*")
@@ -432,6 +502,7 @@ where
       else
         if ← sendOrder promptName conversation (.prompt text) then
           update conversation.number (·.prompted text)
+          Acp.Table.change conversation.number #[.prompted]
 
 /-- Answers the permission request `ticket` of `conversation` with the
 option `optionId`, the user's answer, or says under `name` why not: the
@@ -509,6 +580,100 @@ where
     else
       answerTicket queueAnswerName conversation ticket optionId
 
+/-- `agent-list` (the module docs). -/
+def listCommand (call : Call) : EditorM Unit := do
+  let some (workspace, project) := (← editorState).workspaceOf? call.target.window.buffer
+    | message s!"{listName}: {call.target.buffer.name} has no workspace"
+  Acp.Table.showList call.target.window.id workspace.location project listName
+
+/-- The agent `agent-visit` asked from `call` visits: the id its text
+names, or the agent on the cursor's row of an agents list; or what it says
+when there is none. -/
+def visitedAgent (call : Call) : EditorM (Except String AgentRecord) := do
+  let named :=
+    match call.arguments with
+    | .str text :: _ => if text.trimAscii.isEmpty then none else some text.trimAscii.toString
+    | _ => none
+  match named with
+  | some text =>
+    let some id := text.toNat? | return .error s!"{visitName}: {text} is no agent's id"
+    let some (_, record) ← Acp.Table.locate? id | return .error s!"{visitName}: no agent {id}"
+    return .ok record
+  | none =>
+    let some (project, held) ←
+      Acp.Table.listOf?
+          call.target.window.buffer | return .error s!"{visitName}: no agent on this line"
+    unless (← Acp.Table.listBuffers).contains call.target.window.buffer.index do
+      return .error s!"{visitName}: no agent on this line"
+    let some row ←
+      Generated.cursorRow call.target.window.id
+          call.target.buffer.text | return .error s!"{visitName}: no agent on this line"
+    let rendered :=
+      Acp.Table.render (← chosenView) project.name held (Acp.Table.running (← conversations))
+    let some id := (rendered.2[row]?).join | return .error s!"{visitName}: no agent on this line"
+    let some record := held.find? (·.id == id) | return .error s!"{visitName}: no agent {id}"
+    return .ok record
+
+/-- Resumes the session `sessionId` of `record` in a conversation of its id,
+in the buffer `buffer?` or a new one, shown for `call`: the session job
+loads it from the agent's own store (the module docs). -/
+def resume (call : Call) (record : AgentRecord) (sessionId : String) (buffer? : Option Nat) :
+    EditorM Unit := do
+  let state ← editorState
+  let some workspace := state.workspaces.workspace? record.location
+    | message s!"{visitName}: {record.location.describe} is no workspace"
+  unless workspace.location.can.runCommands do
+    message
+        s!"{visitName}: {workspace.label} is {workspace.location.describe}, where commands cannot run"
+    return
+  let resumed : Conversation :=
+    { number := record.id, agent := record.agent, location := record.location
+      sessionId := some sessionId }
+  let resumed := resumed.noted s!"resuming {record.agent} session {sessionId} in {resumed.root}"
+  let id ←
+    match buffer? with
+    | some index =>
+      pure (BufferId.mk index)
+    | none =>
+      let .ok id ← createBuffer (state.freeName s!"*agent: {record.agent} {workspace.label}*") "" |
+        message s!"{visitName}: the conversation buffer could not be made"
+        return
+      discard <| id.setReadOnly true
+      Workspace.setBufferWorkspace id workspace.location
+      discard <| id.setMajorMode modeName
+      pure id
+  let resumed := { resumed with buffer := some id.index }
+  save resumed
+  redraw resumed
+  Acp.Table.change record.id #[.resuming]
+  match
+    ←
+      startJob sessionJob [.nat record.id, .str record.agent, .str resumed.root, .str sessionId]
+          (key := some (sessionKey record.id)) with
+  | .error refusal =>
+    update record.id (·.noted s!"{visitName}: {refusal.describe}")
+  | .ok () =>
+    pure ()
+  discard <| id.display call.target.window.id visitName
+
+/-- `agent-visit [id]` (the module docs). -/
+def visitCommand (call : Call) : EditorM Unit := do
+  let record ←
+    match ← visitedAgent call with
+    | .ok record =>
+      pure record
+    | .error said =>
+      message said
+      return
+  match Acp.Table.Visit.decide record (← conversation? record.id) with
+  | .show index =>
+    discard <| (BufferId.mk index).display call.target.window.id visitName
+    Acp.Table.change record.id #[.seen]
+  | .resume sessionId buffer? =>
+    resume call record sessionId buffer?
+  | .refuse words =>
+    message s!"{visitName}: {words}"
+
 /-- `agent-cancel` (the module docs). -/
 def cancelCommand (call : Call) : EditorM Unit := do
   let some conversation ← ofCall? cancelName call | return
@@ -522,6 +687,7 @@ def stopCommand (call : Call) : EditorM Unit := do
   let some conversation ← ofCall? stopName call | return
   cancelJob (sessionKey conversation.number)
   closeTickets conversation "session stopped"
+  Acp.Table.change conversation.number #[.stopped "session stopped"]
   update conversation.number fun conversation =>
       { conversation.closePending with
             ended := conversation.ended.orElse fun _ => some "stopped", turn := none
@@ -543,10 +709,12 @@ store; a conversation buffer's session's job is cancelled, which ends its
 child, its pending tickets audited closed, and its conversation dropped. -/
 def closing (id : BufferId) : EditorM Unit := do
   Permissions.closingQueue id
+  Acp.Table.closingList id
   let some conversation ← ofBuffer? id | return
   cancelJob (sessionKey conversation.number)
   closeTickets conversation "buffer closed"
   Workspace.setUnscoped store ((← conversations).filter (·.number != conversation.number))
+  Acp.Table.change conversation.number #[.stopped "buffer closed"]
   Permissions.redrawQueues
 
 /-- The conversation buffer's major mode: `toggle` folds a tool call, and the
@@ -556,6 +724,12 @@ def conversationMode : Editor.Mode :=
     locals := [("p", promptName), ("c", cancelName), ("k", stopName)]
     roleDescs := [(Role.toggle, "fold or unfold the tool call")]
     localDescs := [("p", "prompt the agent"), ("c", "cancel the turn"), ("k", "stop the session")] }
+
+/-- The agents list's major mode: the localleader's `o` visits the agent on
+the cursor's row. -/
+def listMode : Editor.Mode :=
+  { name := Acp.Table.modeName, locals := [("o", visitName)]
+    localDescs := [("o", "visit the agent on this line")] }
 
 /-- The queue buffer's major mode: the localleader's `a` answers the request
 on the cursor's row. -/
@@ -588,11 +762,16 @@ def setup : SetupM Unit := do
   commandWith eventsName eventsCommand
   commandWith queueName queueCommand
   commandWith queueAnswerName queueAnswerCommand
+  commandWith listName listCommand
+  commandWith visitName visitCommand
   Extension.workJob AgentsApi.Agent sessionJob sessionWork
   workJob sendJob sendWork
   workJob Permissions.auditJob Permissions.auditWork
+  workJob Acp.Table.stallJob Acp.Table.stallWork
+  AgentsApi.Table.store.keptAcrossRestart (keep := AgentsApi.Table.keep)
   defineMode conversationMode
   defineMode permissionsMode
+  defineMode listMode
   Extension.add ({ name := "acp", closing } : BuffersApi.Closing)
   exCommand startName startName (takes := .text)
   exCommand promptName promptName (takes := .text)
@@ -601,5 +780,7 @@ def setup : SetupM Unit := do
   exCommand stopName stopName
   exCommand queueName queueName
   exCommand queueAnswerName queueAnswerName (takes := .text)
+  exCommand listName listName
+  exCommand visitName visitName (takes := .text)
 
 end Acp

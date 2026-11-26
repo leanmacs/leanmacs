@@ -107,6 +107,26 @@ def stateChecks : List Check :=
               again.items == closed.items)
             s!"{repr states}" },
     { name :=
+        "a user's chunks are joined by id into the user's message while a loaded history is replayed, and ignored otherwise; a prompt ends the replay"
+      run := do
+        let opened : Opened := { session := 1, sessionId := Contract.sessionId }
+        let chunks : Batch :=
+          {
+            events :=
+              #[.userChunk (some "msg-u1") "Read ", .userChunk (some "msg-u1") "notes.txt.",
+                .chunk (some "msg-1") "Done.", .userChunk none "Again."] }
+        let loaded := (example1.opened opened (loaded := true)).applyBatch chunks
+        let live := (example1.opened opened).applyBatch chunks
+        let prompted := (example1.opened opened (loaded := true)).prompted "p"
+        saw
+            (loaded.items ==
+                #[.userMessage (some "msg-u1") "Read notes.txt.", .message (some "msg-1") "Done.",
+                  .userMessage none "Again."] &&
+              live.items == #[.message (some "msg-1") "Done."] &&
+              loaded.replaying &&
+              !prompted.replaying)
+            s!"{repr loaded.items}; {repr live.items}" },
+    { name :=
         "the session's open gives its number, id, mode and modes; its end is kept and clears the turn; a tool call's fold toggles"
       run := do
         let opened :=
@@ -139,9 +159,10 @@ def stateChecks : List Check :=
                 .permission 2 none Contract.second #[] .withdrawn,
                 .permission 3 (some 1) Contract.call Contract.options (.answered "allow"),
                 .permission 4 (some 1) Contract.call Contract.options .closed,
-                .turnEnded 1 "end_turn", .note "session stopped"]
+                .turnEnded 1 "end_turn", .note "session stopped",
+                .userMessage (some "msg-u1") "Read notes.txt.", .userMessage none ""]
             unfolded := #["call-edit-1"], turn := some 2, awaiting := true
-            ended := some "stopped" }
+            ended := some "stopped", replaying := true }
         let bare : Acp.Conversation := { number := 2, agent := "other", location := .local "/" }
         saw
             (Acp.Conversation.decode full.encode == some full &&

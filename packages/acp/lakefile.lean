@@ -30,7 +30,9 @@ that declares the crate.
   (`Acp.Conversation` and the modules under it), the rewrite of a buffer
   whose text it generates (`Acp.Generated`), the queue of permission
   requests, the policy's application and the audit log (`Acp.Permissions`
-  and the modules under it), its list of packages and its entry module. It requires `buffers-api` for the hook
+  and the modules under it), the agent table, its agents lists, the stall
+  watchdog and resume (`Acp.Table` and the modules under it), its list of
+  packages and its entry module. It requires `buffers-api` for the hook
   `BuffersApi.Closing`, at which a closed conversation buffer stops its
   session. `AcpReal` is the Rust-backed binding alone,
   whose `moreLinkObjs` is the glue, so the glue is linked into exactly the
@@ -88,8 +90,8 @@ of the package but its tests and the binding. -/
 @[default_target] lean_lib Acp where
   globs :=
   #[.one `Acp.Codec, .one `Acp.Service, .one `Acp.ClaudeCode, .andSubmodules `Acp.Conversation,
-    .one `Acp.Generated, .andSubmodules `Acp.Permissions, .one `Acp.Packages,
-    .one `Acp.EditorPackage]
+    .one `Acp.Generated, .andSubmodules `Acp.Permissions, .andSubmodules `Acp.Table,
+    .one `Acp.Packages, .one `Acp.EditorPackage]
   plugins := lintPlugin
 
 /-- The Rust-backed binding, with the package's glue. -/
