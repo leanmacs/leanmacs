@@ -13,7 +13,6 @@ import Editor.Headless.Journal
 import Editor.Headless.Journal.Real
 import Editor.Headless.Queue.Real
 import Editor.Headless.Wait
-import EnvironmentApi
 import Editor.InferredWait
 import Editor.Job.Fake
 import Editor.Job.Jobs
@@ -27,6 +26,7 @@ import Editor.SyntaxTree.Real
 import Editor.Text.Real
 import Editor.Watch.Real
 import Editor.Window
+import EnvironmentApi
 
 /-!
 # The headless host

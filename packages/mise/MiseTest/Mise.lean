@@ -1,5 +1,3 @@
-import Editor.Config.Packages
-import Editor.Extension
 import Editor.File
 import Editor.File.Model
 import Editor.Job
@@ -7,7 +5,6 @@ import Editor.Job.Model
 import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
-import Editor.Setup
 import EnvironmentApi
 import EnvironmentApiTest.Contract
 import EnvironmentApiTest.Model

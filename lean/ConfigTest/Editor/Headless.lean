@@ -61,9 +61,9 @@ import Editor.Text.Real
 import Editor.Window
 import Editor.Window.Real
 import Editor.Workspace
-import FilesApiTest.Fake
 import EnvironmentApi
 import EnvironmentApiTest.Fake
+import FilesApiTest.Fake
 
 /-!
 # Config tests: `Editor/Headless.lean`

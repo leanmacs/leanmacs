@@ -14,7 +14,6 @@ import Editor.Loop
 import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
-import Editor.Process.Environment
 import Editor.Program
 import Editor.Role
 import Editor.Scene

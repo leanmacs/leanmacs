@@ -1,8 +1,8 @@
 import ConfigTest.Check
 import ConfigTest.Support.Shipped
+import Editor.Setup
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
-import Editor.Setup
 
 /-!
 # Config tests: `Editor/Setup.lean`

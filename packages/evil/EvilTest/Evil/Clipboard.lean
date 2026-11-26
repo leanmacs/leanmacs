@@ -11,7 +11,6 @@ import Editor.InputScheme
 import Editor.Invocation
 import Editor.Job
 import Editor.Loop.Driver
-import Editor.Process.Environment
 import Editor.Program
 import Editor.Scene
 import Editor.State

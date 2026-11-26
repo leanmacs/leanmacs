@@ -1,17 +1,12 @@
-import Editor.Diff
 import Editor.File
 import Editor.File.Model
 import Editor.FileWatch
 import Editor.FileWatch.Model
-import Editor.Fuzzy
 import Editor.Invocation
-import Editor.Job
 import Editor.Job.Model
 import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
-import Editor.Program
-import Editor.Text
 import Editor.Text.Model
 import EnvironmentApiTest.Fake
 import EnvironmentApiTest.Model
