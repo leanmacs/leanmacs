@@ -6,7 +6,8 @@ import Editor.SyntaxTree.Registration.Model
 
 A pure model of the syntax tree interface (`Editor/SyntaxTree.lean`). It
 knows one grammar of its own, `json` (`Editor/SyntaxTree/Model/Json.lean`),
-beside any registered at run time (`registry`), and the
+under each name it is told is compiled in (`compiled`), beside any
+registered at run time (`registry`), and the
 subset of the query language that `Editor/SyntaxTree/Model/Query.lean`
 states, and it parses at once: a question of captures is answered of the
 snapshot's own text, so the model answers `notParsed` only when a test
@@ -38,9 +39,15 @@ Its state has three parts:
 - `refreshAfter`: the refresh delay it was handed last. It parses at once,
   so every tree is exact and the delay changes no answer; it is what the
   editor's checks read.
+- `compiled`: the names of its compiled-in grammars, `#[json]` by default.
+  Each is parsed as JSON, ships the model's highlights (`highlights`) and
+  nothing else, and is overridden by a registration of its name. A test of
+  the editor that needs a second compiled-in grammar (`lean`, the grammar a
+  declaration may override) names it here; the contract runs on the
+  default.
 - `registry`: the grammars registered at run time
   (`Editor/SyntaxTree/Registration/Model.lean`), empty by default. The model
-  lists each registered name after `json`, attaches and compiles for it,
+  lists each registered name after the compiled ones, attaches and compiles for it,
   and parses its texts as JSON, the one grammar it has; it ships no query
   for a registered name, `json` included once a registration overrides it,
   as the library ships none for a registered grammar. A test sets it; in a
@@ -99,7 +106,10 @@ structure SyntaxTreeModel where
   /-- The refresh delay `refreshAfter` handed it last, if any. The model
   parses at once, so it changes nothing it answers. -/
   refreshAfter : Option Nat := none
-  /-- The grammars registered at run time: listed after `json`, attached and
+  /-- The names of its compiled-in grammars, each parsed as JSON and
+  shipping the model's highlights. -/
+  compiled : Array String := #["json"]
+  /-- The grammars registered at run time: listed after `compiled`, attached and
   compiled for, parsed as JSON, and shipping no query. -/
   registry : GrammarRegistry := {}
   /-- Whether the tree of each text's last edit is delivered: when `false`,
@@ -109,18 +119,19 @@ structure SyntaxTreeModel where
 
 namespace SyntaxTreeModel
 
-/-- The one grammar the model knows. -/
+/-- The one grammar the model knows, compiled in by default. -/
 def grammar : String :=
   "json"
 
-/-- The highlights query the model ships for `json`, in its own query
-subset. -/
+/-- The highlights query the model ships for each compiled-in name, in its
+own query subset. -/
 def highlights : String :=
   "(pair key: (_) @string.special.key)\n(string) @string\n(number) @number\n(null) @constant.builtin\n(true) @constant.builtin\n(false) @constant.builtin\n"
 
-/-- The grammars the model lists: `json`, then each registered name. -/
+/-- The grammars the model lists: the compiled-in names, then each
+registered name that is not among them. -/
 def grammars (model : SyntaxTreeModel) : Array String :=
-  model.registry.grammars #[grammar]
+  model.registry.grammars model.compiled
 
 /-- Whether the model lists `named`. -/
 def knows (model : SyntaxTreeModel) (named : String) : Bool :=
@@ -175,8 +186,8 @@ def detach (model : SyntaxTreeModel) (snapshot : SnapshotId) :
         languages := model.languages.filter (!model.sameText ·.1 snapshot)
         kept := model.kept.filter (!model.sameText ·.1 snapshot) })
 
-/-- `shippedQuery`: highlights alone, of `json` while no registration
-overrides it; a registered grammar ships none. -/
+/-- `shippedQuery`: highlights alone, of a compiled-in name while no
+registration overrides it; a registered grammar ships none. -/
 def shippedQuery (model : SyntaxTreeModel) (named : String) (kind : QueryKind) :
     Except SyntaxTreeError String :=
   if !model.knows named then .error .unknownGrammar

@@ -167,6 +167,37 @@ def syntaxTreeChecks : List Check :=
               .ok true &&
             (SyntaxTreeM.runModel (SyntaxTree.attach snapshot "python") model).1 matches
               .error .unknownGrammar },
+    { name :=
+        "a syntax tree model given lean as compiled in beside json lists both, attaches and compiles for each and ships its highlights for each; a registration of lean overrides it and ships no query for it, and the default model lists json alone"
+      run :=
+        pure <|
+          let (model, ids) := syntaxTreeModelOf #["[1]"]
+          let snapshot := ids[0]?.getD ⟨0⟩
+          let compiled := { model with compiled := #["json", "lean"] }
+          let leanRegistered : GrammarRegistry :=
+            { registered :=
+                #[("lean", { library := "/lib/lean.so", symbol := "tree_sitter_lean" }, .whole)] }
+          let both : SyntaxTreeM Bool := do
+            let names ← SyntaxTree.grammars
+            SyntaxTree.attach snapshot "lean"
+            let query ← SyntaxTree.compile "lean" "(number) @n"
+            let found ← SyntaxTree.captures snapshot query 0 3
+            discard (SyntaxTree.compile "json" "(number) @n")
+            let leanShips ← SyntaxTree.shippedQuery "lean" .highlights
+            let jsonShips ← SyntaxTree.shippedQuery "json" .highlights
+            return names == #["json", "lean"] && found.size == 1 &&
+                leanShips == SyntaxTreeModel.highlights && jsonShips == SyntaxTreeModel.highlights
+          let overridden : SyntaxTreeM Bool := do
+            let names ← SyntaxTree.grammars
+            SyntaxTree.attach snapshot "lean"
+            return names == #["json", "lean"] &&
+                (←
+                  SyntaxTreeContract.refusedWith .noShippedQuery
+                      (SyntaxTree.shippedQuery "lean" .highlights))
+          (SyntaxTreeM.runModel both compiled).1 matches .ok true &&
+            (SyntaxTreeM.runModel overridden { compiled with registry := leanRegistered }).1 matches
+              .ok true &&
+            (SyntaxTreeM.runModel SyntaxTree.grammars model).1.toOption == some #["json"] },
     { name := "every property of the syntax tree contract holds of the model"
       run := return (← syntaxTreeBroken SyntaxTreeModel.handle).isEmpty }]
 

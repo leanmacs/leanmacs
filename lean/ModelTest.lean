@@ -306,8 +306,10 @@ of blanks, the `ERROR` answer outside the subset, what the query subset
 refuses as unsupported, the contract biting on a model written here
 that answers a range with the whole text's captures, and a model whose
 trees a test says are not delivered refusing questions of captures with
-`notParsed`, and a model given a registry listing, attaching and compiling
-for its registered grammars and shipping no query for them.
+`notParsed`, a model given a registry listing, attaching and compiling
+for its registered grammars and shipping no query for them, and a model
+given `lean` as compiled in beside `json` listing and shipping its
+highlights for both until a registration of `lean` overrides it.
 `grammarRegistryChecks` pin the grammar registry's model
 (`Editor/SyntaxTree/Registration/Model.lean`): given a table, a
 registration, the override of the compiled-in `json`, the default policy,
