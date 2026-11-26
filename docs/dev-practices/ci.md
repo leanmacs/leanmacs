@@ -395,7 +395,7 @@ does not hold them, and may relink), and saves nothing. A change of `lean/lean-t
   step clones it there at the revision the host's manifest pins and builds
   it (20 s on a developer's Mac).
 - **Not the sets' or the packages' build output**: `packages/.lake`,
-  each `.lake` under `packages/` (the twenty-five default packages' and the
+  each `.lake` under `packages/` (the twenty-six default packages' and the
   eighteen interface packages'), `tests/packages/.lake`, each fixture package's `.lake` and
   `tests/empty-set/.lake` are in no cache. So every run writes and
   compiles the three generated roots, links the default set's editor, the

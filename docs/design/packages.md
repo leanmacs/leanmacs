@@ -400,8 +400,8 @@ package `evil` declares it, so the default set's array holds
 build says of the editor for the files it generates in a config directory
 ("A config directory requires the core and the set", below): the set's Lake name and the
 text of the core's `lean-toolchain`. The default set's root imports
-exactly these twenty-seven modules (`lake -d ../packages query
-:editorRootImports` lists them), and its base is the twenty-six named
+exactly these twenty-eight modules (`lake -d ../packages query
+:editorRootImports` lists them), and its base is the twenty-seven named
 (`:editorBase`). The interface packages have no entry module, so neither
 names them; their modules come with their implementations' libraries.
 
@@ -2349,9 +2349,10 @@ an implementation package; a package may import interface packages. A
 package is an interface package when its lakefile declares
 `keywords = ["editor-interface"]`, and an implementation package
 otherwise. The rule holds for every module of a package, its tests
-included. The twenty-five default packages are implementation packages:
+included. The twenty-six default packages are implementation packages:
 each imports the core and, but for `mode-line`, `shipped-themes`,
-`languages`, `restore` and `package-set`, one or more interface packages,
+`languages`, `restore`, `package-set` and `mise` (which imports the core's
+interface library `EnvironmentApi`), one or more interface packages,
 its own or another's ("The module map", below, lists each one's
 `require`s). The eighteen interface packages import the core alone, but
 for `ex-api`, whose contract names `shell-api`'s `shell-command`, and
