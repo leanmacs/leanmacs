@@ -169,7 +169,7 @@ lean/link-stubs/                           macOS: the system libraries' link stu
   `-framework` or `-l` for each stub, and `-Wl,-platform_version,macos,
   <minos>,<sdk>` from its `platform-version` (`linkAsEditor`,
   `stubLinkArgs`). `tools/stage-bundle.sh` writes them from the shipped
-  editor with `tools/link-stubs.sh`, as phase 1 proved ("A link on the
+  editor as the `link-stubs` binary does (`editor_release::stubs`), as phase 1 proved ("A link on the
   user's machine, measured"). With `LEAN_CC` set, a checkout's link, the
   archive's `native-static-libs` line is passed as before. The stubs hold
   only what the shipped editor imports, and the toolchain has no C library
@@ -262,7 +262,8 @@ missing from that stub, so none is generated for it.
 
 **The frameworks, `libobjc` and `libiconv` have no stub in the toolchain,
 so stubs are written from the built editor.** The app is to ship them;
-nothing but the check makes them yet. `tools/link-stubs.sh` reads the built
+nothing but the check makes them yet. The `link-stubs` binary
+(`crates/editor-release-std`, `editor_release::stubs`) reads the built
 `editor` (`otool -L`, `nm -m -u`) and writes one text stub (`.tbd`,
 version 4) for each library it loads other than `libSystem` and `libc++`:
 the library's install name and versions, and only the symbols the editor
@@ -290,7 +291,7 @@ The staged pieces the relink used:
 | `core/glue.o` | The glue object, as `mise run lean` compiled it | 1 | 0.1 MB |
 | `core/libeditor_ffi.a`, now `core/libeditor_rust.a` | The Rust archive (`target/release`): as measured, `editor-ffi`'s; now the crate the package-set build generates for the default set, which holds no package crate, so the core's ([packages.md](packages.md), "Rust in a package"). Beside it now `core/native-static-libs`, the system libraries rustc printed for it, which the link passes when it links against an SDK | 1 | 82.0 MB |
 | `core/lakefile.toml`, `core/lake-manifest.json` | `tools/user-link/core`: they make `core/` a Lake package with no target | 2 | 772 bytes |
-| `stubs/` | `tools/link-stubs.sh` on the built `editor`: 14 stubs and `platform-version` | 15 | 8,681 bytes |
+| `stubs/` | The link stubs written from the built `editor` (now by the `link-stubs` binary): 14 stubs and `platform-version` | 15 | 8,681 bytes |
 | `package/` | As measured, `tests/user-link/package`: `lakefile.lean`, `Main.lean`, `UserLinkFixture.lean`. Now the package's sources (`UserLinkFixture.lean`, `UserLink/EditorPackage.lean`), `tools/user-link/package/lakefile.lean` and the generated `EditorSetRoot.lean`: 4 files, 9,183 bytes | 3 | 10,028 bytes |
 
 The rule for the editor's modules is the built editor's own link line
@@ -449,7 +450,7 @@ What was not tried:
   the symbol.
 - Stubs for Objective-C class symbols. The editor imports none (it imports
   `objc_getClass`, which looks a class up by name at run time), and
-  `tools/link-stubs.sh` refuses one rather than write a form it has not
+  `editor_release::stubs` refuses one rather than write a form it has not
   linked.
 - A smaller toolchain than the whole of it.
 - Compiling the glue with the bundled `clang`: the glue object is prebuilt.

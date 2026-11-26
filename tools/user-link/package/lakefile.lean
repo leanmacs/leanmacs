@@ -62,7 +62,7 @@ def filesEnding (dir : FilePath) (ending : String) : IO (Array String) := do
 /-- The link arguments that name the system's libraries, for the stage
 `stage`.
 
-With stubs staged (`<stage>/stubs`, written by `tools/link-stubs.sh`): the
+With stubs staged (`<stage>/stubs`, written by the `link-stubs` binary): the
 two search paths, then every stub the directory holds, a framework for each
 `<name>.framework` and a library for each `lib<name>.tbd`, then the platform
 version in the directory's `platform-version` (`<minos> <sdk>`). So the link

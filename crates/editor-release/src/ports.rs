@@ -1,9 +1,11 @@
 //! The ports release tooling reaches the world through: the environment
-//! ([`Env`]) and running a program ([`Process`]).
+//! ([`Env`]), running a program ([`Process`]) and the files of a build and
+//! a bundle ([`Files`]).
 
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 /// A program to run, with every argument the core chose for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +111,135 @@ pub trait Process {
 pub trait Env {
     /// The variable's value, or `None` when it is unset.
     fn var(&self, name: &str) -> Option<OsString>;
+}
+
+/// Why the file system refused an operation, naming the path it refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilesError {
+    /// The path the operation was on.
+    pub path: PathBuf,
+    /// The system's reason, or the fake's.
+    pub reason: String,
+}
+
+impl FilesError {
+    /// The error at `path`, for `reason`.
+    pub fn new(path: &Path, reason: impl Into<String>) -> Self {
+        Self {
+            path: path.to_owned(),
+            reason: reason.into(),
+        }
+    }
+}
+
+impl fmt::Display for FilesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.path.display(), self.reason)
+    }
+}
+
+impl Error for FilesError {}
+
+/// What is at a path, a link followed to what it names, as `test -e` and
+/// `test -f` see it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// Nothing: no entry, or a link to nothing.
+    Nothing,
+    /// A regular file, and whether any of its executable bits is set.
+    File {
+        /// Whether any of its executable bits is set.
+        executable: bool,
+    },
+    /// A directory.
+    Directory,
+    /// Something else: a device, a socket, a pipe.
+    Other,
+}
+
+/// What an entry of a directory is, a link not followed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryKind {
+    /// A regular file, and whether any of its executable bits is set.
+    File {
+        /// Whether any of its executable bits is set.
+        executable: bool,
+    },
+    /// A directory.
+    Directory,
+    /// A symbolic link, whose target [`Files::read_link`] reads.
+    Link,
+    /// Something else: a device, a socket, a pipe.
+    Other,
+}
+
+/// One entry of a directory: its name and what it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    /// The entry's name in its directory.
+    pub name: OsString,
+    /// What it is, a link not followed.
+    pub kind: EntryKind,
+}
+
+/// Port: the files a release tool reads and lays out. Every path is
+/// absolute.
+pub trait Files {
+    /// What is at `path`, a link followed.
+    ///
+    /// # Errors
+    ///
+    /// The system's reason when it cannot tell, such as a path it may not
+    /// search; nothing there is [`Kind::Nothing`], not an error.
+    fn kind(&self, path: &Path) -> Result<Kind, FilesError>;
+    /// The entries of the directory `dir`, `.` and `..` left out, sorted by
+    /// the bytes of their names, each with its kind, a link not followed.
+    ///
+    /// # Errors
+    ///
+    /// The system's reason, as when `dir` is not a directory.
+    fn entries(&self, dir: &Path) -> Result<Vec<Entry>, FilesError>;
+    /// The target text of the link at `path`.
+    ///
+    /// # Errors
+    ///
+    /// The system's reason, as when `path` is not a link.
+    fn read_link(&self, path: &Path) -> Result<PathBuf, FilesError>;
+    /// The bytes of the file at `path`, a link followed.
+    ///
+    /// # Errors
+    ///
+    /// The system's reason, as when nothing is there.
+    fn read(&self, path: &Path) -> Result<Vec<u8>, FilesError>;
+    /// Writes `bytes` as the file at `path`, replacing a file there, with
+    /// its executable bits set or not. Its directory must be there.
+    ///
+    /// # Errors
+    ///
+    /// The system's reason, as when the directory is not there.
+    fn write(&mut self, path: &Path, bytes: &[u8], executable: bool) -> Result<(), FilesError>;
+    /// Makes the directory `path` and every directory above it; one that is
+    /// there already is no error.
+    ///
+    /// # Errors
+    ///
+    /// The system's reason, as when a file is in the way.
+    fn make_dir(&mut self, path: &Path) -> Result<(), FilesError>;
+    /// Copies the file at `from`, a link followed, to `to`, replacing a file
+    /// there: its bytes and its executable bits, cloned where the file
+    /// system can. The directory of `to` must be there.
+    ///
+    /// # Errors
+    ///
+    /// The system's reason, as when `from` is not a file.
+    fn copy(&mut self, from: &Path, to: &Path) -> Result<(), FilesError>;
+    /// Makes a symbolic link at `link` whose target text is `target`.
+    /// Nothing may be at `link` already.
+    ///
+    /// # Errors
+    ///
+    /// The system's reason, as when something is at `link`.
+    fn symlink(&mut self, target: &Path, link: &Path) -> Result<(), FilesError>;
 }
 
 /// Runs `invocation` and reads its captured output as UTF-8.

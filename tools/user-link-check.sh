@@ -49,7 +49,8 @@
 #      the workspace's packages and no inherited `LEAN_PATH`;
 #    - `stubs/`: link stubs for the system's frameworks and libraries, made
 #      from the built `editor`'s import table, and the minimum macOS and
-#      SDK version it records (`tools/link-stubs.sh`);
+#      SDK version it records (the `link-stubs` binary of
+#      crates/editor-release-std, `editor_release::stubs`);
 #    - `package/`: the Lean sources of `tests/user-link/package`; the
 #      lakefile of the user's side of the link,
 #      `tools/user-link/package/lakefile.lean`, which requires `core/` and
@@ -415,7 +416,8 @@ generated=$(cd "$lean_dir" && lake -d "$fixture" query :editorRoot) ||
 cp "$generated" "$package/EditorSetRoot.lean"
 
 if [ "$linker" = bundled ]; then
-  "$tools/link-stubs.sh" "$dev_editor" "$stage/stubs"
+  cargo build --quiet --locked --release --manifest-path "$repo/Cargo.toml" -p editor-release-std --bin link-stubs
+  "$repo/target/release/link-stubs" "$dev_editor" "$stage/stubs"
 
   # The check's own two programs, compiled into the stage with the staged
   # clang and its linker, against the toolchain's own `libSystem` stub and

@@ -187,7 +187,8 @@ built it, which the record beside the editor, `editor.oleans`, names, and
 an object under none of them fails the check; the one object its link
 names that is not staged is its generated root's, since the relinked
 editor has a root of its own); link stubs for
-the system's frameworks and libraries, which `tools/link-stubs.sh` writes
+the system's frameworks and libraries, which the `link-stubs` binary
+(`editor_release::stubs`) writes
 from the built editor's import table; the trivial package
 `tests/user-link/package`, one module with one command and its entry
 module; the lakefile of the user's side of the link

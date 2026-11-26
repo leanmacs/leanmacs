@@ -988,7 +988,7 @@ run = "tools/module-bench.sh lean"
 # ld64.lld the Lean toolchain bundles and no Xcode command line tools? It
 # stages the toolchain, the editor's `.olean` files, objects, glue object and
 # Rust archive as `lean` built them, and link stubs made from the built
-# editor's import table (tools/link-stubs.sh), in a temporary directory;
+# editor's import table (the link-stubs binary, editor_release::stubs), in a temporary directory;
 # shows that a sandbox (tools/user-link/sandbox.sb) makes the tools, both
 # SDKs, the real toolchain and the repository unreachable; builds the
 # trivial package tests/user-link/package and links an `editor` from it,
