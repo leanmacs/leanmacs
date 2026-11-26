@@ -87,7 +87,6 @@ and `ModelTest/Lint/RealHost/`.
 | `lean/ConfigTest/Editor/Window/Real.lean` | `.wiring` | The window mode's start-up wait on a real host: its edge. |
 | `lean/ConfigTest/Editor/Job/Real.lean` | `.wiring` | The library's diff and grep services, each end to end, reached by a host's job. |
 | `lean/FfiTest/Editor/Window/Real.lean` | `.wiring` | `Editor.Window.host` on the scripted platform: the window mode's wiring, its restart's exec and real timers. |
-| `lean/Editor/Test/Fixture/RealThread.lean` | `.wiring` | The headless CLI over a real loop thread, whose runs happen in gate steps a Lean linter cannot see. |
 | `packages/evil/EvilTest/Linked/Evil/Operators.lean`, `.../Evil/TreeObjects.lean` | `.wiring` | The shipped Rust `indents` and `textObjects` queries through the Vim scheme's keys, which the syntax model does not hold. |
 | `packages/files/FilesTest/Linked/Files/Real.lean` | `.wiring` | The library's file, watch and syntax services through the files package's commands, each end to end. |
 | `packages/compile/CompileTest/Linked/Compile/Real.lean` | `.wiring` | The library's process service through the compile mode: a child's streamed lines and its exit status. |
@@ -108,19 +107,9 @@ ends: the linter confines construction and reference, not values.
 - FfiTest's binding checks, which reach the raw `Editor.Ffi` bindings, the
   adapters' own surface, and start no loop or service through a mark.
 
-## The CLI's runs in the gate
-
-The headless fixtures run stepped by default (`fixture-test`;
-[headless-mode.md](headless-mode.md), "How the gate runs a fixture"). Those
-that keep running the CLI over a real loop thread are declared once, each
-with what it covers and the gate step that runs it, in
-`Editor.Test.Fixture.RealThread`, a module of the wiring set: the runner's
-are compared both ways by `case_compare` in `tools/wiring-runs.sh`, which
-runs each through the CLI and hands its output to `fixture-test … compare
-<script> <file>`, each step decided by its exit status, and the others'
-subject is a real effect, the journal's write, abort, restart and recovery among
-them (`restore/abort-script` then `restore-script`). The user-sets and
-bundle-sets restarts (W68, W69) run the real editor in their gate steps too.
+The headless fixtures run stepped, on the fakes (`fixture-test`;
+[headless-mode.md](headless-mode.md), "How the gate runs a fixture"), so
+none of them is in the set.
 
 ## How the set runs
 
@@ -141,9 +130,8 @@ nothing prints a line for something else to count.
   ffi-test and every linked test with such a module take a wiring mode
   that runs those groups alone (`config-test … --wiring`, `ffi-test
   wiring`, `<P>Test-Linked … --wiring`, through `tools/package-set.sh
-  --wiring run`) and answer `wiring-modules`, which a reviewer reads and
-  `package-set.sh --wiring run` uses to skip a linked test that holds no
-  such module. Every root reads its mode with a shared reader of
+  --wiring run`, which runs every linked test with `--wiring`) and answer
+  `wiring-modules`, which a reviewer reads. Every root reads its mode with a shared reader of
   `CheckGroup.Mode` and selects its checks by it with `CheckGroup.select`,
   so the roots cannot drift apart: a linked root with
   `CheckGroup.Mode.ofArguments?`, config-test with `CheckGroup.Mode.read?`
@@ -174,32 +162,26 @@ nothing prints a line for something else to count.
   `FfiTest.windowScenarios : List Editor.Scenario`, in their `.wiring`
   module: `main` dispatches each subcommand through it, and
   `ffi-test wiring-scenarios` lists it.
-- **The CLI's runs.** `tools/wiring-runs.sh` holds a case for each
-  real-thread entry whose site is ffi-test and for each scenario, moved from
-  the gate's lines as they were. `prepare` stages what a case builds (the
-  greeting entry's install), and `run` runs the cases, each passing or
-  failing by its status. A case fails when any of its steps fails, not
-  only its last: `run` runs it with errexit as a command of its own, never
-  as a condition, where sh would ignore errexit. `tools/bundle-test.sh`
-  has a `headless` line for each entry at bundle-test; its `stage` and
-  `headless` modes split the stage from the runs. That every entry and
-  scenario has its case or line is a reviewer rule
-  (`.agents/rules/structure.md`, "The wiring set's runs"), which
-  `fixture-test real-thread --site <site>` and `ffi-test
-  wiring-scenarios` list for.
+- **The scenarios' runs.** `mise.toml`'s `window-scenarios` task, a gate
+  step of its own, has one line for each entry of
+  `FfiTest.windowScenarios`, each passing or failing by its status. Each
+  scenario copies the file or config directory it may write into a
+  temporary directory of its own. That every entry has its line is a
+  reviewer rule (`.agents/rules/structure.md`, "The wiring set's runs"),
+  which `ffi-test wiring-scenarios` lists for.
 - **Once in the gate, by structure.** `mise run ffi-test` runs each root
-  once (ffi-test, contract-test and config-test, each a step), every
-  `wiring-runs.sh` case once (`run`), and the linked tests once through
-  the fixture set: `package-set.sh run ../tests/packages` runs every linked
+  once (ffi-test, contract-test and config-test, each a step) and the
+  linked tests once through the fixture set: `package-set.sh run ../tests/packages` runs every linked
   test, since the fixture set requires the default set and Lake names
   every default package for it too, and the default set's run is
   `package-set.sh --no-linked run ../packages`, which runs its headless
-  fixtures on the shipped set's harness and no linked test. An item no
-  runner reaches is a gap reviewers hold, not a gate step. Nothing in `ci`
-  runs a real root's wiring mode or calls `stress.sh`.
+  fixtures on the shipped set's harness and no linked test.
+  `mise run window-scenarios` runs each scenario once. An item no runner
+  reaches is a gap reviewers hold, not a gate step. Nothing in `ci` runs a
+  real root's wiring mode or calls `stress.sh`.
 - **Each round of stress.** The loop's default suites are the wiring
-  modes (`linked-wiring` over the fixture set alone), contract-test, the
-  CLI's runs and the bundle's; each run passes when it exits 0.
+  modes (`linked-wiring` over the fixture set alone), contract-test and
+  the window scenarios; each run passes when it exits 0.
 
 ### Adding a check to the wiring set
 
@@ -213,11 +195,7 @@ nothing prints a line for something else to count.
    (d)) and answer `wiring-modules`. `package-set.sh run` finds it through
    Lake.
 3. **A window scenario.** Add an entry to `FfiTest.windowScenarios` and a
-   case to `tools/wiring-runs.sh`.
-4. **A CLI fixture over a real loop thread.** Add an entry to
-   `RealThread.entries`, and a case to `tools/wiring-runs.sh` (site
-   ffi-test) or a `headless` line to `tools/bundle-test.sh` (site
-   bundle-test).
+   line to `mise.toml`'s `window-scenarios` task.
 
 ## config-test's wall time
 

@@ -28,7 +28,7 @@ result. No job or step continues on error, so a red leg fails the workflow.
 The job sets:
 
 - `MISE_AUTO_INSTALL: "false"`: mise installs only what the mise-action
-  step names (Rust, cargo-deny, clang-format and the workflow lint's three
+  step names (Rust, cargo-deny, clang-format and the workflow lint's two
   tools), never the rest of `mise.toml` (hk, pkl, OpenTofu, gitleaks).
 - `CARGO_PROFILE_DEV_DEBUG: "0"`: the runner's disk is small, and nothing
   the gate checks reads debug information (`tools/linux/run.sh` does the
@@ -52,18 +52,16 @@ and no `MISE_ENV`. The owner chose 26.0 on 2026-11-17, lowering it from
 
 1. The Apple-silicon runner is fixed at `macos-26`, and dyld refuses to
    start a Mach-O whose `minos` is newer than the host. A bundle built for
-   27.2 could not have its headless mode run by `app-check` on the runner,
-   or its `--version` run by `dmg-check`, and the `.dmg` is uploaded only
-   after both pass.
+   27.2 could not have its `--version` run by `dmg-check` on the runner,
+   and the `.dmg` is uploaded only after that passes.
 2. 26.0 is proven: the gate builds the whole tree for it and runs all its
-   tests on `macos-26`, and `build` runs the shipped bundle itself there
-   (relocated, with an empty environment, elaborating config from the
-   bundle's own modules) before every upload. That meets the lakefile's
-   rule, "the lowest macOS the bundle has been run on", as far as
-   `app-check` exercises the app.
+   tests on `macos-26`, and `build` runs the shipped app's `--version` and
+   builds the default set from the mounted image there before every
+   upload. That meets the lakefile's rule, "the lowest macOS the bundle has
+   been run on", as far as `dmg-check` exercises the app.
 3. One value, not two. Keeping 27.2 for the bundle while linking CI's
    executable for 26.0 would ship an app Finder refuses to open on macOS 26
-   although it runs there, weaken `app-check`, and keep a CI-only profile.
+   although it runs there, weaken `dmg-check`, and keep a CI-only profile.
 4. The nightly is for sharing, and most Apple-silicon Macs it is shared
    with run 26 or later.
 
@@ -108,27 +106,22 @@ reach a step only through `env:`, never inside `run:`). Its steps:
    the one `ci (macos-26)` just saved for this commit, so no Lean module is
    rebuilt. It is never saved here: the bundle, about 3.9 GB with the
    Lean toolchain, is built under `packages/.lake` and enters no cache.
-6. "App check": `mise run app-check`, which builds the bundle stamped with
-   the run's build ID and commit (`mise run app`) and checks it
-   ([`on-demand-checks.md`](on-demand-checks.md)).
+6. "App": `mise run app`, which builds the bundle stamped with the run's
+   build ID and commit, ad-hoc signed.
 7. "Pack": `mise run dmg`, which packs `dist/Leanmacs-<build-id>.dmg`.
-8. "Check the dmg": `mise run dmg-check`, which mounts the image and checks
-   its entries, their bytes, the app's signature, stamp and `--version`,
-   and builds the default set from the read-only volume alone.
-9. "Disk": `df -h . "$RUNNER_TEMP"`, so the runner's free disk after the
-   bundle (3.9 GB, cloned for `app-check`'s copy and the image's staging,
-   so it exists once on APFS) and the image (about 1.2 GB) is on record in
-   the log.
-10. Upload `dist/*.dmg` as the workflow artifact `Leanmacs-dmg`, kept 14
+8. "Check the dmg": `mise run dmg-check`, an ignored cargo test
+   (`crates/editor-release-std/tests/dmg_mount.rs`) that mounts the image
+   and checks its entries, their bytes, the app's signature, stamp and
+   `--version`, and builds the default set from the read-only volume alone.
+9. Upload `dist/*.dmg` as the workflow artifact `Leanmacs-dmg`, kept 14
    days, failing if there is no `.dmg` (`if-no-files-found: error`).
 
 Every step runs unconditionally, so a failed check uploads nothing. The
 artifact is on `main`'s runs only; a branch or a pull request builds no
 `.dmg`. Download it from the run's "Artifacts" list: a zip holding
 `Leanmacs-<build-id>.dmg`. The job's limit is 120 minutes; on the owner's
-Mac (2026-11-20) `app-check` took about 4 minutes, `dmg` 97 s and
-`dmg-check` 39 s. The first run on `main` after the toolchain shipped
-(packages roadmap, phase 9) is where the runner's own times and disk show.
+Mac (2026-11-20) building and checking the bundle took about 4 minutes,
+`dmg` 97 s and `dmg-check` 39 s.
 
 ### `release`: the nightly
 
@@ -302,7 +295,7 @@ instead.
 ### `secrets-scan`
 
 `mise run secrets-scan` ([`publishing.md`](publishing.md), "The secret
-scan"): the probe, then gitleaks over `main`'s history, its merges and the
+scan"): gitleaks over `main`'s history, its merges and the
 uncommitted tree. It is a job of its own because it needs the full history
 (`fetch-depth: 0`), which the gate does not, and only gitleaks.
 
@@ -315,12 +308,14 @@ pushed, which are public once pushed, so they are scanned too.
 ### The stress loop, on dispatch only
 
 `.github/workflows/stress.yml` runs [the stress loop](on-demand-checks.md#the-stress-loop-on-demand)
-on `ubuntu-24.04`, the gate's Linux leg. It has no push or pull-request
+on both of the gate's legs, `macos-26` and `ubuntu-24.04`. It has no push or pull-request
 trigger: it runs only when someone dispatches it, with the input `rounds`
-(50 by default, a multiple of 5). Five shards each check out, install the
-tools as the `ci` job does, run `mise run ci` once to build and gate, then
-`tools/stress.sh <rounds / 5> config contract rust open-file` under
-`2 x nproc` hogs, the suites at `nice -n 5`, and upload their logs,
+(50 by default, a multiple of 5). Five shards on each leg each check out,
+install the tools as the `ci` job does, run `mise run ci` once to build
+and gate, then `tools/stress.sh <rounds / 5>`, naming no suite, so its
+four default suites (`config-wiring`, `ffi-wiring`, `contract` and
+`linked-wiring`) run under `2 x cores` hogs, the suites at `nice -n 5` on
+Linux and `taskpolicy -c utility` on macOS, and upload their logs,
 config-test's timings of each check and the summary. The niceness is the
 loop's own, measured: at `nice -n 19` config-test ran 200 to 400 times
 slower and could not end inside the loop's limit
@@ -329,7 +324,7 @@ Stress step exits with the loop's status, and the shards run with
 `fail-fast` off, so the run fails when any shard's loop does; no job adds
 up the shards' counts or reads their logs. It saves no cache. A failure is a bug: it is fixed and the workflow is
 dispatched again from round 1, never re-run shard by shard to collect
-passes. `tools/workflow-check.sh` holds it to its rules (below).
+passes. Review holds it to its rules in `.agents/rules/workflows.md`.
 
 ## Concurrency
 
@@ -427,7 +422,7 @@ does not hold them, and may relink), and saves nothing. A change of `lean/lean-t
 ## Owner checks after the first push
 
 Nothing here can be checked offline: the gate's own run (`mise run ci`)
-checks the workflow's shape, but only GitHub runs it. After this workflow
+checks that the workflow is valid and safe, but only GitHub runs it. After this workflow
 lands, the owner confirms it live, in this order.
 
 1. **Before the first push, apply the allowlist.** `Swatinem/rust-cache@*`
@@ -469,7 +464,7 @@ lands, the owner confirms it live, in this order.
      the pushed commit.
    - The `build` job's Lake restore step logs a cache hit on the
      `…-<sha>` key.
-   - "App check" ends `app-check: ok`.
+   - "App", "Pack" and "Check the dmg" are green.
    - The run's Artifacts list `Leanmacs-dmg`. Download it and unzip it: it
      holds `Leanmacs-<that ID>.dmg`. Open the `.dmg`: it shows
      `Leanmacs.app`, `Applications`, `LICENSE` and `README.txt`.
@@ -504,17 +499,15 @@ lands, the owner confirms it live, in this order.
     the assets' `updated_at` (`gh release view nightly --json assets`) are
     unchanged. Delete the branch.
 11. **A failing release leaves the old nightly whole (optional, owner fork
-    only).** This is confirmed offline: the `nightly` module's tests show
-    that a mismatched stamp is refused before any `gh` call, and the
-    workflow lint's `release-steps` and `release-token` rules hold that
-    the publish is the last step and the only one with a token. To also
-    see it live, do this in an owner fork with Actions on, never in
-    leanmacs/leanmacs. The mutation must keep the gate green, or `release`
-    is skipped and the check proves nothing:
+    only).** The `nightly` module's tests show that a mismatched stamp is
+    refused before any `gh` call, and review holds release.yml to the
+    publish being the last step and the only one with a token
+    (`.agents/rules/workflows.md`). To also see it live, do this in an
+    owner fork with Actions on, never in leanmacs/leanmacs. The mutation
+    must keep the gate green, or `release` is skipped and the check proves
+    nothing:
     - In the fork's `ci.yml`, change the `release` job's `commit:` input
       to another valid 40-hex SHA (any other commit on `main`).
-    - Drop `workflow-lint` from the fork's `[tasks.ci].depends`, since the
-      `release-gating` rule would otherwise fail the gate.
     - Pass: in `release / publish`, "Prepare the nightly" ran and failed
       with a mismatch naming both commits; "Publish the nightly" did not
       run; the fork's `nightly` tag and assets are as before. A run where
@@ -567,79 +560,16 @@ it runs the same in `linux-ci`'s copy of the checkout. It runs, in order:
    actions included, to name a full commit SHA. A finding fails the gate;
    fix the workflow. An ignore that is truly needed goes inline as
    `# zizmor: ignore[<rule>]`, with a comment saying why.
-3. `tools/workflow-check.sh` on each file in `.github/workflows`, written
-   with yq: what this repository needs of the workflows, that neither tool
-   knows. The rules are picked by the file's base name, and a workflow
-   file with no rules fails the rule `workflows`, so a new one cannot go
-   unchecked.
-   - On every file: that nothing continues on error, the mise env of each
-     job (a job that calls a reusable workflow cannot set one and is
-     skipped), that every `uses:` is a full SHA with a `# v…` tag comment,
-     that every cache saves from `main` only and saves the key a restore
-     uses, that mise-action's version is the Dockerfile's `MISE_VERSION`,
-     and that every third-party action is on the allowlist (below).
-   - On `ci.yml`: the triggers, the two legs and `fail-fast: false`, the
-     single "Gate" step, the concurrency group, Lake's key, that `ci` uses
-     rust-cache, that the `ci` job's mise-action `install_args` names every
-     `mise.toml` tool the gate runs (with `MISE_AUTO_INSTALL` false, a tool
-     left out is missing on the runner; the tools the gate never runs are
-     named in the check), the `secrets-scan` job, that
-     `tools/ci/install-elan.sh` pins the Dockerfile's elan,
-     `build-gating`: `build-id` and `build` on `main` pushes only, after
-     the gate, `build` calling `build.yml` with the run's ID and commit,
-     `release-gating` (`release` on `main` pushes only, after `ci`,
-     `build-id`, `build` and `secrets-scan`, calling `release.yml` with
-     the ID and commit, with exactly `contents: write`, `pages: write` and
-     `id-token: write`), `release-concurrency`
-     (the group `nightly-release`, never cancelled) and `write-scope` (the
-     workflow's token reads contents only, and no job but `release` names
-     a write scope).
-   - On `build.yml`: `build-trigger` (`workflow_call` alone, its three
-     inputs required strings), `build-job` (one job on `macos-26`, a leg of
-     `ci.yml`'s matrix, stamped from the inputs, checking out `ref`),
-     `build-steps` (app-check, dmg, dmg-check in that order and
-     unconditional, then the upload, which fails with no `.dmg`) and
-     `build-cache` (no save, and `ci.yml`'s Lake and elan keys).
-   - On `stress.yml`: `stress-trigger` (`workflow_dispatch` alone, with
-     the one input `rounds`), `stress-runner` (every job on
-     `ubuntu-24.04`), `stress-matrix` (exactly five shards, `fail-fast`
-     off), `stress-steps` (one unconditional `mise run ci`, then one
-     `tools/stress.sh` step over config, contract, rust and open-file).
-   - On `release.yml`: `release-trigger` (`workflow_call` alone, its three
-     inputs required strings), `release-job` (exactly the jobs `publish`
-     and `pages`; `publish` on `macos-26`, top-level permissions `{}` and
-     its exactly
-     `contents: write`, stamped from the inputs, one checkout of `ref`,
-     every checkout without persisted credentials), `release-steps` (the
-     download of `Leanmacs-dmg`, then `mise run nightly`, and last, once,
-     the publish command; no `if:`; no step running `gh release`, `gh
-     api`, `git push` or `git tag`), `release-token` (exactly one step has
-     a token in its env, the one running the publish command; none in the
-     job's or workflow's env; no other value names `github.token` or
-     `secrets.`), `release-cache` (no rust-cache or `actions/cache`
-     step), `release-page` (one render of `target/nightly/build.json` into
-     `target/site` after `mise run nightly`, and one
-     `actions/upload-pages-artifact` of `target/site` after it),
-     `pages-job` (`pages` needs exactly `publish`, has no `if:`, runs on a
-     leg of `ci.yml`'s matrix with exactly `pages: write` and
-     `id-token: write` in the `github-pages` environment, and has one
-     step, `actions/deploy-pages` with `id: deployment`) and
-     `pages-concurrency` (the group `pages`, never cancelled).
 
-   Each failure names its rule; the script's header lists them.
-4. `tools/workflow-lint-probe.sh`: zizmor must reject
-   `tests/workflow-lint/tag-pinned.yml`, a tag-pinned action, with
-   `unpinned-uses`; and the check must reject copies of `ci.yml`,
-   `build.yml` and `release.yml` (or of a file it reads) broken one rule
-   at a time, every
-   rule at least once, naming that rule and no other, and pass the
-   unbroken copies. A new rule in the check needs its mutation in the
-   probe, and a new workflow file its rules in the check. A config or a
-   check that stopped checking fails here.
+Each passes by its exit status. What this repository needs of the
+workflows that neither tool knows (no `continue-on-error`, the mise env of
+each job, caches saved from `main` only, each job's triggers, permissions,
+steps and concurrency) is written as reviewer rules in
+`.agents/rules/workflows.md`; review holds a change to a workflow to them.
 
-actionlint, zizmor and yq are pinned in `mise.toml`, installed by mise's
-aqua backend as prebuilt, checksum-checked binaries. Pin a release that
-is at least two weeks old.
+actionlint and zizmor are pinned in `mise.toml`, installed by mise's aqua
+backend as prebuilt, checksum-checked binaries. Pin a release that is at
+least two weeks old.
 
 ## Adding or bumping an action
 
@@ -662,7 +592,6 @@ third-party patterns in `infra/github/actions.tf`'s `patterns_allowed`
 (today `Swatinem/rust-cache@*` and `jdx/mise-action@*`). A new third-party
 action needs its `<owner>/<repo>@*` pattern there, applied with `mise run
 infra-apply` **before** the workflow that uses it is pushed, or that
-workflow's jobs fail at startup. `tools/workflow-check.sh` fails on a
-third-party action with no pattern there, so the gate catches it before
-the push ([`publishing.md`](publishing.md), "The repository's settings as
-code").
+workflow's jobs fail at startup. Review checks the pattern is there before
+the push (`.agents/rules/workflows.md`; [`publishing.md`](publishing.md),
+"The repository's settings as code").

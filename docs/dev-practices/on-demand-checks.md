@@ -80,9 +80,12 @@ This converts a config directory from the form the editor no longer loads,
 modules under `Config/` (the `config-migrate` binary of
 `crates/editor-config-migrate-std`, over `editor_config_migrate::migrate`,
 whose module docs say what it moves and what it refuses). It is run by
-hand, on a real config directory, which is why it is no part of the gate:
-the gate runs the same binary on a temporary copy of a fixture
-([the-gate.md](the-gate.md), "The config directory").
+hand, on a real config directory, which is why it is no part of the gate.
+The gate holds the conversion from both sides:
+`crates/editor-config-migrate-std/tests/convert.rs` converts a copy of
+`tests/config-migrate/chunks` with the binary and requires the result to
+equal `tests/config-migrate/migrated` byte for byte, and config-test's
+`migratedConfigChecks` loads that directory on the real elaborator.
 
 - The files, in byte order, are cut at the first that defines `setup` or
   declares something `private`. For most configs that is the last file.
@@ -113,9 +116,8 @@ mise run module-bench
 
 This measures, on macOS, what each import set config may use costs an app
 bundle (`tools/module-bench.sh`). It is a measurement, not a check, so it
-is not part of the gate; the one thing it asserts is that each headless run
-it times installed its config, since a rejected reload exits 0 and would be
-timed as if it were a start-up. For `Editor` and for `Editor Lean` it prints the modules the
+is not part of the gate, and it asserts nothing. For `Editor` and for
+`Editor Lean` it prints the modules the
 import reads (`config-test bench-modules <sysroot> <olean dir> <module>…`)
 and the bytes of each file kind, of whole top-level directories and of those
 modules alone; which file kinds the import needs, by staging the whole
@@ -133,7 +135,7 @@ the editor into one directory, `lean/editor`, which the `stage-bundle` binary's
 `--closure` form names in the bundle's record, so the staged editor finds
 it with no directory argument, prints its modules and bytes,
 and times five runs of that bundle's headless mode with an empty
-environment on each of two configs: `tests/headless/generate`, whose root
+environment on each of two configs: `tests/bench/generate`, whose root
 imports `Editor` alone, and `tests/headless/bundle`, whose root imports
 `Lean`, so the base grows to hold it. Every temporary
 directory is removed by a trap. It takes about two minutes and a few GB of
@@ -148,14 +150,14 @@ mise run app && mise run dmg && mise run bundle-bench
 ```
 
 `tools/bundle-bench.sh`, macOS on arm64 only, measures the built
-`Leanmacs.app` and this build's disk image, and asserts nothing but that
-each run it times did what it times: the bundle's bytes and files by part
+`Leanmacs.app` and this build's disk image, and asserts nothing: the
+bundle's bytes and files by part
 (the toolchain, the core and the default packages, the editor and the
 launcher, the Rust archive, the link stubs, the whole); the image's bytes
 and its share of GitHub's 2 GiB release-asset limit; the median real time
 of 5 headless runs of the bundle's launcher with `env -i`, and the
 largest maximum resident set (`/usr/bin/time -l`), on
-`tests/headless/generate` (a config of `Editor` alone) and on
+`tests/bench/generate` (a config of `Editor` alone) and on
 `tests/headless/bundle` (a config that imports `Lean`); the time of the
 unchanged default set's build from the bundle, the first (which
 elaborates the core's lakefile) and a second; and the time of the build
@@ -164,322 +166,41 @@ directory. It takes about 40 s; its figures of 2026-11-20 are in
 [`lean-runtime.md`](../design/lean-runtime.md), "The bundle with the
 toolchain, measured".
 
-## The user-side link, on demand
-
-```sh
-mise run user-link-check
-```
-
-This links an `editor` the way a user's Mac would have to, from pieces the
-app ships and with the `clang` and `ld64.lld` the Lean toolchain bundles,
-in a sandbox where the Xcode command line tools cannot be reached, and runs
-it (`tools/user-link-check.sh`). Unlike the benchmarks it asserts: it exits
-non-zero at the first step that does not hold, naming it. It is macOS on
-arm64 only, so it is not part of the gate, which runs on Linux too.
-
-It stages, by copy, in a temporary directory: the Lean toolchain; the
-`.olean` file and the object of each module the built editor's link names,
-the core's and the default packages' (`packages/shipped-themes`,
-`packages/compile`), the glue
-object and the Rust archive, as `mise run lean` built them (the built
-editor is the default package set's, `packages/.lake/build/bin/editor`;
-each module is taken from the build directory of the Lake package that
-built it, which the record beside the editor, `editor.oleans`, names, and
-an object under none of them fails the check; the one object its link
-names that is not staged is its generated root's, since the relinked
-editor has a root of its own); link stubs for
-the system's frameworks and libraries, which the `link-stubs` binary
-(`editor_release::stubs`) writes
-from the built editor's import table; the trivial package
-`tests/user-link/package`, one module with one command and its entry
-module; the lakefile of the user's side of the link
-(`tools/user-link/package/lakefile.lean`); and the relinked editor's root,
-which no one writes: the package-set build generates it for the set
-`tests/user-link`, the default set and that package (`lake -d
-../tests/user-link query :editorRoot` in `lean/`, which writes the root in
-that set's ignored build directory and links nothing;
-[`lean-runtime.md`](../design/lean-runtime.md), "A link on the user's
-machine, measured"). Then it
-
-1. probes the sandbox (`tools/user-link/sandbox.sb`): running
-   `/usr/bin/xcrun`, `/usr/bin/clang`, `/usr/bin/ld`, `/usr/bin/cc` and
-   `/usr/bin/git`, reading the SDK and listing the real toolchain and the
-   repository must each be refused, and the staged `clang` must run;
-2. builds the package and links the `editor` inside the sandbox with the
-   staged `lake`, with an empty environment and decoys for the developer
-   tools first on the `PATH`;
-3. signs the result with `codesign --force -s -` and verifies it;
-4. runs its headless mode with an empty environment, given the staged
-   toolchain and two `.olean` directories joined with `:`, the staged
-   pieces' and the one the package's build wrote: the relinked editor's
-   config base is its set's, `Editor` and then the entry modules of the
-   default packages and of the fixture package, and it has no record of
-   where their modules are. It must print exactly
-   `tests/headless/expected` for the standing fixture, but for the
-   package's command, `user-link-hello`, which each line that lists the
-   commands must name once; and for
-   `tests/user-link` the package's command must run and say its message in
-   the echo area (`tests/user-link/expected`, which holds the echo area's
-   text alone, cut from the `scene` line);
-5. requires that no decoy ran, that every file the linker opened is under
-   the stage, that the build changed none of the staged pieces, and that
-   the relinked editor records the built editor's minimum macOS and SDK
-   version;
-6. prints the machine, the staged pieces with their sizes, the link line,
-   and the medians of five runs each of the package build, the whole build
-   and link, the link alone and the signing.
-
-```sh
-tools/user-link-check.sh lean --linker system
-```
-
-is the baseline: the same steps outside the sandbox with `/usr/bin/cc` and
-the SDK's frameworks, with the same report, which lists where the linker's
-files came from. `--keep` leaves the temporary directory and prints its
-path.
-
-Run it from a shell that is not itself sandboxed: when `sandbox-exec`
-cannot apply the profile the check fails at its probe, and it never goes on
-unsandboxed. It needs `mise run lean` first, which the task runs; the check
-itself takes about half a minute. The staged copies are made with `cp -c`,
-which clones on APFS; where it cannot clone, the stage is about 3.4 GB. The
-build adds the relinked editor, 230 MB. Every temporary file is under one
-directory, removed by a trap. The decision it stands behind, the
-figures and what was not tried are in
-[`lean-runtime.md`](../design/lean-runtime.md), "A link on the user's
-machine, measured". Run it again when the Lean toolchain's pin moves, when
-the Rust library gains a system dependency, and when macOS or Xcode is
-upgraded.
-
-## User package sets, on demand
-
-`mise run user-sets-check` (`tools/user-sets-check.sh`) runs the checks of a
-user's package set that need git, Cargo or more builds than the gate's
-`user-sets-test` ([packages.md](../design/packages.md), "User package
-sets"). It writes in a temporary directory, with `HOME` and `XDG_*` inside
-it (Cargo's and rustup's homes kept, so the Rust set builds offline), but
-the fixture packages' own `.lake/` and, for the Rust set, the checkout's
-`target/`. It ends `user-sets-check: ok`.
-
-- **E, the first launch after an editor update.** A version 1 is built
-  from the shipped default. A copy of the shipped default with its
-  records, its `editor.core` another core's, is what `leanmacs --data …
-  --default <copy> -- --probe` starts, not version 1. Through the
-  launcher, the copy's start-up reload builds the set and restarts into
-  the new version, which answers `hello-init: initialize ran`. With a
-  lakefile naming `broken-elab`, the copy keeps running and the build
-  buffer shows Lean's `Type mismatch`.
-- **F, git update.** A package in a local repository (`file://`), whose
-  lakefile names the core from git as a published package's does (a
-  `file://` stand-in for the core's repository, `tools/core-repo.sh`), is
-  installed and its pin recorded in `editor.packages`; after a new commit
-  `:package-update git-package` moves the pin and builds version 2;
-  `:package-update git-package <first rev>` writes `rev` into the
-  lakefile and builds version 3 at that pin. Each step runs on the version
-  the one before built, so its start-up reload builds nothing. After
-  them the lakefile's last require must be `editor-core` by the running
-  core's directory, which each edit wrote at the root, and no core may be
-  cloned under the config's `.lake/packages`.
-- **G, Rust.** A set holding the fixture package `echo`, whose crate the
-  editor's Cargo workspace holds, builds with Cargo, and the new editor
-  passes its probe. (A crate outside the repository is refused; `ffi-test`
-  checks that, `tools/rust-outside-check.sh`.)
-- **H, a probe failure.** `init-throws`, whose `initialize` throws in an
-  executable called `editor` (Lean runs it when it compiles a module that
-  imports it, too, so it does not throw there), builds and links; the new
-  editor fails its probe, nothing is published, and the editor keeps
-  running.
-
-Measured on macOS arm64 (2026-11-20), the fixture packages and the core
-already built: E 10 s, F 17 s, G 5 s, H 6 s; 38 s in all. The gate's
-`user-sets-test` takes about 17 s on the same machine, its A's two
-successful builds and one failed link about 13 s together.
-
 ## The app bundle, on demand
 
 ```sh
-mise run app-check
+mise run app
+mise run dmg && mise run dmg-check
 ```
 
-This builds `Leanmacs.app` from the default package set, at
-`packages/.lake/build/Leanmacs.app` (`mise run app`;
-[`building.md`](building.md), "The app bundle") and checks it, on macOS on
-arm64 only (`tools/app-check.sh lean packages`: the core's directory and
-the set's). First it works out the stamp it expects
-with the tool `mise run app` stamps with (`leanmacs-release build-id` and
-`commit`), and exports it, so its own builds see the same values. When
-neither `LEANMACS_BUILD_ID` nor `LEANMACS_COMMIT` was set, it also requires
-the two to be HEAD's committer time in UTC and HEAD's SHA as git itself
-prints them (`TZ=UTC git log -1 --date=format-local:%Y%m%d%H%M%S
---format=%cd`, `git rev-parse HEAD`), so the stamping tool is not its own
-judge; when either was set, as in CI, it takes the values given. In a
-temporary directory removed by a trap it copies the bundle with `ditto
---clone`, so what follows runs on a relocated copy, which costs no disk on
-APFS; verifies the copy's signature with `codesign --verify --strict
---deep`; reads its `Info.plist` with `plutil` (it lints,
-`CFBundleExecutable` is `leanmacs`, the launcher, an executable file under
-`Contents/MacOS` beside the `editor` it starts,
-`LSArchitecturePriority` starts with arm64, `LSMinimumSystemVersion` is no
-later than this machine's macOS, and `CFBundleDocumentTypes` is exactly two
-entries, each with `CFBundleTypeRole` `Editor` and one content type,
-`public.text` at `LSHandlerRank` `Alternate` then `public.data` at `None`,
-read key by key with `plutil -extract`; a walk over the whole plist finds no
-`LSHandlerRank` of `Default` or `Owner` and no `UTImportedTypeDeclarations`
-or `UTExportedTypeDeclarations`; and both checks are run on mutated copies
-that must each fail naming the key: a rank of `Default` on the first entry,
-a role of `Viewer` on the second, a second content type, a third entry, and
-for the walk a `Default`, an `Owner`, an inserted
-`UTExportedTypeDeclarations` and an `Owner` under a dotted key it cannot
-address (which fails as `cannot read` that path); `CFBundleShortVersionString`
-is the line of `lean/app/version`, read from the file the build reads,
-`CFBundleVersion` the expected build ID and `LeanmacsCommit` the expected
-commit; `LSApplicationCategoryType` is `public.app-category.developer-tools`
-and `NSHumanReadableCopyright` is not empty) and the launcher and the editor
-each with `lipo` (arm64 alone) and `vtool` (a `minos` no later than
-`LSMinimumSystemVersion`); converts the icon back to an iconset with `iconutil -c
-iconset`, which must hold exactly the ten standard images, each read by
-ImageIO (`sips`) at its nominal size, 16 to 1024 pixels; and runs the
-copy's `editor headless`, through the launcher, on `tests/headless/bundle` with no
-directory argument, an empty environment (`env -i`) and `/` as the working
-directory, which must exit 0 and print exactly `expected` (the fixture's
-root imports `Lean`, so the bundle carries Lean's module files); runs its
-`editor headless --generate` the same way on a copy of
-`tests/headless/generate`, whose config directory holds `init.lean` alone,
-which must load the config, print exactly its `expected`, and leave a
-`lean-toolchain` equal to `lean/lean-toolchain` and a `lakefile.toml`
-equal to `tests/headless/generate/expected-lakefile-bundle` naming the
-copy's `Contents/Resources/lean/set`; and runs the
-copy's `editor --version` the same way, which must print exactly the
-version, `build <ID>` and `commit <SHA>` lines, so the Lean plist reader
-reads the keys the build writes; then the launcher's `--probe` of the
-copy's editor, and of a copy of the editor outside the bundle started with
-`--default`, each with an empty environment from `/`, must print `probe:
-ok`, the launcher, and the copy as CoreFoundation's main bundle with the
-app's real identifier, so an editor outside the bundle has the app's
-identity (`docs/design/lean-runtime.md`, "The app's identity across an
-exec"). Then **a user's package set from the copy alone**
-(`tools/bundle-sets.sh`, whose header says each check, as
-`bundle-test` runs them on a staged bundle; [`the-gate.md`](the-gate.md),
-"The bundle test"): the copy holds every piece a build needs; a first
-launch on a config of `init.lean` alone generates the lakefile and builds
-nothing; and, with the copy's `Contents/Resources/lean` made read-only
-and decoys of `lean`, `lake`, `clang`, `cc`, `ld`, `xcrun`, `cargo` and
-`git` first on the `PATH` (and decoy `LEAN_CC`, `CC` and `LEAN_SYSROOT`),
-the copy's own `lake` builds the unchanged default set compiling nothing
-of the copy, the copy's editor installs `hello-init` from a path and runs
-its command, drops the default package `compile` and starts the result,
-and builds the C FFI fixture `c-glue` with the bundled `clang`, whose
-command answers from its C function. Last, it builds
-`editorApp` again and checks that the bundle's executable, its
-`CodeResources` and the build's trace file keep their modification times
-and inodes: the second build copied and signed nothing. Lake's output is
-printed, and holds no `Built «default-set»:editorApp` line. Then, in a
-clone of the core and of the default set, `lean/` and `packages/` side by
-side in the temporary directory (`cp -c`, so it takes no space), with a
-`cargo` that does nothing first on the `PATH`, it swaps the built
-`stage-bundle` binary for a script that stages with it and then fails,
-builds `editorApp`, which must fail, puts the binary back so the inputs
-hash to the old trace again, and builds
-once more: the bundle must still verify and be the old one, so a failed or
-interrupted rebuild leaves no half-built bundle taken as up to date. In the
-same clone it writes another version, 9.8.7, into `lean/app/version` and
-builds: the bundle must be rebuilt, verify, and name 9.8.7 as
-`CFBundleShortVersionString`, with `CFBundleVersion` still the build ID. It turns the artwork, `lean/app/Leanmacs.png`, a quarter
-(`sips -r 90`) and builds: the bundle must be rebuilt and verify, and its
-icon must hold the ten images with a 1024-pixel one that differs from
-before, so the artwork must not look the same turned a quarter. It
-writes malformed versions (a trailing space, an empty file, `1.x`, a second
-line, four parts) and builds each: each build must fail on the version file
-and leave the old bundle. It writes `0.1.0` with no newline after it and
-builds: the build must succeed and the bundle name 0.1.0, with
-`CFBundleVersion` still the build ID, and the check
-must read 0.1.0 from that file as it reads `lean/app/version`, so the two
-take the same files. Last, it replaces the artwork with a 512×300 PNG, a
-256×256 PNG and a 1024×1024 JPEG and builds each: each build must fail
-with an error that `app/Leanmacs.png` must be a 1024x1024 PNG and leave
-the old bundle; then it puts the artwork back. It builds with
-`LEANMACS_BUILD_ID=20010203040506` and `LEANMACS_COMMIT` forty `a`s
-(20010203040507 and forty `b`s when it was given that stamp itself): the
-bundle must be rebuilt and verify, name both, and its `editor --version`
-must print them. Last, it builds with `LEANMACS_BUILD_ID` unset, `2026` and
-`2001020304050x`, and with `LEANMACS_COMMIT` unset, in upper case and 39
-digits long: each build must fail naming the variable and leave the old
-bundle, which must still verify. It ends `app-check: ok` with the bundle's
-size, and takes about four minutes, the steps' times printed beside them
-(37 s on 2026-11-17; 70 s on 2026-11-20 with the launcher; 247 s on
-2026-11-20 with the toolchain, on an Apple M5 Max: the package-set checks
-about 50 s, each of the clone's seven rebuilds about 25 s, as each stages
-and signs the whole toolchain again). Its time limit is 600 s. On
-2026-11-20 it ended `app-check: ok, 3.6G bundle`.
+`mise run app` builds `Leanmacs.app` from the default package set, at
+`packages/.lake/build/Leanmacs.app`, stamped with the build ID and the
+commit and signed ad hoc, on macOS on arm64 only
+([`building.md`](building.md), "The app bundle"). `mise run dmg` packs it
+and `mise run dmg-check` checks the image ("The disk image, on demand",
+below): the app's signature, its stamp, its `editor --version`, and the
+default set built from the read-only volume alone. CI's build job runs
+the three on every push to main, before it uploads the image
+([`ci.md`](ci.md)).
 
-To see the stamp taken from the environment, as CI gives it, run it once
+None of them is part of the gate, which builds no bundle: it is about
+3.9 GB, must be signed, and the gate runs on Linux too. What the bundle's
+staging decides is held in the gate by the `stage-bundle` binary's tests
+(`crates/editor-release`, `crates/editor-release-std/tests/stage_bundle.rs`),
+and what the launcher decides by `crates/editor-launch`'s and
+`crates/editor-launch-std`'s. Build the app and run `dmg-check` after a
+change to `editorApp`, to the `stage-bundle` binary
+(`editor_release::bundle`) or to module lookup
+(`lean/Editor/ModuleLookup.lean`).
+
+To see the stamp taken from the environment, as CI gives it, build once
 with both variables set, then rebuild from HEAD:
 
 ```sh
-LEANMACS_BUILD_ID=20010203040506 LEANMACS_COMMIT=$(printf 'a%.0s' $(seq 40)) mise run app-check
+LEANMACS_BUILD_ID=20010203040506 LEANMACS_COMMIT=$(printf 'a%.0s' $(seq 40)) mise run app
 plutil -extract CFBundleVersion raw -o - packages/.lake/build/Leanmacs.app/Contents/Info.plist   # 20010203040506
 mise run app
 ```
-
-It writes nothing outside its temporary directory but that second build,
-which is shown to write nothing, opens no window and needs no person. It is
-not part of the gate because the gate does not build the bundle, which is
-about 3.9 GB and must be signed, and runs on Linux too. It is the check for
-any change to `editorApp`, to the `stage-bundle` binary
-(`editor_release::bundle`) or to module lookup
-(`lean/Editor/ModuleLookup.lean`): such a change is not done until this
-ends `app-check: ok`. CI's build job runs it on every push to main, before
-it packs the disk image ([`ci.md`](ci.md)).
-
-## The restart on a desktop
-
-```sh
-mise run restart-check
-```
-
-This builds `Leanmacs.app` (`mise run app`) and checks, on this desktop,
-what the gate cannot: that a restart keeps the app's identity to
-LaunchServices (`tools/restart-check.sh packages`;
-`docs/design/lean-runtime.md`, "The app's identity across an exec"). macOS
-only. It opens windows, and needs no person. In a temporary directory
-removed by a trap, it copies the bundle, sets the copy's
-`CFBundleIdentifier` to `org.leanmacs.restart-check`, signs it ad hoc and
-verifies it, so the owner's `Leanmacs.app` and a running editor are never
-touched; copies the copy's editor to `elsewhere/editor`, outside the
-bundle; writes `bad`, which prints `probe: ok` for `--probe` and otherwise
-exits 3; and writes the config `tests/restart-check/config/init.lean`,
-which restarts into `elsewhere/editor` on entering a `*.restart-elsewhere`
-file and into `bad` on a `*.restart-bad` one, each only for a buffer this
-run opened (`Buffer.historyRestored` is false), so a restored buffer never
-restarts again. Then:
-
-- **A.** It launches the copy cold, `open -n -a <copy> --args --state …
-  --config … --sysroot … --oleans …` (the copy's two module directories,
-  given so that the editor outside the bundle loads the config too, as a
-  restart hands its options on), waits for `lsappinfo` to list an instance
-  of the identifier and records its pid, P.
-- **B.** It sends the copy an open-file event for `x.restart-elsewhere`
-  (`open -a <copy> <file>`): P's config restarts into `elsewhere/editor`,
-  after AppKit has checked in. It waits for the hand-over record to appear
-  and then go (the hand-shake), and asserts one instance of the identifier,
-  with pid P, `bundle path` the copy and name `Leanmacs`, and that P now
-  runs `elsewhere/editor` (`ps -o comm=`).
-- **C.** An open-file event for `after.txt` must reach that executable:
-  within 10 s the newest index lists it.
-- **D.** An open-file event for `y.restart-bad`: P restarts into `bad`,
-  which fails; the launcher's watcher, a process LaunchServices did not
-  launch, starts the previous executable, `elsewhere/editor`, as a new pid
-  Q. It asserts the hand-shake, one instance, with pid Q and the copy's
-  bundle path, that Q runs `elsewhere/editor`, and that an open-file event
-  for `after2.txt` reaches Q.
-
-It ends Q and prints `restart-check: ok` with both pids and paths; a
-failure names the step and prints what `lsappinfo` says of the identifier.
-It takes about 15 s. Its first run, on 2026-11-20 on an Apple M5 Max under
-macOS 27.2.1, passed every step; `docs/design/lean-runtime.md` keeps its
-output. Run it after a change to the launcher (`crates/editor-launch`,
-`crates/editor-launch-std`), to how the editor execs, to the bundle's
-`Info.plist`, or to the window's start-up.
 
 ## The disk image, on demand
 
@@ -512,7 +233,7 @@ it owns, and detaches it however it ends. Then:
   three;
 - a user's package set must build from the read-only volume alone: the
   image's `leanmacs headless --generate`, on a temporary config of
-  `tests/headless/generate`'s `init.lean`, writes a lakefile naming the
+  `tests/bench/generate`'s `init.lean`, writes a lakefile naming the
   volume's set and core, and the volume's own `lake -d <config> build
   :editorInstall`, with an empty environment but `PATH=/usr/bin:/bin`,
   `HOME` in the temporary directory and the app's `editor.build`, exits 0
@@ -560,7 +281,7 @@ mise run install
 ```
 
 This installs the app to use, on macOS on arm64 only. After `mise run
-app-check`, `tools/install-app.sh` replaces `/Applications/Leanmacs.app`
+app`, `tools/install-app.sh` replaces `/Applications/Leanmacs.app`
 with the built bundle, the default package set's
 (`packages/.lake/build/Leanmacs.app`), by `ditto`, and verifies its
 signature. When
@@ -772,7 +493,8 @@ and an input method's composition arrive.
 | `mise run window-check -- --no-ime` | Runs the window with composition not allowed, so a dead key arrives as a key marked dead. Seen on Linux under Xvfb. |
 | `mise run window-check -- --seconds <n>` | Closes the window after that many seconds if nobody has (120 by default). |
 
-The exit status is 0 when the window ran, 1 when it could not be opened and
+The exit status is 0 when the window ran and a key event reached the Lean
+loop, 1 when it could not be opened or no key event reached the loop, and
 2 when the options are not understood. A window that ran and never reported
 that it opened counts as one that could not be opened, in the report and in
 the status. The gate runs the same loop on the
@@ -1098,29 +820,21 @@ the CPU ("The load on Linux", below, says why 5). The suites:
 | Suite | Runs |
 |---|---|
 | `config-wiring` | `config-test --wiring`, from `lean/`, with `--timings`: the groups of its check set's modules of the wiring set |
-| `ffi-wiring` | `ffi-test wiring`, then the window scenarios (`tools/wiring-runs.sh run <prepared> scenarios`) |
+| `ffi-wiring` | `ffi-test wiring`, then the window scenarios (`mise run --skip-deps window-scenarios`) |
 | `contract` | `contract-test`, as the gate runs it |
 | `linked-wiring` | each linked test's wiring groups, `tools/package-set.sh --wiring run` over the fixture set, which names every default package too, so each runs once |
-| `cli-wiring` | the real-thread entries at ffi-test through the CLI (`tools/wiring-runs.sh run <prepared> fixtures`) |
-| `bundle-wiring` | the entries at bundle-test over a staged bundle (`tools/bundle-test.sh headless <prepared>/bundle`) |
 | `rust` | `cargo test --workspace --locked` (opt-in) |
 | `gate-ffi` | `mise run ffi-test`, whole (opt-in) |
-| `probe` | `STRESS_PROBE`'s command, for `tools/stress-probe.sh` alone (opt-in) |
 
-With no suite named it runs the first six, the wiring set. Nothing here
+With no suite named it runs the first four, the wiring set. Nothing here
 lists its checks: the roots' check sets, which `linter.wiringSet` holds
-complete, ffi-test's scenario table and the real-thread set's entries
-are the only source, read through the executables' own listings. The
-Rust workspace tests sit outside it (the roadmap keeps the Rust services'
-contract checks as they are), and are the opt-in `rust`. Run it after
-`mise run ci` has built everything: it builds nothing, and `cargo test`
-would build a changed tree inside the loop. Before the hogs start, a
-prepare stage stages, once, what the chosen suites build before their
-runs (`tools/wiring-runs.sh prepare`, the greeting entry's install;
-`tools/bundle-test.sh stage`, together about 4 GB) into a temporary
-directory of its own, never under `$STRESS_OUT`, which the trap removes
-when the loop ends, however it ends. Each run passes when it exits 0 and
-fails when it does not; nothing reads its log to decide. A wiring mode
+complete, and ffi-test's scenario table are the only source, read through
+the executables' own listings and mise.toml's `window-scenarios` task.
+The Rust workspace tests sit outside it (the roadmap keeps the Rust
+services' contract checks as they are), and are the opt-in `rust`. Run it
+after `mise run ci` has built everything: it builds nothing, and `cargo
+test` would build a changed tree inside the loop. Each run passes when it
+exits 0 and fails when it does not; nothing reads its log to decide. A wiring mode
 that selected nothing, or a root a suite skipped, would pass the round:
 that coverage is held structurally (`linter.wiringSet`'s rule (d)) and by
 review, not by the loop. Each run's output goes to
@@ -1138,42 +852,17 @@ macOS), with a guard in another that kills the run's whole group if it has
 not ended within `STRESS_LIMIT` seconds (30 minutes), so a hang shows as a
 failed run. Those groups are out of reach of a terminal's Ctrl-C, so the
 trap on exit, INT and TERM sends TERM to the run's group and the guard's
-and waits for them, then kills the hogs: nothing is left running.
-`tools/stress-probe.sh`, which `mise run stress` and `mise run
-linux-stress` run first, proves it in under a second. It interrupts, then
-terminates, the loop mid-round on a stand-in suite, with the guard's
-`sleep` a stand-in too, and fails if a process of either group is still
-there to be released once the loop has exited. Run against the trap that
-killed only the hogs, it failed on both signals. Then, with `STRESS_LIMIT=1`
-and a guard's `sleep` that returns once the suite has started, it runs a
-suite that hangs, with a child that hangs too, and fails unless the loop
-exits 1 and nothing of the run is left to be released. Run against a guard
-that killed only the run's leader, it failed with the suite's run and its
-child still there. The guard ignores TERM once its sleep has returned, so
-the run it kills ending first does not cut its hang line from the log,
-which people read. And the INT, TERM and limit cases, and one that ends as
-a loop does with a suite that reads what was staged (`cat`, so the suite
-fails by its own status when the tree is not there) and must exit 0, each
-stage a stand-in tree (`STRESS_PROBE_STAGE`) and fail unless it is gone
-once the loop has exited and was never under `$STRESS_OUT`; against a loop
-that staged under its logs and never removed them, each failed.
+and waits for them, then kills the hogs: nothing is left running. The
+guard ignores TERM once its sleep has returned, so the run it kills ending
+first does not cut its hang line from the log, which people read.
 
 `.github/workflows/stress.yml` runs the same loop on both of the gate's
 legs, macOS and ubuntu, five shards each, and names no suite, so it runs
 the script's default. Each shard's Stress step exits with the loop's
 status, and the shards run with fail-fast off, so the workflow fails when
 any shard's loop does; nothing adds up counts or reads the logs. Each
-shard uploads its summary and its logs alone, for people, never what the
-loop staged. `tools/workflow-check.sh` holds it to that, and
-`tools/workflow-lint-probe.sh` shows each rule biting. It runs on dispatch
-alone.
-
-The open-file fixture was the named case: it pinned the count of scenes
-published, which the syntax worker's deliveries vary under load (21 of 30
-loaded runs failed at 042e3b40). With the count out of the scene line
-(`published`, [headless-mode.md](headless-mode.md)), `mise run stress -- 50
-open-file` at 5142a367 on an 18-core Mac under 36 hogs printed
-`open-file: 50/50`.
+shard uploads its summary and its logs alone, for people. Review holds it
+to that (`.agents/rules/workflows.md`). It runs on dispatch alone.
 
 A failure is a bug, in a check or in the code. It is fixed and the loop is
 run again from round 1, never retried away.
@@ -1198,12 +887,11 @@ hogs unless it says otherwise:
   added in c8fe16b3 after the run at 43f421a6 (lean/ConfigTest/Editor/
   Headless.lean: `awaitIndexed`'s answers at idle over a scripted wait, and,
   through the real host, `indexed` failing at idle with a job asleep), and
-  the loop as 0199931c and c926a7df left it, its probe passing first.
+  the loop as 0199931c and c926a7df left it.
 - The open-file fixture alone, 50 rounds at 5142a367: open-file: 50/50.
 - `mise run stress -- 10 ffi` was not run, under the same cut.
 - Supplementary, the Linux container (arm64 Debian, 8 CPUs, 16 hogs), at
-  43f421a6 with the build `mise run lean` makes (its gate stops at
-  bundle-test, linux-gate-bundle-test-wants-ld64-lld): it failed in round 1
+  43f421a6 with the build `mise run lean` makes: it failed in round 1
   of config, its hang guards firing ("a reload whose root first imports
   Lean installs ... the editor thread had not settled within 120000 ms", and
   loops not ended 30000 ms and 200 ms after they were asked to stop). Filed
@@ -1243,10 +931,7 @@ rounds each; the runs' ids, archives and outcomes are on the phase:
   Linux container's gate failed three times before its loop ran, each a
   find of the phase: F1, the Docker VM's disk full (Cargo's `target/` in
   the volume, emptied); F2, the linker killed by the VM's memory during
-  the cold rebuild F1 left; F3, user-sets-test's scrub of the repository's
-  path, which at `/work` also took the `/work` inside
-  `packages/workspace` (34ded915: the scrub takes a path only as a whole,
-  checked first on that case); and F4, lean-fmt's frontend children
+  the cold rebuild F1 left; and F3, lean-fmt's frontend children
   killed by the VM's OOM killer at one worker a core, a child for a module
   that imports `Lean` holding about 2 GB (ca174c4b:
   tools/lean-fmt-workers.sh sizes the workers to the memory, 3 in the
@@ -1354,12 +1039,11 @@ cancelled. Roadmap host-tests-on-fakes replaces it with proofs and forced
 tests, and keeps stress for its last phase.
 
 - Local, `tools/stress.sh 10 config`, macOS (18 cores, 36 hogs) and the
-  Linux container (after `mise run lean` and the probe, `STRESS_LIMIT=1800`,
+  Linux container (after `mise run lean`, `STRESS_LIMIT=1800`,
   16 hogs), at 8ff52f1c, d3be1632 and 83a3529e, and the container at
   717a3bcf: each `config: 10/10`, no `a hang` line in any log. The
-  container's gate was not run first: it stops at bundle-test
-  (linux-gate-bundle-test-wants-ld64-lld), and one attempt took the Docker
-  VM's disk from 2.8 GB free to 1.0 GB before it was stopped.
+  container's gate was not run first: one attempt took the Docker VM's
+  disk from 2.8 GB free to 1.0 GB before it was stopped.
 - `stress.yml` on `ubuntu-24.04`:
 
   | Run | Head | Rounds | Result |
@@ -1379,9 +1063,8 @@ tests, and keeps stress for its last phase.
   (717a3bcf, second attempt), 45096886654 (d3be1632, first and third
   attempts) and 45109040776 (83a3529e, second and third attempts). The
   attempts that
-  failed did so in the gate's other tasks, each filed:
-  bundle-test-reaches-its-600-s-limit-on-macos-ci,
-  bundle-sets-restarted-editor-killed-at-60-s-on-macos-ci (twice) and
+  failed did so in the gate's other tasks, each filed: three in steps
+  since gone from the gate, and
   vc-contract-hook-refusal-lines-flaky-on-ubuntu-ci.
 
 `mise run linux-stress` runs the same loop in the Linux container of
@@ -1389,10 +1072,9 @@ tests, and keeps stress for its last phase.
 there, with `2 x nproc` hogs of the container's CPUs; its logs are in
 `.linux-ci/work/stress-logs/`. It is evidence for the Linux code paths
 (pidfd, inotify, glibc), on the machine's own architecture, not for the
-ubuntu runner. `.github/workflows/stress.yml` runs the loop on
-`ubuntu-24.04`, on dispatch only: five shards of ten rounds, and a summary
-job that adds them up and must print each suite's `50/50`
-([ci.md](ci.md#the-stress-loop-on-dispatch-only)).
+ubuntu runner. `.github/workflows/stress.yml` runs the loop on both of
+the gate's legs, on dispatch only: five shards each, each passing by its
+loop's exit status ([ci.md](ci.md#the-stress-loop-on-dispatch-only)).
 
 ## The gate on Linux, on demand
 
@@ -1448,11 +1130,13 @@ contract in `crates/editor-platform`, to the surface code of
 `crates/editor-render-wgpu`, or to `render` in `crates/editor-ffi`. It uses
 the image, the cache and the volume of `linux-ci`, and runs seven things
 under Xvfb, a display that needs no screen and no person, failing if any
-fails:
+exits non-zero. It reads none of their output to decide; it waits on a
+program's output only to know when to type:
 
 1. the window adapter's example, as `window-contract` runs it first;
 2. `editor window-check --seconds 5`, with xdotool giving the window the
-   focus and typing a sentence and a dead key into it;
+   focus and typing a sentence and a dead key into it. It exits 1 when no
+   key event reached the Lean loop;
 3. the same with `--no-ime`;
 4. the window that draws, as `window-contract` runs it second
    (`crates/editor-ffi/examples/window/`), on Mesa's software Vulkan
@@ -1470,11 +1154,10 @@ fails:
    read back from the surface and compared, whatever the reason; a
    picture more than 3 of 255 from the headless renderer's; a frame
    drawn that nothing asked for; a window left alone for a second with a
-   frame not laid out for the size and scale it last said; no input), if
-   any of those eight inputs did not come off the queue as the port
-   documents it, the resize at the run's scale, and if no frame printed
-   `at scale 1: 14 points are 14 pixels` in the first run and `at scale
-   2: 14 points are 28 pixels` in the second.
+   frame not laid out for the size and scale it last said; no input).
+   That each of the eight inputs comes off the queue as the port
+   documents it is printed, one `input:` line each, and not checked here:
+   a gap.
 
    **The second run is what shows the window's scale reaching layout.**
    At scale 1 a layout that was told the scale and one that was not lay
@@ -1515,18 +1198,14 @@ fails:
    come off the queue, and a second and a half more have passed so that
    the frame laid out for that resize is drawn and judged first, its
    file is rewritten to 192 and it is signalled to read it again. winit
-   then sends the event, and the run requires
-   what the port documents for it, a resize at the size last known and
-   the new scale: `input: resized 300 by 120 at scale 2`. The example
-   lays a frame out for it, which must say `14 points are 28 pixels` or
-   the example fails. winit then asks the X server for the window at
-   twice its size, and `input: resized 600 by 240 at scale 2` follows or
-   does not (it followed in eighteen runs of twenty, and why not in the
-   other two was not looked into): that line is not required. The
-   required line came in all twenty. With the arm made to do nothing
-   the run prints `input: resized 600 by 240 at scale 1`, the example
-   passes, and the task fails with `the change of scale did not come off
-   the queue as: input: resized 300 by 120 at scale 2` (seen).
+   then sends the event, which the port documents as a resize at the
+   size last known and the new scale (`input: resized 300 by 120 at scale
+   2`). The example lays a frame out for it, which must say `14 points
+   are 28 pixels` or the example fails. winit then asks the X server for
+   the window at twice its size, and `input: resized 600 by 240 at scale
+   2` may follow. That the change comes off the queue as the port
+   documents it is not checked: with the arm made to do nothing the
+   example still passes, a gap.
 
    What was tried first, and does not work here: `xrdb -merge` of
    `Xft.dpi: 192` while the window is open. winit has a handler for a
@@ -1550,21 +1229,21 @@ fails:
    process;
 6. a text written to the clipboard by one process and read by another,
    while the first is still alive. One process cannot show this: on X11
-   the text is served by the process that wrote it;
+   the text is served by the process that wrote it. The reader, the
+   example's `clipboard read <expected>`, exits 1 when the clipboard holds
+   anything but the expected text;
 7. the editor on a file (since milestone 1): `editor --report` on a copy
    of `tests/window/session.txt`, with no toolchain, so no config, and
    xdotool typing `ihello `, `<Escape>`, `:w`, `<Return>`, `:q` and
-   `<Return>`. The editor must exit 0 within 60 seconds, the copy must
-   hold the bytes of `tests/window/session-expected`, and the report must
-   count at least one frame. The report is printed; its figures are Xvfb's
-   and llvmpipe's, not milestone figures. First run 2026-11-15 (Apple M5
-   Max host, aarch64 container): all seven passed; the surface offered
-   `immediate`, `mailbox`, `fifo` and `fifo-relaxed` and was configured
-   with `fifo` at a frame latency of 1; 16 frames, `present - input`
-   median 3704 µs, p99 51462 µs. The counters said no glyph was
-   rasterised: why (whether the container's fonts give the editor's
-   `monospace` anything) was not looked into, and the check does not ask
-   for glyphs.
+   `<Return>`. The editor must exit 0 within 60 seconds. What it saved
+   and how many frames its report counts are not checked: a gap. The
+   report is printed; its figures are Xvfb's and llvmpipe's, not milestone
+   figures. First run 2026-11-15 (Apple M5 Max host, aarch64 container):
+   the surface offered `immediate`, `mailbox`, `fifo` and `fifo-relaxed`
+   and was configured with `fifo` at a frame latency of 1; 16 frames,
+   `present - input` median 3704 µs, p99 51462 µs. The counters said no
+   glyph was rasterised: why (whether the container's fonts give the
+   editor's `monospace` anything) was not looked into.
 
 Its input is synthetic. It goes through the X server and the real window
 library, so it shows the path a key and the pointer take on Linux, but
@@ -1584,37 +1263,7 @@ nowhere in the gate:
 
 A change that touches the window, the surface or the clipboard is not done
 until both `mise run ci` and this task exit 0, every part, on the tree that
-is to land. Each of its checks was seen to fail once, in the container,
-with the code changed for the run: the picture, with the surface drawn through a view that is not
-sRGB (every pixel off, by 74 of 255); that a picture is compared at all,
-with the surface configured without the use that lets its texture be
-copied out, so that wgpu refuses the copy (`frame 1's picture could not
-be read back: Validation Error`, for each frame), and with the surface
-made to say its texture is not copied from (`frame 1's picture was not
-compared, and this run requires it (--require-picture)`, for each
-frame); the idle second, with a render loop
-that marks its frame dirty after every draw (10 frames drawn, 0 asked for)
-and with a window that asks for a redraw whenever it is asked for one
-(270139 asked for); an input's line, with Escape named `Esc`; the
-input itself, with nothing sent; the scale reaching layout, with the
-example made not to tell its layout the scale (a run at scale 2 exits 1,
-as quoted under part 4); that a frame was laid out at scale 2 at all,
-with winit not told the scale in the second run (`no frame said it is
-laid out at scale 2 and its 14 points are 28 pixels`); and the change of
-scale, with the adapter's arm for it made to do nothing (`the change of
-scale did not come off the queue as: input: resized 300 by 120 at scale
-2`). Those two mutations of the idle second
-were made again once the example judged each draw by what asked for it,
-and each still fails the task: the first with `334 of the 336 draws were
-asked for by nothing: the first is draw 2, which began 256.1 ms after
-the window opened` and `336 draws were made and 5 were asked for`, each
-such draw `for nothing that was asked` in the timeline; the second with
-`the window asked to be drawn 273961 times while idle: more than 5 is a
-timer`. Before the example failed a picture
-that could not be read back, the first of those two mutations left this
-task at exit 0 with three frames presented and no picture compared: a
-journal entry shows that a present call returned, and only the
-comparison shows that what was presented is the fixture.
+is to land.
 
 Under Xvfb there is no clipboard manager, so a text is gone from the
 clipboard when the process that wrote it ends. That is X11's rule and not
@@ -2272,3 +1921,14 @@ surface (llvmpipe, under Xvfb) and the others only read in wgpu's source.
 If figures from a window favour another presentation, the decision in
 `rendering-prior-art.md` and `present::PREFERRED` change in the same
 commit.
+
+## The fixture fonts, made again
+
+```sh
+tools/fonts/subset.sh <directory of the upstream files>
+```
+
+Run by hand, once, when the fixture fonts under `tests/fonts/` change;
+never by the gate, which reads only the files checked in. It refuses an
+upstream file that is not the pinned one (`tests/fonts/README.md` says
+where each comes from and what the tests rest on in it).

@@ -256,9 +256,9 @@ end Greeting.EditorPackage
     `Package` without importing a module every host reaches, which the
     rule on host imports forbids an entry module
     ([structure.md](../../.agents/rules/structure.md), "Host imports").
-  - **What says so**: `lean/EditorCore/` is gone; the gate requires the
-    empty set's root to import `Editor` and `Editor.Main` alone
-    (`:editorRootImports`, in `ffi-test`); and
+  - **What says so**: `lean/EditorCore/` is gone; the empty set's root
+    imports `Editor` and `Editor.Main` alone (`:editorRootImports` lists
+    them); and
     `ModelTest.packageChecks` holds that a host handed no package starts
     from a registry that holds nothing.
   - **Session restore's registrations and the package-set commands are
@@ -386,7 +386,7 @@ options and a warning in it fails the build. It imports each entry module
 of the set in order and appends their `packages` in that order; a set of
 the core alone (`tests/empty-set`), which has no entry module, passes
 `#[]` and the base `Editor` alone, and imports `Editor` and `Editor.Main`
-and nothing else, which the gate requires of it. The array after the packages holds the `scheme`
+and nothing else. The array after the packages holds the `scheme`
 of each entry module whose Lake package declares the keyword
 `editor-input-scheme`, in that order: the input schemes the set supplies,
 of which the editor runs the last ("Input schemes", below). The default
@@ -394,9 +394,9 @@ package `evil` declares it, so the default set's array holds
 `Evil.EditorPackage.scheme`; the empty set's is `#[]`. The last value before the arguments is what the
 build says of the editor for the files it generates in a config directory
 ("A config directory requires the core and the set", below): the set's Lake name and the
-text of the core's `lean-toolchain`. The gate requires the default set's root to
-import exactly these twenty-seven modules (`lake -d ../packages query
-:editorRootImports`, in `ffi-test`), and its base to be the twenty-six named
+text of the core's `lean-toolchain`. The default set's root imports
+exactly these twenty-seven modules (`lake -d ../packages query
+:editorRootImports` lists them), and its base is the twenty-six named
 (`:editorBase`). The interface packages have no entry module, so neither
 names them; their modules come with their implementations' libraries.
 
@@ -479,8 +479,8 @@ mode, which the base imported, left the core.
   a config that names that module's declaration
   (`tests/window/base/config`), which is rejected on `Editor` alone. What
   the gate does not run is the window mode's `main` itself, which opens
-  the system's window; `mise run app-check` runs the shipped bundle's
-  headless mode.
+  the system's window; `mise run dmg-check` runs the shipped app's
+  `--version` and its `--generate` from the packed image.
 - **The base is where config starts, and it grows** (phase 7). A config
   file is a Lean module with real import lines
   ([lean-runtime.md](lean-runtime.md), "Config and reload"). It may import a
@@ -544,8 +544,8 @@ globs = ["Config.+"]
   bundle the directory is `Contents/Resources/lean/set`, where the app
   ships the default set (`lean/Editor/ModuleLookup.lean`, "The set"), so
   the app generates the lakefile too, naming that set (decided
-  2026-11-19, deferred to phase 9; `bundle-test` and `app-check` check
-  it). An editor that finds no set directory, or no core directory,
+  2026-11-19, deferred to phase 9; `dmg-check` builds the default set
+  from a lakefile the packed app generated). An editor that finds no set directory, or no core directory,
   generates `lean-toolchain` alone.
 - **The lakefile is the user's once it is there.** The editor never
   rewrites it. When a config file imports a module that is not linked, the
@@ -558,9 +558,8 @@ globs = ["Config.+"]
   `require` of the default set: the lakefile then names the user's set, or
   that set's own requires when a default package is dropped, and the
   rebuild the diagnostic asks for is the build of that set. The
-  needs-a-rebuild diagnostic and its fixture
-  (`tests/headless/needs-rebuild`, a config whose lakefile requires the
-  fixture package `greeting`) are the half of that this phase built.
+  needs-a-rebuild diagnostic (held by `ModelTest.moduleSessionChecks`) is
+  the half of that this phase built.
 - **What phase 8 does with the launcher** (session-restore phase 3,
   `crates/editor-launch`). The per-user executable lives outside the
   bundle, so the bundle's launcher, `Contents/MacOS/leanmacs`, starts it:
@@ -605,7 +604,7 @@ globs = ["Config.+"]
   phase 6 the base's modules were all the core's and the first directory
   alone was used. The gate starts the window mode's wiring for both sets'
   editors with that default and requires config to load (`ffi-test
-  window-host-direct`), and checks each record: the default set's names
+  window-host-direct`, a window scenario). The default set's record names
   forty-four directories, the core's, then those of its twenty-five
   default packages and eighteen interface packages in the order the build
   visits them, each interface package before the first package that
@@ -640,22 +639,17 @@ globs = ["Config.+"]
   root is generated from it. Each Lake package's entry module still lists
   its own `Package` values, which is what the root reads. The core's lists
   17, and fewer as features move out.
-- **No root is written by hand, the user-side link's included.** That
-  check ([lean-runtime.md](lean-runtime.md), "A link on the user's
-  machine, measured") links an editor against a staged core of prebuilt
-  pieces, which carries no facet, with a linker that is not Lake's own
-  here. Its fixture is a package of a set of its own, `tests/user-link`
-  (the default set and the package `user-link`, whose entry module is
-  `UserLink.EditorPackage`), and the check asks the checkout for that
-  set's root alone: the facet `editorRoot` writes a set's root and prints
-  its path, and links and builds nothing
-  (`lake -d ../tests/user-link query :editorRoot`). The check stages that
-  file as the relinked editor's root. So the one generator writes every
-  root, and the gate shows that set's root generates and lists the
-  package after the core (`ffi-test`). On a user's machine there is no
-  checkout to ask, so the app ships the core built with its lakefile,
-  which carries the facets (phase 9; [lean-runtime.md](lean-runtime.md),
-  "The app ships the toolchain").
+- **No root is written by hand, the user-side link's included.** The
+  user-side link ([lean-runtime.md](lean-runtime.md), "A link on the
+  user's machine, measured") was measured against a staged core of
+  prebuilt pieces, which carries no facet, with a linker that is not
+  Lake's own; its root came from the checkout's facet `editorRoot`, which
+  writes a set's root and prints its path, and links and builds nothing
+  (`lake -d <set dir> query :editorRoot`). So the one generator writes
+  every root. On a user's machine there is no checkout to ask, so the app
+  ships the core built with its lakefile, which carries the facets
+  (phase 9; [lean-runtime.md](lean-runtime.md), "The app ships the
+  toolchain").
 
 ### A package's tests and the gate's steps over them
 
@@ -688,7 +682,7 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   `expected`, run stepped by the fixture harness built from the set
   (`fixture-test`, the `editorFixtures` facet;
   [headless-mode.md](../dev-practices/headless-mode.md), "How the gate
-  runs a fixture"), but those the real-thread set leaves to the CLI;
+  runs a fixture");
 - **the module `<P>Test.FixtureSetups`**, when the package has one,
   declares `setups`, the fixture setups of the fixtures whose stepped runs
   reach the package's processes, built from the package's own command
@@ -703,22 +697,22 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
 | `test` | `lake -d <package> test --wfail`; a package with no test driver fails the step | `lean-test`, with the `cargo` that fails first on the `PATH` |
 | `build` | Once, the set's `editor` and its fixture harness, `fixture-test`; then `lake -d <package> build --wfail`, the package's default targets under its own linter options; and its linked test's executable | `lean` |
 | `fmt` (`format` rewrites) | `lean-fmt format --check` and `lean-fmt check`, with `--root <package>`, from the formatter's host | `lean-fmt` (`lean-format`) |
-| `run` | The linked test, in the package's directory; then the package's headless fixtures on the set's `fixture-test`, once a package, each run stepped and compared with its `expected`, the harness's count line required to cover every fixture the step found. It prints what it ran, and the gate requires the fixture packages' and the default packages' linked tests and fixtures among it | `ffi-test`, over the fixture set and over the default set |
+| `run` | The linked test, in the package's directory; then the package's headless fixtures on the set's `fixture-test`, once a package, each run stepped and compared with its `expected`; the harness exits 1 on a fixture that differs and on a root that holds none | `ffi-test`, over the fixture set and over the default set |
 
 - **The packages a step runs over** are those of the set that are path
   dependencies and hold a Lean library, other than the core, which the
-  gate's own tasks cover. A step exits 2 when there is none, so it cannot
-  pass by running over nothing, and `lean-test` shows that on a set kept
-  for it, `tests/empty-set`, which requires the core alone.
+  gate's own tasks cover. The script is a thin driver: it runs each
+  package's commands, stops at the first that fails and passes its exit
+  status through, and decides nothing of its own.
 - **The gate gives the steps the fixture set**, which requires the default
-  set. So the default packages are tested, built, formatted and run through
-  it, and `lean-test` requires the line the `test` step prints as it
-  reaches each of them, the twenty-five default packages and the eighteen
-  interface packages. The default set's own
+  set. So the default packages, the twenty-five default packages and the
+  eighteen interface packages, are tested, built, formatted and run
+  through it. The default set's own
   `editor` and `fixture-test` are built beside it, for the standing
   fixtures under `tests/headless/`, and **`run` is also given the default
-  set**, so the default packages' linked tests and fixtures hold of the
-  set that is shipped, not only of the fixture set.
+  set**, with no linked test (`--no-linked`, as each already ran through
+  the fixture set), so the default packages' fixtures hold of the set
+  that is shipped, not only of the fixture set.
 - **A package's linked-only test modules are under `<P>Test/Linked/`**,
   each mirroring the module it tests
   (`ShippedThemesTest/Linked/ShippedThemes.lean`), and `<P>Test/Linked.lean`
@@ -839,9 +833,7 @@ set, holds its three themes.
   needed nothing of this package while the config base was the core's
   alone. The base is the set's now, and holds this package's entry module,
   so the bundle ships its modules, in this package's own build directory
-  staged under `Contents/Resources/lean/set` (phase 9). `bundle-test` runs the
-  package's `shipped-themes` and `package-names` fixtures from a staged
-  bundle with an empty environment.
+  staged under `Contents/Resources/lean/set` (phase 9).
 
 ### The default package `compile`
 
@@ -1001,9 +993,7 @@ over the process service, a major mode, ex names and contributions.
   registered there and lists a contribution's commands, which nothing
   then reads.
 - **The app bundle carries its modules**, built, in this package's own
-  build directory under `Contents/Resources/lean/set`, and `bundle-test`
-  runs the fixture `config` from
-  a staged bundle with an empty environment.
+  build directory under `Contents/Resources/lean/set`.
 
 ### The default packages of the features-as-packages roadmap's phase 3
 
@@ -1697,12 +1687,11 @@ scheme are retired, and one fixture of the refusal replaces them:
   facts are held by the checks of a host handed no package, which
   registers nothing (`ModelTest.packageChecks` and
   `ConfigTest.hostChecks`), and by `ExTest.exChecks`; that the empty set's
-  config base is `Editor` alone is a pin of `ffi-test`
-  (`lake -d ../tests/empty-set query :editorBase`).
-- `tests/headless/no-input-scheme` is added: `ffi-test` runs the empty
-  set's editor in the headless mode on it, and with `--probe`, and each
-  must exit 1 having printed exactly its `expected`, the one line of the
-  block below.
+  config base is `Editor` alone shows in
+  `lake -d ../tests/empty-set query :editorBase`, which no test pins.
+- An editor of the empty set refuses to start with the one line of the
+  block below; the refusal's text and that no scheme is chosen are
+  `ModelTest.schemePackageChecks`'.
 
 No line of a fixture that still exists changed as a leave-out effect in
 this phase: the lines that changed are registration order's ("Registration
@@ -1779,9 +1768,9 @@ only.
   "Crate coupling"). They are removed. What they stood for is held where
   it can fail:
   - the core's Lake package has no entry module, so the root of the set
-    with no package imports `Editor` and `Editor.Main` alone, a pin of
-    `ffi-test` beside that set's base (`lake -d ../tests/empty-set query
-    :editorRootImports`);
+    with no package imports `Editor` and `Editor.Main` alone (`lake -d
+    ../tests/empty-set query :editorRootImports` shows it; no test pins
+    it, a gap);
   - a host handed no package starts from a registry with no entry of any
     kind: `ModelTest.packageChecks`, on the model, beside a package of
     every kind that fills each one, and `ConfigTest.hostChecks`, through
@@ -1918,7 +1907,7 @@ guide quotes.
   command runs.** The fixture set's editor prints `run greeting-hello: ok`
   and the scene with the package's text for `hello`. The default set's
   editor prints `run greeting-hello: no such command` for the same script,
-  which `ffi-test` also checks, so the command came from the set.
+  so the command came from the set.
 - **A package registers after the package it requires.** Both packages
   register `greeting-reply`, and of two registrations of a name the later
   is the one found. The fixture set requires `greeting-loud`, and
@@ -1929,9 +1918,7 @@ guide quotes.
 - **Every fixture lakefile is TOML but `echo`'s**, turns every Lean linter
   on with `warningAsError`, as the core does, and names default targets.
   `echo`'s is Lean, because a TOML lakefile cannot declare a target that
-  compiles C, `moreLinkObjs`, or the crate's target; so are those of the
-  three packages of the Rust bans check's bite sets (`tests/rust-bans/`),
-  which declare a crate and hold no Lean. A package's test
+  compiles C, `moreLinkObjs`, or the crate's target. A package's test
   driver is not a default target, as the core's
   `model-test` is not: `mise run lean` links with the system compiler,
   which a TOML lakefile has no flags for.
@@ -1952,10 +1939,8 @@ interface packages of the default set (`project-api`, `vc-api`,
 `minibuffer-api`, `execute-command-api`, `binding-search-api`,
 `at-point-api`), the fixture
 set, each fixture package (`echo` among them), the writing guide's
-example package (`docs/packages/word-count/`), the empty set, the
-user-side link's set and its package, the Rust bans check's two bite sets
-(`tests/rust-bans/ffi`, `tests/rust-bans/peer`) and their three packages,
-and the formatter's host.
+example package (`docs/packages/word-count/`), the empty set, and the
+formatter's host.
 
 - **A set's manifest holds path entries only.** With it present, a
   dependency the manifest does not hold fails the build (`dependency … not
@@ -1987,9 +1972,8 @@ runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
 default set and its forty-three packages, the twenty-five default
 packages and the eighteen interface packages, the fixture set and its
 four packages, the writing guide's example package `word-count`, the
-empty set, the user-side link's set and its package, the Rust bans
-check's two bite sets and their three packages, the user sets' fixtures,
-and the formatter's host): `lean-fmt` refuses a root with no
+empty set, the user-set fixture `tests/user-sets/hello-init`, and the
+formatter's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file, through the link, when Lake is
 run in that directory. So there is no copy to fall behind, and a bump of
 the pin (`AGENTS.md`, "Toolchains") changes one file. A new Lake root
@@ -1999,9 +1983,8 @@ links its `lean-toolchain` the same way and never copies it
 Where such a directory leaves the tree, the link would dangle, so what
 leaves carries the pin's text: the bundle's shipped files list each
 package's `lean-toolchain` by the file it resolves to (`editorShipped`),
-and the scripts that copy a fixture package elsewhere (`git_core_copy` in
-`tools/core-repo.sh`, `tools/bundle-sets.sh`, `tools/bundle-bench.sh`)
-copy with `cp -RL`, which follows it.
+and a script that copies a fixture package elsewhere
+(`tools/bundle-bench.sh`) copies with `cp -RL`, which follows it.
 
 ## User package sets
 
@@ -2011,8 +1994,8 @@ section is how a set the user names becomes the editor they run. The app
 builds it itself, from the Lean toolchain, the core and the default
 packages it ships, with no Lean, compiler or Cargo of the user's (phase 9;
 [lean-runtime.md](lean-runtime.md), "The app ships the toolchain");
-`bundle-test` and `app-check` build one from a bundle alone, read-only,
-with decoys of every tool first on the `PATH`.
+`dmg-check` builds the default set from the packed image alone,
+read-only, with `PATH=/usr/bin:/bin`.
 
 ### The records beside a set's editor
 
@@ -2023,16 +2006,14 @@ executable it links, besides `editor.oleans` and `editor.set`:
   (`coreIdentity` in `lean/lakefile.lean`). It mixes the traces of the
   objects of every module of the core's library `Editor`, the core's glue (`glue.o`), the core's Rust archive
   (`rustlib`) and the version of the Lean toolchain. Two sets over one
-  core get the same identity, whatever their packages: `ffi-test` compares
-  the default set's and the fixture set's. The whole libraries are hashed,
+  core get the same identity, whatever their packages. The whole libraries are hashed,
   not only the modules a set links, so a package that imports a core
   module the default set does not link does not change the identity. A
   per-user editor linked against another core is never started
   ([lean-runtime.md](lean-runtime.md), "A cold start picks the newest
   per-user editor"). The `stage-bundle` binary copies the record
   in the bundle's resources, `Contents/Resources/editor.core`: `codesign`
-  refuses a file in `Contents/MacOS` that is not code (found by `mise run
-  app-check`). The launcher and the editor read it there for an executable
+  refuses a file in `Contents/MacOS` that is not code. The launcher and the editor read it there for an executable
   in a bundle, and beside the executable otherwise.
 - **`editor.build`**: the environment a rebuild must reproduce, one line
   `NAME=value` for each of `LEAN_CC` and `MACOSX_DEPLOYMENT_TARGET` that
@@ -2087,10 +2068,10 @@ exist yet:
 - **Its size.** Measured on macOS arm64 for the fixture set: the
   executable is about 240 MB and the whole directory about 420 MB.
 
-`ffi-test` installs the fixture set into a temporary directory, runs the
-fixture package `greeting`'s headless fixture from it with no `.olean`
-directory given, verifies its signature on macOS, and checks that a second
-install into the same directory is refused.
+No gate step installs a set. `mise run dmg-check` installs the default
+set from the packed image and starts the editor it installed; that an
+install is signed, and that a second install into the same directory is
+refused, are checked by no test, a gap.
 
 ### The fingerprint: when a set differs from the running editor's
 
@@ -2255,8 +2236,8 @@ is pinned on the models (`ModelTest.packageSetBuildChecks`):
    core from git: Lake takes the git require, and would build a core from source that is not the one the
    editor links. The refusal comes after the resolve, which may already
    have fetched that core; the manifest is authoritative only then. Step 5
-   reuses the manifest this step read. `user-sets-test` D shows it end to
-   end.
+   reuses the manifest this step read. `ModelTest.packageSetBuildChecks`
+   holds the refusal (`lean/ModelTest/Editor/PackageSet/Build.lean`).
 3. **Rust**: `lake query :editorRustCrates`; a set that holds a package
    declaring a Rust crate stops here, refused ("Who can build it"). No
    Cargo is ever run.
@@ -3125,11 +3106,8 @@ parents under `wrappers = []` and fails a wrapper it never meets under
 generator writes a `deny.toml` beside the generated crate in which the
 generated crate is the one wrapper of `editor-ffi` and of each package
 crate, and `ffi-test` runs cargo-deny's bans over it, for the fixture set
-and the default set, passing by cargo-deny's exit status. It shows them
-bite over `tests/rust-bans/`: two sets, one whose package's crate depends
-on `editor-ffi` and one whose package's crate depends on another
-package's, where cargo-deny must exit 2, its status when the bans refuse a
-crate (`docs/dev-practices/the-gate.md`, "The Rust bans check").
+and the default set, passing by cargo-deny's exit status
+(`docs/dev-practices/the-gate.md`, "The Rust bans check").
 
 ### Behind a port, so it stays replaceable
 
@@ -3183,11 +3161,9 @@ a native module either compiles it or fetches a prebuilt one.
   C++ sources the toolchain's compiler builds, as Lake builds the core's
   own glue (`buildLeanO`), or a system C library it links. It needs
   nothing beyond the bundled toolchain. A package's object reaches the
-  editor's link through its library's `moreLinkObjs`. The fixture package
-  `tests/user-sets/c-glue` is one: its `c/cglue.c` is bound by an
-  `@[extern]` declaration and answers its command. From the app, the
-  bundled `clang` compiles C that includes `lean/lean.h` alone (`c-glue`
-  does, in `bundle-test` and `app-check`), and its linker links what the
+  editor's link through its library's `moreLinkObjs`, its C bound by an
+  `@[extern]` declaration. From the app, the bundled `clang` compiles C
+  that includes `lean/lean.h` alone, and its linker links what the
   link stubs hold, the system's functions the shipped editor itself
   imports. C that includes a header of the system's C library
   (`<stdio.h>`), or calls a system function the stubs lack, needs the
@@ -3241,11 +3217,11 @@ such a crate: its dependencies are not in the core's lock (the build is
 `cargo fetch --locked` then `--offline`), and `editor-service` has no
 published name for it to depend on.
 
-`ffi-test` checks these: a set in a temporary directory that requires the
-default set and `c-glue` is linked with a `cargo` that always fails first
-on the PATH, and `c-glue`'s command answers from its C function; and a copy
-of `echo` outside the repository is refused with its reason
-(`tools/rust-outside-check.sh`).
+The refusal is `outsideCrateRefusal?` in `lean/lakefile.lean`, pinned by
+the `#guard`s beside it, and what a failed build says of missing tooling
+is `missingTooling?`, pinned by `ModelTest.packageSetBuildChecks`. That a
+set holding a C package links with no Cargo, and that its C answers, is
+not checked in the gate: a gap.
 
 ## The module map
 
@@ -3283,7 +3259,7 @@ and the core's Lake package registers no `Package`.
 | The contracts and cases: `Editor.Api.Cases`, `Editor.Clipboard.Contract`, `Editor.Completion.AtPointContract`, `Editor.Completion.Contract`, `Editor.Completion.DisplayContract`, `Editor.Completion.StyleContract`, `Editor.Config.Elaborator.Contract`, `Editor.Display.Contract`, `Editor.File.Cases`, `Editor.Fuzzy.Contract`, `Editor.Headless.Journal.Contract`, `Editor.Headless.Queue.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.Job.FlushContract`, `Editor.Job.HandleContract`, `Editor.Job.ProtocolContract`, `Editor.Job.PumpContract`, `Editor.Job.SchedulerContract`, `Editor.SyntaxTree.Contract`, `Editor.SyntaxTree.DeliveryContract`, `Editor.Text.Contract`, `Editor.UndoTree.Cases`, `Editor.Watch.Contract` | 24 | core | in tests |
 | The fakes, the test scheme, the loop's driver, the reading of what a package registers and the theme picture check: `Editor.Completion.Fake`, `Editor.Config.Packages`, `Editor.Headless.Journal.Fake`, `Editor.InputScheme.Test`, `Editor.Job.Fake`, `Editor.Loop.Driver`, `Editor.SyntaxTree.Fake`, `Editor.Theme.Picture` | 8 | core | in tests |
 | The linked test kit: `Editor.Test.Linked.Bench`, `Editor.Test.Linked.Frames`, `Editor.Test.Linked.Host`, `Editor.Test.Linked.Jobs`, `Editor.Test.Linked.Keys`, `Editor.Test.Linked.Lines`, `Editor.Test.Linked.Listings`, `Editor.Test.Linked.Rig`, `Editor.Test.Linked.Services`, `Editor.Test.Linked.Shipped`, `Editor.Test.Linked.Stepping`, `Editor.Test.Linked.Syntax`, `Editor.Test.Linked.Trees` | 13 | core | in a linked test |
-| The headless fixture harness, which a package set's `fixture-test` runs (`docs/dev-practices/headless-mode.md`, "How the gate runs a fixture"): a fixture's parts, its discovery, its setups, the real-thread set, its command line, its stepped run and its edge: `Editor.Test.Fixture.CommandLine`, `Editor.Test.Fixture.Discover`, `Editor.Test.Fixture.Fixture`, `Editor.Test.Fixture.Main`, `Editor.Test.Fixture.RealThread`, `Editor.Test.Fixture.Setup`, `Editor.Test.Fixture.Stepped` | 7 | core | no |
+| The headless fixture harness, which a package set's `fixture-test` runs (`docs/dev-practices/headless-mode.md`, "How the gate runs a fixture"): a fixture's parts, its discovery, its setups, its command line, its stepped run and its edge: `Editor.Test.Fixture.CommandLine`, `Editor.Test.Fixture.Discover`, `Editor.Test.Fixture.Fixture`, `Editor.Test.Fixture.Main`, `Editor.Test.Fixture.Setup`, `Editor.Test.Fixture.Stepped` | 6 | core | no |
 | The model test kit: `Editor.Test.AtPoint`, `Editor.Test.Completion`, `Editor.Test.Config`, `Editor.Test.Driver`, `Editor.Test.Editing`, `Editor.Test.Ex`, `Editor.Test.Excerpt`, `Editor.Test.Files`, `Editor.Test.Frame`, `Editor.Test.Geometry`, `Editor.Test.Hosted`, `Editor.Test.Jobs`, `Editor.Test.Keys`, `Editor.Test.Listings`, `Editor.Test.Loop`, `Editor.Test.Minibuffer`, `Editor.Test.Models`, `Editor.Test.Modes`, `Editor.Test.Opener`, `Editor.Test.PackageSet`, `Editor.Test.Prompts`, `Editor.Test.Restore`, `Editor.Test.Shell`, `Editor.Test.Shipped`, `Editor.Test.Sources`, `Editor.Test.States`, `Editor.Test.Views`, `Editor.Test.Windows`, `Editor.Test.Workspace` | 29 | core | in tests |
 | The config session: `Editor.Config.Diagnostic`, `Editor.Config.Directory`, `Editor.Config.Display`, `Editor.Config.Elaborate`, `Editor.Config.ExactPath`, `Editor.Config.LakePackage`, `Editor.Config.Lakefile`, `Editor.Config.Lakefile.Toml`, `Editor.Config.Owner`, `Editor.Config.Registry`, `Editor.Config.Reload`, `Editor.Config.Session`, `Editor.Config.Stores` | 13 | core | no |
 | The raw bindings: `Editor.Ffi`, `Editor.Ffi.Clipboard`, `Editor.Ffi.Counter`, `Editor.Ffi.Diffs`, `Editor.Ffi.Display`, `Editor.Ffi.Document`, `Editor.Ffi.Events`, `Editor.Ffi.Excerpts`, `Editor.Ffi.Files`, `Editor.Ffi.Fuzzy`, `Editor.Ffi.Grep`, `Editor.Ffi.Interrupt`, `Editor.Ffi.Inverse`, `Editor.Ffi.Launch`, `Editor.Ffi.Log`, `Editor.Ffi.MainThread`, `Editor.Ffi.Marker`, `Editor.Ffi.Pair`, `Editor.Ffi.Processes`, `Editor.Ffi.Render`, `Editor.Ffi.Search`, `Editor.Ffi.Snapshot`, `Editor.Ffi.Syntax`, `Editor.Ffi.Text`, `Editor.Ffi.Timers`, `Editor.Ffi.Transaction`, `Editor.Ffi.Watches`, `Editor.Ffi.Window`, `Editor.Ffi.Words` | 29 | core | no |
@@ -3500,9 +3476,10 @@ that opens and takes no input.
   (`packages/evil/Evil/Compiled.lean`). The value is in `Evil.Compiled` and
   not in the entry module, which imports package modules and nothing else.
   The core's Lake package declares no keyword and no `scheme`, so the set
-  of the core alone (`tests/empty-set`) has none: `ffi-test` runs its
-  editor in the headless mode and with `--probe` and requires exit 1 and
-  the refusal's line each time (`tests/headless/no-input-scheme`). Until
+  of the core alone (`tests/empty-set`) has none: its editor exits 1 with
+  the refusal's line in the headless mode and with `--probe`, and
+  `ModelTest.schemePackageChecks` holds that no scheme is chosen and the
+  refusal's text. Until
   that phase's commit that moved evil, the core's Lake package declared the
   keyword and `EditorCore.EditorPackage.scheme`.
 - **A test drives the loop on a scheme a package supplies**:

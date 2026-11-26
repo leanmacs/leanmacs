@@ -2709,10 +2709,7 @@ between commands is the loop's
 ([text-and-display.md](text-and-display.md), "Views as built").
 
 Everything here is tested on the display model, which lays text out in
-cells of one size, and, since the display pipeline's last phase, once over
-real layout: the milestone fixture (`tests/headless/milestone`) runs `C-f`
-over the library's layout in cells and checks that the rows the loop asked
-for are the rows of the frame drawn (`agree`). A view is asked about with
+cells of one size. A view is asked about with
 its height less its bottom row, as tall as the display answers
 (`EditorState.bottomRow`).
 
@@ -4558,8 +4555,7 @@ the job contract's listing property (`File.list` on the model, the fake and
 real files), `FilesTest.Linked.filePromptChecks` (criteria 1, 2, 4, 5 and 6 over
 the recorder under the Vim scheme), `FilesTest.filesPackageChecks` and
 `CompletionTest.completionPackageChecks` (the shipped file source and its
-job, and the shipped style) and the fixture
-`tests/headless/open-file` (the prompt on real files).
+job, and the shipped style).
 
 ### Completion at point
 

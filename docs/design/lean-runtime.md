@@ -204,54 +204,34 @@ macOS SDK.
 
 It was measured on 2026-11-18, on an Apple M5 Max, macOS 27.2.1, with Lean
 4.35.0 (its clang and lld are 23.1.0), on a machine that has Xcode 27.2 and
-the command line tools, with
-
-```sh
-mise run user-link-check
-```
-
-(`tools/user-link-check.sh`;
-[on-demand-checks.md](../dev-practices/on-demand-checks.md)). The check
-stages the pieces below in a temporary directory, by copy; builds the
-trivial package `tests/user-link/package` and links an `editor` from it
-with the staged `lake`, inside a sandbox where the tools cannot be reached;
-signs the result with `codesign --force -s -`; and runs it. When this was
-measured the package brought two modules of its own: its one module,
-`UserLinkFixture`, with its one command, `user-link-hello`; and a root
-written by hand, `Main`, 78 lines that copied the body of the shipped
-headless host, standing in for the root the package-set build was to
-generate. The figures below are of that root. **That root is gone: the relinked
-editor's root is now generated**, as the editor's own is
-([packages.md](packages.md), "The generated root"). The fixture is a
-package of a set of its own, `tests/user-link` (the default set and the
-package `user-link`, with an entry module, `UserLink.EditorPackage`,
-beside its one module). The build that generates a root is a facet of the
-core's lakefile, and the staged core here is prebuilt pieces behind a
-lakefile with no target, which cannot carry it. So the check asks the
-checkout, where the facet is, for that set's root and nothing else
-(`lake -d ../tests/user-link query :editorRoot`, which writes the root and
-links nothing), and stages the file as `EditorSetRoot.lean` beside the
-package's sources and the lakefile of the user's side of the link
-(`tools/user-link/package/lakefile.lean`). The staged `lake` compiles that
-root and links it. The generator on the user's machine, where there is no
-checkout to ask, came with the packages roadmap's phase 9: the app ships
-the core built, whose lakefile supplies the facets, and links a user's set
-with the same stubs ("The app ships the toolchain", above;
-`bundle-test` and `app-check` build one from the bundle alone). The
-check reads the pieces from the default set's editor
-(`packages/.lake/build/bin/editor` and its `editor.rsp`), and the object it
-leaves out is that editor's generated root's, where it was `Main`'s. The
-check asserts: the relinked editor
-prints exactly `tests/headless/expected` for the standing headless fixture,
-but for the package's own command: the relinked editor is the whole editor
-(`Editor.Main.run`) with the fixture package after the core's, so each of
-that fixture's two lines that list the commands names `user-link-hello`
-too, exactly once, and with that word taken out the output is `expected`
-to the byte. (The hand-written root had a mode of its own for the core's
-packages alone, which printed `expected` as it is.) And
-for `tests/user-link` the package's command runs and its message is in
-the echo area (`run user-link-hello: ok`, then `echo "hello from a package
-linked on this machine"`). MB are 10⁶ bytes of apparent size.
+the command line tools, by a check run by hand. The check staged the
+pieces below in a temporary directory, by copy; built a trivial package
+and linked an `editor` from it with the staged `lake`, inside a sandbox
+where the tools could not be reached; signed the result with `codesign
+--force -s -`; and ran it. When this was measured the package brought two
+modules of its own: its one module, `UserLinkFixture`, with its one
+command; and a root written by hand, `Main`, 78 lines that copied the body
+of the shipped headless host, standing in for the root the package-set
+build was to generate. The figures below are of that root. **That root is
+gone: a relinked editor's root is now generated**, as the editor's own is
+([packages.md](packages.md), "The generated root"). The build that
+generates a root is a facet of the core's lakefile (`editorRoot`, which
+writes a set's root and links nothing), and a staged core of prebuilt
+pieces behind a lakefile with no target cannot carry it, so the check
+later asked the checkout for its set's root and staged that file beside
+the package's sources. The generator on the user's machine, where there
+is no checkout to ask, came with the packages roadmap's phase 9: the app
+ships the core built, whose lakefile supplies the facets, and links a
+user's set with the same stubs ("The app ships the toolchain", above;
+`dmg-check` builds the default set from the packed image alone). The
+check read the pieces from the default set's editor
+(`packages/.lake/build/bin/editor` and its `editor.rsp`), and the object
+it left out was that editor's generated root's, where it was `Main`'s. It
+asserted that the relinked editor printed exactly the standing headless
+fixture's `expected` but for the package's own command, which each of the
+two lines that list the commands named once, and that the package's
+command ran and said its message in the echo area. MB are 10⁶ bytes of
+apparent size.
 
 **`libSystem`: the macOS SDK's stubs are not needed.** The linker's own
 report of the files it opened (`-dependency_info`) names
@@ -290,9 +270,9 @@ The staged pieces the relink used:
 | `core/obj/` | The object of each of those modules, `.c.o.export` (`lean/.lake/build/ir`) | 217 | 17.3 MB |
 | `core/glue.o` | The glue object, as `mise run lean` compiled it | 1 | 0.1 MB |
 | `core/libeditor_ffi.a`, now `core/libeditor_rust.a` | The Rust archive (`target/release`): as measured, `editor-ffi`'s; now the crate the package-set build generates for the default set, which holds no package crate, so the core's ([packages.md](packages.md), "Rust in a package"). Beside it now `core/native-static-libs`, the system libraries rustc printed for it, which the link passes when it links against an SDK | 1 | 82.0 MB |
-| `core/lakefile.toml`, `core/lake-manifest.json` | `tools/user-link/core`: they make `core/` a Lake package with no target | 2 | 772 bytes |
+| `core/lakefile.toml`, `core/lake-manifest.json` | The check's own: they make `core/` a Lake package with no target | 2 | 772 bytes |
 | `stubs/` | The link stubs written from the built `editor` (now by the `link-stubs` binary): 14 stubs and `platform-version` | 15 | 8,681 bytes |
-| `package/` | As measured, `tests/user-link/package`: `lakefile.lean`, `Main.lean`, `UserLinkFixture.lean`. Now the package's sources (`UserLinkFixture.lean`, `UserLink/EditorPackage.lean`), `tools/user-link/package/lakefile.lean` and the generated `EditorSetRoot.lean`: 4 files, 9,183 bytes | 3 | 10,028 bytes |
+| `package/` | As measured, the fixture package: `lakefile.lean`, `Main.lean`, `UserLinkFixture.lean`. With the generated root, its sources, its entry module, its lakefile and the generated `EditorSetRoot.lean`: 4 files, 9,183 bytes | 3 | 10,028 bytes |
 
 The rule for the editor's modules is the built editor's own link line
 (`packages/.lake/build/bin/editor.rsp`; `lean/.lake/build/bin/editor.rsp`
@@ -360,15 +340,14 @@ and its response file, with the 217 objects under `<stage>/core/obj` cut:
 
 The first two objects are the package's own modules, and `-rdynamic` is
 from `supportInterpreter`. From the editor's objects to `-dependency_info`
-it is the package's `moreLinkArgs` (`tools/user-link/package/lakefile.lean`,
-which was `tests/user-link/package/lakefile.lean` when this was measured),
-and the rest is what Lake adds for the bundled compiler.
+it is the package's `moreLinkArgs`, and the rest is what Lake adds for
+the bundled compiler.
 
 **How the tools were made unreachable.** The machine has Xcode and the
 command line tools, so their absence is enforced, in three layers:
 
-- **A sandbox** round the package build and the link
-  (`sandbox-exec -f tools/user-link/sandbox.sb`). It runs no program
+- **A sandbox** round the package build and the link (`sandbox-exec`
+  with a profile of the check's). It runs no program
   outside the stage, and lets nothing be read under `/Applications`,
   `/Library/Developer`, `/opt`, `/usr/local` or `/Users`: Xcode and both
   SDKs, the real toolchain, Cargo and the repository. The base system
@@ -398,9 +377,9 @@ alone. When `sandbox-exec` cannot apply the profile, as in a shell that is
 itself sandboxed, the check fails; it never goes on unsandboxed.
 
 **The limit:** this is a sandbox on a machine that has the tools, not a
-run on a Mac that never had them. The app bundle's check on the CI runner,
-once the bundle carries the toolchain, and the owner's own use are the
-later evidence.
+run on a Mac that never had them. The image's check on the CI runner
+(`dmg-check`, which builds the default set from the image) and the owner's
+own use are the later evidence.
 
 What else it showed:
 
@@ -432,8 +411,8 @@ What else it showed:
   that.
 - **A copy of a system program does not run.** A copy of `/bin/cat` or
   `/bin/ls` in the stage was killed as it started (signal 9), outside the
-  sandbox too. So the check's probe and its decoys are two small C
-  programs (`tools/user-link/probe.c`, `decoy.c`), compiled into the stage
+  sandbox too. So the check's probe and its decoys were two small C
+  programs, compiled into the stage
   by the staged `clang` against the toolchain's `libSystem` stub, with no
   SDK and no C library headers.
 
@@ -712,8 +691,7 @@ queues and exits.
   its layout alone, not by a `.app` suffix. Nothing is read from the
   environment: `LEAN_PATH` is ignored, as the elaborator ignores it. It is
   pinned in `model-test` (`ModelTest.moduleLookupChecks`,
-  `windowOptionChecks`, `headlessCommandLineChecks`) and run from a staged
-  bundle by the gate's `bundle-test`.
+  `windowOptionChecks`, `headlessCommandLineChecks`).
 - **The config directory** is `--config`, or `leanmacs` under
   `$XDG_CONFIG_HOME`, or under `$HOME/.config` when that is unset. A
   default directory that does not exist loads nothing and says nothing; a
@@ -872,26 +850,17 @@ so a program the editor runs never takes the app as its own bundle.
 |---|---|
 | The gate, macOS leg: `crates/editor-launch-std/tests/identity.rs` | In a fake bundle: the launcher's cold start runs the bundle's editor as the app; a hand-over to an editor outside the bundle, and an explicit `--default` outside it, is the app too, in the launcher's own pid; the same editor run directly is not |
 | The gate, both legs: the launch fixtures `tests/launch/handover-v1` and `tests/launch/arguments-v1`, read by both sides | What crosses between Lean's restart and the launcher, as files: Lean's encoding of the hand-over record is `handover-v1` (`ContractTest.launchRecordChecks`) and the launcher decodes it (`editor_launch::handover`'s fixture test); the launcher execs a hand-over's candidate with the arguments of `arguments-v1` (`editor_launch::launch::tests::the_hand_over_exec_arguments_are_the_checked_in_fixture`) and Lean takes its launch flags back from them (`ContractTest.launchRecordChecks`). The decisions on each side are their own tests' (`ModelTest.restartChecks`, `restartHandoverChecks`; `editor_launch`'s `launch` and `watch` tests) |
-| The gate, both legs: `mise run bundle-test` | The real editor, through the staged bundle's launcher, inside the bundle and outside it with `--default`: `--probe` prints the launcher and, on macOS, the staged bundle and its identifier (`bundle none` elsewhere) |
-| On demand and each push to main: `mise run app-check` | The same two probes on the real bundle, expecting its real identifier; `CFBundleExecutable` is `leanmacs`, and the launcher and the editor are each arm64 with a `minos` no later than the bundle's |
-| On demand, on a desktop: `mise run restart-check` | LaunchServices' record of the process (one instance, its pid, its `bundlepath` and name) after a restart into an editor outside the bundle once AppKit had checked in, open-file events reaching the new executable, and the fallback's identity when the watcher, which LaunchServices did not launch, starts the previous executable |
-
-**Argued, not observed: the Dock icon's pixels.** `restart-check` checks
-LaunchServices' `bundlepath` and name for the running process; the Dock
-draws the icon from that bundle's `CFBundleIconFile`, so the pixels are not
-compared. No tool reads the Dock's drawn icon back without the
-Accessibility permission, which a person would have to grant.
-
-**`restart-check`'s run** (2026-11-20, an Apple M5 Max, macOS 27.2.1,
-arm64), every step passed:
-
-```text
-restart-check: A. launched cold as pid 50627
-restart-check: B. pid 50627 restarted into <tmp>/elsewhere/editor, one instance, bundlepath <tmp>/Leanmacs.app
-restart-check: C. after.txt reached pid 50627
-restart-check: D. <tmp>/bad failed, the watcher started <tmp>/elsewhere/editor as pid 51058, one instance, bundlepath <tmp>/Leanmacs.app, and after2.txt reached it
-restart-check: ok (P 50627, Q 51058, <tmp>/Leanmacs.app, <tmp>/elsewhere/editor)
-```
+**Seen once on a desktop** (2026-11-20, an Apple M5 Max, macOS 27.2.1,
+arm64), and checked by no test: a copy of the app, restarted into an
+editor outside the bundle once AppKit had checked in, kept LaunchServices'
+record of the process (one instance, the same pid, the copy's
+`bundlepath` and name); open-file events reached the new executable; and
+when a restart into a failing executable fell back, the watcher, which
+LaunchServices did not launch, started the previous executable with the
+same record. The Dock icon's pixels were argued, not observed: the Dock
+draws the icon from that bundle's `CFBundleIconFile`, and no tool reads
+the Dock's drawn icon back without the Accessibility permission, which a
+person would have to grant.
 
 So an exec after AppKit's check-in keeps the identity, and decision 1's
 contingency (handing over with `open -n -a <bundle> --args --handover
@@ -1054,9 +1023,7 @@ lean-toolchain       generated when absent
   set and a config file, and reports a type error at its position. The gate
   holds that on a config package config-test writes as an editor of the
   default set generates it (`ConfigTest.lspChecks`: the lakefile
-  `Editor.Config.LakePackage.lakefile` gives, the core's pin), and, until
-  the script goes, on a directory the editor generated
-  (`tools/config-package-check.sh`, `config-test lsp`). It writes
+  `Editor.Config.LakePackage.lakefile` gives, the core's pin). It writes
   `lake-manifest.json` and `.lake/` in the config directory, and builds
   there the config files a file imports; it fetches nothing and builds
   nothing under the set.
@@ -2615,7 +2582,7 @@ What the figures show:
   `Init.olean.private`; with both it imports and the config loads and runs.
   `.ir` and `.ir.sig` are never needed: compiled code is linked into the
   executable, and the fixture's command, which calls compiled code of
-  `Init` and of `Editor`, runs without them (`bundle-test`). The editor
+  `Init` and of `Editor`, runs without them. The editor
   package's own modules have only `.olean` files; the toolchain's use the
   module system, which reads all three. `.olean.private` is more than half
   of the bytes.
@@ -2634,9 +2601,9 @@ editor's set outside the core ([packages.md](packages.md), "The config base
 of a set"): for the default set, `Editor`, `ShippedThemes.EditorPackage`
 and `Compile.EditorPackage`. A config file may import any module of `Std`
 or `Lean` beside it, and a bundled editor reads a module from the bundle
-alone, so `:editorApp` and `bundle-test` take the closure of that base with
+alone, so `:editorApp` took the closure of that base with
 `Std` and `Lean` over the set's `.olean` directories, the core's and each
-default package's, and stage it into the bundle's one directory
+default package's, and staged it into the bundle's one directory
 (the `stage-bundle` binary, `editor_release::bundle`, which takes the
 package directories joined with `:` and copies a module from the first that
 holds it). On 2026-11-19:
@@ -2645,7 +2612,7 @@ holds it). On 2026-11-19:
 |---|---|
 | Modules in the bundle | 2,501: `Init` 653, `Std` 494, `Lean` 1,227, `Editor` 117, `Compile` 6, `ShippedThemes` 4 |
 | Module files, the three kinds | 1,760.1 MB (616.0 MB for the 919 modules of the base alone, before) |
-| The bundle's headless mode, `env -i`, on a config that imports `Editor` alone (`tests/headless/generate`): real time (median of 5), largest maximum resident set | 0.24 s, 561.4 MB |
+| The bundle's headless mode, `env -i`, on a config that imports `Editor` alone (`tests/bench/generate`): real time (median of 5), largest maximum resident set | 0.24 s, 561.4 MB |
 | The same on a config that imports `Lean` (`tests/headless/bundle`) | 0.71 s, 1,294.0 MB |
 
 - **Carrying `Lean` costs disk, and start-up only for config that imports
@@ -2694,7 +2661,7 @@ on the same editor, so the two columns differ by the layout alone, while
 | The link stubs | 15 files, under 0.1 MB | | |
 | The whole bundle | 3,848.6 MB, 21,854 files | not measured | 1,995 MB (module files 1,760.1 MB) |
 | The disk image (`UDZO`) | 1,216,458,264 bytes, 56.6% of GitHub's 2 GiB asset limit | | |
-| Headless start, a config of `Editor` alone (`tests/headless/generate`): real time, maximum resident set | 0.41 to 0.47 s, 609.8 MB | 0.39 s, 572.3 MB | 0.24 s, 561.4 MB |
+| Headless start, a config of `Editor` alone (`tests/bench/generate`): real time, maximum resident set | 0.41 to 0.47 s, 609.8 MB | 0.39 s, 572.3 MB | 0.24 s, 561.4 MB |
 | The same, a config that imports `Lean` (`tests/headless/bundle`) | 1.49 to 1.54 s, 1,452.1 MB | 1.16 s, 1,305.2 MB | 0.71 s, 1,294.0 MB |
 | The unchanged default set's build from the bundle (`lake build :editorInstall`): first, with the core's lakefile elaborated; second | 10.6 to 11.8 s; 0.8 to 0.9 s | | |
 | The build that installs `hello-init` from the bundle | 3.4 to 3.5 s | | |

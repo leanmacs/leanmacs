@@ -19,7 +19,7 @@ fixture set with its packages:
 | `lake build --wfail` | The core's modules and `ffi-test`, `config-test` and `contract-test`, under `lean/.lake/build` |
 | `lake -d ../packages build --wfail :editor` | The editor, from the default package set (`packages/lakefile.toml`): the package-set build writes its root module, builds it and links `packages/.lake/build/bin/editor` |
 | `sh ../tools/package-set.sh build ../tests/packages` | The fixture set's editor (`tests/packages/.lake/build/bin/editor`), and the default targets and the linked test of each package of the set: the fixture packages, the writing guide's example package `word-count` (`docs/packages/word-count/`) and, through the default set, its sixteen default packages and nine interface packages |
-| `lake -d ../tests/empty-set build --wfail :editor` | An editor from the core alone (`tests/empty-set/.lake/build/bin/editor`), which `ffi-test` runs two fixtures on |
+| `lake -d ../tests/empty-set build --wfail :editor` | An editor from the core alone (`tests/empty-set/.lake/build/bin/editor`), which refuses to start for want of an input scheme |
 
 The editor is `packages/.lake/build/bin/editor`. It is not a target of the
 core: the core's lakefile defines how an editor is linked from a set, as
@@ -146,8 +146,8 @@ reads as up to date, the set's lakefile, the Rust archive that a set with
 no Rust package relinks with, and the link stubs the toolchain's linker
 needs for the system's frameworks. What ships of the set is what
 `lake -d ../packages query :editorShipped` lists, and
-the `stage-bundle` binary (`editor_release::bundle`) copies it, the layout `mise run bundle-test`
-stages ([`headless-mode.md`](headless-mode.md), "From an app bundle").
+the `stage-bundle` binary (`editor_release::bundle`) copies it
+([`headless-mode.md`](headless-mode.md), "From an app bundle").
 Config may import any module of `Init`, `Std` and `Lean` the toolchain
 holds. Its size is in [`lean-runtime.md`](../design/lean-runtime.md),
 "Memory and size": 3,848.6 MB in 21,854 files on 2026-11-20, four fifths
@@ -159,9 +159,10 @@ bundle identifier `io.github.leanmacs.Leanmacs`, the executable `editor`,
 the icon, `NSHighResolutionCapable`, `LSArchitecturePriority` arm64 and
 `LSMinimumSystemVersion`, the lowest macOS the bundle has been run on:
 26.0, which equals mise.toml's `MACOSX_DEPLOYMENT_TARGET`, so the
-executable's `minos` is the same. CI's `mise run app-check` runs the
-bundle's headless mode on the `macos-26` runner on every main build, and
-the window was run by hand on 27.2; the owner chose 26.0 on 2026-11-17
+executable's `minos` is the same. CI's `mise run dmg-check` runs the
+bundle's `editor --version` and builds the default set from its image on
+the `macos-26` runner on every main build, and the window was run by hand
+on 27.2; the owner chose 26.0 on 2026-11-17
 ([`ci.md`](ci.md), "Deployment target"). Its two document types (`CFBundleDocumentTypes`) are "Text"
 (`public.text`, which every text type conforms to) at the rank `Alternate`,
 offered under Finder's "Open With" but never chosen over another app, and
@@ -219,8 +220,7 @@ file, since `sips -z` would stretch it into a blurred icon without a word.
 `sips` scales it to the ten standard sizes (16, 32, 128, 256 and 512 points, at 1×
 and 2×) in an iconset in the staging directory, and `iconutil` makes
 `Leanmacs.icns` of them. The owner may replace the PNG with any 1024×1024
-image that does not look the same turned a quarter (`mise run app-check`
-turns it to show a new artwork rebuilds the icon).
+image that does not look the same turned a quarter.
 
 Lake rebuilds the bundle only when an input changes: the executable, the
 `Editor` library's modules, the default packages', which the executable
@@ -257,8 +257,9 @@ any installed one, and a config fixture to `~/.config/leanmacs` when no
 config is there
 ([`on-demand-checks.md`](on-demand-checks.md), "Installing the app").
 
-`mise run app-check` checks the built bundle
-([`on-demand-checks.md`](on-demand-checks.md), "The app bundle, on demand").
+`mise run dmg && mise run dmg-check` packs the built bundle and checks
+the image ([`on-demand-checks.md`](on-demand-checks.md), "The app bundle,
+on demand").
 
 ### The disk image
 

@@ -45,9 +45,9 @@ set, so no script can reach a user's own. With one, a reload whose config
 lakefile or manifest differs from the running editor's starts the job
 `package-build`, whose output goes to the buffer `*package-build*`, and
 the commands `package-install`, `package-remove` and `package-update` (ex
-names of the same) edit the config's `lakefile.toml`. The fixtures under
-`tests/user-sets/` (`git-missing`, `match`) and `tools/user-sets-test.sh`
-run them.
+names of the same) edit the config's `lakefile.toml`. What the build
+decides is held by `ModelTest.packageSetBuildChecks`, and the edits'
+texts by config-test's `packageSetEditChecks`.
 
 This is the editor with no window. It loads the config in a directory, runs
 a script against it and prints what happened. It writes nothing into the
@@ -57,7 +57,7 @@ toolchain's directory (`lean --print-prefix`) and `<olean dir>` the
 directory of the core's `.olean` files
 (`lean/.lake/build/lib/lean`). They are given both or neither, so three or
 five paths are refused; from the build tree they are always given, and
-every check of the gate but `bundle-test` gives them. Nothing is read from
+every check of the gate gives them. Nothing is read from
 the environment or the working directory.
 
 **`<olean dir>` is a search path**: one directory, or several joined with
@@ -123,14 +123,10 @@ path and the record (`lean/Editor/ModuleLookup.lean`, pinned by
 `ModelTest.moduleLookupChecks` and `ModelTest.headlessCommandLineChecks`),
 and the executable's path is read from `IO.appPath`.
 
-`mise run bundle-test`, part of the gate, lays out that bundle in a
-temporary directory with the `stage-bundle` binary
-(`editor_release::bundle`) and runs the headless
-mode of its editor, through the launcher, on `tests/headless/bundle` and
-the default packages' fixtures, with no directory argument, an empty
-environment and a working directory outside the bundle
-([`the-gate.md`](the-gate.md), "The bundle test"). To stage one by hand,
-from `lean/`, into a directory of your own:
+The `stage-bundle` binary (`editor_release::bundle`) lays out that bundle;
+its tests (`crates/editor-release-std/tests/stage_bundle.rs`) hold what it
+stages, and the gate runs no bundled editor. To stage one by hand, from
+`lean/`, into a directory of your own:
 
 ```sh
 lake -d ../packages query :editorShipped > <dir>/shipped
@@ -148,8 +144,10 @@ import ([`lean-runtime.md`](../design/lean-runtime.md), "What config may
 import, measured").
 
 `mise run app` builds this layout for real, as `Leanmacs.app`
-([`building.md`](building.md), "The app bundle"), and `mise run app-check`
-runs this mode from a copy of it.
+([`building.md`](building.md), "The app bundle"), and `mise run dmg-check`
+runs its `--generate` from the packed image
+([on-demand-checks.md](on-demand-checks.md), "The disk image, on
+demand").
 
 ## Drawing it: `--render`
 
@@ -187,11 +185,6 @@ directives read the drawing:
   microseconds, and the rows they rebuilt. Its numbers vary between runs,
   so it is for measuring (`mise run milestone-bench`), never for a
   fixture.
-
-`tests/headless/milestone/` is milestone 1's fixture over the whole program:
-`:e` on a 60-line source file, an evil session ending in `:w`, `agree`
-after `C-f` and after the save, and `idle`; `ffi-test` compares its
-output and the saved file's bytes ([the-gate.md](the-gate.md)).
 
 ## A config directory
 
@@ -232,7 +225,8 @@ directory's `lakefile.toml` and `lean-toolchain` when they are absent, and
 never changes one that is there. The gate runs the headless mode on the
 config directories checked in under `tests/` with no `--generate`, so none
 of them is ever written to, and uses the option only on temporary copies
-(`tools/config-package-check.sh`, `mise run bundle-test`).
+(the `window-host-generate` window scenario, and config-test's checks of
+the generated lakefile).
 
 ## What config defines, and the script
 
@@ -341,7 +335,7 @@ with no config and `show` lists them before config's
 
 `run <name>` hands a command no argument, so a script cannot give
 `open-file` its path that way. Config's own command calls the operation
-the command is written with, `Files.open view path`, as the fifth fixture
+the command is written with, `Files.open view path`, as the fourth fixture
 below does; `Files.save buffer` is the save. Or the script runs
 `open-file` with no path, commits the path into the minibuffer and accepts,
 as the fixture `open-file` does. While a load or a save is in flight the editor
@@ -525,7 +519,7 @@ which the ex names `b`, `ls` and `bd` run.
   by a scene: `minibuffer-accept`, `ex` with the line, and the bound
   command.
 - A script runs a line with `run ex`, a `commit` of the line and `key
-  <Enter> Enter -`, as the eighth fixture below does.
+  <Enter> Enter -`, as the seventh fixture below does.
 
 `setup` binds an ex name to a command's name with `exCommand`, by default
 taking nothing:
@@ -586,7 +580,7 @@ timers.
 | `settle <milliseconds>` | As `settle`, with that many milliseconds as its guard in place of 30 seconds, and a failure names that many. A directive's own bound becomes a hang guard named for it (`HangGuard.on "the settle" <milliseconds>`, and so "the join", "the index's write" and "the restart" for `join`, `indexed` and `restarted` with seconds). It is for a fixture whose cold reload is known to be slow, with the reason beside it in the script. Anything but one number is refused. |
 | `run <name>` | Runs the command registered under that name, through the editor loop, as a key would: with the focused window, guarded against the interrupt key, and rolled back if it does not run to its end. It is no key, so the input scheme's state is as it was: a command that a key enters a Vim state with enters none (the table of evil's commands, above). |
 | `spawn <name>` | Starts the job registered under that name. It runs in the background, and the editor goes on answering. |
-| `join [<seconds>]` | Waits until everything asked so far has been handled and no job is running, or until the editor is idle with a job still running, which fails the run at once (`the join on line N of the script found the editor idle with a job still running`): a job that sleeps on the clock no `advance` moves. Its 30 seconds, or the seconds given, are a hang guard, said once and failing the run: a package-set build (`tools/user-sets-test.sh`) takes longer than 30 seconds. With seconds, the editor thread's answer is guarded by them too, as a `settle <milliseconds>`'s is, and a failure names them, in milliseconds. |
+| `join [<seconds>]` | Waits until everything asked so far has been handled and no job is running, or until the editor is idle with a job still running, which fails the run at once (`the join on line N of the script found the editor idle with a job still running`): a job that sleeps on the clock no `advance` moves. Its 30 seconds, or the seconds given, are a hang guard, said once and failing the run: a package-set build takes longer than 30 seconds. With seconds, the editor thread's answer is guarded by them too, as a `settle <milliseconds>`'s is, and a failure names them, in milliseconds. |
 | `advance <milliseconds>` | Moves the headless mode's job clock on by that many milliseconds, once it holds a wait due within them, completing every wait then due: a job's sleep, a time limit, the pause of completion at point. It sends nothing to the editor thread that shows and prints nothing, so a scene count is unchanged by it. One that finds the editor idle with no wait due within the time stalls the run at once, saying `the advance on line N found the editor idle with no wait due within M ms on the clock`. Its 30 seconds are a hang guard only. Anything but one number is refused. |
 | `show` | Prints the commands, the texts and the stores. |
 | `journalled` | Waits as `settle` does, then, for up to 30 seconds, until the library's file service holds no request: the session journal's writes, which nothing else waits for, are then on disk. |
@@ -672,49 +666,7 @@ view 0 0,0 0x0: "hello", scroll 0, selections 5..5, padding 8 8
 status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:6" +4, mode-line.secondary "All" +4
 ```
 
-A fourth, `tests/headless/dispatch/script`, runs on a config of its own,
-`tests/headless/dispatch/config`, which registers `spin`, a command that
-inserts `spin` and then asks the text its revision a thousand million
-times, and `mark`, which inserts `mark`, and binds `C-c s` and `C-c m` to
-them. It sends `C-c s` and then `C-g`, the interrupt key, which stops
-`spin` and rolls its insertion back, and is then looked up as any key is:
-under the Vim scheme it runs `keyboard-quit`, which, with no `:!` running,
-says `Quit`. Then `C-c m`, which runs to its end.
-The config also registers the job `double` and the command `ask` shown
-above, on `C-c d`: the script sends `C-c d`, advances the headless mode's
-clock past the job's sleep (`advance 1`), waits for the job with `join`,
-and asks for the scene, whose echo area holds what the job's command said.
-Its output must be exactly `tests/headless/dispatch/expected`; were `spin`
-not stopped, the gate's time limit would end the run:
-
-```console
-$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script
-reload 1: installed, 1 files, 3 commands
-key arrived: c KeyC control
-key arrived: s KeyS -
-key arrived: g KeyG control
-scene 0x0, focused 0, echo "Quit", echo padding 8, preedit -, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-key arrived: c KeyC control
-key arrived: m KeyM -
-scene 0x0, focused 0, echo "", echo padding 8, preedit -, theme "default"
-view 0 0,0 0x0: "mark", scroll 0, selections 4..4, padding 8 8
-status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
-key arrived: c KeyC control
-key arrived: d KeyD -
-job 1 double: started
-job 1 double: ok
-scene 0x0, focused 0, echo "doubled to 42", echo padding 8, preedit -, theme "default"
-view 0 0,0 0x0: "mark", scroll 0, selections 4..4, padding 8 8
-status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:5" +4, mode-line.secondary "All" +4
-```
-
-The status line after the first scene's view has the state's badge and the
-buffer's name: `spin` was rolled back, so the buffer is not modified. After
-`mark` it has the modified mark too, and its line:col is after the text.
-
-A fifth, `tests/headless/files/script`, runs the file commands the editor
+A fourth, `tests/headless/files/script`, runs the file commands the editor
 ships, on the config in `tests/headless/files/config`, and touches no file.
 `save-buffer` is compiled in, so it runs with no config registering it: on
 the scratch buffer, which shows no file, it says so in the echo area. The
@@ -746,7 +698,7 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-A sixth, the default package `minibuffer`'s
+A fifth, the default package `minibuffer`'s
 `packages/minibuffer/tests/headless/prompt/script` (the core's until the
 features-as-packages roadmap's phase 4, moved byte for byte), asks for a
 prompt and answers it, on the config in
@@ -803,7 +755,7 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-A seventh, `tests/headless/evil-script`, runs on the first fixture's config
+A sixth, `tests/headless/evil-script`, runs on the first fixture's config
 directory and loads none of it: it has no `reload`. So every command its
 keys run is one the editor ships. It presses `i`, which begins an insert,
 then the five keys of `hello`, each typed text; `<Escape>`, which returns
@@ -842,7 +794,7 @@ between characters, after what was typed; in normal state it is on a
 character. `scene` prints a selection's two ends and not its shape or the
 cursor's.
 
-An eighth, `tests/headless/ex/script`, runs the ex command line on the
+A seventh, `tests/headless/ex/script`, runs the ex command line on the
 first fixture's config directory, of which it loads nothing. Each line is
 the prompt opened, a `commit` of the line, and `<Enter>`. The first and
 the last open it as a user does, with the `:` key (`key : Semicolon
@@ -903,7 +855,7 @@ Four scenes are published between the first `:` key and the first
 with the line, so it prints `published 4`. The second line adds a fifth,
 for `save-buffer`.
 
-A ninth, the default package `minibuffer`'s
+An eighth, the default package `minibuffer`'s
 `packages/minibuffer/tests/headless/candidates/script` (the core's until
 the features-as-packages roadmap's phase 4, moved byte for byte), asks
 for a prompt with candidates and chooses one, on the config in
@@ -979,7 +931,7 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-A tenth is a fixture of the default package `shipped-themes`, which the
+A ninth is a fixture of the default package `shipped-themes`, which the
 package steps run on the fixture harness of each set that holds the
 package, stepped ("How the gate runs a fixture", below;
 `tools/package-set.sh run`, in `mise run ffi-test`), not a line of the
@@ -1022,7 +974,7 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-An eleventh, the same package's
+A tenth, the same package's
 `packages/shipped-themes/tests/headless/shipped-themes/script`, runs on the
 config in `shipped-themes/config` beside it, which names a shipped theme,
 `solarized-light` (`useTheme`): the `shipped-themes` package registers its
@@ -1031,8 +983,7 @@ installed. Config names the theme by its name and no declaration of the
 package. The first
 scene is drawn in `solarized-light`. Then `load-theme` is answered with
 `fairy-floss`, and the next scene is drawn in it. Its output must be
-exactly `shipped-themes/expected`. `mise run bundle-test` runs this fixture
-from a staged bundle too:
+exactly `shipped-themes/expected`:
 
 ```console
 $ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../packages/shipped-themes/tests/headless/shipped-themes/config ../packages/shipped-themes/tests/headless/shipped-themes/script
@@ -1082,18 +1033,16 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-An editor whose set supplies no input scheme refuses to start, and
-`tests/headless/no-input-scheme` is the fixture of that. `mise run
-ffi-test` runs it on another editor: the one `mise run lean` links from the
-set `tests/empty-set`, which requires the core alone, the default set with
-its packages, `evil` among them, dropped. The Vim scheme is that package's
+An editor whose set supplies no input scheme refuses to start: the one
+`mise run lean` links from the set `tests/empty-set`, which requires the
+core alone, the default set with its packages, `evil` among them,
+dropped. The Vim scheme is that package's
 ([packages.md](../design/packages.md), "Input schemes"), so the editor
 prints one line on stderr and exits 1 before it reads the script or loads
-the config, and `editor --probe` does the same. Its output must be exactly
-`tests/headless/no-input-scheme/expected`:
+the config, and `editor --probe` does the same:
 
 ```console
-$ ../tests/empty-set/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/no-input-scheme/config ../tests/headless/no-input-scheme/script
+$ ../tests/empty-set/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean <config dir> <script>
 editor: no input scheme is installed: no package of this editor's package set supplies one
 $ echo $?
 1
@@ -1107,7 +1056,7 @@ nothing answers and an ex line with no `compile`. They are retired; where
 those facts are held now is in
 [packages.md](../design/packages.md), "Dropping evil or themes leaves…".
 
-A twelfth, the default package `mode-line`'s
+An eleventh, the default package `mode-line`'s
 `packages/mode-line/tests/headless/mode-line/script` (the core's until
 the features-as-packages roadmap's phase 3, moved byte for byte), runs on
 the config in `packages/mode-line/tests/headless/mode-line/config`, which defines a segment of its own,
@@ -1150,7 +1099,7 @@ decorations 2: minibuffer.candidate 0..1 minibuffer.candidate 2..4 minibuffer.ca
 status 2: -
 ```
 
-A thirteenth, `tests/headless/padding/script`, runs on the config in
+A twelfth, `tests/headless/padding/script`, runs on the config in
 `tests/headless/padding/config`, which sets the frame padding to 12 points
 (`framePadding 12`). After a resize to 640 by 480 the window's view is
 padded 12 across and 12 down and the echo 12, the padding, since the
@@ -1176,7 +1125,7 @@ decorations 2: minibuffer.candidate 0..1 minibuffer.candidate 2..4 minibuffer.ca
 status 2: -
 ```
 
-A fourteenth, `tests/headless/monocle/script`, runs on the config in
+A thirteenth, `tests/headless/monocle/script`, runs on the config in
 `tests/headless/monocle/config`, which chooses the monocle layout
 (`layout .monocle`) and binds `C-c s` to a command that splits the window
 it is pressed in and `C-c o` to one that focuses the next window of the
@@ -1214,7 +1163,7 @@ decorations 3: minibuffer.candidate 0..1 minibuffer.candidate 2..4 minibuffer.ca
 status 3: -
 ```
 
-A fifteenth, `tests/headless/two-windows/script`, runs on the config in
+A fourteenth, `tests/headless/two-windows/script`, runs on the config in
 `tests/headless/two-windows/config`, which keeps the default layout and
 binds the same two keys as the monocle fixture's (each fixture's config
 directory is self-contained). In a frame of 640 by 120 it types twelve
@@ -1269,7 +1218,7 @@ status 1 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inact
 divider 318,0 2x104 in window-divider
 ```
 
-A sixteenth, `tests/headless/manual-splits/script`, runs on the config in
+A fifteenth, `tests/headless/manual-splits/script`, runs on the config in
 `tests/headless/manual-splits/config`, which chooses the manual split layout
 (`layout Layout.manual`) and binds no key: the window commands are reached
 by the keys the Vim scheme ships under `C-w`. In a frame of 640 by 480,
@@ -1341,7 +1290,7 @@ view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-A seventeenth, `tests/headless/insert-window-keys/script`, runs on the
+A sixteenth, `tests/headless/insert-window-keys/script`, runs on the
 config in `tests/headless/insert-window-keys/config`, which binds every key
 of the Vim scheme's `C-w` table with `bindKey` (`for (keys, name) in
 Vim.Default.windowKeys do bindKey keys name`) and keeps the default layout.
@@ -1384,7 +1333,7 @@ status 1 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buff
 divider 318,0 2x464 in window-divider
 ```
 
-An eighteenth, `tests/headless/insert-word-delete/script`, runs on the
+A seventeenth, `tests/headless/insert-word-delete/script`, runs on the
 config in `tests/headless/insert-word-delete/config`, which binds no key
 under `C-w`, so insert state keeps Vim's word delete there: after `i` and a
 committed `hello world`, `C-w` leaves `hello `, still in insert state, and
@@ -1405,7 +1354,7 @@ view 0 0,0 640x464: "hello l", scroll 0, selections 7..7, padding 8 8
 status 0 in mode-line.active: mode-line.state.insert "INSERT" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:8" +4, mode-line.secondary "All" +4
 ```
 
-A nineteenth, `tests/headless/display-rules/script`, runs on the config in
+An eighteenth, `tests/headless/display-rules/script`, runs on the config in
 `tests/headless/display-rules/config`, which keeps the default layout,
 binds `C-c n` to a command that makes a buffer called `notes` and displays
 it (`BufferId.display`), and makes one display rule, whose target, the
@@ -1462,7 +1411,7 @@ divider 318,0 2x464 in window-divider
 divider 320,230 320x2 in window-divider
 ```
 
-A twentieth, `tests/headless/edge-sidebar/script`, runs on the config in
+A nineteenth, `tests/headless/edge-sidebar/script`, runs on the config in
 `tests/headless/edge-sidebar/config`, which chooses
 `layout (.edge .left 25 Layout.default)`, sends the buffers of the minor
 mode `notes` to the left edge with a display rule, and binds `C-c n` to a
@@ -1540,7 +1489,7 @@ view 0 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-A twenty-first, `tests/headless/float-rule/script`, runs on the config in
+A twentieth, `tests/headless/float-rule/script`, runs on the config in
 `tests/headless/float-rule/config`, which keeps the default layout, binds
 `C-c n` and `C-c m` to commands that each make a buffer and display it, and
 sends what the first opens to a float and what the second opens to a float
@@ -1595,7 +1544,7 @@ status 2 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
 divider 318,0 2x464 in window-divider
 ```
 
-A twenty-second, `tests/headless/float-anchor/script`, runs on the config
+A twenty-first, `tests/headless/float-anchor/script`, runs on the config
 in `tests/headless/float-anchor/config`, which keeps the default layout,
 binds `C-c f` to a command that puts eighty lines, `line00` to `line79`, at
 the cursor, and `C-c h` to one that opens a buffer `hint` in a transient
@@ -1643,7 +1592,7 @@ view 2 40,308 320x116: "a hint", scroll 0, selections 0..0, padding 8 8
 status 2 in mode-line.inactive: mode-line.inactive "hint" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "All" +4
 ```
 
-A twenty-third, `tests/headless/tabs/script`, runs on the config in
+A twenty-second, `tests/headless/tabs/script`, runs on the config in
 `tests/headless/tabs/config`, which keeps the default layout and binds
 `tab-rename` to `C-c r` and `tab-move-right` to `C-c m`; every other tab
 command is reached by the Vim scheme's own keys under `C-w`, tmux's. `C-w
@@ -1759,7 +1708,7 @@ view 4 0,0 640x464: "", scroll 0, selections 0..0, padding 8 8
 status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
 ```
 
-A twenty-fourth, `tests/headless/window-dividers/script`, runs on the
+A twenty-third, `tests/headless/window-dividers/script`, runs on the
 config in `tests/headless/window-dividers/config`, which chooses the manual
 split layout and binds no key. In a frame of 640 by 480, `C-w v` puts view
 1 left of view 0 and focuses it: view 1 gives up 2 pixels at its right,
@@ -1809,7 +1758,7 @@ divider 0,230 318x2 in window-divider
 divider 318,232 2x232 in window-divider
 ```
 
-A twenty-fifth, the default package `at-point`'s
+A twenty-fourth, the default package `at-point`'s
 `packages/at-point/tests/headless/at-point/script` (the core's until the
 features-as-packages roadmap's phase 4, moved byte for byte), shows
 completion at point's auto popup on the shared config it ran on, copied
@@ -1888,117 +1837,6 @@ otherwise), the state's badge in the status line (`NORMAL`, `INSERT`,
 `VISUAL`), the cursor's line:col and position, and the echo, which is empty until the save says
 `wrote @DIR@/verse.txt`. And the model's copy must hold the bytes of
 `tests/headless/session/verse-expected`.
-
-**`open-file`'s prompt over real files** is a process check, one of the
-fixtures the real-thread set leaves to the CLI
-(`Editor.Test.Fixture.RealThread`): its last file, `notes/todo.md`, opens
-in a mode attached to a grammar of the library's syntax service, which
-the syntax tree's model does not hold (it knows `json` alone), so a
-stepped run would say the attach refused where the CLI says nothing
-(`tests/headless/open-file/`): the entry copies the tree `tree/`
-(`alpha.txt`, `beta.txt`, `.hidden` and `notes/todo.md`) into its
-temporary directory and writes the template `script` there with that
-directory's path in place of `@DIR@`. It makes that directory with
-`mktemp -d /tmp/open-file.XXXXXXXX`, not under `$TMPDIR`, so that its
-path is 23 bytes on every machine: the prompt's view prints the cursor's
-byte offset over the absolute path typed, which writing the path `@DIR@`
-does not change, so the offset is the same everywhere only if the path's
-length is. The script loads no config. It runs
-`open-file` and joins: the prompt starts with the executable's working
-directory and lists it, which is never printed. `C-u` deletes the input,
-and the tree's directory is committed and listed: `notes/`, annotated
-`directory`, then `alpha.txt` and `beta.txt`, and not `.hidden`. A `.`
-lists `.hidden` among the names that hold a `.`, in the library's order,
-with no new job line: the directory was read once. `<Backspace>` deletes
-it, `no` lists `notes/` with its match, `<Tab>` puts `notes/` in the input
-and the directory is listed, `todo.md`, and `C-n` and `<Enter>` open it.
-Then `open-file` again, `C-u`, and a directory that is not there: the echo
-area says `files: cannot list @DIR@/tree/missing/: nothing is at the
-path`, and nothing is listed. Every job is waited for with `join`, so its
-lines are fixed. The run must exit with status 0, and its output, with the
-temporary directory's path written `@DIR@`, must be exactly
-`tests/headless/open-file/expected`:
-
-```console
-$ ../packages/.lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config "$dir/script"
-run open-file: ok
-job 1 files: started
-job 1 files: ok
-job 1 files: ok
-key arrived: u KeyU control
-job 2 files: started
-job 2 files: ok
-job 2 files: ok
-job 3 files: started
-job 3 files: ok
-job 3 files: ok
-scene 0x0, focused 1, echo "", echo padding 8, preedit -, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 0,0 0x0: "@DIR@/tree/", scroll 0, selections 29..29, padding 8 0
-status 1: minibuffer.prompt "Open file: "
-view 2 0,0 0x0: "notes/     directory\nalpha.txt\nbeta.txt", scroll 0, selections , padding 8 0
-decorations 2: minibuffer.candidate 0..20 minibuffer.annotation 11..20 minibuffer.candidate 21..30 minibuffer.candidate 31..39
-status 2: -
-scene 0x0, focused 1, echo "", echo padding 8, preedit -, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 0,0 0x0: "@DIR@/tree/.", scroll 0, selections 30..30, padding 8 0
-status 1: minibuffer.prompt "Open file: "
-view 2 0,0 0x0: ".hidden\nalpha.txt\nbeta.txt", scroll 0, selections , padding 8 0
-decorations 2: minibuffer.candidate 0..7 minibuffer.match 0..1 minibuffer.candidate 8..17 minibuffer.match 13..14 minibuffer.candidate 18..26 minibuffer.match 22..23
-status 2: -
-key arrived: <Backspace> Backspace -
-scene 0x0, focused 1, echo "", echo padding 8, preedit -, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 0,0 0x0: "@DIR@/tree/no", scroll 0, selections 31..31, padding 8 0
-status 1: minibuffer.prompt "Open file: "
-view 2 0,0 0x0: "notes/  directory", scroll 0, selections , padding 8 0
-decorations 2: minibuffer.candidate 0..17 minibuffer.match 0..2 minibuffer.annotation 8..17
-status 2: -
-key arrived: <Tab> Tab -
-job 4 files: started
-job 4 files: ok
-job 4 files: ok
-scene 0x0, focused 1, echo "", echo padding 8, preedit -, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 1 0,0 0x0: "@DIR@/tree/notes/", scroll 0, selections 35..35, padding 8 0
-status 1: minibuffer.prompt "Open file: "
-view 2 0,0 0x0: "todo.md", scroll 0, selections , padding 8 0
-decorations 2: minibuffer.candidate 0..7
-status 2: -
-key arrived: n KeyN control
-key arrived: <Enter> Enter -
-job 5 load-file: started
-job 5 load-file: ok
-job 6 find-workspace: started
-job 6 find-workspace: ok
-job 7 find-mode-markers: started
-job 7 find-mode-markers: ok
-scene 0x0, focused 0, echo "", echo padding 8, preedit -, theme "default"
-view 0 0,0 0x0: "todo: list the files\n", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "todo.md" +4, mode-line.secondary "@DIR@/tree/notes" +4 | mode-line.secondary "code" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-run open-file: ok
-job 8 files: started
-job 8 files: ok
-job 8 files: ok
-key arrived: u KeyU control
-job 9 files: started
-job 9 files: ok
-job 9 files: ok
-job 10 files: started
-job 10 files: ok
-scene 0x0, focused 3, echo "files: cannot list @DIR@/tree/missing/: nothing is at the path", echo padding 8, preedit -, theme "default"
-view 0 0,0 0x0: "todo: list the files\n", scroll 0, selections 0..0, padding 8 8
-status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "todo.md" +4, mode-line.secondary "@DIR@/tree/notes" +4 | mode-line.secondary "code" +4, mode-line.secondary "1:1" +4, mode-line.secondary "All" +4
-view 3 0,0 0x0: "@DIR@/tree/missing/", scroll 0, selections 37..37, padding 8 0
-status 3: minibuffer.prompt "Open file: "
-view 2 0,0 0x0: "", scroll 0, selections , padding 8 0
-status 2: -
-key arrived: <Escape> Escape -
-```
 
 **A view that follows its cursor** is a fourth process check of the same
 form (`tests/headless/view/`): the entry copies `lines.txt`, 120 lines
@@ -2261,14 +2099,14 @@ wait through them ([`docs/design/concurrency.md`](../design/concurrency.md),
 | The editor thread's answer, inside each wait | The loop answering the wait's marker | The wait's guard, or a `settle <ms>`'s or `join <s>`'s own | Its hang line, then the run fails as `unanswered` | None: the stepped host's turn is the driver's own, so every event sent is handled in the wait's drain |
 | `journalled` | The file service's flush | 30 s | The run fails as `unanswered` | The rest, then the journal fake's drain, resolved by its own step during the rest |
 | `indexed [<seconds>]` | The index written, or idle with a write in its sleep, which moves the clock past it and waits again, or idle with a background job still running, which fails as `working` (not a hang) | 30 s, or the seconds given | Its hang line, then the run fails as `unanswered` | The same loop over the rest: at rest with the write asleep, the clock is moved past it and the next rest writes the index into the file fake's model |
-| `restarted [<seconds>]` | The loop's task ending | 30 s, or the seconds given | The run fails as `notRestarted` | The rest: a turn that ended the loop with a hand-over (`Progress.handOver`), or `notRestarted` at once with none; refused for a fixture outside the real-thread set |
+| `restarted [<seconds>]` | The loop's task ending | 30 s, or the seconds given | The run fails as `notRestarted` | The rest: a turn that ended the loop with a hand-over (`Progress.handOver`), or `notRestarted` at once with none; a fixture whose script uses it is refused |
 | The loop's end | Its task, which ends once a reload it started has ended | 30 s, then `Headless.hangGrace` (5 s) | Its hang line, then the run fails as `hung`, exit 1 | The bracket's end: each job cancelled stepped to its end on the fakes |
 | `idle` | Everything sent handled, then the render loop's rest (`Render.awaitRest`, on the step that records it) | 30 s | `idle: the render loop did not come to rest within M ms` | Everything sent handled to rest; with no render loop it says so |
 
 ### How the gate runs a fixture
 
-**Every headless fixture runs stepped by default**, on the stepped host with
-the fakes, with nothing declared. A fixture is a file named `script` or
+**Every headless fixture runs stepped**, on the stepped host with the
+fakes. A fixture is a file named `script` or
 `<x>-script` in a discovery root or a directory directly under it, its
 expected output `expected` or `<x>-expected` beside it, and its config
 directory the first there is of `<x>-config` and `config` beside it and the
@@ -2299,31 +2137,15 @@ as it was; a fixture that differs fails, naming its first differing line
 with both texts, and one whose run throws (a hang given up at its guard
 among them) fails with `fixture-test: <script>: its run threw: <error>`,
 and the harness goes on to the next fixture. It prints `fixture-test: <script>: stepped, as expected`
-for each and `fixture-test: ran <n> fixtures stepped under <root>, <m>
-left to the CLI` for each root, and fails a root that holds no fixture.
+for each and `fixture-test: ran <n> fixtures stepped under <root>` for
+each root, for people; it exits 1 when a fixture differs or a root holds
+no fixture.
 
-**A fixture keeps the CLI only through an entry in
-`Editor.Test.Fixture.RealThread`** (`lean/Editor/Test/Fixture/RealThread.lean`),
-the real-thread set, which says what each covers and the gate step that
-runs it through the CLI:
-
-- a **`runner`** entry's subject is the script runner over a real loop
-  thread itself (the CLI's runner, [real-thread-checks.md](real-thread-checks.md)):
-  it runs both ways, the CLI over a real loop thread and the harness
-  stepped, and `case_compare` in `tools/wiring-runs.sh` runs it through
-  the CLI and hands the output to `fixture-test … compare <script> <file>`,
-  which exits 1 unless the two outputs are the same and are the expected
-  file (`fixture-test … compared` lists them);
-- a **`realEffect`** entry's subject is a real effect, which it names: a
-  process exec'd, a directory written, a real state directory read by the
-  next process, records beside an installed executable, a grammar of the
-  library's syntax service. Its CLI run covers it; it is also stepped when
-  its stepped output is its expected file too.
-
-An entry not stepped is skipped, with its line `fixture-test: <script>:
-left to the CLI (<site>): <covers>`; an entry under a root that names no
-discovered fixture fails the run, as stale. A script that aborts or waits
-for a restart is refused stepped unless it has an entry.
+A script that aborts or waits for a restart (`restarted`) is always
+refused stepped: its subject is a real effect, which a fixture cannot
+show on the fakes. The restart's hand-over and the session's restore are
+held by their model tests instead (`lean/ModelTest/Editor/Restart/Handover.lean`,
+`lean/ModelTest/Editor/Restore/`).
 
 **Seeds go in a setup** (`Editor.Test.Fixture.Setup`, keyed by the
 script's path): the model directory `@DIR@` stands for and what `@FILE@`
@@ -2334,7 +2156,7 @@ model file equal to a checked-in one, no line starting with a prefix),
 scripted process answers, another working directory, and another config
 directory, a path from the repository's root read in place, never copied,
 in place of the one discovery found (`config`; `tests/headless/default-config`
-names the shipped `config/default`, as its CLI run copies it). The core's
+names the shipped `config/default`). The core's
 setups are `Setup.core`; a fixture whose run reaches a package's processes
 takes its setup from that Lake package's `<P>Test.FixtureSetups`, whose
 `setups` the package-set build hands the set's harness after the core's
@@ -2345,8 +2167,8 @@ what it stands for is refused, and so is a fixture with no expected file
 and no after-check. **`expected` is never edited to fit a stepped run**:
 it is the CLI's. A stepped run that differs is a fake that answers unlike
 its adapter, fixed with a failing property of that port's contract first;
-else a missing seed, added to the setup; else a real effect, moved into
-the real-thread set with what it is.
+else a missing seed, added to the setup; else a real effect, which
+belongs in a test of the adapter that has it, not in a fixture.
 
 ## A package's fixtures
 
@@ -2357,9 +2179,8 @@ directory, a `script` and an `expected`
 steps over them"). `mise run ffi-test` runs them on the fixture harness of
 each package set that holds the package, stepped, once a package
 (`tools/package-set.sh run`, "How the gate runs a fixture", above): each
-must print exactly `expected`, and the harness's count line must cover
-every fixture the step found, or the step fails. Run through the CLI, the
-set's editor prints the same:
+must print exactly `expected`, or the harness exits 1 and the step fails.
+Run through the CLI, the set's editor prints the same:
 
 ```console
 $ cd lean
@@ -2375,9 +2196,7 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   for the fixture set, as the editor is: the package's command is
   compiled into both. The editor of the default set, which does not hold
   the fixture package, answers `run greeting-hello: no such command` to
-  the same script, and `ffi-test` checks that too, through the CLI: the
-  fixture is in the real-thread set for it, and for its run on a per-user
-  install.
+  the same script.
 - **The `.olean` directory given is the core's.** Config is elaborated on
   the set's base, `Editor` and then the entry module of each package of
   the set outside the core, and the editor finds a package's modules
@@ -2387,8 +2206,7 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   `packages/compile/tests/headless/config` do, and can bind and run a
   package's commands by name.
 - **The standing fixtures under `tests/headless/` are the core's**, run on
-  the default set's harness, or its editor for those the real-thread set
-  leaves to the CLI, and none of them changed when the editor came
+  the default set's harness, and none of them changed when the editor came
   to be built from a package set. Five lines of three of them changed
   when the compile mode moved into a default package, for the order it
   registers in, three lines of two when the command prompt and the
@@ -2401,8 +2219,7 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   directory as its setup's config, in an empty working directory `/d/cwd`
   whose fallback lister and filter answer nothing as `find` and `fzf` do
   there (the workspace package's `WorkspaceTest.FixtureSetups`, built from
-  its `Lister.fallback` and `FindFile.filtering`), and through the CLI on a copy in a
-  temporary directory (`tools/wiring-runs.sh`): `SPC :`
+  its `Lister.fallback` and `FindFile.filtering`): `SPC :`
   and `SPC ?`, run from the binding search as their keys would run, open
   the command prompt and the binding search. The binding search lists its
   workspace, project-search, working-set and `SPC b` keys, and `SPC f f`,
@@ -2412,9 +2229,8 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   cannot (`find-file-in-project: scratch is in no project`, `E348: No
   string under cursor`, `working-set-add: scratch has no file`,
   `working-set-open: scratch has no workspace`). The editor runs in an
-  empty directory beside the config's copy, `@DIR@/cwd` once the
-  temporary directory is written `@DIR@`, so what starts at the working
-  directory or searches it is the same on every machine.
+  empty working directory, written `@DIR@/cwd`, so what starts at the
+  working directory or searches it is the same on every machine.
 - **`tests/headless/working-set-from-search`** is project search and the
   working sets together, on the default set's editor with no config: `:e`
   opens a file of a tree that is a workspace by its marker `.project`,
@@ -2423,9 +2239,9 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   file's range, not the results'), and `working-set-open` shows that row
   of the file as the set's one excerpt, nothing drifted, which `RET`
   visits. A search's deliveries are what the library has found when its
-  job reads it, so how many there are differed from run to run through the
-  CLI: its setup leaves the job lines out, as the gate's CLI run did, and a
-  scene line carries no count of the scenes published.
+  job reads it, so how many there are differs from run to run on a real
+  host: its setup leaves the job lines out, and a scene line carries no
+  count of the scenes published.
 - **The fixtures of the four features that moved in the
   features-as-packages roadmap's phase 3 are their packages'**:
   `packages/mode-line/tests/headless/mode-line`, the core's until then;

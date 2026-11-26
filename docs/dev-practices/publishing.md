@@ -58,13 +58,8 @@ which runs them all and fails if any fails:
 3. The unstaged changes to tracked files (`--pre-commit`).
 4. The staged changes (`--staged`).
 
-The task first runs `tools/secrets-scan-probe.sh`: in a throwaway
-repository it plants a GitHub token-shaped string (made at random on each
-run, never written in the script) where each of the four passes looks, and
-only there, runs `tools/secrets-scan.sh` on it, and requires each pass to
-report its token. A broken config, a wrong flag or a dropped pass in the
-script fails here rather than passing silently. Then it runs
-`tools/secrets-scan.sh .` on this repository.
+The task runs `tools/secrets-scan.sh .` on this repository, and passes
+by its exit status.
 
 Untracked files that are not staged are not scanned; stage them first.
 
