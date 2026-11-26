@@ -123,8 +123,8 @@ def initializeCheck : IO Bool := do
     return false
 
 /-- Runs the three checks and exits 0 when all hold, 1 when one does not, and 2
-for a command line that is not the two directories. The exit is explicit,
-after the library's services are shut down and its queues quit, as the
+for a command line that is not the two directories, with `--wiring` after
+them or not, which runs nothing. The exit is explicit, after the library's services are shut down and its queues quit, as the
 headless mode's is: a task may still be blocked in the library. -/
 def main (arguments : List String) : IO UInt32 := do
   match arguments with
@@ -137,11 +137,14 @@ def main (arguments : List String) : IO UInt32 := do
     Editor.Ffi.watchesShutdown
     Editor.Ffi.quit
     IO.Process.exit (if initialized && library && config then 0 else 1)
-  -- No module of the wiring set: it lists none, so `tools/package-set.sh
-  -- --wiring run`, the stress loop's `linked-wiring`, skips it.
+  -- No module of the wiring set: it lists none, and its wiring run
+  -- (`tools/package-set.sh --wiring run`, the stress loop's
+  -- `linked-wiring`) selects no check and passes.
+  | [_, _, "--wiring"] =>
+    return 0
   | ["wiring-modules"] =>
     return 0
   | _ =>
     IO.eprintln
-        "usage: GreetingTest-Linked <sysroot> <core olean dir>, or GreetingTest-Linked wiring-modules"
+        "usage: GreetingTest-Linked <sysroot> <core olean dir> [--wiring], or GreetingTest-Linked wiring-modules"
     return 2

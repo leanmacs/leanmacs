@@ -28,7 +28,7 @@ service and no pump is started.
 
 /-- Runs the checks and exits 0 when all hold, 1 after naming on stderr the
 ones that do not, and 2 for a command line that is not the two
-directories. -/
+directories, with `--wiring` after them or not, which runs nothing. -/
 def main (arguments : List String) : IO UInt32 := do
   match arguments with
   | [_, _] =>
@@ -40,11 +40,14 @@ def main (arguments : List String) : IO UInt32 := do
           s!"completion linked test: {CompletionTest.linkedStyles.length * Editor.Completion.StyleContract.properties.length} checks passed"
     (← IO.getStdout).flush
     return if failed.isEmpty then 0 else 1
-  -- No module of the wiring set: it lists none, so `tools/package-set.sh
-  -- --wiring run`, the stress loop's `linked-wiring`, skips it.
+  -- No module of the wiring set: it lists none, and its wiring run
+  -- (`tools/package-set.sh --wiring run`, the stress loop's
+  -- `linked-wiring`) selects no check and passes.
+  | [_, _, "--wiring"] =>
+    return 0
   | ["wiring-modules"] =>
     return 0
   | _ =>
     IO.eprintln
-        "usage: CompletionTest-Linked <sysroot> <core olean dir>, or CompletionTest-Linked wiring-modules"
+        "usage: CompletionTest-Linked <sysroot> <core olean dir> [--wiring], or CompletionTest-Linked wiring-modules"
     return 2

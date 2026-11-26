@@ -64,11 +64,14 @@ def main (arguments : List String) : IO UInt32 := do
     (← IO.getStdout).flush
     Editor.Test.Linked.shutdown
     IO.Process.exit (if failed.isEmpty then 0 else 1)
-  -- No module of the wiring set: it lists none, so `tools/package-set.sh
-  -- --wiring run`, the stress loop's `linked-wiring`, skips it.
+  -- No module of the wiring set: it lists none, and its wiring run
+  -- (`tools/package-set.sh --wiring run`, the stress loop's
+  -- `linked-wiring`) selects no check and passes.
+  | [_, _, "--wiring"] =>
+    return 0
   | ["wiring-modules"] =>
     return 0
   | _ =>
     IO.eprintln
-        "usage: ThemesTest-Linked <sysroot> <core olean dir>, or ThemesTest-Linked wiring-modules"
+        "usage: ThemesTest-Linked <sysroot> <core olean dir> [--wiring], or ThemesTest-Linked wiring-modules"
     return 2

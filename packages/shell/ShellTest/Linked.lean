@@ -10,7 +10,7 @@ builds this root's executable with the Rust library linked, and runs it in
 the package's directory with the Lean toolchain's directory and the core's
 `.olean` directory, which it does not need. It prints `shell linked test: N
 checks passed`, and exits 0 when all hold, 1 after naming on stderr the ones
-that do not, and 2 for a command line that is not the two directories. The
+that do not, and 2 for a command line that is not the two directories, with `--wiring` after them or not, which runs nothing. The
 exit is explicit, after the library's services are shut down and its queues
 quit: a task may still be blocked in the library.
 
@@ -43,11 +43,14 @@ def main (arguments : List String) : IO UInt32 := do
     (← IO.getStdout).flush
     Editor.Test.Linked.shutdown
     IO.Process.exit (if failed.isEmpty then 0 else 1)
-  -- No module of the wiring set: it lists none, so `tools/package-set.sh
-  -- --wiring run`, the stress loop's `linked-wiring`, skips it.
+  -- No module of the wiring set: it lists none, and its wiring run
+  -- (`tools/package-set.sh --wiring run`, the stress loop's
+  -- `linked-wiring`) selects no check and passes.
+  | [_, _, "--wiring"] =>
+    return 0
   | ["wiring-modules"] =>
     return 0
   | _ =>
     IO.eprintln
-        "usage: ShellTest-Linked <sysroot> <core olean dir>, or ShellTest-Linked wiring-modules"
+        "usage: ShellTest-Linked <sysroot> <core olean dir> [--wiring], or ShellTest-Linked wiring-modules"
     return 2
