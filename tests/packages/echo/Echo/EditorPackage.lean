@@ -10,7 +10,7 @@ package set and its build"). The packages are `Echo.packages`
 
 namespace Echo.EditorPackage
 
-/-- The packages of the Lake package `echo`: `Echo.packages`, none. -/
+/-- The packages of the Lake package `echo`: `Echo.packages`. -/
 def packages : Array Editor.Package :=
   Echo.packages
 

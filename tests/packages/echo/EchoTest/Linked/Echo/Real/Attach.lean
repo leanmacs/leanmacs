@@ -14,7 +14,7 @@ crate takes it over through `editor-service`'s stream source alone
 (`editor_service::stream::take_over`), which `editor-ffi` provided when the
 library started. The crate reads the child's lines, writes `pong` back when
 it reads `ping-me`, sees its exit, and completes a request of its own
-service, which the kit's pump ends and Lean takes (`Echo.Real.attachTake`).
+service, which the kit's pump ends and Lean takes (`Echo.Real.attachTakeRaw`).
 So one Rust archive holds one copy of `editor-service`'s static, and the
 source the library provided is the one the package's crate finds.
 
@@ -72,7 +72,7 @@ private def attached (completions : Job.Completions) (child : UInt64) : IO (Opti
     return none
   unless ← completes done do
     return none
-  return (← Echo.Real.attachTake request).map (·.1)
+  return (← Echo.Real.attachTakeRaw request).map (·.1)
 
 /-- The checks of a child taken over by the crate, over `services`, whose
 pump is running. -/
@@ -104,7 +104,7 @@ def attachChecks (services : Editor.Test.Linked.Services) : List Check :=
               completes done
             else
               pure false
-          let read := (← Echo.Real.attachTake request).map (·.1)
+          let read := (← Echo.Real.attachTakeRaw request).map (·.1)
           saw (taken && completed && read == some "<cancelled>")
               s!"taken {taken}, completed {completed}, read {repr read}" },
     { name := "a child whose last delivery the crate pulled is forgotten, and not taken over again"

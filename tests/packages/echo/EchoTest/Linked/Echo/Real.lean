@@ -44,7 +44,10 @@ def realSubject (completions : Job.Completions) : IO Echo.Contract.Subject := do
         let some wait := (← waits.get)[id]? | return false
         -- Waited for on the wait itself; the kit's patience is a hang guard.
         let ended ← Job.awaitWithin Test.Linked.patience wait.result?
-        return ended == some (some .completed) }
+        return ended == some (some .completed)
+      endedNow := fun id => do
+        let some wait := (← waits.get)[id]? | return false
+        return (← wait.isResolved) && wait.result?.get == some .completed }
 
 /-- The check of the binding: every property of the contract, over
 `completions`, run on one subject in one pass through the completion queue
