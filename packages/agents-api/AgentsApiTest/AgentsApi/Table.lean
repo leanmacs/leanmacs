@@ -6,7 +6,8 @@ import AgentsApiTest.Check
 
 `tableChecks`: the reducer's attention and activity over a table of events
 (AC1 of acp-agents phase 7), an agent idle in the conversation with work
-in flight among them, and a session opened or resumed again, whose new
+in flight among them, an agent whose prompt was refused, which is idle
+and not watched, and a session opened or resumed again, whose new
 process numbers its turns from 1; the stall watchdog's verdict at its
 deadline; the list's order; the minted id; the display name; a record
 kept across a restart; and the table's tree, read back through the
@@ -75,6 +76,9 @@ def rows : List Row :=
       activity := .items #[] },
     { name := "c: prompted, sent 1", record := after r0 rowC, attention := .working
       activity := .items #[] },
+    { name := "c2: prompted, the prompt refused: nothing in flight"
+      record := after r0 [.prompted, .sent none], attention := .idle, activity := .items #[]
+      holds := fun record => !record.awaiting && record.turn.isNone && !record.watched },
     { name := "d: c, permission 1", record := after r0 rowD, attention := .waiting
       activity := .items #[] },
     { name := "e: d, answered 1", record := after r0 (rowD ++ [.answered 1])
