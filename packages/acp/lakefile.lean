@@ -72,7 +72,9 @@ target acpGlue.o pkg : FilePath := do
 /-- The codec, the service, the packages and the entry module: every module
 of the package but its tests and the binding. -/
 @[default_target] lean_lib Acp where
-  globs := #[.one `Acp.Codec, .one `Acp.Service, .one `Acp.Packages, .one `Acp.EditorPackage]
+  globs :=
+  #[.one `Acp.Codec, .one `Acp.Service, .one `Acp.ClaudeCode, .submodules `Acp.Conversation,
+    .one `Acp.Packages, .one `Acp.EditorPackage]
   plugins := lintPlugin
 
 /-- The Rust-backed binding, with the package's glue. -/
