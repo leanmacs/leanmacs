@@ -590,6 +590,7 @@ pub const PARENS_CORPUS: Corpus = Corpus {
     ],
     unknown_kind_query: "atom @a\nvector @v\n",
     shipped: &[QueryKind::Highlights],
+    highlights: None,
     settings_query: "list @l #set! injection.language parens #set! injection.include-children\natom @a\n\"(\" @p #set! key\n",
     settings: &[
         &[

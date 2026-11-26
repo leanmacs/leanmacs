@@ -66,6 +66,12 @@ pub struct Corpus {
     pub unknown_kind_query: &'static str,
     /// The kinds of query the grammar ships ([`Syntax::shipped_query`]).
     pub shipped: &'static [QueryKind],
+    /// The highlights query [`HIGHLIGHTS_AFTER_EDITS`] and [`CONVERGES`]
+    /// draw with when `shipped` lacks [`QueryKind::Highlights`]: how a
+    /// grammar that ships no query, as one registered at run time ships
+    /// none, is held to both with the query that sits beside its library.
+    /// Ignored when the grammar ships its own; with neither, both fail.
+    pub highlights: Option<&'static str>,
     /// A query whose patterns have `#set!` settings.
     pub settings_query: &'static str,
     /// The settings of each pattern of `settings_query`, in order: each a
@@ -159,7 +165,8 @@ pub const SETTINGS: &str = "each pattern's settings are the ones its source sets
 /// tree reparsed as the core reparses equal those on a fresh parse of the
 /// same snapshot, whenever that fresh parse has no error; and at least one
 /// reparse is compared. A [`ReparsePolicy::Whole`] grammar holds it with
-/// nothing to compare.
+/// nothing to compare. A grammar that ships no highlights query is drawn
+/// with the corpus's ([`Corpus::highlights`]), and fails with none.
 pub const HIGHLIGHTS_AFTER_EDITS: &str = "on a text without errors, the shipped highlights of an incremental reparse equal those of a fresh parse";
 
 /// Over the same edits as [`GRAMMAR_QUALITY`], every tree a round keeps,
@@ -170,8 +177,9 @@ pub const DELIVERED_WHOLE: &str = "every tree a round keeps is whole";
 /// From each text, over each named case and a short sweep, a real
 /// [`Session`] driven round by round ([`Session::parse_once`]) and then
 /// refreshed ([`Session::refresh_once`]) delivers a tree whose nodes equal
-/// a fresh parse's, drawn with the shipped highlights as a fresh highlight
-/// draws them; and a second refresh is [`Outcome::UpToDate`] and calls no
+/// a fresh parse's, drawn with the shipped highlights (or, for a grammar
+/// that ships none, the corpus's: [`Corpus::highlights`]) as a fresh
+/// highlight draws them; and a second refresh is [`Outcome::UpToDate`] and calls no
 /// consumer. Timing is the worker's rule, pinned in its own tests: here
 /// there is no worker and no clock.
 pub const CONVERGES: &str = "after the idle refresh the delivered tree equals a fresh parse, and a refresh that finds no difference delivers nothing";
@@ -792,13 +800,18 @@ fn delivered_whole<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpu
     after_edits(syntax, parser, corpus, &mut same)
 }
 
-/// The grammar's shipped highlights query, compiled, each capture in a face
-/// named after it; `None` when it ships none that compiles.
+/// The highlights query the properties draw with, compiled, each capture
+/// in a face named after it: the grammar's shipped one when the corpus
+/// lists [`QueryKind::Highlights`], else the corpus's own
+/// ([`Corpus::highlights`]); `None` when there is none that compiles.
 fn shipped_highlighter<S: Syntax>(syntax: &S, corpus: &Corpus) -> Option<Highlighter<S::Query>> {
     let grammar = GrammarName::new(corpus.grammar);
-    let query = syntax
-        .shipped_query(&grammar, QueryKind::Highlights)
-        .and_then(|source| syntax.compile(&grammar, &source).ok())?;
+    let source = if corpus.shipped.contains(&QueryKind::Highlights) {
+        syntax.shipped_query(&grammar, QueryKind::Highlights)
+    } else {
+        corpus.highlights.map(str::to_owned)
+    };
+    let query = source.and_then(|source| syntax.compile(&grammar, &source).ok())?;
     let names = syntax.capture_names(&query);
     let faces = names.iter().cloned().map(Some).collect();
     Highlighter::new(Arc::new(query), names.len(), faces).ok()
@@ -1296,7 +1309,9 @@ impl Random {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake::{GRAMMAR, PARENS_CORPUS, Parens, ParensParser, ParensQuery, ParensTree};
+    use crate::fake::{
+        GRAMMAR, PARENS_CORPUS, PARENS_HIGHLIGHTS, Parens, ParensParser, ParensQuery, ParensTree,
+    };
 
     #[test]
     fn the_properties_are_seventeen_and_each_is_named_once() {
@@ -1369,6 +1384,12 @@ mod tests {
         ParsesOutsideRanges,
         /// It ships its highlights query as a query of every kind.
         ShipsEveryKind,
+        /// It ships no query of any kind, as a grammar registered at run
+        /// time does.
+        ShipsNone,
+        /// As [`Flaw::ReparsesOtherwise`], and it ships no query of any
+        /// kind.
+        ReparsesOtherwiseShipsNone,
     }
 
     /// The fake with one flaw.
@@ -1484,7 +1505,9 @@ mod tests {
                     parser.remembered = Some((text.to_string(), tree.clone()));
                     tree
                 }
-                Flaw::ReparsesOtherwise | Flaw::ReparsesOtherwiseDeclaredWhole
+                Flaw::ReparsesOtherwise
+                | Flaw::ReparsesOtherwiseDeclaredWhole
+                | Flaw::ReparsesOtherwiseShipsNone
                     if !Parens.has_errors(&fresh) =>
                 {
                     let mut nodes = Parens.nodes(&fresh);
@@ -1513,6 +1536,7 @@ mod tests {
                 Flaw::BrokenShipped => Some("((".to_owned()),
                 Flaw::ShipsEveryKind => Parens.shipped_query(grammar, QueryKind::Highlights),
                 Flaw::ShipsForAny => Parens.shipped_query(&GrammarName::new(GRAMMAR), kind),
+                Flaw::ShipsNone | Flaw::ReparsesOtherwiseShipsNone => None,
                 _ => Parens.shipped_query(grammar, kind),
             }
         }
@@ -1796,6 +1820,47 @@ mod tests {
     #[test]
     fn a_syntax_that_ships_a_kind_its_corpus_does_not_list_is_reported() {
         assert_eq!(failed(Flaw::ShipsEveryKind), [SHIPPED]);
+    }
+
+    /// The fake's corpus for a grammar that ships no query, with `highlights`
+    /// as the corpus's own highlights query.
+    fn shipping_none(highlights: Option<&'static str>) -> Corpus {
+        Corpus {
+            shipped: &[],
+            highlights,
+            ..PARENS_CORPUS
+        }
+    }
+
+    #[test]
+    fn a_grammar_that_ships_no_query_keeps_the_contract_with_the_corpus_highlights() {
+        assert_eq!(
+            check(
+                &Broken::new(Flaw::ShipsNone),
+                &shipping_none(Some(PARENS_HIGHLIGHTS))
+            ),
+            [""; 0]
+        );
+    }
+
+    #[test]
+    fn a_grammar_that_ships_no_highlights_and_a_corpus_with_none_fails_highlights_after_edits() {
+        // Both properties that draw highlights find nothing to draw with.
+        assert_eq!(
+            check(&Broken::new(Flaw::ShipsNone), &shipping_none(None)),
+            [HIGHLIGHTS_AFTER_EDITS, CONVERGES]
+        );
+    }
+
+    #[test]
+    fn a_reparse_that_draws_other_highlights_is_reported_with_the_corpus_highlights() {
+        assert_eq!(
+            check(
+                &Broken::new(Flaw::ReparsesOtherwiseShipsNone),
+                &shipping_none(Some(PARENS_HIGHLIGHTS))
+            ),
+            [GRAMMAR_QUALITY, HIGHLIGHTS_AFTER_EDITS]
+        );
     }
 
     #[test]
