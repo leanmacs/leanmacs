@@ -49,6 +49,31 @@
 //! step it on their own thread ([`Worker::step`]); `tests/worker.rs` runs
 //! the loop on a thread, and on a clock that moves by itself shows a park
 //! ended by its deadline alone, with nothing waking it.
+//!
+//! # Registrations
+//!
+//! The grammars the syntax can parse with are state of the process's
+//! syntax service, so in production a registration ([`Syntax::register`])
+//! reaches the syntax only as a request on this worker's queue
+//! ([`Handle::register`]), in the order it was queued:
+//!
+//! - **Each step answers the registrations first.** Each step of the loop,
+//!   and of [`Worker::step`], first takes every registration queued and
+//!   answers each, in order, with no lock held, and only then runs the next
+//!   round or refresh. A registration only changes which grammar a parser
+//!   opened afterwards gets, so answering it ahead of the queued rounds
+//!   means an attach made after its answer opens the registered grammar.
+//! - **The answer is a callback**, called once on the loop's thread with the
+//!   registered name or the refusal. A caller that must not block (the
+//!   editor thread, through `editor-ffi`'s completion queue) keeps the
+//!   answer and completes a wait with it.
+//! - **A flush** ([`Handle::flush_registrations`]) is a barrier in the same
+//!   order: its callback is called once every registration queued before it
+//!   is answered.
+//! - **No caller is left without an answer.** When the loop ends, by
+//!   [`Handle::stop`] or by a panic in a round, every registration still
+//!   queued is answered `None` and every flush is called; one queued on a
+//!   stopped worker is answered `None` at once.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -58,8 +83,34 @@ use std::time::Duration;
 use editor_text::Revision;
 
 use crate::clock::Clock;
-use crate::port::{ReparsePolicy, Syntax};
+use crate::port::{GrammarName, GrammarSource, RegistrationRefusal, ReparsePolicy, Syntax};
 use crate::session::{Outcome, Session};
+
+/// What a registration's callback is handed: the registered name or the
+/// refusal, or `None` when the loop ended before it answered.
+pub type Answer = Option<Result<GrammarName, RegistrationRefusal>>;
+
+/// A registration's callback ([`Handle::register`]), called once with its
+/// [`Answer`].
+pub type Reply = Box<dyn FnOnce(Answer) + Send>;
+
+/// What a registration queue holds: a registration, or a flush's barrier.
+enum Request {
+    /// Register the grammar of a source, and hand the answer to the reply.
+    Register(GrammarSource, Reply),
+    /// Call this once every request before it is answered.
+    Barrier(Box<dyn FnOnce() + Send>),
+}
+
+impl Request {
+    /// Ends the request with no answer: the loop ended before it.
+    fn drop_unanswered(self) {
+        match self {
+            Self::Register(_, reply) => reply(None),
+            Self::Barrier(done) => done(),
+        }
+    }
+}
 
 /// The longest the loop parks before it looks at the clock again. A
 /// deadline may be as far away as a `u64` of milliseconds, which no
@@ -131,8 +182,9 @@ pub struct Worker<S: Syntax> {
 struct Shared<S: Syntax> {
     /// The queue and the refreshes.
     queue: Mutex<Queue<S>>,
-    /// Woken when a session is queued, a refresh is scheduled, the worker
-    /// is stopped, or [`Handle::wake`] is called.
+    /// Woken when a session is queued, a refresh is scheduled, a
+    /// registration or a flush is queued, the worker is stopped, or
+    /// [`Handle::wake`] is called.
     ready: Condvar,
     /// Where the time is read.
     clock: Arc<dyn Clock>,
@@ -149,6 +201,8 @@ struct Queue<S: Syntax> {
     sessions: VecDeque<Weak<Session<S>>>,
     /// The refreshes, each a session's.
     refreshes: Refreshes<Weak<Session<S>>>,
+    /// The registrations and flushes, in the order they were queued.
+    registrations: VecDeque<Request>,
     /// Whether the loop should end.
     stopped: bool,
 }
@@ -164,6 +218,32 @@ impl<S: Syntax> Clone for Handle<S> {
     fn clone(&self) -> Self {
         Self {
             shared: self.shared.clone(),
+        }
+    }
+}
+
+/// What the loop does next.
+enum Next<S: Syntax> {
+    /// Answer these registrations and flushes, in order.
+    Requests(VecDeque<Request>),
+    /// Run this job.
+    Job(Job<S>),
+}
+
+/// Ends the loop's queue when the loop returns or unwinds: marks the worker
+/// stopped, and ends every registration and flush still queued with no
+/// answer, so no caller waits for ever.
+struct Drain<'a, S: Syntax>(&'a Shared<S>);
+
+impl<S: Syntax> Drop for Drain<'_, S> {
+    fn drop(&mut self) {
+        let requests = {
+            let mut queue = self.0.lock();
+            queue.stopped = true;
+            std::mem::take(&mut queue.registrations)
+        };
+        for request in requests {
+            request.drop_unanswered();
         }
     }
 }
@@ -213,6 +293,7 @@ impl<S: Syntax> Worker<S> {
                 queue: Mutex::new(Queue {
                     sessions: VecDeque::new(),
                     refreshes: Refreshes::new(),
+                    registrations: VecDeque::new(),
                     stopped: false,
                 }),
                 ready: Condvar::new(),
@@ -229,13 +310,27 @@ impl<S: Syntax> Worker<S> {
         }
     }
 
-    /// Runs one round of the next queued session or, with none queued, the
-    /// first refresh due, and returns how it ended: [`Outcome::Gone`] too
-    /// for a session nobody holds any more. `None` when nothing is queued
-    /// and no refresh is due.
+    /// Answers every registration and flush queued, in order, then runs
+    /// one round of the next queued session or, with none queued, the
+    /// first refresh due, and returns how that ended: [`Outcome::Gone`] too
+    /// for a session nobody holds any more. `None` when no session is
+    /// queued and no refresh is due.
     pub fn step(&self) -> Option<Outcome> {
+        let requests = std::mem::take(&mut self.shared.lock().registrations);
+        self.answer(requests);
         let job = self.shared.next(&mut self.shared.lock())?;
         Some(self.work(&job))
+    }
+
+    /// Answers each of `requests`, in order, with no lock held: a
+    /// registration with the syntax's answer, a flush by calling it.
+    fn answer(&self, requests: VecDeque<Request>) {
+        for request in requests {
+            match request {
+                Request::Register(source, reply) => reply(Some(self.syntax.register(&source))),
+                Request::Barrier(done) => done(),
+            }
+        }
     }
 
     /// Runs `job`, which was just taken out of the queue or the schedule.
@@ -259,20 +354,27 @@ impl<S: Syntax> Worker<S> {
         outcome
     }
 
-    /// The loop: runs each queued round and each refresh once it is due,
-    /// and otherwise parks, with no deadline when no refresh is scheduled
-    /// and until the earliest deadline otherwise, until the worker is
-    /// stopped ([`Handle::stop`]).
+    /// The loop: answers each registration and flush queued, runs each
+    /// queued round and each refresh once it is due, and otherwise parks,
+    /// with no deadline when no refresh is scheduled and until the earliest
+    /// deadline otherwise, until the worker is stopped ([`Handle::stop`]).
+    /// When it returns or unwinds, every registration still queued is
+    /// answered `None` and every flush called (the module docs,
+    /// "Registrations").
     pub fn run(&self) {
+        let _drain = Drain(&self.shared);
         loop {
-            let job = {
+            let next = {
                 let mut queue = self.shared.lock();
                 loop {
                     if queue.stopped {
                         return;
                     }
+                    if !queue.registrations.is_empty() {
+                        break Next::Requests(std::mem::take(&mut queue.registrations));
+                    }
                     if let Some(job) = self.shared.next(&mut queue) {
-                        break job;
+                        break Next::Job(job);
                     }
                     queue = match queue.refreshes.next_due() {
                         None => self
@@ -297,7 +399,12 @@ impl<S: Syntax> Worker<S> {
                     };
                 }
             };
-            self.work(&job);
+            match next {
+                Next::Requests(requests) => self.answer(requests),
+                Next::Job(job) => {
+                    self.work(&job);
+                }
+            }
         }
     }
 }
@@ -357,6 +464,36 @@ impl<S: Syntax> Handle<S> {
         self.shared.ready.notify_all();
     }
 
+    /// Queues the registration of the grammar `source` names, answered on
+    /// the loop's thread before its next round, in order with the other
+    /// registrations; `reply` is called once with the answer (the module
+    /// docs, "Registrations"). On a stopped worker it is answered `None` at
+    /// once, on the caller's thread. It never waits.
+    pub fn register(&self, source: GrammarSource, reply: Reply) {
+        self.queue_request(Request::Register(source, reply));
+    }
+
+    /// Queues a flush: `done` is called once every registration queued
+    /// before it is answered. On a stopped worker it is called at once, on
+    /// the caller's thread. It never waits.
+    pub fn flush_registrations(&self, done: Box<dyn FnOnce() + Send>) {
+        self.queue_request(Request::Barrier(done));
+    }
+
+    /// Queues `request` and wakes the loop, or ends it with no answer on a
+    /// stopped worker, outside the lock.
+    fn queue_request(&self, request: Request) {
+        let mut queue = self.shared.lock();
+        if queue.stopped {
+            drop(queue);
+            request.drop_unanswered();
+            return;
+        }
+        queue.registrations.push_back(request);
+        drop(queue);
+        self.shared.ready.notify_all();
+    }
+
     /// Ends the loop: [`Worker::run`] returns before its next round.
     pub fn stop(&self) {
         self.shared.lock().stopped = true;
@@ -373,8 +510,9 @@ mod tests {
 
     use super::*;
     use crate::clock::ManualClock;
+    use crate::fake::libraries::{self, Libraries};
     use crate::fake::{GRAMMAR, Parens, ParensParser};
-    use crate::port::GrammarName;
+    use crate::port::{GrammarName, GrammarSource, RegistrationRefusal};
     use crate::session::tests::{Recording, Recovers, Revisions, TextSource, replace};
 
     /// The interval the tests refresh after.
@@ -720,6 +858,164 @@ mod tests {
         assert_eq!(worker.step(), None);
         clock.set(50);
         assert_eq!(worker.step(), Some(Outcome::UpToDate));
+    }
+
+    /// The answers a registration's reply is handed, in order, and a reply
+    /// that records into them.
+    #[derive(Clone, Default)]
+    struct Answers(Arc<Mutex<Vec<Answer>>>);
+
+    impl Answers {
+        /// A reply that records its answer.
+        fn reply(&self) -> Reply {
+            let answers = self.0.clone();
+            Box::new(move |answer| answers.lock().unwrap().push(answer))
+        }
+
+        /// The answers recorded.
+        fn all(&self) -> Vec<Answer> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    /// A worker over the fake with its table, on a clock of its own.
+    fn libraries_worker() -> Worker<Libraries> {
+        worker_of(Libraries::new(libraries::table()), &ManualClock::new())
+    }
+
+    /// A source of `symbol` in no library any test reads.
+    fn source(symbol: &str) -> GrammarSource {
+        GrammarSource {
+            library: "/nowhere.so".into(),
+            symbol: symbol.to_owned(),
+            policy: None,
+        }
+    }
+
+    #[test]
+    fn a_registration_is_answered_by_the_next_step_and_lists_its_grammar() {
+        let worker = libraries_worker();
+        let answers = Answers::default();
+        let brackets = GrammarName::new("brackets");
+        worker
+            .handle()
+            .register(libraries::corpus().new, answers.reply());
+
+        assert_eq!(answers.all(), []);
+        assert!(!worker.syntax.grammars().contains(&brackets));
+        assert_eq!(worker.step(), None);
+        assert_eq!(answers.all(), [Some(Ok(brackets.clone()))]);
+        assert!(worker.syntax.grammars().contains(&brackets));
+    }
+
+    #[test]
+    fn a_step_answers_each_queued_registration_in_order_before_its_round() {
+        let worker = worker_of(Recording::default(), &ManualClock::new());
+        let (_text, session) = session_of(&worker, "(a)");
+        let handle = worker.handle();
+        let answers = Answers::default();
+        handle.touch(&session, Revision::new(0));
+        handle.register(source("tree_sitter_first"), answers.reply());
+        handle.register(source("tree_sitter_second"), answers.reply());
+        let before = worker.syntax.calls.lock().unwrap().len();
+
+        let outcome = worker.step();
+
+        assert_eq!(
+            worker.syntax.calls.lock().unwrap()[before..],
+            [
+                "register tree_sitter_first",
+                "register tree_sitter_second",
+                "parse"
+            ]
+        );
+        assert_eq!(outcome, Some(Outcome::Delivered(Revision::new(0))));
+        assert_eq!(
+            answers.all(),
+            [
+                Some(Err(RegistrationRefusal::Unsupported)),
+                Some(Err(RegistrationRefusal::Unsupported))
+            ]
+        );
+    }
+
+    #[test]
+    fn a_refused_registration_is_answered_with_its_refusal() {
+        let worker = libraries_worker();
+        let answers = Answers::default();
+        worker
+            .handle()
+            .register(libraries::corpus().not_found, answers.reply());
+
+        worker.step();
+
+        assert_eq!(answers.all(), [Some(Err(RegistrationRefusal::NotFound))]);
+    }
+
+    #[test]
+    fn a_flush_is_called_after_every_registration_queued_before_it() {
+        let worker = libraries_worker();
+        let handle = worker.handle();
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let reply = |tag: &'static str| -> Reply {
+            let order = order.clone();
+            Box::new(move |_| order.lock().unwrap().push(tag))
+        };
+        handle.register(libraries::corpus().new, reply("first"));
+        handle.flush_registrations(Box::new({
+            let order = order.clone();
+            move || order.lock().unwrap().push("flush")
+        }));
+        handle.register(libraries::corpus().overriding, reply("second"));
+
+        assert_eq!(*order.lock().unwrap(), [""; 0]);
+        worker.step();
+        assert_eq!(*order.lock().unwrap(), ["first", "flush", "second"]);
+    }
+
+    #[test]
+    fn a_registration_on_a_stopped_worker_is_answered_with_none() {
+        let worker = libraries_worker();
+        let handle = worker.handle();
+        let answers = Answers::default();
+        let flushed = Arc::new(Mutex::new(false));
+        handle.stop();
+
+        handle.register(libraries::corpus().new, answers.reply());
+        handle.flush_registrations(Box::new({
+            let flushed = flushed.clone();
+            move || *flushed.lock().unwrap() = true
+        }));
+
+        assert_eq!(answers.all(), [None]);
+        assert!(*flushed.lock().unwrap());
+        assert_eq!(worker.step(), None);
+        assert_eq!(answers.all(), [None]);
+    }
+
+    #[test]
+    fn a_registration_queued_when_the_loop_returns_is_answered_with_none_and_a_flush_is_called() {
+        let worker = libraries_worker();
+        let handle = worker.handle();
+        let answers = Answers::default();
+        let flushed = Arc::new(Mutex::new(false));
+        handle.register(libraries::corpus().new, answers.reply());
+        handle.flush_registrations(Box::new({
+            let flushed = flushed.clone();
+            move || *flushed.lock().unwrap() = true
+        }));
+        handle.stop();
+
+        worker.run();
+
+        assert_eq!(answers.all(), [None]);
+        assert!(*flushed.lock().unwrap());
+        assert!(
+            !worker
+                .syntax
+                .grammars()
+                .contains(&GrammarName::new("brackets"))
+        );
     }
 
     #[test]

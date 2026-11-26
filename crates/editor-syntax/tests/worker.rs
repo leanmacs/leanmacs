@@ -4,7 +4,8 @@
 //! once the clock has passed the idle interval and the loop is woken, the
 //! text is refreshed; and on a clock that moves by itself, the loop, parked
 //! until a refresh's deadline and woken by nothing, refreshes the text
-//! once the deadline passes.
+//! once the deadline passes; and a registration queued while the loop is
+//! parked wakes it and is answered.
 //!
 //! Nothing sleeps. The consumer sends each revision it is handed on a
 //! channel, and the test waits on it, or on the session, with a bound.
@@ -17,6 +18,7 @@ use std::time::Duration;
 use editor_wait::{HangGuard, Stopwatch};
 
 use editor_syntax::clock::{Clock, ManualClock};
+use editor_syntax::fake::libraries::{self, Libraries};
 use editor_syntax::fake::{GRAMMAR, Parens, ParensParser};
 use editor_syntax::{
     Consumer, GrammarName, Handle, Latest, Parsed, Session, Source, Syntax, Worker,
@@ -143,9 +145,9 @@ fn a_worker_on_its_own_thread_delivers_only_newer_revisions_and_ends_at_the_last
 
 /// Stops the loop when dropped, so a failed assertion inside the scope
 /// ends the loop before the scope joins its thread.
-struct Stop<'a>(&'a Handle<Parens>);
+struct Stop<'a, S: Syntax>(&'a Handle<S>);
 
-impl Drop for Stop<'_> {
+impl<S: Syntax> Drop for Stop<'_, S> {
     fn drop(&mut self) {
         self.0.stop();
     }
@@ -252,4 +254,31 @@ fn the_loop_parked_until_a_deadline_refreshes_the_text_when_it_passes_with_no_wa
             "the loop did not wake by itself for the refresh's deadline"
         );
     });
+}
+
+#[test]
+fn a_registration_wakes_the_parked_loop_and_is_answered() {
+    let worker = Worker::new(
+        Arc::new(Libraries::new(libraries::table())),
+        Arc::new(ManualClock::new()),
+        REFRESH_AFTER,
+    );
+    let handle = worker.handle();
+    let (sent, received) = mpsc::channel();
+
+    let answer = thread::scope(|scope| {
+        // Nothing is queued, so the loop parks with no deadline: only the
+        // registration can wake it.
+        scope.spawn(|| worker.run());
+        let _stop = Stop(&handle);
+        handle.register(
+            libraries::corpus().new,
+            Box::new(move |answer| {
+                let _ = sent.send(answer);
+            }),
+        );
+        editor_wait::recv(&received, BOUND).expect("an answer within the bound")
+    });
+
+    assert_eq!(answer, Some(Ok(GrammarName::new("brackets"))));
 }
