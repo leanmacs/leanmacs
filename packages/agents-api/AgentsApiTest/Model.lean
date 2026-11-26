@@ -1,4 +1,6 @@
 import AgentsApiTest.AgentsApi
+import AgentsApiTest.AgentsApi.Arguments
+import AgentsApiTest.AgentsApi.View
 import AgentsApiTest.AgentsApiTest.Contract
 import AgentsApiTest.AgentsApiTest.Fake
 import AgentsApiTest.AgentsApiTest.Protocol
@@ -19,6 +21,11 @@ imports the test modules and runs their checks:
   request vocabulary read back as it was written and a malformed request
   refused, the agent registration point a choice by name, and an agent's
   command;
+- `argumentsChecks`: a session's values as command arguments
+  (`AgentsApi/Arguments.lean`), each read back as it was written, and a
+  malformed list read as none;
+- `viewChecks`: the extension point `ConversationView`
+  (`AgentsApi/View.lean`), a choice by name;
 - `fakeChecks`: the fake of the service (`AgentsApiTest/Fake.lean`) at the
   runner's port: what each request answers and when a `next` completes;
 - `contractBiteChecks`: three flawed fakes, each refused by the contract on
@@ -29,7 +36,9 @@ imports the test modules and runs their checks:
 
 /-- Every check of the test driver, in the order they run. -/
 def AgentsApiTest.checks : List AgentsApiTest.Check :=
-  AgentsApiTest.protocolChecks ++ AgentsApiTest.agentsApiChecks ++ AgentsApiTest.fakeChecks ++
+  AgentsApiTest.protocolChecks ++ AgentsApiTest.agentsApiChecks ++ AgentsApiTest.argumentsChecks ++
+    AgentsApiTest.viewChecks ++
+    AgentsApiTest.fakeChecks ++
     AgentsApiTest.contractBiteChecks
 
 /-- Runs the checks, and prints each that failed; the exit status is 1 when
