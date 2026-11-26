@@ -115,6 +115,7 @@ headers and no Cargo). Under `Contents/Resources`:
 
 ```
 editor.core, editor.oleans, editor.build   the records (below)
+editor.grammars                            the staged grammars directories, when the set ships any
 lean/toolchain/                            the Lean toolchain, whole, but mise's exposed/
 lean/lean/                                 the core: lakefile.lean, lean-toolchain, lake-manifest.json,
                                            ffi/glue.c, the sources of the Editor library and FilesApi,
@@ -150,6 +151,12 @@ lean/link-stubs/                           macOS: the system libraries' link stu
 - **The bundle's records.** `editor.oleans` names the `.olean`
   directories, relative to `Contents/Resources`
   (`lean/Editor/ModuleLookup.lean`, "The bundle's record").
+  `editor.grammars` names, for each Lake package of the set that ships
+  grammars (the keyword `editor-grammars`), its `grammars/` directory as
+  staged under `lean/set/`, relative to `Contents/Resources`
+  (`lean/Editor/ModuleLookup.lean`, "The grammars"; [packages.md](packages.md),
+  "A package's grammars"); the default set ships none, so the bundle has
+  none.
   `editor.build` is the executable's `.build` record without `LEAN_CC`, so
   a build the app runs keeps `MACOSX_DEPLOYMENT_TARGET` and compiles with
   the bundled `clang` (`lean/Editor/PackageSet/Running.lean`).

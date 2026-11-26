@@ -254,6 +254,57 @@ volume alone`. It does not
 depend on `dmg`, so CI's build job, which runs `dmg` then `dmg-check`,
 packs once. It is not part of the gate, which builds no bundle.
 
+## A package's grammar, installed, on demand
+
+```sh
+mise run grammar-install-check
+```
+
+The roadmap `syntax-runtime-grammars`' done criterion is an install: a
+package that ships a grammar, installed, highlights its language in the
+restarted editor with no rebuild ([packages.md](../design/packages.md), "A
+package's grammars"). The task builds what `mise run lean` builds, then
+runs the ignored test
+`crates/editor-syntax-fixture-ini/tests/package_install.rs` with
+`LEANMACS_SYSROOT` naming the toolchain's directory (the test panics when
+that is unset). In a temporary directory it owns, it:
+
+- copies the test package `tests/grammar-set/ini-grammar`, puts the fixture
+  grammar library Cargo builds at the path the package's declaration names
+  for this platform in the copy's `grammars/`, and points the copy's
+  `editor-core` require at the core's absolute directory;
+- generates a config directory from the package's
+  `tests/install/config/init.lean` with the default set's editor's
+  `headless --generate`, adds the copy's `[[require]]` before the core's, as
+  `:package-install` does, and resolves it with the toolchain's `lake update
+  --keep-toolchain`;
+- installs it with `lake -d <config> build :editorInstall`, with
+  `EDITOR_INSTALL_DIR` in the temporary directory and the default set's
+  `editor.build`, and reads back the library and the highlights query the
+  install copied to `grammars/ini-grammar/` and its `editor.grammars`;
+- runs the installed editor headless, in a directory holding a copy of
+  `tests/syntax/ini/settings.ini`, on the package's `tests/install/script`,
+  which opens the file and asks `highlights`, and holds its `highlights`
+  line to `tests/install/expected` and its output to no refusal of the
+  grammar `ini`.
+
+It writes nothing outside its temporary directory but what the default
+set's and the core's builds would write in place, which `mise run lean`
+has already built; it takes about 8 s after that build (2026-11-26, macOS
+arm64). It ends `grammar-install-check: an install of a set with
+ini-grammar highlights settings.ini with the package's grammar`.
+
+It is not part of the gate (the operator's decision, 2026-11-26): an
+install is about 420 MB, and no gate step installs a set
+([packages.md](../design/packages.md), "The install"). The gate covers the
+grammar path through the wiring check over the grammar set's build
+(`IniGrammarTest.Linked.realChecks`, in `mise run ffi-test`), the bundle's
+staging test (`the_binary_stages_a_packages_grammar_library_and_queries`)
+and the model checks of the declaration, its resolution and its
+registration. Run it after a change to the install (`editorInstall`), the
+records (`editor.grammars`, `Editor/ModuleLookup.lean`), the staging
+(`stageGrammars`, `editorShipped`) or the install's signing.
+
 ## The nightly's preparation, on demand
 
 ```sh

@@ -37,16 +37,21 @@ details:
   tests, and the unit tests of the examples declared `test = true`.
 - **`lean-test`**: the Lean model tests (`lake test`), the linters' checks
   (`lake exe lint-test`) and each package's Lake test driver over the
-  fixture set ("The package steps"), all with a `cargo` that fails first
-  on the PATH, so none of them needs the Rust library.
+  fixture set ("The package steps"), and the test driver of the package
+  `ini-grammar` of the grammar set (`tests/grammar-set/`), which no package
+  step reaches, all with a `cargo` that fails first on the PATH, so none of
+  them needs the Rust library.
 - **`lean`**: `lake build` of the core and its test executables with every
   linter on and warnings errors, which runs Cargo for the Rust static
   library; the editor and fixture harness of the default set (`packages/`)
   and of the fixture set (`tests/packages/`), each package's targets and
-  linked test ("The package steps"); and the editor of the set that holds
-  no package (`tests/empty-set/`).
-- **`lean-fmt`**: lean-fmt's format and lint checks over the core and each
-  package of the fixture set ("Formatting").
+  linked test ("The package steps"); the editor of the set that holds
+  no package (`tests/empty-set/`); and the editor of the grammar set
+  (`tests/grammar-set/`), whose build stages its package's `grammars/`
+  and writes `editor.grammars`, with its package's targets and linked
+  test, each on a line of its own.
+- **`lean-fmt`**: lean-fmt's format and lint checks over the core, each
+  package of the fixture set ("Formatting") and the grammar set's package.
 - **`ffi-test`**: cargo-deny over each set's generated crate ("The Rust
   bans check"); `ffi-test`'s checks of the Lean/Rust boundary;
   `contract-test`, the ports' contracts against their real bindings;
@@ -54,8 +59,12 @@ details:
   display, theme and excerpt pictures; the headless fixtures under
   `tests/headless` on the default set's fixture harness, stepped on the
   fakes ([`headless-mode.md`](headless-mode.md), "How the gate runs a
-  fixture"); and each package's linked test and headless fixtures ("The
-  package steps").
+  fixture"); each package's linked test and headless fixtures ("The
+  package steps"); and the grammar set's package's linked test, handed the
+  grammar set's editor, the fixture grammar library Cargo builds and the
+  syntax fixtures. The install check of that package
+  (`mise run grammar-install-check`) is on demand, never here
+  ([`on-demand-checks.md`](on-demand-checks.md)).
 - **`window-scenarios`**: each window scenario of `ffi-test`
   (`FfiTest.windowScenarios`), the window mode's wiring on the scripted
   platform with a real editor loop thread, a line each

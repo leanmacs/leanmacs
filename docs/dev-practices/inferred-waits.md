@@ -87,8 +87,9 @@ The marked constants:
 | `Ffi.filesPending`, `diffsPending`, `grepPending`, `processesPending`, `watchesPending`, `timersPending` | count | the job port's real binding and contracts (`Editor.Job.Real`, `.Contract`, `.FlushContract`, `.HandleContract`), `Editor.Test.Linked.Services` |
 | `Test.Linked.pendingChildren`, `childrenReapedTo` | count | none |
 | `Ffi.awaitWaiting`, `Test.Linked.startsArrive` | firstAfter | none |
-| `Ffi.syntaxSettle` | realEffect | `Editor.SyntaxTree.Real`, `Editor.SyntaxTree.DeliveryContract`, `Editor.Test.Linked.Shipped`, `Editor.Test.Linked.Syntax` |
-| `Test.Linked.recordingSyntaxTree`, `shippedStagedReal`, `withRealSyntaxHost`, `SyntaxText.run`, `SyntaxText.over`, `ConfigTest.withRealSyntaxTestHost` | realEffect | none |
+| `Ffi.syntaxSettle` | realEffect | `Editor.SyntaxTree.Real`, `Editor.SyntaxTree.DeliveryContract`, `Editor.Test.Linked.Shipped`, `Editor.Test.Linked.Syntax`, `Editor.Test.Linked.Grammar`, `Editor.Headless` |
+| `Test.Linked.settlingAttach` | realEffect | `Editor.SyntaxTree.Real` (contract-test's `ContractTest.Editor.SyntaxTree.Real`, its mirror), `Editor.Test.Linked.Grammar` |
+| `Test.Linked.recordingSyntaxTree`, `shippedStagedReal`, `withRealSyntaxHost`, `SyntaxText.run`, `SyntaxText.over`, `Test.Linked.declaredDrawn`, `ConfigTest.withRealSyntaxTestHost` | realEffect | none |
 
 The hosts' general wait, `Host.waitWhile` and `Stepped.waitWhile`, takes
 a kind of wait (`Headless.Wait.Kind`), and what it infers "done" from is
@@ -125,7 +126,24 @@ readout whose fake exists. Phase 3 marked each as its fake landed:
   `withRealSyntaxTestHost`. The shipped hosts' default syntax tree is the
   stage's fake (`shippedStaged`, `withShippedHost`, `withRealShippedHost`);
   only a check whose subject is the library's syntax service takes the real
-  binding, under an allow naming its row (W87 to W91).
+  binding, under an allow naming its row (W87 to W92).
+  Phase 5 of the roadmap `syntax-runtime-grammars` added three subjects.
+  `Editor.Test.Linked.Grammar`, the kit's `declaredDrawn`, which settles
+  the text it draws and is marked in turn, so its callers carry allows
+  (W90, W92). The kit's `settlingAttach`, moved there from contract-test's
+  support with `drainedParsed` (which reads the library's queue and is a
+  real-host `.service` mark, no wait), marked for the adapter's contract
+  checks and the kit's grammar module. And `Editor.Headless`, the
+  headless host's driver: the script's `highlights` waits in the library
+  for the delivery of the focused view's tree before it asks the editor
+  thread for the captures, the readout the on-demand install check reads.
+  It is a subject rather than a caller of a kit wrapper because
+  `Editor.Headless` is production code, the CLI's driver, which may import
+  no test kit; as a subject that is no test module it hands the wait on
+  unmarked, as the hosts' own workings do (`Round.judge`), and only its
+  driver's `highlights` reaches it. Its check is the wiring module
+  `ConfigTest/Editor/SyntaxTree/Real.lean`, through `Headless.runOn` on a
+  real host.
 
 A site that a later phase removes, or that stays, keeps an explicit allow,
 `set_option linter.inferredWait false in` on the declaration that holds it,
@@ -250,8 +268,9 @@ under an `#[expect]` of its own, so the gate sees each ban bite.
 | W87 | `packages/evil/EvilTest/Linked/Support/Vim.lean`, `withRealVimHost` (`withRealSyntaxHost`), for evil's `treeObjectChecks` (both host checks) and the eight indent checks (`withEvilIndentHost`) | d | syntax | real binding | Stays: A5, the Vim scheme over the library's shipped Rust `textObjects` and `indents` queries, which the syntax model does not hold; each settle is on its own snapshot; phase 6 marked `withRealVimHost`, used by the wiring modules `EvilTest/Linked/Evil/Operators.lean` and `TreeObjects.lean` | `linter.inferredWait`; allowed at `withRealVimHost` |  |
 | W88 | `packages/evil/EvilTest/Linked/Evil/TreeObjects.lean`, `objectRowsWrong` and `treeObjectsEditedCheck` (`SyntaxText.run`, `SyntaxText.over`) | d | syntax | real binding | Stays: no host, the real binding's delivery of the check's own text over the shipped Rust `textObjects` query; phase 6 placed it in the wiring module `EvilTest/Linked/Evil/TreeObjects.lean`, declared in place | `linter.inferredWait`; allowed at each of those declarations |  |
 | W89 | `lean/ConfigTest/Support/Shipped.lean`, `withRealSyntaxTestHost`, for config-test's indent checks (`ConfigTest/Editor/Indent.lean`, `withIndentHost`); and `ConfigTest/Editor/Headless.lean`, `recordedStage` (`recordingSyntaxTree`, `Ffi.syntaxSettle`), for `parseHighlightedTextLibraryCheck` | d | syntax | real binding | Stays: A5, the library's syntax service, whose deliveries come over its own queue; phase 6 marked `withRealSyntaxTestHost`, used by the wiring module `ConfigTest/Editor/Indent.lean`, declared in place | `linter.inferredWait`; allowed at `withRealSyntaxTestHost`, `withIndentHost` and `recordedStage` |  |
-| W90 | `lean/ContractTest/Support/Syntax.lean`, `settlingAttach` and `settling`, `ContractTest/Editor/Job/Real.lean`, `jobCommandReachesSyntaxTreeCheck`, and `ContractTest/Editor/Language/Grammar.lean`, `declaredGrammarDrawnCheck` | d | syntax | real binding | Stays: the syntax adapter's contract support, whose subject is the real binding's deliveries; outside the rule of the wiring set: an adapter's contract (AC3) | `linter.inferredWait`; allowed at each of those declarations |  |
+| W90 | `lean/ContractTest/Support/Syntax.lean`, `settling` (over the kit's `settlingAttach`), `ContractTest/Editor/Job/Real.lean`, `jobCommandReachesSyntaxTreeCheck`, and `ContractTest/Editor/Language/Grammar.lean`, `declaredGrammarDrawnCheck` (through the kit's `declaredDrawn`) | d | syntax | real binding | Stays: the syntax adapter's contract support, whose subject is the real binding's deliveries; outside the rule of the wiring set: an adapter's contract (AC3). Phase 5 of syntax-runtime-grammars moved `settlingAttach` and `drainedParsed` into the linked kit (`Editor/Test/Linked/Syntax.lean`), `settlingAttach` marked, and wrote `declaredGrammarDrawnCheck` on the kit's `declaredDrawn` | `linter.inferredWait`; allowed at each of those declarations |  |
 | W91 | `packages/files/FilesTest/Linked/Files.lean`, `languageChecks` over the grammars the syntax model does not hold (rust, markdown, toml and lean: the `.rs`, `.md`, `.toml`/`Cargo.lock`, `.lean`/`lakefile.lean` opens, the detach of a `.rs` buffer, and config's rust over the shipped one), through `withRealLanguageHost` and `recordingSyntaxTree`: `Ffi.syntaxSettle` after an attach | d | syntax | real binding | Stays: the library's shipped grammars and highlights queries are the subject, which the syntax model, json alone, does not hold; each settle is on the check's own snapshot, and the host's waits are its own jobs' end lines (`reportedAfter`); phase 6 placed it in the wiring module `FilesTest/Linked/Files/Real.lean`. The json and plain-text checks moved onto the syntax fake in phase 4 | `linter.inferredWait` once `Ffi.syntaxSettle` is marked; allowed at `languageStage` |  |
+| W92 | `tests/grammar-set/ini-grammar/IniGrammarTest/Linked/IniGrammar/Real.lean`, `drawnCheck` (`declaredDrawn`) | d | syntax | real binding | Stays: a package's grammar file reaching the real loader and highlighter is the subject; the settle is on the check's own text's snapshot, in the wiring module, declared `.wiring` | `linter.inferredWait`; allowed at `drawnCheck` |  |
 
 ## The flaky tasks
 

@@ -414,6 +414,21 @@ it"](../design/packages.md#who-can-build-it)).
   Cargo, installed with rustup, from a checkout only. A crate from outside
   the repository is refused for now, with the reason.
 
+## Shipping a grammar
+
+A package can bring a tree-sitter grammar for a language the editor lacks,
+with no rebuild of the editor: keep the grammar's prebuilt library, one per
+platform, and its queries under a `grammars/` directory in the package,
+give the lakefile `keywords = ["editor-grammars"]`, and declare the grammar
+on your `Package` (`grammars := #[Language.Grammar.declarePerPlatform …]`),
+with paths relative to `grammars/`, beside a `defineLanguage` that names
+it. Build each library with `tree-sitter build`. The layout, the
+declaration, the platform names and where the editor finds the files are in
+[packages.md](../design/packages.md), ["A package's
+grammars"](../design/packages.md#a-packages-grammars); the test package
+[`ini-grammar`](../../tests/grammar-set/ini-grammar/IniGrammar.lean) is a
+whole example.
+
 ## Publishing
 
 A user's set can require a package in three ways

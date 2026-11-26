@@ -279,6 +279,116 @@ end Greeting.EditorPackage
     is a `Package` in all but type. What a set without either does is
     under "Dropping one of the seven leaves…", below.
 
+### A package's grammars
+
+A package can bring the grammars of languages the editor lacks: their
+native libraries and their queries, which the editor reads when it runs.
+No grammar is compiled or fetched by any build; the package ships the
+prebuilt library as it is.
+
+**The keyword and the layout.** A Lake package that ships grammars keeps
+their files under a `grammars/` directory and carries the keyword
+`editor-grammars` (`keywords = ["editor-grammars"]`, `grammarsKeyword` in
+`lean/lakefile.lean`), as one that supplies an input scheme carries
+`editor-input-scheme`: Lake is asked for the keyword, so the build learns
+which packages ship grammars without reading any source. A package with the
+keyword and no entry module, or no `grammars/` directory, fails the set's
+build with a message naming it.
+
+```
+<package>/grammars/
+  darwin-aarch64/libtree-sitter-<name>.dylib
+  darwin-x86_64/libtree-sitter-<name>.dylib
+  linux-aarch64/libtree-sitter-<name>.so
+  linux-x86_64/libtree-sitter-<name>.so
+  queries/highlights.scm      and injections.scm, indents.scm,
+                              textobjects.scm, each optional
+```
+
+**The declaration.** The package declares its grammars on its
+`Editor.Package`, in its entry module's packages, with the phase 4
+declaration (`Language.Grammar`, `Editor/Language/Grammar.lean`), every
+path relative to its `grammars/`:
+
+```lean
+def package : Package :=
+  { name := "ini-grammar"
+    setup := defineLanguage
+      { name := "ini", patterns := [.extension "ini"], syntaxTree := { grammar := "ini" } }
+    grammars := #[Language.Grammar.declarePerPlatform "ini"
+      [("darwin-aarch64", "darwin-aarch64/libtree-sitter-ini.dylib"),
+        ("linux-x86_64", "linux-x86_64/libtree-sitter-ini.so")] "queries"] }
+```
+
+The single form (`Language.Grammar.declare`, one library on every
+platform) works too, its query directory defaulting to `queries/` beside
+the library. The generated root tags each such package with its Lake
+package (`Package.lakePackage`, through `Editor.Package.shipping`; "The
+generated root", below), and the host resolves the declaration against
+the directory where that Lake package's `grammars/` is staged beside the
+running editor (`Package.collected`, `Editor/Config/Packages.lean`). A
+path that is absolute, or whose `..` climbs out of `grammars/`, refuses the
+package with a message naming it and the path (``the package `p` is
+refused: its grammar `ini`'s path `../outside.dylib` leaves its grammars
+directory``), and so do grammars with no staged directory, which names the
+keyword. A refused package registers nothing; the others register.
+
+**The platform.** A native library is built for one platform, so the
+per-platform form gives one path per platform, under its name `<os>-<arch>`
+(`darwin-aarch64`, `darwin-x86_64`, `linux-aarch64`, `linux-x86_64`;
+`Language.Grammar.platformOf`, from Lean's target triple), sharing one
+query directory, which then has no default. Config may use the same form
+(`defineGrammarPerPlatform`, `Editor/Setup.lean`). The library is picked
+when the core's `register-grammars` job registers the grammar: on a
+platform the declaration does not list, the registration is refused in
+the job's reply, before the service is asked, and said in the echo area
+(``grammar `ini`: the grammar's registration failed: it declares no
+library for the platform `linux-riscv64`, so its languages have no syntax
+tree``). Its buffers open as plain text, and no build breaks.
+
+**Precedence.** Packages register before config, and the grammar table puts
+config's declarations over every package's by name
+(`Registry.grammarTable`), the language table's rule: config overrides a
+package's grammar by declaring its name. The one job registers each name
+once, from the winning owner.
+
+**Building the library, for a package's author.** A tree-sitter grammar's
+library is built per platform with the tree-sitter CLI:
+
+```sh
+tree-sitter generate          # once, if src/parser.c is not checked in
+tree-sitter build --output grammars/darwin-aarch64/libtree-sitter-ini.dylib
+```
+
+which compiles `src/parser.c` and, when the grammar has one, `src/scanner.c`
+into a shared library exporting `tree_sitter_<name>`. Build it once on (or
+for) each platform the declaration lists, and copy each library to
+`grammars/<platform>/`. Put the queries under `grammars/queries/` as
+regular files, the names nvim-treesitter and Helix use; a link would
+dangle in a staged or bundled copy.
+
+**Where the files go.** Each place an editor runs from gets a copy, and a
+record that names it (`editor.grammars`, lines `<lake><TAB><directory>`,
+read like `editor.oleans`: `Editor/ModuleLookup.lean`, "The grammars"):
+
+| Where the editor runs | Where the grammars are | The record |
+|---|---|---|
+| A set's build (`lake -d <set> build :editor`) | `<set>/.lake/build/grammars/<lake>/`, a fresh copy each build (`stageGrammars`) | `<set>/.lake/build/bin/editor.grammars`, absolute lines |
+| A per-user install (`:editorInstall`) | `<install>/grammars/<lake>/`, copied from the set's staged copy | `<install>/editor.grammars`, relative lines `<lake><TAB>grammars/<lake>`, so the directory still renames into place |
+| The app bundle | `Contents/Resources/lean/set/<rel>/grammars/`, the package's own copy in the bundle's staged set (`editorShipped`'s `file` line), so a user's set built from the bundle stages and installs it in turn | `Contents/Resources/editor.grammars`, `<lake><TAB>lean/set/<rel>/grammars` (`editorShipped`'s `grammars` line, which `stage-bundle` writes) |
+
+The install copies rather than references for the reason it copies the
+`.olean` files: a later build of the set must not change what an installed
+editor loads. The install's executable is signed ad hoc without the
+hardened runtime, so the library it loads from its own directory needs no
+step by the user (phase 2's record). The test package `ini-grammar`
+(`tests/grammar-set/`, "The fixture set", below) is shown through all
+three: the gate's wiring check reads the set's staged copy, the bundle's
+staging test stages it, and an on-demand check installs a set with it and
+runs the installed editor headless
+(`docs/dev-practices/on-demand-checks.md`, "A package's grammar,
+installed, on demand").
+
 ### The order packages register in
 
 The set's packages are visited from the set, **each after the packages it
@@ -391,7 +501,11 @@ of each entry module whose Lake package declares the keyword
 `editor-input-scheme`, in that order: the input schemes the set supplies,
 of which the editor runs the last ("Input schemes", below). The default
 package `evil` declares it, so the default set's array holds
-`Evil.EditorPackage.scheme`; the empty set's is `#[]`. The last value before the arguments is what the
+`Evil.EditorPackage.scheme`; the empty set's is `#[]`. The packages of an
+entry module whose Lake package carries the keyword `editor-grammars` are
+listed tagged with it, `(Editor.Package.shipping "<lake>" <P>.EditorPackage.packages)`
+("A package's grammars", above); the default set has none, so its root is
+as shown. The last value before the arguments is what the
 build says of the editor for the files it generates in a config directory
 ("A config directory requires the core and the set", below): the set's Lake name and the
 text of the core's `lean-toolchain`. The default set's root imports
@@ -425,10 +539,12 @@ core's identity (`coreIdentityOf`), the build record (`buildRecordOf`),
 whether a set or a crate is
 in the repository (`isUnderRoot`, `outsideCrateRefusal?`, beside
 `rustSource`), the records of where the set and the core are
-(`setRecordText`, `coreDirRecordText`); what a bundle ships
+(`setRecordText`, `coreDirRecordText`); the grammars' records and staged
+place (`grammarsRecordText`, `stagedGrammarsPlace`); what a bundle ships
 (`shipsLibraryNamed`, `builtOf`, `prebuiltRustFiles`, `shippedFileLine`,
-`listsResolved`, `shippedOleansLines`); the install (`installOleansRecord`,
-`installRefusal?`, `installSigning`); the app's `Info.plist`, version,
+`listsResolved`, `shippedOleansLines`, `shippedGrammarsLines`); the install
+(`installOleansRecord`, `installGrammarsRecord`, `installRefusal?`,
+`installSigning`); the app's `Info.plist`, version,
 stamp, artwork, icon sizes and deployment target (`appInfoPlist`,
 `parseAppVersion`, `parseAppStamp`, `checkAppArtwork`, `appIconSizes`,
 `deploymentTargetFits`) and the order it is assembled and signed in
@@ -1936,6 +2052,19 @@ guide quotes.
   driver is not a default target, as the core's
   `model-test` is not: `mise run lean` links with the system compiler,
   which a TOML lakefile has no flags for.
+- **A package that ships a grammar has a set of its own,
+  `tests/grammar-set/`.** It requires `ini-grammar`, a test package with
+  the keyword `editor-grammars` that declares the grammar `ini` per
+  platform and the language `ini` ("A package's grammars", above); its
+  `grammars/` holds only the checked-in highlights query, no library. It
+  is not in the fixture set: every default package's fixtures run on that
+  set's harness, and a package grammar there would start the core's
+  `register-grammars` job at every install of every one of them, shifting
+  their job ids and adding a refusal to their echo (the stepped stage has
+  no grammar service). No package step reaches it: `mise.toml` names its
+  build, its test driver, its formatting and its linked test, which takes
+  the grammar set's editor, the fixture library Cargo builds and the syntax
+  fixtures.
 - **The fixtures are hermetic.** They are checked in and build into their
   own `.lake/` directories, as the core builds into `lean/.lake`. Every
   dependency is a path, and nothing is written outside those directories.
@@ -2013,7 +2142,7 @@ read-only, with `PATH=/usr/bin:/bin`.
 
 ### The records beside a set's editor
 
-The package-set build (the facet `editor`) writes four records beside the
+The package-set build (the facet `editor`) writes five records beside the
 executable it links, besides `editor.oleans` and `editor.set`:
 
 - **`editor.core`**: the core's identity, one line, 16 hex digits
@@ -2050,6 +2179,11 @@ executable it links, besides `editor.oleans` and `editor.set`:
   directory is `Contents/Resources/lean/lean`, by the layout, as the set's
   is. A per-user install copies it, so a per-user editor knows the core it
   was built against.
+- **`editor.grammars`**: where the build staged the `grammars/` directory
+  of each Lake package of the set that ships grammars, one line
+  `<lake><TAB><directory>` each, absolute (`stageGrammars`); empty for a
+  set that ships none. The editor resolves those packages' grammar
+  declarations against it ("A package's grammars", above).
 
 ### The install: a set's editor in one directory
 
@@ -2064,8 +2198,11 @@ exist yet:
   editor.build     the build environment, copied
   editor.coredir   the core's directory, copied
   editor.oleans    one relative line: lib/lean
+  editor.grammars  one relative line per package that ships grammars:
+                   <lake><TAB>grammars/<lake>
   lib/lean/...     .olean, .olean.server and .olean.private of every module
                    of the workspace the set's root imports
+  grammars/<lake>/ a copy of each grammars directory the set's build staged
 ```
 
 - **The modules are copied, not referenced.** A later build that fails
@@ -2083,7 +2220,10 @@ exist yet:
   executable is about 240 MB and the whole directory about 420 MB.
 
 No gate step installs a set. `mise run dmg-check` installs the default
-set from the packed image and starts the editor it installed; that an
+set from the packed image and starts the editor it installed, and `mise
+run grammar-install-check` installs a set with the test package
+`ini-grammar` and runs the installed editor headless on its language
+(`docs/dev-practices/on-demand-checks.md`), both on demand; that an
 install is signed, and that a second install into the same directory is
 refused, are checked by no test, a gap.
 
@@ -2819,6 +2959,7 @@ package, names a module of evil or of the themes:
 | The linked kit's `withShippedHost (scheme : InputScheme)` (`Editor.Test.Linked.Shipped`, which also holds `rustObjectsText`) | A host made as the executable's are, of the scheme it is given; it replaces a host that named the Vim scheme | every linked test; evil's `withVimHost` is `withShippedHost Vim.Default.scheme`, in evil's tests |
 | The linked kit's `Editor.Test.Linked.Syntax` | The real syntax binding as a check observes it with no host: `shippedCaptureNames`, `SyntaxText.over` and `.run`, `indentKept`, `mangledRust` | the core's `indentChecks`; evil's `evilIndentChecks` and `treeObjectFixtureChecks` |
 | The linked kit's `Editor.Test.Linked.Frames` | `withFramedHost`: a host on the real display, with the frame a second display lays the same scene out in under a given theme | the themes' linked `themeChecks` |
+| The linked kit's `Editor.Test.Linked.Grammar` | `declaredDrawn`: declarations registered by the core's job on the real services, a language's tree resolved, a text entered, its tree delivered and drawn on the real display over cells; and `Editor.Test.Linked.Syntax`'s `settlingAttach` and `drainedParsed`, which it waits and drains with | the core's `declaredGrammarDrawnCheck`; the test package `ini-grammar`'s linked `realChecks` |
 | `Session.hints` (`Editor.Test.Linked.Host`), `showsText` (`Editor.Test.Linked.Lines`) | A scene's key hint lines, and whether a view line shows a text with a selection | the core's keymap and indent checks; evil's `evilLeaderChecks` and `evilIndentChecks` |
 
 Nothing was added for another package to reach evil or the themes
@@ -3338,7 +3479,7 @@ and the core's Lake package registers no `Package`.
 | The models of the ports: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Config.Elaborator.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Grep.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `Editor.SyntaxTree.Model.Json`, `Editor.SyntaxTree.Model.Query`, `Editor.SyntaxTree.Registration.Model`, `Editor.Text.Model`, `Editor.Watch.Model` | 17 | core | in tests |
 | The contracts and cases: `Editor.Api.Cases`, `Editor.Clipboard.Contract`, `Editor.Completion.AtPointContract`, `Editor.Completion.Contract`, `Editor.Completion.DisplayContract`, `Editor.Completion.StyleContract`, `Editor.Config.Elaborator.Contract`, `Editor.Display.Contract`, `Editor.File.Cases`, `Editor.Fuzzy.Contract`, `Editor.Headless.Journal.Contract`, `Editor.Headless.Queue.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.Job.FlushContract`, `Editor.Job.HandleContract`, `Editor.Job.ProtocolContract`, `Editor.Job.PumpContract`, `Editor.Job.SchedulerContract`, `Editor.SyntaxTree.Contract`, `Editor.SyntaxTree.DeliveryContract`, `Editor.Text.Contract`, `Editor.UndoTree.Cases`, `Editor.Watch.Contract` | 24 | core | in tests |
 | The fakes, the test scheme, the loop's driver, the reading of what a package registers and the theme picture check: `Editor.Completion.Fake`, `Editor.Config.Packages`, `Editor.Headless.Journal.Fake`, `Editor.InputScheme.Test`, `Editor.Job.Fake`, `Editor.Loop.Driver`, `Editor.SyntaxTree.Fake`, `Editor.Theme.Picture` | 8 | core | in tests |
-| The linked test kit: `Editor.Test.Linked.Bench`, `Editor.Test.Linked.Frames`, `Editor.Test.Linked.Host`, `Editor.Test.Linked.Jobs`, `Editor.Test.Linked.Keys`, `Editor.Test.Linked.Lines`, `Editor.Test.Linked.Listings`, `Editor.Test.Linked.Rig`, `Editor.Test.Linked.Services`, `Editor.Test.Linked.Shipped`, `Editor.Test.Linked.Stepping`, `Editor.Test.Linked.Syntax`, `Editor.Test.Linked.Trees` | 13 | core | in a linked test |
+| The linked test kit: `Editor.Test.Linked.Bench`, `Editor.Test.Linked.Frames`, `Editor.Test.Linked.Grammar`, `Editor.Test.Linked.Host`, `Editor.Test.Linked.Jobs`, `Editor.Test.Linked.Keys`, `Editor.Test.Linked.Lines`, `Editor.Test.Linked.Listings`, `Editor.Test.Linked.Rig`, `Editor.Test.Linked.Services`, `Editor.Test.Linked.Shipped`, `Editor.Test.Linked.Stepping`, `Editor.Test.Linked.Syntax`, `Editor.Test.Linked.Trees` | 14 | core | in a linked test |
 | The headless fixture harness, which a package set's `fixture-test` runs (`docs/dev-practices/headless-mode.md`, "How the gate runs a fixture"): a fixture's parts, its discovery, its setups, a package's fixture support (the setups and the service fakes a package brings to the stepped harness), its command line, its stepped run and its edge: `Editor.Test.Fixture.CommandLine`, `Editor.Test.Fixture.Discover`, `Editor.Test.Fixture.Fixture`, `Editor.Test.Fixture.Main`, `Editor.Test.Fixture.Setup`, `Editor.Test.Fixture.Stepped`, `Editor.Test.Fixture.Support` | 7 | core | no |
 | The model test kit: `Editor.Test.AtPoint`, `Editor.Test.Completion`, `Editor.Test.Config`, `Editor.Test.Driver`, `Editor.Test.Editing`, `Editor.Test.Ex`, `Editor.Test.Excerpt`, `Editor.Test.Files`, `Editor.Test.Frame`, `Editor.Test.Geometry`, `Editor.Test.Hosted`, `Editor.Test.Jobs`, `Editor.Test.Keys`, `Editor.Test.Listings`, `Editor.Test.Loop`, `Editor.Test.Minibuffer`, `Editor.Test.Models`, `Editor.Test.Modes`, `Editor.Test.Opener`, `Editor.Test.PackageSet`, `Editor.Test.Prompts`, `Editor.Test.Restore`, `Editor.Test.Shell`, `Editor.Test.Shipped`, `Editor.Test.Sources`, `Editor.Test.States`, `Editor.Test.Views`, `Editor.Test.Windows`, `Editor.Test.Workspace` | 29 | core | in tests |
 | The config session: `Editor.Config.Diagnostic`, `Editor.Config.Directory`, `Editor.Config.Display`, `Editor.Config.Elaborate`, `Editor.Config.ExactPath`, `Editor.Config.LakePackage`, `Editor.Config.Lakefile`, `Editor.Config.Lakefile.Toml`, `Editor.Config.Owner`, `Editor.Config.Registry`, `Editor.Config.Reload`, `Editor.Config.Session`, `Editor.Config.Stores` | 13 | core | no |

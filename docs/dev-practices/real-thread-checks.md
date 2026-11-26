@@ -82,18 +82,19 @@ and `ModelTest/Lint/RealHost/`.
 | `lean/ConfigTest/Editor/Headless/Real/Waits.lean` | `.wiring` | The driver's waits across the loop thread: the idle signal read from another thread and an unanswering editor thread exist only on a real one; and the parity of a stepped host's scenes with a real one's. |
 | `lean/ConfigTest/Editor/Headless/Real/Runner.lean` | `.wiring` | The headless CLI's runner over a real loop (`Headless.run`, `runAndDispose`, `Hosting.real`): its logic is pinned stepped, its real hosting and dispose after the join are what the CLI runs. |
 | `lean/ConfigTest/Editor/Headless/Queue/Real.lean` | `.wiring` | The library's editor queue and its interrupt flag: a stepped host never pulls it. |
-| `lean/ConfigTest/Editor/SyntaxTree/Real.lean` | `.wiring` | The library's syntax service, whose parses come back over the library's queue. |
+| `lean/ConfigTest/Editor/SyntaxTree/Real.lean` | `.wiring` | The library's syntax service, whose parses come back over the library's queue; and the script's `highlights` over a real host (`Hosting.real`), whose subject is the library's real parse. |
 | `lean/ConfigTest/Editor/Indent.lean` | `.wiring` | The shipped Rust `indents` query over the real syntax service: the syntax model holds JSON alone. |
 | `lean/ConfigTest/Editor/Window/Real.lean` | `.wiring` | The window mode's start-up wait on a real host: its edge. |
 | `lean/ConfigTest/Editor/Job/Real.lean` | `.wiring` | The library's diff and grep services, each end to end, reached by a host's job. |
 | `lean/FfiTest/Editor/Window/Real.lean` | `.wiring` | `Editor.Window.host` on the scripted platform: the window mode's wiring, its restart's exec and real timers. |
 | `packages/evil/EvilTest/Linked/Evil/Operators.lean`, `.../Evil/TreeObjects.lean` | `.wiring` | The shipped Rust `indents` and `textObjects` queries through the Vim scheme's keys, which the syntax model does not hold. |
 | `packages/files/FilesTest/Linked/Files/Real.lean` | `.wiring` | The library's file, watch and syntax services through the files package's commands, each end to end. |
+| `tests/grammar-set/ini-grammar/IniGrammarTest/Linked/IniGrammar/Real.lean` | `.wiring` | The library's grammar, file and syntax services and its display: a package's grammar file reaches the real loader and the highlighter only through them, and what the grammar set's build staged is read through the record beside the set's editor. |
 | `packages/compile/CompileTest/Linked/Compile/Real.lean` | `.wiring` | The library's process service through the compile mode: a child's streamed lines and its exit status. |
 | `tests/packages/echo/EchoTest/Linked/Echo/Real/Attach.lean` | `.wiring` | The library's process service, taken over by the echo crate through `editor-service`'s stream source: the subject is a child the real process port opened, and no fake opens a child the crate can take. |
 | `packages/acp/AcpTest/Linked/Acp/Real/Session.lean` | `.wiring` | The acp crate on a real child through the process service: only a real child exercises the take-over, the SDK's threads and the completion queue together. Its waits are on each job's outcome, the session job's posts and the runner's flushes; the orders it relies on are proved on agents-api's protocol model and forced on the stepped host over agents-api's fake. |
 | `packages/version-control/VersionControlTest/Linked/VersionControl/Git.lean`, `packages/workspace/WorkspaceTest/Linked/Workspace/Contract.lean`, `.../Workspace/Lister.lean`, `tests/packages/echo/EchoTest/Linked/Echo/Real.lean`, `packages/acp/AcpTest/Linked/Acp/Real/Contract.lean` (agents-api's service on the acp crate) | `.contract` | A port's contract against its real adapter, which the module's root hands it. |
-| The roots `lean/ConfigTest.lean`, `lean/FfiTest.lean` and the linked roots of compile, version-control, workspace, files, echo and acp | `.edge` | Their `main` starts the process's services and pump, or runs the benches or scenarios, and hands them to the modules above. agents-api's linked root starts none: its one check runs on the stepped host over the fake, so it declares nothing and its `wiring-modules` is empty. |
+| The roots `lean/ConfigTest.lean`, `lean/FfiTest.lean` and the linked roots of compile, version-control, workspace, files, echo, acp and the test package `ini-grammar` (`tests/grammar-set/ini-grammar/IniGrammarTest/Linked.lean`) | `.edge` | Their `main` starts the process's services and pump, or runs the benches or scenarios, and hands them to the modules above. agents-api's linked root starts none: its one check runs on the stepped host over the fake, so it declares nothing and its `wiring-modules` is empty. |
 
 The modules a root hands real services by value (`services.jobs`) are
 declared `.wiring` or `.contract`, so the value's flow is visible at both
@@ -132,7 +133,12 @@ nothing prints a line for something else to count.
   that runs those groups alone (`config-test … --wiring`, `ffi-test
   wiring`, `<P>Test-Linked … --wiring`, through `tools/package-set.sh
   --wiring run`, which runs every linked test with `--wiring`) and answer
-  `wiring-modules`, which a reviewer reads. Every root reads its mode with a shared reader of
+  `wiring-modules`, which a reviewer reads. The test package
+  `ini-grammar`'s linked test takes `--wiring` too, but no package step
+  reaches its set (`tests/grammar-set/`), so the stress loop's
+  `tools/package-set.sh --wiring run` does not run it; the gate's
+  `ffi-test` runs it once (rdm task `grammar-set-outside-stress-loop`).
+  Every root reads its mode with a shared reader of
   `CheckGroup.Mode` and selects its checks by it with `CheckGroup.select`,
   so the roots cannot drift apart: a linked root with
   `CheckGroup.Mode.ofArguments?`, config-test with `CheckGroup.Mode.read?`
