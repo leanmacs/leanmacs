@@ -1027,6 +1027,15 @@ def registryChecks : List Check :=
             numbers (registry.registered.answer (.extensions key)) == #[1, 2, 3, 4] &&
             numbers (RegistryRequest.bare (.configExtensions key)) == #[]) },
     { name :=
+        "the loop is told the name of the base a host installs: config's choice when it made one, else the latest package's default, else inherited"
+      run :=
+        let defaulted : Config.Registry := { baseDefaults := #["first", "second"] }
+        pure
+          (({} : Config.Registry).registered.answer .environmentBase == Process.inheritedName &&
+            defaulted.registered.answer .environmentBase == "second" &&
+            { defaulted with environmentBase := some "chosen" }.registered.answer .environmentBase ==
+              "chosen") },
+    { name :=
         "the collector keeps a job over an extension point with its point, a host installs it with its owner, and `Package.registered` lists its name among the jobs"
       run :=
         let counting : Package :=

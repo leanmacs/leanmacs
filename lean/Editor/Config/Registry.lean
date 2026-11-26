@@ -1326,7 +1326,8 @@ completion source registered under a name (`source?`) and the names of
 those registered in a category (`sourcesIn`), for a prompt that asks for
 them; and the codec a store is kept across a restart with (`codec?`), with
 its owner's name, and whether a job is reported as stopped by a restart
-(`reported`), for the session restore. Which command a
+(`reported`), for the session restore; and the name of the base of a
+child's environment (`baseName`), for a command that says the layers. Which command a
 name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
@@ -1345,7 +1346,7 @@ def registered (registry : Registry) : Loop.Registered :=
     atPoint := registry.atPoint?, atPointNames := registry.atPointNames
     codec? := fun name => (registry.codec? name).map fun (owner, codec) => (owner.name, codec)
     reported := registry.reported, extensions := registry.extensionsAt
-    configExtensions := registry.configExtensionsAt }
+    configExtensions := registry.configExtensionsAt, environmentBase := registry.baseName }
 
 end Registry
 

@@ -3,6 +3,7 @@ import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.InputScheme
 import Editor.Language.IndentUnit
+import Editor.Process.Environment
 import Editor.Store.Codec
 import Editor.Workspace
 
@@ -158,6 +159,10 @@ inductive RegistryRequest where
   registration order, each as a `Dynamic`: the tail of `extensions`'
   answer (`Extension.configValues`). -/
   | configExtensions (key : Lean.Name)
+  /-- The name of the base of a child's environment a host installs:
+  config's choice, else the latest package's default, else `inherited`
+  (`Config.Registry.baseName`). -/
+  | environmentBase
 
 /-- The type of the reply to each question. -/
 abbrev RegistryRequest.Reply : RegistryRequest → Type
@@ -179,6 +184,7 @@ abbrev RegistryRequest.Reply : RegistryRequest → Type
   | .storeCodec _ => Option (String × StoreCodec)
   | .extensions _ => Array Dynamic
   | .configExtensions _ => Array Dynamic
+  | .environmentBase => String
 
 /-- The answer to `request` where no loop dispatched the command: as with
 nothing registered and config's defaults, except that any job name is
@@ -202,5 +208,6 @@ def RegistryRequest.bare : (request : RegistryRequest) → request.Reply
   | .storeCodec _ => none
   | .extensions _ => #[]
   | .configExtensions _ => #[]
+  | .environmentBase => Process.inheritedName
 
 end Editor
