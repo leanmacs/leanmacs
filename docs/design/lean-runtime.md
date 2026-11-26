@@ -1469,7 +1469,7 @@ def package : Package :=
     the first reload);
   - its `setup` sets what only config may choose: `useTheme`, `modeLine`,
     `framePadding`, `keyHintDelay`, `layout`, `tabBar`, `titleBar`,
-    `processEnvironment`, `autoReload`, `workspace`, `workspaceLister`,
+    `autoReload`, `workspace`, `workspaceLister`,
     `projectLister`, `displayRule`, `shellTimeLimit`, `syntaxRefreshDelay`,
     `leaderKey`, `localLeaderKey`, `projectCommands`, `useStyle`,
     `useDisplay` and `useDisplayFor`, which an install sets for config and

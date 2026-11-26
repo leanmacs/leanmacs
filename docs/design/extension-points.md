@@ -256,6 +256,18 @@ extension points is:
   options or "ask" ([agent-hosting.md](agent-hosting.md), "Permissions, as
   built").
 
+The core's interface library `environment-api` (`lean/EnvironmentApi.lean`;
+[packages.md](packages.md), "The core interface library `environment-api`")
+has one of each. `EnvironmentApi.DirectorySource` is a hook whose reader
+replaces by name in place (`DirectorySource.ordered`): every value applies
+in registration order, and a later value of a name takes the earlier one's
+place, so config's `Mise.executable` replaces the mise package's value
+where the package put it. `EnvironmentApi.BaseSource` is a choice by name
+(`BaseSource.choose`), the name given by the core's setting
+`environmentBase`, beside the core's built-in `inherited`, launchd's
+environment; a name nothing answers to is said at reload, and children keep
+the base they had.
+
 ### How the values travel
 
 The mechanism is one generic registration added to the core, taking the
@@ -610,7 +622,10 @@ and it is not routed through an extension point.**
   (`Extension.configValues`, decided in features-as-packages phase 8 for
   the first hook that needed it, the compile mode's): the order is the
   reader's rule, written once in the interface package, and a value
-  carries no rank. Emacs lets a hook function ask to run early or late
+  carries no rank. `environment-api`'s directory sources are a hook whose
+  reader replaces a value of a name already seen in its place: that rule is
+  that reader's, too, written once in the interface
+  (`EnvironmentApi.DirectorySource.ordered`). Emacs lets a hook function ask to run early or late
   (`add-hook`'s depth). Whether a value needs to say that for itself is
   still open, and is decided when a hook first needs it.
 - **The registrations the core already has.** Completion sources, styles,

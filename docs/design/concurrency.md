@@ -843,28 +843,37 @@ and changes on disk:
     source can travel through a registry and run in a job with no `EditorM`
     in the reply.
   - *Layers.* Each directory source's lookup runs with the base's and the
-    earlier sources' variables set over the editor's environment, so mise
-    sees the base's `PATH`.
+    earlier sources' variables set over the editor's environment, so a
+    directory source sees the base's `PATH`.
   - *The base* is launchd's `inherited` environment, the editor's own with
-    no lookup, the only base config reaches. A base that is a lookup runs
-    once per run over the editor's environment.
-  - *The setting.* Config's (`processEnvironment`, the setup port's first
-    option) maps onto sources (`Process.Setting.sources`): `inherited`, no
-    directory source, children exactly as before; `mise` with an absolute
-    path, or with none; and the default `auto`. `mise` with no path, and
-    `auto` in the window mode, take the first of `~/.local/bin/mise` (from
-    `HOME`), `/opt/homebrew/bin/mise` and `/usr/local/bin/mise` whose stamp
-    a file request answers; with none, `mise` reports "mise is not at …"
-    once for each directory and `auto` skips it. `auto` in the headless
-    mode and the checks has no source. The first job to resolve a source's
-    executable keeps the answer in the shared state until a reload.
-  - *The mise lookup* runs `<mise> env --json` in the child's directory
-    through the process service, with a mebibyte of output and a time
-    limit, 5 s by default (`ProcessRequest.runWithin`, a run killed with its
-    group once its limit has passed: the runner arms an alarm on the clock
-    and cancels the run at the library when the alarm comes first). The
-    JSON object of strings is read in Lean, outside `Lean.Data.Json`, which
-    config's closure leaves out.
+    no lookup, built into the core under the name `inherited`, or a base
+    source a package registers. A base that is a lookup runs once per run
+    over the editor's environment.
+  - *The registry* gives the layers. The sources are packages registered at
+    the extension points of the core's interface library `environment-api`
+    (`lean/EnvironmentApi.lean`; [packages.md](packages.md), "The core
+    interface library `environment-api`"): a hook of directory sources, and
+    a choice of base by the name the core's setting `environmentBase` gives
+    (config's, else a package's default, else `inherited`). At every reload
+    that installs, the host reads them (`EnvironmentApi.ofRegistry`) and
+    installs them in the shared state (`Job.Environments.install`); a source
+    may give none in a mode, and a base name nothing answers to keeps the
+    base installed before, which the reload's report says. With nothing
+    registered, children start exactly as their commands say. The first job
+    to resolve a source's executable keeps the answer in the shared state
+    until a reload. The core names no source.
+  - *The mise package's lookup* (`packages/mise/`, a default package) runs
+    `<mise> env --json` in the child's directory in the window mode, mise
+    found at the first of the usual places whose stamp a file request
+    answers, skipped with none; the headless mode and the checks look
+    nothing up. Config's `Mise.executable` takes mise's path, and leaving
+    the package out means no directory lookup. Every lookup runs through
+    the process service with a mebibyte of output and a time limit, 5 s by
+    default (`ProcessRequest.runWithin`, a run killed with its group once
+    its limit has passed: the runner arms an alarm on the clock and cancels
+    the run at the library when the alarm comes first). A JSON object of
+    strings is read in Lean, outside `Lean.Data.Json`, which config's
+    closure leaves out (`Process.parseVariables`).
   - *The cache* is the entries of the state every job of a host shares
     (`JobRequest.environment`, answered at once, as `now` is, and as the
     fuzzy matcher is, `JobRequest.fuzzy`, whose reply is an `Except String`
@@ -872,8 +881,8 @@ and changes on disk:
     reference), each under its slot: the base's, kept until a reload, so it
     is looked up at most once per run; and one for each directory and
     source, kept while the stamps of the source's stamp files in the
-    directory and each ancestor (for mise, `mise.toml`, `.mise.toml`,
-    `.tool-versions` and `mise.local.toml`), read through the file port's
+    directory and each ancestor (for mise, its four config files), read
+    through the file port's
     stamp request before the lookup ran, and the variables of the layers
     below it are unchanged. A reload that installs drops every entry, the
     base's included. mise's global config and environment variables are not

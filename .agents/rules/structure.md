@@ -18,6 +18,10 @@ rules below comes back.
 - The core imports no package. A feature that is moving out of the core
   has its imports from the core cut before it moves; Lake refuses the
   import once it has moved, since the core requires no package.
+- The interface libraries staged in the core's Lake package (`FilesApi`,
+  `EnvironmentApi`, each with its test library) are the core's, not
+  packages: a core module may import the interface library, which imports
+  only the core's API, and a core test module its test library.
 - Every executable root that reaches the config elaborator adapter
   (`Editor.Config.Elaborate`) also links the config base (`Editor`): the
   elaborator imports the base's modules at runtime, so each must already be
@@ -58,12 +62,13 @@ See `docs/design/lean-runtime.md`, "Packages".
 
 The rule is about direct `import` lines, by four kinds of importer.
 
-- A library module imports only the core's API and the core interface
-  (`FilesApi`).
+- A library module imports only the core's API and the core interfaces
+  (`FilesApi`, `EnvironmentApi`).
 - A test module (`<P>Test.…`) may also import the test doubles: the pure
   models, contracts, fakes, `Editor.Test` and what is under it except
   `Editor.Test.Linked`, a feature's kit still in the core (`Editor.*.Kit`),
-  and `FilesApiTest` except what is under `FilesApiTest.Linked`.
+  and `FilesApiTest` and `EnvironmentApiTest` except what is under their
+  `.Linked`.
 - The linked test (`<P>Test.Linked` and the modules under it) may also
   import the linked test kit (`Editor.Test.Linked…`, `<I>Test.Linked…`).
 - The linked test's root alone may also import the real bindings of the
