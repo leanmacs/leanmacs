@@ -346,13 +346,24 @@ does everything that acts.
   every request has an answer record. There is no time stamp: the job
   port has no wall clock, and the order of the lines is the order of the
   events.
-- **The writer.** Records go to an outbox in an unscoped store; when no
-  write is in flight its lines are handed to one job, `agent-audit`, which
-  makes the log's directory and appends the text, and returns the result
-  as a value. Its command drops what it wrote, says a refusal once
-  (`agent audit log: <path> not written: <reason>`), and starts the next.
-  So appends reach the file service one at a time and in order
+- **The writer.** Records go to an outbox in an unscoped store, whose
+  rules are pure (`Acp/Permissions/Outbox.lean`); when no write is in
+  flight its lines are handed to one job, `agent-audit`, which makes the
+  log's directory and appends the text, and returns the result as a
+  value. Its command drops what it wrote and starts the next. So appends
+  reach the file service one at a time and in order
   ([concurrency.md](concurrency.md), "The permission audit log's writer").
+- **A refused write loses no record.** A refusal of the log (a directory
+  where it should be, permission denied, a full disk), or a job that
+  cannot start, keeps the lines in the outbox, and the next record's write
+  carries them, oldest first, so the log is whole once it can be written
+  again. It is tried once a record, never in a loop, and said once until a
+  write lands: `agent audit log: <path> not written: <reason>; <n> records
+  kept, tried again with the next record`. Dropping the lines and saying
+  the loss would leave a gap in a log whose point is that every request
+  and its answer are in it, for a failure that is often passing. Kept
+  lines live as long as the store, so an editor that quits before a write
+  lands loses them; the message said so while it ran.
 - **Why it is safe.** The only order sent for the log is an append, after
   a make of its directory: nothing saves over it, removes it or reads it.
   A record holds what the queue shows the user (title, raw input, diff,
@@ -372,8 +383,9 @@ does everything that acts.
   `agents-api`'s fake (`AcpTest/Linked/Acp/Permissions.lean`): two
   sessions' requests in one queue, answered from it by session; a request
   across a reload; the log's orders to the file fake for an answer from
-  the queue, a policy's answer, a withdrawal and a close; silence; the
-  queue's refusals and prompt; and closing the queue buffer. A
+  the queue, a policy's answer, a withdrawal and a close; a refused
+  append that loses no record; silence; the queue's refusals and prompt;
+  and closing the queue buffer. A
   conversation no view shows is read from `acp`'s store by the check's
   `test-probe-conversation`, so two conversations of one header are told
   apart.

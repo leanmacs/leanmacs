@@ -14,12 +14,21 @@ itself.
 - **One write at a time.** `enqueue` adds lines and starts a write of every
   waiting line only when none is in flight; a line added while one is in
   flight waits for it.
-- **A finished write drops what it held.** `wrote count` drops the first
+- **A write that lands drops what it held.** `wrote count` drops the first
   `count` lines, the ones the write held, and starts a write of the lines
   that came in meanwhile, if any.
+- **A refused write loses nothing.** `refused` keeps every line, the
+  refused write's among them, and starts nothing: the next lines added
+  start one write of them all, so a log that cannot be written is tried
+  again once per record, never in a loop. Only the first refusal since a
+  write landed is to be said (`said`), so a log that stays unwritable says
+  so once.
 
 So the writes reach the file service one at a time, in the order the lines
-were added. The outbox's tree (`encode`, `decode`) is what the store keeps.
+were added, and a line leaves the outbox only once a write of it has
+landed. Lines kept after a refusal live as long as the store does: an
+editor that quits before a write lands loses them, and the refusal it said
+is the user's word of it. The outbox's tree (`encode`, `decode`) is what the store keeps.
 -/
 
 namespace Acp.Permissions
@@ -33,6 +42,8 @@ structure Outbox where
   /-- How many of `lines` the write in flight holds; none when no write is
   in flight. -/
   writing : Option Nat := none
+  /-- Whether a refusal was said since the last write that landed. -/
+  said : Bool := false
   deriving DecidableEq, Repr, Inhabited
 
 /-- A write the writer is to start: the text of the first `count` lines of
@@ -60,17 +71,25 @@ unless one is in flight (`start`). -/
 def enqueue (outbox : Outbox) (lines : Array String) : Outbox × Option Write :=
   start { outbox with lines := outbox.lines ++ lines }
 
-/-- The write in flight, of `count` lines, finished: the first `count` lines
-dropped, no write in flight, and a write of the lines that came in
-meanwhile started (`start`). -/
+/-- The write in flight, of `count` lines, landed: the first `count` lines
+dropped, no write in flight, no refusal said since, and a write of the
+lines that came in meanwhile started (`start`). -/
 def wrote (outbox : Outbox) (count : Nat) : Outbox × Option Write :=
-  start { lines := outbox.lines.extract count outbox.lines.size, writing := none }
+  start { lines := outbox.lines.extract count outbox.lines.size }
+
+/-- The write in flight was refused, or its job could not start: no write in
+flight, every line kept for the write the next `enqueue` starts, and
+whether to say it, only for the first refusal since a write landed. -/
+def refused (outbox : Outbox) : Outbox × Bool :=
+  ({ outbox with
+      writing := none, said := true },
+    !outbox.said)
 
 /-- The outbox as a tree, as the store keeps it. -/
 def encode (outbox : Outbox) : Value :=
   .record
     [("lines", .list (outbox.lines.toList.map .str)),
-      ("writing", Acp.Conversation.optional .nat outbox.writing)]
+      ("writing", Acp.Conversation.optional .nat outbox.writing), ("said", .bool outbox.said)]
 
 /-- The outbox a tree is (`encode`), if it is one. -/
 def decode : Value → Option Outbox
@@ -79,7 +98,8 @@ def decode : Value → Option Outbox
     let lines ← lines.toArray.mapM Acp.Conversation.str?
     let writing ←
       Acp.Conversation.optional? Acp.Conversation.nat? (Acp.Conversation.field fields "writing")
-    return { lines, writing }
+    let .bool said := Acp.Conversation.field fields "said" | none
+    return { lines, writing, said }
   | _ => none
 
 end Outbox

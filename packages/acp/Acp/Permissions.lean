@@ -37,12 +37,16 @@ an outbox in an unscoped store (`auditStore`), whose rules are the pure
 `Acp/Permissions/Outbox.lean`'s: when no write is in flight, its lines are
 handed to one job, `agent-audit`, as one text, which makes the log's
 directory and then appends the text, and returns the result as a value.
-Its command drops the lines it wrote, says a refusal once, and starts the
-next write if more lines are waiting. This module only keeps the outbox,
-starts the job each transition hands it and says a refusal. So the appends
-reach the file service one at a time, in the order the records were made,
-and none is lost: two jobs at once could land out of order, and a keyed job
-would cancel an older one. The only order sent for the log is an append, after a
+Its command drops the lines it wrote and starts the next write if more
+lines are waiting. A refused write, or a job that cannot start, keeps its
+lines, which the next record's write carries, and is said once until a
+write lands: `agent audit log: <path> not written: <reason>; <n> records
+kept, tried again with the next record`. This module only keeps the
+outbox, starts the job each transition hands it and says a refusal. So the
+appends reach the file service one at a time, in the order the records
+were made, and a record leaves the outbox only once it is written: two
+jobs at once could land out of order, and a keyed job would cancel an
+older one. The only order sent for the log is an append, after a
 make of its directory: nothing saves over it, removes it or reads it.
 -/
 
@@ -78,38 +82,45 @@ def queueStore : Store (Array Nat) :=
 /-- The audit log's outbox (`Acp/Permissions/Outbox.lean`), in the unscoped
 store. -/
 def auditStore : Store Outbox :=
-  { name := "acp-permission-audit", version := 1, initial := {}, encode := Outbox.encode
+  { name := "acp-permission-audit", version := 2, initial := {}, encode := Outbox.encode
     decode := Outbox.decode }
 
 /-! ## The audit log -/
 
-/-- Keeps `outbox` and hands its write, if it started one, to `agent-audit`
-(the module docs). A write whose job could not start is said, and its lines
-wait in the outbox with no write in flight. -/
-def startWrite (outbox : Outbox) (write : Option Outbox.Write) : EditorM Unit := do
-  let started ←
-    match write, (← editorState).stateDirectory with
-    | some write, some directory =>
-      match ← startJob auditJob [.str directory.toString, .str write.text, .nat write.count] with
-      | .ok () =>
-        pure true
-      | .error refusal =>
-        message s!"agent audit log: {refusal.describe}"
-        pure false
-    | some _, none =>
-      pure false
-    | none, _ =>
-      pure true
-  Workspace.setUnscoped auditStore (if started then outbox else { outbox with writing := none })
+/-- A write of the audit log refused for `reason`: the outbox's
+`Outbox.refused`, which keeps its lines for the next record, said when it
+says to. -/
+def refusedWrite (reason : String) : EditorM Unit := do
+  let (outbox, say) := ((← editorState).workspaces.getUnscoped auditStore).refused
+  Workspace.setUnscoped auditStore outbox
+  if say then
+    message
+        s!"agent audit log: {reason}; {outbox.lines.size} records kept, tried again with the next record"
 
-/-- What the command of a finished `agent-audit` does: a refusal of the log
-at `path` said once, and the outbox's `Outbox.wrote` of the `count` lines
-the write held. -/
+/-- Keeps `outbox` and hands its write, if it started one, to `agent-audit`
+(the module docs). A write whose job cannot start is refused
+(`refusedWrite`). -/
+def startWrite (outbox : Outbox) (write : Option Outbox.Write) : EditorM Unit := do
+  Workspace.setUnscoped auditStore outbox
+  let some write := write | return
+  let some directory := (← editorState).stateDirectory
+    | refusedWrite "the host keeps no state directory"
+  match ← startJob auditJob [.str directory.toString, .str write.text, .nat write.count] with
+  | .ok () =>
+    pure ()
+  | .error refusal =>
+    refusedWrite refusal.describe
+
+/-- What the command of a finished `agent-audit` does: the outbox's
+`Outbox.wrote` of the `count` lines the write held, or, when the log at
+`path` refused it, `refusedWrite`. -/
 def audited (count : Nat) (path : String) (refusal : Option FileError) : EditorM Unit := do
-  if let some error := refusal then
-    message s!"agent audit log: {path} not written: {error.describe}"
-  let (outbox, write) := ((← editorState).workspaces.getUnscoped auditStore).wrote count
-  startWrite outbox write
+  match refusal with
+  | some error =>
+    refusedWrite s!"{path} not written: {error.describe}"
+  | none =>
+    let (outbox, write) := ((← editorState).workspaces.getUnscoped auditStore).wrote count
+    startWrite outbox write
 
 /-- `agent-audit`: makes the log's directory under the state directory its
 arguments name, appends their text, and finishes with the result, never

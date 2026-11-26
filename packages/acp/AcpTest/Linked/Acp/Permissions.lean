@@ -24,6 +24,8 @@ are told apart.
   under the host's state directory, by the orders the file fake was handed,
   for an answer from the queue, a policy's answer, a withdrawal and a
   close; and nothing but appends, after the directory's make, names it.
+- **The writer** (`writerChecks`): a refused append loses no record, and
+  is said once.
 - **Silence**: a session that never asks leaves the queue empty, sends no
   answer, writes no record and waits on nothing but its session's `next`.
 - **The queue's refusals**, **an answer asked for** by the queue's prompt,
@@ -233,6 +235,69 @@ def auditChecks (context : HostContext) (packages : Array Package) : List Check 
                 held == expected &&
                 policyHeld)
               s!"orders {repr orders}; text {repr text}; held {repr held}; answers {repr answers}; queue {queue}" }
+
+/-- Changes the file fake's model by `change`, as a check sets up or clears
+what the log's path holds. -/
+def changeFiles (fakes : Stage.Fakes) (change : FileModel → FileModel) : IO Unit :=
+  fakes.services.files.state.modify fun state => { state with model := change state.model }
+
+/-- The `asked` line of the request `ticket` of turn `turn`, as the
+`permissionRequest` script parks it for a later prompt. -/
+def askedLineOf (ticket turn : Nat) : String :=
+  (Acp.Permissions.Record.asked "example" 1
+      { askedRequest with
+        ticket, turn := some turn }).line
+
+/-- The checks of the audit log's writer: a refused write. -/
+def writerChecks (context : HostContext) (packages : Array Package) : List Check :=
+  [{  name :=
+        "a refused append of the audit log loses no record: it is said once, with the records kept, a second refusal says nothing, and once the log can be written the next record's write appends them all in order"
+      run :=
+        withConversation context packages Fake.permissionRequest (state := some stateDirectory)
+          fun session _ fakes => do
+          -- A directory where the log should be: its directory is made, and
+          -- each append of it refused.
+          changeFiles fakes (·.withDirectory auditLog)
+          unless ← started session do
+            return false
+          unless ← prompted session do
+            return false
+          let first ← session.echo
+          let heldFirst ← logHeld fakes
+          unless ← exStepped session Acp.Conversation.queueName do
+            return false
+          unless ← exStepped session s!"{cursorToRequest} 1 1" do
+            return false
+          -- Another message in the echo area, so a second refusal said
+          -- would be the one it shows after the answer.
+          discard <| storeProbe session
+          unless ← exStepped session s!"{Acp.Conversation.queueAnswerName} allow-once" do
+            return false
+          settledAfter session
+          let second ← session.echo
+          let refusedAppends := ((← logOrders fakes).filter (· matches .append ..)).size
+          changeFiles fakes fun model =>
+              { model with directories := model.directories.filter (· != auditLog) }
+          unless ← exStepped session s!"{showConversation} 1" do
+            return false
+          unless ← prompted session do
+            return false
+          let held ← logHeld fakes
+          let orders ← logOrders fakes
+          let expected :=
+            logText
+              [askedLine, decidedLine "ask",
+                "answered\tconversation=1\tticket=1\toption=allow-once\tby=user", askedLineOf 2 2,
+                "decided\tconversation=1\tticket=2\tpolicy=default\tdecision=ask"]
+          saw
+              (says first
+                  s!"agent audit log: {auditLog} not written: what is at the path is not a file; 2 records kept, tried again with the next record" &&
+                heldFirst.isEmpty &&
+                !says second "agent audit log" &&
+                refusedAppends == 2 &&
+                appendOnly orders &&
+                held == expected)
+              s!"first {first}; held first {repr heldFirst}; second {second}; refused appends {refusedAppends}; orders {repr orders}; held {repr held}" }]
 
 /-- The checks of the supporting behaviour: silence, the queue's refusals and
 closing the queue buffer. -/
@@ -449,6 +514,7 @@ def permissionChecks (context : HostContext) (packages : Array Package) : List C
                   text.contains "-- turn 1: end_turn" &&
                   after == #["permissions of example", "nothing pending"])
                 s!"before {before}; installed {installed}; waiting {waiting}; shown {shown}; again {again}; answers {repr answers}; text {text}; after {after}" }] ++
-    auditChecks context packages ++ supportingChecks context packages
+    auditChecks context packages ++ writerChecks context packages ++
+    supportingChecks context packages
 
 end AcpTest.Linked
