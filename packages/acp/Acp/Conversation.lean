@@ -87,7 +87,7 @@ its conversation's number, and adds its record; the commands feed it
 the session's opening, each batch's events, each prompt, its reply, each
 answer taken and each stop, so its attention and activity follow the
 session. A stall watchdog marks a working agent silent past
-`Acp.Table.stallTimeout` as of unknown activity.
+`AgentsApi.AgentRecord.stallTimeout` as of unknown activity.
 
 - **`agent-list`** shows the agents list of the focused buffer's project,
   its sessions ordered by attention (`Acp/Table/List.lean`), in one buffer
@@ -382,8 +382,7 @@ def eventsCommand (call : Call) : EditorM Unit := do
   let .nat number :: .nat time :: rest := call.arguments | return
   let some batch := Batch.ofArguments? rest | return
   update number (·.applyBatch batch)
-  Acp.Table.heard number time
-  Acp.Table.change number (batch.events.map .event)
+  Acp.Table.change number (#[.heardAt time] ++ batch.events.map .event)
   let some conversation ← conversation? number | return
   let policy ← PermissionPolicy.named
   let decided := Permissions.decisions policy conversation batch

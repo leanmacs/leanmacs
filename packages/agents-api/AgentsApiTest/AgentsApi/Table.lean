@@ -7,9 +7,10 @@ import AgentsApiTest.Check
 `tableChecks`: the reducer's attention and activity over a table of events
 (AC1 of acp-agents phase 7), an agent idle in the conversation with work
 in flight among them, and a session opened or resumed again, whose new
-process numbers its turns from 1; the list's order; the minted id; the display name;
-a record kept across a restart; and the table's tree, read back through
-the store's codec and refused when it is not one. The test driver's root,
+process numbers its turns from 1; the stall watchdog's verdict at its
+deadline; the list's order; the minted id; the display name; a record
+kept across a restart; and the table's tree, read back through the
+store's codec and refused when it is not one. The test driver's root,
 `AgentsApiTest/Model.lean`, runs them.
 -/
 
@@ -137,6 +138,15 @@ def rows : List Row :=
           [.resumed "sess-0001", .prompted, .event (.turnEnded 1 "end_turn"), .sent (some 1)]
       attention := .finished, activity := .items #[] }]
 
+/-- `rowG`'s record, its tool call heard at `time` on the job clock, the
+watchdog armed at its prompt, at the generation 0. -/
+def heardAt (time : Nat) : AgentRecord :=
+  after r0 (rowC ++ [.heardAt time, .event (.toolCall (bash "in_progress"))])
+
+/-- The stall timeout. -/
+def timeout : Nat :=
+  AgentRecord.stallTimeout
+
 /-- Two records of the table, `claude-code` 1 and 2. -/
 def twoRecords : Array AgentRecord :=
   #[r0, { r0 with id := 2 }]
@@ -161,6 +171,34 @@ def tableChecks : List Check :=
             (changed[0]? == some r0 && (changed[1]?.map (·.attention)) == some .working &&
               unknown == twoRecords)
             s!"{repr changed}" },
+    { name :=
+        "the stall watchdog's verdict at its deadline: nothing while the agent is not working or has stalled; a stall at the generation it was armed at when nothing was heard since; armed again for the last batch's timeout when one came since; and a stall at the last batch's generation when that batch is a whole timeout old"
+      run := do
+        let deadline := 1000 + timeout
+        let verdicts :=
+          [(after r0 rowH).verdict 1 deadline, (after r0 (rowG ++ [.stalled 1])).verdict 1 deadline,
+            (after r0 rowG).verdict 1 deadline, (heardAt 1500).verdict 0 deadline,
+            (heardAt 1000).verdict 0 deadline, (after r0 rowG).verdict 0 deadline]
+        let stalled := (after r0 rowG).apply (.stalled 1)
+        saw
+            (verdicts ==
+                [.rest, .rest, .stall 1, .rearm (1500 + timeout) 1, .stall 1,
+                  .rearm (deadline + timeout) 1] &&
+              stalled.activity == .unknown &&
+              (heardAt 1500).heardAt == some 1500 &&
+              (after (heardAt 1500) [.event (.chunk (some "msg-1") "More.")]).heardAt ==
+                some 1500 &&
+              (heardAt 1500).afterRestart.heardAt.isNone &&
+              (after (heardAt 1500) [.resumed "sess-0001"]).heardAt.isNone)
+            s!"{repr verdicts}" },
+    { name := "the stall watchdog watches a record while it is working and has not stalled"
+      run := do
+        saw
+            (!r0.watched && (after r0 [.prompted]).watched && (after r0 rowG).watched &&
+              !(after r0 rowD).watched &&
+              !(after r0 (rowG ++ [.stalled 1])).watched &&
+              !(after r0 rowH).watched)
+            s!"{repr (after r0 rowG)}" },
     { name :=
         "the list's order is by attention, waiting, finished and unread, working and idle, then by id"
       run := do
@@ -224,7 +262,7 @@ def tableChecks : List Check :=
                 [.event (.toolCall (bash "in_progress")),
                   .event (.title "T")]) with
             sessionId := some "sess-0001",
-            stalled := true, replaying := true
+            heardAt := some 1500, stalled := true, replaying := true
             ended := some "x", location := .reachable "ssh" "example" "/work/example" }
         let records := #[full, r0]
         let codec := Table.store.codec Table.keep

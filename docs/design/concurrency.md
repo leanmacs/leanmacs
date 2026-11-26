@@ -2445,22 +2445,29 @@ promises more than that, per take. Pinned on the stepped host
 events in ten pieces, both ways, one memory-queue event and one scene).
 
 **The stall watchdog: one keyed job armed once, judged by a generation**
-(acp-agents phase 7; `packages/acp/Acp/Table.lean`). A working agent
-silent past `Acp.Table.stallTimeout` is of unknown activity. Its watchdog
-is one job, `agent-stall`, keyed `agent-stall <id>`, that waits on the job
+(acp-agents phase 7; `packages/agents-api/AgentsApi/Table.lean` decides,
+`packages/acp/Acp/Table.lean` carries it out). A working agent silent
+past `AgentRecord.stallTimeout` is of unknown activity. Its watchdog is
+one job, `agent-stall`, keyed `agent-stall <id>` and carrying the
+record's generation (`heard`) it was armed at, that waits on the job
 clock (`waitUntil`; the fake clock on a stepped host) until a deadline:
-the timeout after the prompt, or after the last batch, whose time the
-session job stamps on its post from the job clock (`now`). It is armed
-once while the agent works, not again for each batch: restarting a keyed
-job for each batch would cancel one job a batch, each cancel a turn of
-the loop, and the conversation's one-scene-a-batch property above would
-not hold. At its deadline its command arms it again for the last batch's
-timeout if one came since, and otherwise hands the pure reducer
-`.stalled` at the record's generation (`heard`), which the reducer ignores
-when stale or when the agent no longer works; an agent that stops working
-has its watchdog cancelled by its key. Pinned on the stepped host by
-advancing the fake clock to one millisecond under each deadline and then
-to it (`AcpTest/Linked/Acp/Table.lean`, AC2).
+the timeout after it starts, or the deadline its last verdict gave. It is
+armed once while the agent works, not again for each batch: restarting a
+keyed job for each batch would cancel one job a batch, each cancel a turn
+of the loop, and the conversation's one-scene-a-batch property above
+would not hold. Each batch instead stamps the record with the job clock's
+time the session job put on its post (`.heardAt`). At its deadline the
+job's command, on the loop, carries out the pure `AgentRecord.verdict` of
+the record as it is then: `.stalled` at the armed generation when nothing
+was heard since; armed again for the last batch's timeout when one came
+since and that is still ahead; otherwise `.stalled` at the last batch's
+generation; nothing once the agent no longer works. The reducer ignores a
+`.stalled` that is stale or comes when the agent no longer works; an
+agent that stops working has its watchdog cancelled by its key. The
+verdict is pinned as a pure function (`AgentsApiTest/AgentsApi/Table.lean`)
+and on the stepped host by advancing the fake clock to one millisecond
+under each deadline and then to it (`AcpTest/Linked/Acp/Table.lean`,
+AC2).
 
 **A load's history is queued before its open completes** (acp-agents phase
 7; `packages/acp/rust/src/session.rs`). The agent replays a loaded

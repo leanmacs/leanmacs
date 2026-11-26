@@ -1,5 +1,5 @@
 workspace work@work at local @DIR@/work:
-project work: agents-table=[{id: 1, agent: "claude-code", source: "acp", location: {local: "@DIR@/work"}, sessionId: "sess-0001", title: null, pending: [], awaiting: false, turn: null, lastEnded: 0, unread: true, work: [], stalled: false, heard: 0, replaying: false, ended: "the agent exited 0"}]
+project work: agents-table=[{id: 1, agent: "claude-code", source: "acp", location: {local: "@DIR@/work"}, sessionId: "sess-0001", title: null, pending: [], awaiting: false, turn: null, lastEnded: 0, unread: true, work: [], stalled: false, heard: 0, heardAt: null, replaying: false, ended: "the agent exited 0"}]
 unscoped:
 reload 1: installed, 1 files, 0 commands
 key arrived: : Semicolon shift

@@ -30,10 +30,17 @@ step of the client's own: a prompt handed over, its reply, an answer taken,
 the session opened or resumed, a visit, the stall watchdog's verdict, or a
 stop.
 
-- **The stall watchdog** carries the generation it was armed for
-  (`heard`, the count of events heard), so a verdict armed before a later
-  event, or one that comes while the agent is not working, changes
-  nothing.
+- **The stall watchdog** watches a record while it works and has not
+  stalled (`AgentRecord.watched`). It is armed once, at the generation it
+  was armed for (`heard`, the count of events heard), not again for each
+  batch, and at its deadline `AgentRecord.verdict` says what it does:
+  nothing once the agent is not watched; a stall at the generation it was
+  armed for when nothing was heard since; armed again for the last
+  batch's timeout (`stallTimeout` after `heardAt`, the job clock's time
+  stamped on the batch, `.heardAt`) when one came since and that is still
+  ahead; otherwise a stall at the last batch's generation. The reducer
+  takes `.stalled` only at the record's own generation and while it is
+  watched, so a verdict that comes after a later event changes nothing.
 - **A loaded history** is replayed with `replaying` set, from `.resumed`
   until the next prompt: it adds no work, since nothing of a dead
   process is in flight.
@@ -130,6 +137,9 @@ structure AgentRecord where
   stalled : Bool := false
   /-- How many of its events were heard: the stall watchdog's generation. -/
   heard : Nat := 0
+  /-- When its session was last heard from, on the job clock: the time
+  stamped on the last batch of its events. -/
+  heardAt : Option Nat := none
   /-- Whether a loaded history is being replayed. -/
   replaying : Bool := false
   /-- Why its session ended, while none runs. -/
@@ -146,6 +156,8 @@ inductive Change where
   | sent (turn : Option Nat)
   /-- The session produced `event`. -/
   | event (event : Event)
+  /-- The session's next events were taken at `time` on the job clock. -/
+  | heardAt (time : Nat)
   /-- The service took the answer to `ticket`. -/
   | answered (ticket : Nat)
   /-- The session opened, the provider's id `sessionId`. -/
@@ -162,6 +174,18 @@ inductive Change where
   | stalled (heard : Nat)
   /-- The client stopped it, or it could not go on, for `reason`. -/
   | stopped (reason : String)
+  deriving DecidableEq, Repr
+
+/-- What the stall watchdog does at its deadline (`AgentRecord.verdict`). -/
+inductive Watchdog where
+  /-- Nothing: the agent is not watched. -/
+  | rest
+  /-- The reducer is told the agent stalled at the generation `heard`
+  (`Change.stalled`). -/
+  | stall (heard : Nat)
+  /-- The watchdog waits again, until `deadline` on the job clock, armed at
+  the generation `heard`. -/
+  | rearm (deadline heard : Nat)
   deriving DecidableEq, Repr
 
 /-- A change to the session whose record has the id `agent`. -/
@@ -210,11 +234,12 @@ def track (work : Array WorkItem) (call : ToolCall) : Array WorkItem :=
     else work.push (WorkItem.of call)
 
 /-- `record` with nothing of a running process left: no request pending, no
-prompt or turn, no work, no stall and no replay. -/
+prompt or turn, no work, no stall, no replay and no time it was heard
+at. -/
 def quiet (record : AgentRecord) : AgentRecord :=
   { record with
     pending := #[], awaiting := false, turn := none, work := #[], stalled := false
-    replaying := false }
+    replaying := false, heardAt := none }
 
 /-- `record` as a new process of its session begins: `quiet`, and its turn
 numbering forgotten, since each process numbers its turns from 1. -/
@@ -247,6 +272,7 @@ def heardEvent (record : AgentRecord) (event : Event) : AgentRecord :=
 /-- `record` after `change` (the module docs). -/
 def apply (record : AgentRecord) : Change → AgentRecord
   | .event event => record.heardEvent event
+  | .heardAt time => { record with heardAt := some time }
   | .prompted =>
     { record with
       awaiting := true, unread := false, replaying := false }
@@ -269,6 +295,31 @@ def apply (record : AgentRecord) : Change → AgentRecord
     if heard == record.heard && record.attention == .working then { record with stalled := true }
     else record
   | .stopped reason => { record.quiet with ended := record.ended.orElse fun _ => some reason }
+
+/-- How long a working agent may be silent before its activity is unknown,
+in milliseconds on the job clock. -/
+def stallTimeout : Nat :=
+  120000
+
+/-- Whether the stall watchdog watches `record`: while it works and has not
+stalled. -/
+def watched (record : AgentRecord) : Bool :=
+  record.attention == .working && !record.stalled
+
+/-- The verdict of the stall watchdog armed at the generation `armed` on
+`record` once the job clock reached `deadline` (the module docs). With no
+time heard at, a batch heard since counts a whole timeout from the
+deadline. -/
+def verdict (record : AgentRecord) (armed deadline : Nat) : Watchdog :=
+  if !record.watched then .rest
+  else
+    if record.heard == armed then .stall armed
+    else
+      match record.heardAt with
+      | some time =>
+        if time + stallTimeout > deadline then .rearm (time + stallTimeout) record.heard
+        else .stall record.heard
+      | none => .rearm (deadline + stallTimeout) record.heard
 
 /-- The words of the ending a record kept across a restart has when it had
 none. -/
@@ -333,8 +384,8 @@ def encode (record : AgentRecord) : Value :=
       ("awaiting", .bool record.awaiting), ("turn", optional .nat record.turn),
       ("lastEnded", .nat record.lastEnded), ("unread", .bool record.unread),
       ("work", .list (record.work.toList.map encodeWork)), ("stalled", .bool record.stalled),
-      ("heard", .nat record.heard), ("replaying", .bool record.replaying),
-      ("ended", optional .str record.ended)]
+      ("heard", .nat record.heard), ("heardAt", optional .nat record.heardAt),
+      ("replaying", .bool record.replaying), ("ended", optional .str record.ended)]
 
 /-- The record a tree is (`encode`), if it is one. -/
 def decode : Value → Option AgentRecord
@@ -355,11 +406,12 @@ def decode : Value → Option AgentRecord
     let work ← work.toArray.mapM decodeWork?
     let stalled ← bool? (field fields "stalled")
     let heard ← nat? (field fields "heard")
+    let heardAt ← optional? nat? (field fields "heardAt")
     let replaying ← bool? (field fields "replaying")
     let ended ← optional? str? (field fields "ended")
     return {
         id, agent, source, location, sessionId, title, pending, awaiting, turn, lastEnded, unread,
-        work, stalled, heard, replaying, ended }
+        work, stalled, heard, heardAt, replaying, ended }
   | _ => none
 
 end AgentRecord

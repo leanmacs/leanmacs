@@ -468,17 +468,23 @@ stopped). Identity is the minted `id`, the provider's `sessionId`, and
   agent refuses is recorded as the session's end: `the session did not
   resume: <words>`.
 
-**The stall watchdog** (`Acp/Table.lean`): while an agent works and has not
-stalled, one job, `agent-stall`, keyed `agent-stall <id>`, waits on the job
-clock until `Acp.Table.stallTimeout` (120 000 ms) after the prompt or after
-the session's last batch, which the session job stamps with the job
-clock's time. It is armed once, not again for each batch, so a stream of
-batches starts no jobs and costs no turns; at its deadline its command
-arms it again for the last batch's timeout if one came since, and
-otherwise hands the reducer `.stalled` at the record's generation (`heard`,
-the count of events heard), which the reducer ignores when stale or when
-the agent no longer works. The timeout is a constant: making it config's
-is later work.
+**The stall watchdog**: what it decides is the pure core's
+(`AgentsApi/Table.lean`), so a second front end shares it; acp's
+`Acp/Table.lean` only carries it out. It watches an agent while it works
+and has not stalled (`AgentRecord.watched`): one job, `agent-stall`, keyed
+`agent-stall <id>`, armed at the record's generation (`heard`, the count
+of events heard), waits on the job clock until `AgentRecord.stallTimeout`
+(120 000 ms) from its start. It is armed once, not again for each batch,
+so a stream of batches starts no jobs and costs no turns. At its deadline
+its command carries out `AgentRecord.verdict`, a pure function of the
+record, the generation it was armed at and the deadline: nothing once the
+agent is not watched; `.stalled` at the armed generation when nothing was
+heard since; armed again for `stallTimeout` after the last batch
+(`heardAt`, the job clock's time the session job stamps on each batch,
+taken in as `.heardAt`) when one came since and that is still ahead; and
+otherwise `.stalled` at the last batch's generation. The reducer takes
+`.stalled` only at the record's own generation and while it is watched.
+The timeout is a constant: making it config's is later work.
 
 **The agents list**: `agent-list` shows the focused buffer's project's
 sessions in one read-only buffer, `*agents: <project>*`, in the mode
@@ -514,8 +520,8 @@ in its buffer; a record that never opened is refused
 (`Acp/Table/Visit.lean`). Nothing loads a session at a restore or when the
 list is shown.
 
-**Tests**: AC1's table of events, the order, the name, the restart's keep
-and the tree in `agents-api-test` (`AgentsApiTest/AgentsApi/Table.lean`),
+**Tests**: AC1's table of events, the watchdog's verdict, the order, the
+name, the restart's keep and the tree in `agents-api-test` (`AgentsApiTest/AgentsApi/Table.lean`),
 and the two theorems; the list, the visit and the replayed user's message
 in `acp-test`; and on the stepped host (`AcpTest/Linked/Acp/Table.lean`):
 the stall on the fake clock, not one millisecond before; the list's order

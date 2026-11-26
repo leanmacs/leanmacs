@@ -14,7 +14,7 @@ prompts' texts say what they give, or `Fake.resumable`, whose store holds
 check's own advances of the stage's fake clock; every wait is a step to
 rest.
 
-- **AC2**: a working agent silent past `Acp.Table.stallTimeout` is of
+- **AC2**: a working agent silent past `AgentRecord.stallTimeout` is of
   unknown activity, and not one millisecond before; a batch makes it known
   again; a batch before the deadline moves it to that batch's timeout; an
   agent not working never stalls.
@@ -97,7 +97,7 @@ def stallChecks (context : HostContext) (packages : Array Package) : List Check 
           unless ← promptedWith session "work" do
             return false
           let first ← tableText session
-          advanced session (Acp.Table.stallTimeout - 1)
+          advanced session (AgentRecord.stallTimeout - 1)
           let before ← tableText session
           unless ← exStepped session Acp.Conversation.listName do
             return false
@@ -126,12 +126,12 @@ def stallChecks (context : HostContext) (packages : Array Package) : List Check 
             return false
           unless ← promptedWith session "work" do
             return false
-          advanced session (Acp.Table.stallTimeout - 1)
+          advanced session (AgentRecord.stallTimeout - 1)
           fake.agentSends 1 [.event (.chunk (some "msg-w") " More.")]
           session.step
           advanced session 1
           let atFirst ← tableText session
-          advanced session (Acp.Table.stallTimeout - 2)
+          advanced session (AgentRecord.stallTimeout - 2)
           let underSecond ← tableText session
           advanced session 1
           let atSecond ← tableText session
@@ -147,7 +147,7 @@ def stallChecks (context : HostContext) (packages : Array Package) : List Check 
           unless ← promptedWith session "done" do
             return false
           advanced session Acp.Conversation.batchPause
-          advanced session (10 * Acp.Table.stallTimeout)
+          advanced session (10 * AgentRecord.stallTimeout)
           let line ← tableText session
           unless ← exStepped session Acp.Conversation.listName do
             return false
@@ -358,7 +358,7 @@ def resumeChecks (context : HostContext) (packages : Array Package) : List Check
             unless ← promptedWith session "work" do
               return false
             let working ← tableText session
-            advanced session (Acp.Table.stallTimeout - 1)
+            advanced session (AgentRecord.stallTimeout - 1)
             let before ← tableText session
             advanced session 1
             let stalled ← tableText session

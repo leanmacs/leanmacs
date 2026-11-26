@@ -27,17 +27,19 @@ again and arms the watchdog.
 
 ## The stall watchdog
 
-While a record's attention is `working` and it has not stalled, one job,
-`agent-stall`, keyed `agent-stall <id>`, waits on the job clock until its
-deadline: `stallTimeout` after the prompt, or after the session was last
-heard from (`heard`: the job clock's time the session job stamped on its
-batch). It is armed once, not again for each batch, so a stream of batches
-starts no jobs; at its deadline its command arms it again for the last
-batch's timeout if one came since, and otherwise tells the reducer the
-agent stalled, at its current generation. A record that stops working has
-its watchdog cancelled. What the watchdog keeps of each agent, when it was
-last heard and whether a watchdog is armed, is in an unscoped store
-(`watchStore`).
+What the watchdog decides is the pure core's (`AgentsApi/Table.lean`):
+whom it watches (`AgentRecord.watched`) and its verdict at a deadline
+(`AgentRecord.verdict`); this module only carries them out. While a record
+is watched, one job, `agent-stall`, keyed `agent-stall <id>` and carrying
+the generation it was armed at, waits on the job clock until its deadline:
+`AgentRecord.stallTimeout` from its start, or the deadline its verdict
+gave. It is armed once, not again for each batch, so a stream of batches
+starts no jobs; at its deadline its command does what the verdict says,
+with the record as it is then. A record no longer watched has its watchdog
+cancelled. The ids whose watchdog is armed are kept in an unscoped store
+(`armedStore`); when the session was last heard from is the record's
+(`AgentRecord.heardAt`), from the time the session job stamps on its
+batch.
 
 ## The agents lists
 
@@ -62,11 +64,6 @@ def modeName : String :=
 /-- The name of the stall watchdog's job. -/
 def stallJob : String :=
   "agent-stall"
-
-/-- How long a working agent may be silent before its activity is unknown,
-in milliseconds on the job clock. -/
-def stallTimeout : Nat :=
-  120000
 
 /-- The key the stall watchdog of the agent `id` runs under. -/
 def stallKey (id : Nat) : String :=
@@ -139,79 +136,55 @@ def closingList (id : BufferId) : EditorM Unit := do
   if held.contains id.index then
     Workspace.setUnscoped listStore (held.filter (· != id.index))
 
-/-- What the stall watchdog keeps of an agent: when its session was last
-heard from, on the job clock (none since its last prompt), and whether a
-watchdog is armed for it. -/
-structure Watch where
-  /-- The agent's id. -/
-  id : Nat
-  /-- When its session's last batch was taken, on the job clock; none since
-  its last prompt. -/
-  heardAt : Option Nat := none
-  /-- Whether a watchdog is armed for it. -/
-  armed : Bool := false
-  deriving DecidableEq, Repr
-
-/-- What the watchdog keeps of each agent, in an unscoped store. -/
-def watchStore : Store (Array Watch) :=
+/-- The ids of the agents whose stall watchdog is armed, in an unscoped
+store. -/
+def armedStore : Store (Array Nat) :=
   { name := "acp-agent-watch", version := 1, initial := #[]
-    encode := fun watches =>
-      .list
-        (watches.toList.map fun watch =>
-          .list [.nat watch.id, (watch.heardAt.map Value.nat).getD .null, .bool watch.armed])
+    encode := fun ids => .list (ids.toList.map .nat)
     decode := fun
       | .list items =>
         items.toArray.mapM fun
-          | .list [.nat id, .null, .bool armed] => some { id, armed }
-          | .list [.nat id, .nat heardAt, .bool armed] =>
-            some { id, heardAt := some heardAt, armed }
+          | .nat id => some id
           | _ => none
       | _ => none }
 
-/-- What the watchdog keeps of the agent `id`. -/
-def watchOf (id : Nat) : EditorM Watch := do
-  return (((← editorState).workspaces.getUnscoped watchStore).find? (·.id == id)).getD { id }
+/-- The ids of the agents whose stall watchdog is armed. -/
+def armedIds : EditorM (Array Nat) := do
+  return (← editorState).workspaces.getUnscoped armedStore
 
-/-- Keeps `watch` in place of the agent's own. -/
-def keepWatch (watch : Watch) : EditorM Unit := do
-  let held := ((← editorState).workspaces.getUnscoped watchStore).filter (·.id != watch.id)
-  Workspace.setUnscoped watchStore (held.push watch)
+/-- Notes whether the stall watchdog of the agent `id` is armed. -/
+def setArmed (id : Nat) (armed : Bool) : EditorM Unit := do
+  let held := (← armedIds).filter (· != id)
+  Workspace.setUnscoped armedStore (if armed then held.push id else held)
 
-/-- Notes that the session of the agent `id` was heard from at `time`, on
-the job clock. -/
-def heard (id time : Nat) : EditorM Unit := do
-  keepWatch { ← watchOf id with heardAt := some time }
+/-- Starts the stall watchdog of the agent `id`, armed at the generation
+`heard`, to wait until `deadline?`, or with none until
+`AgentRecord.stallTimeout` after it starts. -/
+def start (id heard : Nat) (deadline? : Option Nat) : EditorM Unit := do
+  let deadline :=
+    match deadline? with
+    | some deadline => [.bool true, .nat deadline]
+    | none => [.bool false]
+  if (← startJob stallJob (.nat id :: .nat heard :: deadline) (key := some (stallKey id))).isOk then
+    setArmed id true
 
-/-- Arms the stall watchdog of `record` once it works and has not stalled,
-unless one is armed; cancels an armed one once it does not (the module
-docs). A watchdog armed at `deadline?` waits until then; with none, until
-`stallTimeout` after it starts. -/
-def arm (record : AgentRecord) (deadline? : Option Nat := none) : EditorM Unit := do
-  let watch ← watchOf record.id
-  if record.attention == .working && !record.stalled then
-    unless watch.armed do
-      let deadline :=
-        match deadline? with
-        | some deadline => [.bool true, .nat deadline]
-        | none => [.bool false]
-      if
-          (←
-              startJob stallJob (.nat record.id :: deadline) (key :=
-                  some (stallKey record.id))).isOk then
-        keepWatch { watch with armed := true }
+/-- Arms the stall watchdog of `record` once it is watched, unless one is
+armed; cancels an armed one once it is not (the module docs). -/
+def arm (record : AgentRecord) : EditorM Unit := do
+  let armed := (← armedIds).contains record.id
+  if record.watched then
+    unless armed do
+      start record.id record.heard none
   else
-    if watch.armed then
+    if armed then
       cancelJob (stallKey record.id)
-      keepWatch { watch with armed := false }
+      setArmed record.id false
 
 /-- Applies `changes`, in order, to the record of the agent `id`, writes its
 project's table back, writes every agents list again and arms the
-watchdog; nothing for an id no table holds. A prompt forgets when the
-session was last heard from, so its watchdog counts from the prompt. -/
+watchdog; nothing for an id no table holds. -/
 def change (id : Nat) (changes : Array AgentsApi.Change) : EditorM Unit := do
   let some (project, _) ← locate? id | return
-  if changes.contains .prompted then
-    keepWatch { ← watchOf id with heardAt := none }
   let held :=
     changes.foldl (fun held change => AgentsApi.Table.apply held { agent := id, change })
       (← records project.identity)
@@ -230,39 +203,35 @@ def add (record : AgentRecord) : EditorM Bool := do
   redrawLists
   return true
 
-/-- The command the stall watchdog of the agent `id` hands the loop once
-the job clock reached `deadline`: when its session was heard from since
-`stallTimeout` before the deadline, the watchdog is armed again for that
-time's timeout; otherwise the reducer is told it stalled, at its current
-generation (the module docs). -/
-def stalledCommand (id deadline : Nat) : EditorM Unit := do
-  let watch ← watchOf id
-  keepWatch { watch with armed := false }
+/-- The command the stall watchdog of the agent `id`, armed at the
+generation `armed`, hands the loop once the job clock reached `deadline`:
+it carries out the record's verdict (`AgentRecord.verdict`, the module
+docs). -/
+def stalledCommand (id armed deadline : Nat) : EditorM Unit := do
+  setArmed id false
   let some (_, record) ← locate? id | return
-  match watch.heardAt with
-  | some time =>
-    if time + stallTimeout > deadline then
-      arm record (some (time + stallTimeout))
-    else
-      change id #[.stalled record.heard]
-  | none =>
-    change id #[.stalled record.heard]
+  match record.verdict armed deadline with
+  | .rest =>
+    pure ()
+  | .stall heard =>
+    change id #[.stalled heard]
+  | .rearm deadline heard =>
+    start id heard (some deadline)
 
 /-- The stall watchdog (the module docs): waits on the job clock until its
-deadline, or `stallTimeout` from its start with none, then hands the loop
-its verdict. -/
+deadline, or `AgentRecord.stallTimeout` from its start with none, then
+hands the loop its command. -/
 def stallWork (arguments : List Argument) : Work := fun _ => do
-  let deadline ←
+  let (id, armed, deadline) ←
     match arguments with
-    | [.nat _, .bool true, .nat deadline] =>
-      pure deadline
-    | [.nat _, .bool false] =>
-      pure ((← now) + stallTimeout)
+    | [.nat id, .nat armed, .bool true, .nat deadline] =>
+      pure (id, armed, deadline)
+    | [.nat id, .nat armed, .bool false] =>
+      pure (id, armed, (← now) + AgentRecord.stallTimeout)
     | _ =>
-      throw s!"{stallJob}: its arguments are not an agent and a deadline"
-  let .nat id :: _ := arguments | throw s!"{stallJob}: its arguments name no agent"
+      throw s!"{stallJob}: its arguments are not an agent, a generation and a deadline"
   waitUntil deadline
-  return stalledCommand id deadline
+  return stalledCommand id armed deadline
 
 /-- The agents list of the project `identity`, if one is open. -/
 def listBufferOf? (identity : Project.Identity) : EditorM (Option BufferId) := do
