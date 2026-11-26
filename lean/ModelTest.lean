@@ -513,7 +513,10 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   once it has passed and not before, none after a sequence completed
   before it, and a delay of another generation that changes nothing; and
   a journal order the file model refuses is kept, its path and why, with
-  the orders after it still handed;
+  the orders after it still handed; a grammar a job registers listed by
+  the syntax tree model once the job has run, before its command; and the
+  core's own work started outside a step, under the next id, delivered by
+  `finish`;
 - `promptChecks`: prompts on that driver. `promptLoopChecks`, with commands
   written here under keys of the global keymap: an accepted prompt's
   answer is handed back with the step, and the answer's command runs

@@ -18,6 +18,7 @@ import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Pool
 import Editor.Job.Real
+import Editor.Language.Grammar.Register
 import Editor.Loop
 import Editor.PackageSet.Build
 import Editor.RealHost
@@ -1449,7 +1450,11 @@ hands the display the new theme (`Config.retheme`). A package-set build the
 reducer asks for (`buildPackages`, `docs/design/packages.md`, "User package
 sets") is started as the job `package-build`, keyed so, printed `job <id>
 package-build: started`, and said (`PackageSet.startedLine`); what the
-reducer has to say of the set instead is said. -/
+reducer has to say of the set instead is said. The registration of the
+declared grammars an install asks for (`registerGrammars`) is started as
+the core's own job `register-grammars`, owned by `config`
+(`Editor/Language/Grammar/Register.lean`), printed `job <id>
+register-grammars: started`; the editor thread waits for none of it. -/
 def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ scheme)
     (event : Config.Event β σ) : IO (Running β σ scheme) := do
   let (config, effects) := Config.step running.config event
@@ -1501,8 +1506,14 @@ def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ
         running := started.rekeyed started.keyed
     | .say text =>
       running := running.said text
-    | .registerGrammars _ _ =>
-      pure ()
+    | .registerGrammars generation grammars =>
+      -- The core's own work, owned by config, so the next install's
+      -- `cancelJobs` cancels it before its command runs.
+      let (id, started) ←
+        running.startWork collaborators .config Language.Grammar.jobName
+          (Language.Grammar.work generation grammars)
+      collaborators.emit s!"job {id} {Language.Grammar.jobName}: started"
+      running := started
   return running
 
 /-- Sets what the last reload read of the package set

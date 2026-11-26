@@ -37,6 +37,7 @@ import Editor.Job.Jobs
 import Editor.Job.Runner
 import Editor.Job.Table
 import Editor.Language
+import Editor.Language.Grammar
 import Editor.Layout
 import Editor.Loop
 import Editor.Menu
@@ -2111,7 +2112,26 @@ def reloadEchoChecks (context : Context) : List Check :=
           session.resize 80 64
           session.ask []
           let made ← session.echo
-          return before == ("", #[]) && isGreetError made }]
+          return before == ("", #[]) && isGreetError made },
+    { name :=
+        "a reload that installs a config declaring a grammar starts the job register-grammars, and its command says in the echo area that the grammar ini's registration failed, so its languages have no syntax tree"
+      run :=
+        withHost context
+          [("init.lean",
+              "def setup : SetupM Unit := do\n  defineGrammar \"ini\" \"/g/libtree-sitter-ini.so\"\n")]
+          fun session => do
+          session.ask [.reload]
+          session.step
+          let lines ← session.lines
+          let echo ← session.echo
+          let started :=
+            lines.any fun line =>
+              line.startsWith "job " && line.endsWith s!" {Language.Grammar.jobName}: started"
+          saw
+              (started &&
+                echo.startsWith "\"grammar `ini`: the grammar's registration failed: " &&
+                echo.endsWith ", so its languages have no syntax tree\"")
+              s!"lines={lines} echo={echo}" }]
 
 /-- The checks of what the executable's host (`Headless.shippedOver`) starts
 its loop with: the state directory it is handed. What its registry holds is

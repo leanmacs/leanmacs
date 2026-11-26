@@ -397,7 +397,10 @@ show:
   it hold, and at once when it holds already;
 - `reloadEchoChecks`: a rejected reload's first error is said in the echo
   area, while the old config runs; a reload that installs says nothing;
-  and one rejected before the frame is made is said once it is;
+  one rejected before the frame is made is said once it is; and one that
+  installs a config declaring a grammar starts the job `register-grammars`,
+  whose command says the registration failed on the stepped stage, which
+  has no grammar service;
 - `faceChecks`: a face set in a config file reaches the next frame,
   through a host handed the display's real binding over the library's
   layout: the host's reload re-themes its display (`Config.retheme`), and
