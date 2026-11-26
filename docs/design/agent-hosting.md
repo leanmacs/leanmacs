@@ -521,7 +521,8 @@ in `acp-test`; and on the stepped host (`AcpTest/Linked/Acp/Table.lean`):
 the stall on the fake clock, not one millisecond before; the list's order
 and a visit's reorder; the table read back after a restart over the
 journal's recording fake, two hosts in turn
-(`AcpTest/Linked/Support/Restart.lean`); a session loaded on its first
+(`AcpTest/Linked/Support/Restart.lean`), and an agent started after it
+minted an id past the kept records'; a session loaded on its first
 visit with its history shown, once; a refused load retried. The contract
 holds the fake and the crate to a load and a refused load. Through the
 CLI, `packages/acp/tests/headless/table/` and `table-restore/` run on the

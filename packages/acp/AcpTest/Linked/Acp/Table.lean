@@ -23,7 +23,8 @@ rest.
 - **AC4**: after a restart over the journal's recording fake
   (`AcpTest/Linked/Support/Restart.lean`), the table's records are read
   back from the project's store, every session's identity and workspace,
-  and nothing is resumed.
+  and nothing is resumed; an agent started then is minted an id past the
+  kept records', so none is overwritten.
 - **AC5**: a session from before a restart is resumed by `session/load`
   when it is first visited, with its history shown; a second visit loads
   nothing, and the resumed session is live: working while its new
@@ -264,7 +265,28 @@ def restartChecks (context : HostContext) (packages : Array Package) : List Chec
                       "2 claude-code 2: idle, nothing in flight — claude-code in /work/example, session sess-0002, not running; ended: the editor restarted"] &&
                   log.isEmpty &&
                   started.isEmpty)
-                s!"table {table}; rows {rows}; log {log.size}; started {started.size}" }]
+                s!"table {table}; rows {rows}; log {log.size}; started {started.size}" },
+    { name :=
+        "an agent started after a restart is minted an id past every kept record's, so the kept record stays as it was kept, and its conversation takes that number"
+      run := do
+        let model ← IO.mkRef files
+        unless ← beforeRestart context packages model false do
+          return false
+        withStateHost context packages Fake.table model fun session _ _ => do
+            restored session
+            unless ← startedWith session "" do
+              return false
+            let table ← tableText session
+            let store ← storeProbe session
+            -- The second host's fake numbers its sessions afresh, so the
+            -- new session is its `sess-0001` too.
+            saw
+                (table ==
+                    " ; ".intercalate
+                      [keptFirst,
+                        "2|sess-0001|claude-code 2|claude-code|/work/example|idle|nothing|-"] &&
+                  says store "store: [2]")
+                s!"table {table}; store {store}" }]
 
 /-- The conversation's lines of the resumed session: its note and its
 replayed history, in order. -/
