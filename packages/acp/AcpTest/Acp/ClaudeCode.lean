@@ -1,0 +1,83 @@
+import Acp.ClaudeCode
+import Acp.Conversation
+import AcpTest.Check
+import Editor.Config.Packages
+
+/-!
+# Model tests: `Acp/ClaudeCode.lean`, and what `Acp.setup` registers
+
+`claudeCodeChecks`: Claude Code's adapter is `claude-agent-acp` with no
+arguments, the editor's environment untouched and no MCP server, so its
+child's environment has no `CLAUDE_CONFIG_DIR` of the editor's; and a
+package whose setup is `Acp.setup`, registered alone as a host registers
+it (`Config.State.ofPackages`), registers it at `AgentsApi.Agent`, the
+default view at `AgentsApi.ConversationView`, the session commands, their
+jobs and the conversation's mode, with nothing refused. The test driver's
+root, `AcpTest/Model.lean`, runs them; it imports nothing of the crate's
+binding, so it builds `Acp.setup`'s package here rather than taking
+`Acp.package`.
+-/
+
+namespace AcpTest
+
+open Editor
+open AgentsApi
+
+/-- The package `acp` as its setup registers it, without the crate's
+service, which this driver does not link. -/
+def conversationPackage : Package :=
+  { name := "acp", setup := Acp.setup }
+
+/-- The values `package` registers at the extension point `α`, in order. -/
+def registeredAt (α : Type) [TypeName α] (package : Package) : Array α :=
+  package.registered.extensions.filterMap fun (key, value) =>
+    if key == TypeName.typeName α then value.get? α else none
+
+/-- The checks of Claude Code's registration. -/
+def claudeCodeChecks : List Check :=
+  [{  name :=
+        "Claude Code's adapter is claude-agent-acp with no arguments, an environment that clears, sets and unsets nothing, so no CLAUDE_CONFIG_DIR, and no MCP server; its command runs in the session's root"
+      run := do
+        let agent := Acp.claudeCode
+        let command := agent.command "/work/example"
+        saw
+            (agent.name == "claude-code" && agent.program == "claude-agent-acp" &&
+              agent.arguments.isEmpty &&
+              agent.environment == {} &&
+              !agent.environment.clear &&
+              agent.environment.set.isEmpty &&
+              agent.environment.unset.isEmpty &&
+              agent.mcpServers.isEmpty &&
+              command ==
+                { program := "claude-agent-acp", directory := "/work/example" : Process.Command })
+            s!"{repr agent}" },
+    { name :=
+        "acp's setup registers Claude Code's adapter, which a choice finds as claude-code, and the default view, which a choice finds by the default name"
+      run := do
+        let agents := registeredAt Agent conversationPackage
+        let views := registeredAt ConversationView conversationPackage
+        let chosen := Agent.choose agents Acp.defaultAgent
+        saw
+            (agents == #[Acp.claudeCode] && chosen == some Acp.claudeCode && views.size == 1 &&
+              (ConversationView.choose views).map (·.name) == some ConversationView.defaultName)
+            s!"agents {repr agents}, views {views.size}" },
+    { name :=
+        "acp's package registers alone with nothing refused: its session commands, its jobs agent-session and agent-send, and the mode agent-conversation, whose toggle is agent-toggle"
+      run := do
+        let (state, refused) : Config.State Unit Unit × Array String :=
+          Config.State.ofPackages #[conversationPackage]
+        let registry := state.registry
+        let commands :=
+          [Acp.Conversation.startName, Acp.Conversation.promptName, Acp.Conversation.answerName,
+            Acp.Conversation.cancelName, Acp.Conversation.stopName, Acp.Conversation.toggleName,
+            Acp.Conversation.openedName, Acp.Conversation.eventsName]
+        saw
+            (refused.isEmpty && commands.all (fun name => (registry.find? name).isSome) &&
+              [Acp.Conversation.sessionJob, Acp.Conversation.sendJob].all
+                (fun name => registry.jobs.any (·.registration.name == name)) &&
+              registry.modes.any fun entry =>
+                entry.mode.name == Acp.Conversation.modeName &&
+                  entry.mode.roles == [(Role.toggle, Acp.Conversation.toggleName)])
+            s!"refused {refused}" }]
+
+end AcpTest

@@ -52,6 +52,10 @@ package acp where
 
 require «agents-api» from ".." / "agents-api"
 
+/-- The interface package of the buffer commands: the hook `BuffersApi.Closing`,
+at which closing a conversation buffer stops its session. -/
+require «buffers-api» from ".." / "buffers-api"
+
 require «editor-core» from ".." / ".." / "lean"
 
 /-- The core's build linters as a Lean plugin, which each library and the
@@ -73,7 +77,7 @@ target acpGlue.o pkg : FilePath := do
 of the package but its tests and the binding. -/
 @[default_target] lean_lib Acp where
   globs :=
-  #[.one `Acp.Codec, .one `Acp.Service, .one `Acp.ClaudeCode, .submodules `Acp.Conversation,
+  #[.one `Acp.Codec, .one `Acp.Service, .one `Acp.ClaudeCode, .andSubmodules `Acp.Conversation,
     .one `Acp.Packages, .one `Acp.EditorPackage]
   plugins := lintPlugin
 

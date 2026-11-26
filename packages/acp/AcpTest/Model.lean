@@ -1,3 +1,4 @@
+import AcpTest.Acp.ClaudeCode
 import AcpTest.Acp.Codec
 import AcpTest.Acp.Conversation.Diff
 import AcpTest.Acp.Conversation.Render
@@ -20,6 +21,9 @@ test modules and runs their checks:
   (`Acp/Conversation/Diff.lean`);
 - `stateChecks`: a conversation after each event and each of the client's
   steps, and its store's tree (`Acp/Conversation/State.lean`);
+- `claudeCodeChecks`: Claude Code's adapter, with nothing of the editor's
+  in its environment, and what `Acp.setup` registers
+  (`Acp/ClaudeCode.lean`, `Acp/Conversation.lean`);
 - `renderChecks`: a conversation's text, its fold and its map of rows, as
   the default view shows it (`Acp/Conversation/Render.lean`,
   `Acp/Conversation/View.lean`).
@@ -31,7 +35,8 @@ linked test's (`AcpTest/Linked.lean`).
 /-- Every check of the test driver, in the order they run. -/
 def AcpTest.checks : List AcpTest.Check :=
   AcpTest.codecChecks ++ AcpTest.serviceChecks ++ AcpTest.diffChecks ++ AcpTest.stateChecks ++
-    AcpTest.renderChecks
+    AcpTest.renderChecks ++
+    AcpTest.claudeCodeChecks
 
 /-- Runs the checks and prints each that failed; the exit status is 1 when
 one did. -/
