@@ -70,13 +70,14 @@ pub mod highlight;
 pub mod inject;
 mod port;
 pub mod query;
+pub mod registry;
 pub mod session;
 pub mod worker;
 
 pub use highlight::{BadFaces, HighlightSpan, Highlighter, Highlights};
 pub use port::{
-    Capture, GrammarName, Match, MatchCapture, Node, QueryError, QueryErrorKind, QueryKind,
-    ReparsePolicy, Setting, Syntax,
+    Capture, GrammarName, GrammarSource, Match, MatchCapture, Node, QueryError, QueryErrorKind,
+    QueryKind, RegistrationRefusal, ReparsePolicy, Setting, Syntax,
 };
 pub use session::{
     CapturesRefusal, Consumer, Kept, KeptRefusal, Latest, Outcome, Parsed, Session, Source,

@@ -10,6 +10,7 @@
 
 use std::fmt;
 use std::ops::Range;
+use std::path::PathBuf;
 
 use editor_text::{InputEdit, Point, Snapshot};
 
@@ -177,6 +178,76 @@ pub enum ReparsePolicy {
     Whole,
 }
 
+/// Where a grammar registered at run time comes from
+/// ([`Syntax::register`]): a native library, the symbol that hands out its
+/// language, and the reparse policy its declaration gives, if any.
+///
+/// It carries no grammar kind: a native library is the only form a grammar
+/// takes at run time (`docs/design/rust-library.md`, "Syntax, as built"),
+/// and a second form would be a new field, not a change of the call.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GrammarSource {
+    /// The library's path.
+    pub library: PathBuf,
+    /// The symbol the library exports its language under:
+    /// `tree_sitter_python`.
+    pub symbol: String,
+    /// The reparse policy the declaration gives, or `None`, which a
+    /// registration takes as [`ReparsePolicy::Whole`]: a grammar loaded at
+    /// run time has not been swept for [`crate::contract::GRAMMAR_QUALITY`].
+    pub policy: Option<ReparsePolicy>,
+}
+
+impl GrammarSource {
+    /// The prefix a grammar's symbol carries before its name.
+    const PREFIX: &str = "tree_sitter_";
+
+    /// The name the grammar is registered under: its symbol without the
+    /// `tree_sitter_` prefix (`tree_sitter_python` is `python`). A symbol
+    /// without that prefix, or with nothing after it, is its own name. The
+    /// rule is mirrored in Lean (`GrammarSource.name`,
+    /// `lean/Editor/SyntaxTree/Registration.lean`).
+    pub fn name(&self) -> GrammarName {
+        let name = self
+            .symbol
+            .strip_prefix(Self::PREFIX)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&self.symbol);
+        GrammarName::new(name)
+    }
+}
+
+/// Why a registration was refused ([`Syntax::register`]). A refusal leaves
+/// every grammar as it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RegistrationRefusal {
+    /// No file is at the library's path.
+    NotFound,
+    /// The file is not a library this platform can open.
+    NotLoadable,
+    /// The library's grammar is of an ABI the parsing library does not
+    /// speak.
+    UnsupportedAbi,
+    /// The library exports no symbol of that name.
+    MissingSymbol,
+    /// This implementation loads no grammar at run time.
+    Unsupported,
+}
+
+impl fmt::Display for RegistrationRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::NotFound => "no file is at the grammar's path",
+            Self::NotLoadable => "the file is not a library this platform can open",
+            Self::UnsupportedAbi => "the grammar is of an ABI the parsing library does not speak",
+            Self::MissingSymbol => "the library exports no such symbol",
+            Self::Unsupported => "this syntax loads no grammar at run time",
+        })
+    }
+}
+
+impl std::error::Error for RegistrationRefusal {}
+
 /// Why a query was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QueryErrorKind {
@@ -322,4 +393,35 @@ pub trait Syntax: Send + Sync + 'static {
     /// ([`Node::error`], [`Node::missing`]): what [`nodes`](Self::nodes)
     /// would show, answered without reading the tree out.
     fn has_errors(&self, tree: &Self::Tree) -> bool;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A source of `symbol` in a library no test reads.
+    fn source(symbol: &str) -> GrammarSource {
+        GrammarSource {
+            library: PathBuf::from("/fake/grammars.so"),
+            symbol: symbol.to_owned(),
+            policy: None,
+        }
+    }
+
+    #[test]
+    fn a_source_is_named_by_its_symbol_without_the_tree_sitter_prefix() {
+        assert_eq!(
+            source("tree_sitter_python").name(),
+            GrammarName::new("python")
+        );
+    }
+
+    #[test]
+    fn a_symbol_without_the_prefix_names_the_grammar_itself() {
+        assert_eq!(source("python").name(), GrammarName::new("python"));
+        assert_eq!(
+            source("tree_sitter_").name(),
+            GrammarName::new("tree_sitter_")
+        );
+    }
 }
