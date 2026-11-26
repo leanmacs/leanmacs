@@ -59,7 +59,9 @@ library (`docs/design/lean-runtime.md`). A test module's initialiser runs at
 start-up just as this module's does.
 
 Some behaviour needs a process of its own, so it is a scenario chosen by an
-argument (see `main`): `exit <code>` for the exit status, `shutdown` and
+argument (see `main`): `exit <code>` for the exit status, which
+`entryChecks` runs as a child of the library's process service and reads
+the status of, `shutdown` and
 `exit-while-blocked` because quitting the queues is for good, and `overflow`
 because it ends in an abort. `theme-pictures <dir> <font>` compares the
 picture of the theme `default`, of a fixture file, with its reference image

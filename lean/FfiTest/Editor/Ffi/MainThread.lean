@@ -1,14 +1,17 @@
 import Editor.Ffi.Counter
 import Editor.Ffi.MainThread
+import Editor.Ffi.Processes
 import FfiTest.Check
+import FfiTest.Support.Files
+import FfiTest.Support.Processes
 import Lean.Environment
 import Lean.Util.Path
 
 /-!
 # FFI tests: `Editor/Ffi/MainThread.lean`
 
-The tests of `Editor/Ffi/MainThread.lean`: `entryChecks`, and the `overflow`
-scenario (`say`, `overflowMarker`, `overflowUnsafe`, `overflow`). The root
+The tests of `Editor/Ffi/MainThread.lean` and of the entry point it
+reads: `entryChecks`, and the `overflow` scenario (`say`, `overflowMarker`, `overflowUnsafe`, `overflow`). The root
 module `FfiTest` runs them, and each list's own doc says what it checks.
 -/
 
@@ -43,7 +46,20 @@ def entryChecks (_ : Unit) : List Check :=
         let pool ← IO.asTask Editor.Ffi.threadStackSize
         let onDedicated ← IO.ofExcept (← IO.wait dedicated)
         let onPool ← IO.ofExcept (← IO.wait pool)
-        return isEditorStack onMain && isEditorStack onDedicated && isEditorStack onPool }]
+        return isEditorStack onMain && isEditorStack onDedicated && isEditorStack onPool },
+    { name :=
+        "the entry point hands the command line to Lean's main and makes its result the process's exit status: this executable run as a child of the library's process service with exit 7 ends with status 7"
+      run :=
+        inOwnDirectory (targets := [filesFlushed, processesFlushed]) fun directory => do
+          let executable ← IO.appPath
+          unless
+            ←
+              Editor.Ffi.processesRun 1180 executable.toString #["exit", "7"] false #[] #[]
+                  directory.toString 65536 do
+            return false
+          unless ← processCompleted 1180 do
+            return false
+          return (← Editor.Ffi.processesTake 1180) matches some (.ran (.code 7) _ _) }]
 
 /-- Prints a line of the overflow scenario and flushes it: the process is
 about to abort, and an abort does not flush. -/

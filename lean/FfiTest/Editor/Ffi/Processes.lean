@@ -1,7 +1,7 @@
-import Editor.Ffi.Events
 import Editor.Ffi.Processes
 import FfiTest.Check
 import FfiTest.Support.Files
+import FfiTest.Support.Processes
 import FfiTest.Support.Queues
 
 /-!
@@ -12,23 +12,6 @@ The tests of `Editor/Ffi/Processes.lean`: `processChecks`. The root module
 -/
 
 namespace FfiTest
-
-/-- The id of the process service as the source of its completions. -/
-def processService : UInt64 :=
-  3
-
-/-- The library's process service, as a directory's bracket flushes it: its
-flush is completed once every run started before has ended and every child
-cancelled before has been reaped. -/
-def processesFlushed : Flushed :=
-  { name := "process", flush := Editor.Ffi.processesFlush, service := processService }
-
-/-- Whether the next completion on the queue is the process service's, for
-the run `id`. -/
-def processCompleted (id : UInt64) : IO Bool := do
-  let some event ← pull .completion | return false
-  return event.source == { kind := .library, id := processService } && event.kind == .completion &&
-      event.code == id
 
 /-- Runs `/bin/sh -c script` in `directory` as the run `id`, waits for its
 completion and takes its result. `none` when the run was refused, was not
