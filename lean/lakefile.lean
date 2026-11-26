@@ -433,32 +433,71 @@ whatever `lean` is on the `PATH`. -/
 def systemLibDirOf (install : LeanInstall) : FilePath :=
   install.systemLibDir
 
+/-- The two places a Lean toolchain install can be looked up, for
+`findSystemLibDir` to choose between. -/
+structure LeanInstallLookups (m : Type → Type) where
+  /-- The install Lake finds for itself (`Lake.findInstall?`), which takes the
+  `lean` beside the running `lake` first. -/
+  lakes : m (Option LeanInstall)
+  /-- The install of the `lean` first on the `PATH` (`lean --print-prefix`,
+  `Lake.findLeanCmdInstall?`). -/
+  onPath : m (Option LeanInstall)
+
+/-- The directory of the static libraries Lean's runtime needs, of the
+install Lake finds for itself (`lookups.lakes`), or why there is none. It
+never asks `lookups.onPath`, not even when Lake finds no install: a `lean`
+first on the `PATH` may be a user's other Lean, or one that fails. -/
+def findSystemLibDir [Monad m] (lookups : LeanInstallLookups m) : m (Except String FilePath) := do
+  let some lean ← lookups.lakes | return .error "cannot find the Lean toolchain to link against"
+  return .ok (systemLibDirOf lean)
+
+/-- The real `LeanInstallLookups`, over Lake's own lookups. -/
+def lakeInstallLookups : LeanInstallLookups BaseIO where
+  lakes := return (← Lake.findInstall?).2.1
+  onPath := Lake.findLeanCmdInstall?
+
 /-- The directory of the static libraries Lean's runtime needs (libgmp, libuv
 and the rest), inside the Lean toolchain Lake itself is using, as this
 lakefile is elaborated: for the core's own `lean_exe`s, whose `moreLinkArgs`
 are fixed then. It asks Lake as Lake finds its own toolchain
-(`Lake.findInstall?`), which takes the `lean` beside the running `lake`
-first, so it never reads the `PATH`: an app bundle's `lake`, run with no
-`lean` on the `PATH`, or with a user's other Lean there, elaborates this
-lakefile against its own toolchain (`docs/design/lean-runtime.md`, "Build").
-The editor's own link asks the workspace's toolchain as it runs instead
-(`editorLinkArgs`). -/
+(`findSystemLibDir` over `lakeInstallLookups`), which takes the `lean`
+beside the running `lake` first, and never the `PATH`'s: an app bundle's
+`lake`, run with no `lean` on the `PATH`, or with a user's other Lean there,
+elaborates this lakefile against its own toolchain
+(`docs/design/lean-runtime.md`, "Build"). The editor's own link asks the
+workspace's toolchain as it runs instead (`editorLinkArgs`). -/
 def leanSystemLibDir : FilePath :=
   run_io
     do
-      let (_, some lean, _) ←
-        Lake.findInstall? | throw <| IO.userError "cannot find the Lean toolchain to link against"
-      return systemLibDirOf lean
+      match ← (findSystemLibDir lakeInstallLookups : BaseIO _) with
+      | .ok dir =>
+        return dir
+      | .error message =>
+        throw <| IO.userError message
+
+/-- A fake of `LeanInstallLookups` for the guards below: Lake's own install
+is `lakes`, the `PATH`'s `lean` is at `/path`, and each lookup asked is
+recorded, in order. -/
+def recordingLookups (lakes : Option LeanInstall) : LeanInstallLookups (StateM (Array String)) where
+  lakes := do
+    modify (·.push "lakes")
+    return lakes
+  onPath := do
+    modify (·.push "path")
+    return some { sysroot := "/path" }
 
 /- Guards: the static libraries' directory the core's executables link
-against is the one of the toolchain install Lake found (`systemLibDirOf`,
-over the `LeanInstall` that `Lake.findInstall?` returns), whatever `lean`
-is on the `PATH`: its own `lib`. That Lake finds its install by the
-running `lake`, not the `PATH`, is Lake's. -/
-#guard systemLibDirOf { sysroot := "/t" } == ("/t/lib" : FilePath)
+against is the one of the toolchain install Lake found for itself, and the
+`lean` on the `PATH` is never asked, not even when Lake found none. That
+Lake finds its install by the running `lake`, not the `PATH`, is Lake's. -/
+#guard
+  let lakes : LeanInstall := { sysroot := "/lake" }
+  let (dir, asked) := (findSystemLibDir (recordingLookups (some lakes))).run #[]
+  dir.toOption == some (systemLibDirOf lakes) && asked == #["lakes"]
 
 #guard
-  systemLibDirOf { sysroot := "/elsewhere/toolchain" } == ("/elsewhere/toolchain/lib" : FilePath)
+  let (dir, asked) := (findSystemLibDir (recordingLookups none)).run #[]
+  dir.toOption.isNone && asked == #["lakes"]
 
 /-- The link arguments of `linkArgs`, with the static libraries'
 directory `systemLibDir`. -/

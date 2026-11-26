@@ -424,7 +424,7 @@ stamp, artwork, icon sizes and deployment target (`appInfoPlist`,
 `parseAppVersion`, `parseAppStamp`, `checkAppArtwork`, `appIconSizes`,
 `deploymentTargetFits`) and the order it is assembled and signed in
 (`appSteps`); and the toolchain the core's executables link against
-(`systemLibDirOf`). Whether Lake, LaunchServices or codesign then do
+(`findSystemLibDir`). Whether Lake, LaunchServices or codesign then do
 their part is theirs.
 
 #### The config base of a set
