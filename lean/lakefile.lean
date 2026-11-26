@@ -514,8 +514,9 @@ def entryModule? (pkg : Package) : IO (Option Module) := do
   | none =>
     return none
 
-/-- The packages of the set `set`, in the order their entry modules
-register: `set` and every package it requires, directly or through
+/-- The packages of a set, in the order their entry modules register
+(`setPackages`), on any items with a key and what each requires: `root`
+and every package it requires, directly or through
 another, each after the packages it requires, and those in the order its
 lakefile declares them. So a package registers after every package it
 depends on, the core's packages come first, since every package with an
@@ -527,28 +528,66 @@ package reached only through another after the package that requires it.
 So this walks the `require`s itself, depth first. The walk keeps the names
 of the packages it has entered, so a package is visited once and a cycle,
 which Lake refuses when it loads the workspace, could not loop here. -/
-partial def setPackages (ws : Workspace) (set : Package) : Array Package :=
-  (visit set (#[], #[])).2
+partial def requireOrder {α : Type} (key : α → Name) (needs : α → Array α) (root : α) : Array α :=
+  (visit root (#[], #[])).2
 where
-  /-- Visits `pkg` after its dependencies: `state` is the names of the
-  packages entered so far and the packages in order so far. -/
-  visit (pkg : Package) (state : Array Name × Array Package) : Array Name × Array Package :=
-    if state.1.contains pkg.keyName then state
+  /-- Visits `item` after what it requires: `state` is the keys of the
+  items entered so far and the items in order so far. -/
+  visit (item : α) (state : Array Name × Array α) : Array Name × Array α :=
+    if state.1.contains (key item) then state
     else
       let state :=
-        pkg.depConfigs.foldl
-          (fun state dep =>
-            match ws.findPackageByName? dep.name with
-            | some dep => visit dep state
-            | none => state)
-          (state.1.push pkg.keyName, state.2)
-      (state.1, state.2.push pkg)
+        (needs item).foldl (fun state dep => visit dep state) (state.1.push (key item), state.2)
+      (state.1, state.2.push item)
+
+/-- `requireOrder` over a table of each package's name and the names it
+requires, in its lakefile's order, from the package `root`: the order
+`setPackages` gives, on plain names. A name the table does not hold
+requires nothing. -/
+def requireOrderOf (table : Array (Name × Array Name)) (root : Name) : Array Name :=
+  requireOrder id (fun name => ((table.find? (·.1 == name)).map (·.2)).getD #[]) root
+
+/-- The packages of the set `set` (see `requireOrder`), each found in the
+workspace by the name its requirer gives it; a name the workspace does not
+hold is passed over. -/
+def setPackages (ws : Workspace) (set : Package) : Array Package :=
+  requireOrder (·.keyName) (fun pkg => pkg.depConfigs.filterMap (ws.findPackageByName? ·.name)) set
+
+/- Guards: the order a set's packages register in (`requireOrderOf`, the walk
+`setPackages` makes, over a table of each package's `require`s in its
+lakefile's order): a package comes after every package it requires, so the
+core first; packages that do not depend on each other keep the order the
+requiring lakefile names them in; and a package two others require (a
+diamond) is visited once. -/
+#guard
+  requireOrderOf #[(`set, #[`a, `b]), (`a, #[`core]), (`b, #[`core]), (`core, #[])] `set ==
+    #[`core, `a, `b, `set]
+
+#guard
+  requireOrderOf #[(`set, #[`b, `a]), (`a, #[`core]), (`b, #[`core]), (`core, #[])] `set ==
+    #[`core, `b, `a, `set]
+
+#guard
+  requireOrderOf
+      #[(`set, #[`a, `b]), (`a, #[`api, `core]), (`b, #[`api]), (`api, #[`core]), (`core, #[])]
+      `set ==
+    #[`core, `api, `a, `b, `set]
 
 /-- The repository the core is in: the directory above the core's. -/
 def repositoryRoot : FetchM FilePath := do
   let some core := (← getWorkspace).findPackageByKey? __name__
     | error "the core's package is not in the workspace"
   return core.dir / ".."
+
+/-- Why the crate `name` of the package `owner`, whose manifest is at
+`manifest`, is refused, with `root` the repository, all paths with their
+links resolved: a manifest outside the repository is, with the rule; none
+for one inside it. -/
+def outsideCrateRefusal? (owner name root manifest : String) : Option String :=
+  if manifest.startsWith (root ++ "/") then none
+  else
+    some
+      s!"{owner}'s Rust crate {name} is outside the editor's Cargo workspace ({root}): building a third party's Rust is not supported yet; see docs/design/packages.md, 'Who can build it'"
 
 /-- The Rust crates of the set `set`, in the order their packages register
 (`setPackages`): a package declares its crate with a target named
@@ -571,9 +610,8 @@ def setRustCrates (set : Package) : FetchM (Array RustCrate) := do
     let manifest ← IO.FS.realPath (config.format .text data)
     let name ← crateName manifest
     let root := (← IO.FS.realPath (← repositoryRoot)).toString
-    unless manifest.toString.startsWith (root ++ "/") do
-      error
-          s!"{owner}'s Rust crate {name} is outside the editor's Cargo workspace ({root}): building a third party's Rust is not supported yet; see docs/design/packages.md, 'Who can build it'"
+    if let some reason := outsideCrateRefusal? owner name root manifest.toString then
+      error reason
     crates := crates.push { owner, name, manifest }
   return crates
 
@@ -625,11 +663,38 @@ def rustSource (crates : Array RustCrate) (inRepository : Bool) : RustSource :=
       false ==
     .cargo
 
+/-- Whether the directory `dir` is the directory `root` or under it, both
+as paths with their links resolved. -/
+def isUnderRoot (root dir : String) : Bool :=
+  dir == root || dir.startsWith (root ++ "/")
+
 /-- Whether the directory of `pkg` is inside the repository `root`. -/
 def isInRepository (root : FilePath) (pkg : Package) : IO Bool := do
-  let root := (← IO.FS.realPath root).toString
-  let dir := (← IO.FS.realPath pkg.dir).toString
-  return dir == root || dir.startsWith (root ++ "/")
+  return isUnderRoot (← IO.FS.realPath root).toString (← IO.FS.realPath pkg.dir).toString
+
+/- Guards: a set is in the repository when its directory, resolved, is the
+repository's or under it (`isUnderRoot`, which `isInRepository` and
+`rustSource` decide on), and a directory that only starts with the
+repository's name is not; and a package's crate whose manifest is outside
+the repository is refused (`outsideCrateRefusal?`), the reason naming the
+package, the crate, the repository and the rule, while one inside is
+not. -/
+#guard isUnderRoot "/r" "/r"
+
+#guard isUnderRoot "/r" "/r/packages"
+
+#guard !isUnderRoot "/r" "/r-other/packages"
+
+#guard !isUnderRoot "/r" "/home/u/set"
+
+#guard outsideCrateRefusal? "echo" "echo-service" "/r" "/r/tests/packages/echo/Cargo.toml" == none
+
+#guard (outsideCrateRefusal? "near" "near-service" "/r" "/r-other/near/Cargo.toml").isSome
+
+#guard
+  outsideCrateRefusal? "far" "far-service" "/r" "/elsewhere/far/Cargo.toml" ==
+    some
+      "far's Rust crate far-service is outside the editor's Cargo workspace (/r): building a third party's Rust is not supported yet; see docs/design/packages.md, 'Who can build it'"
 
 /-- The core's archive in the repository `root` and the file of the system
 libraries it needs, as Cargo builds them for the core (`rustlib`):
@@ -796,6 +861,10 @@ def linkAsEditor (set : Package) (root : Module) (file : FilePath) : FetchM (Job
       buildLeanExeSync file ((info.objs.push glue).push rust) info.libs
           (#["-rdynamic"] ++ info.args ++ entry ++ system)
 
+/-- Whether `part` occurs in `text`, for the guards of generated text. -/
+def holdsText (text part : String) : Bool :=
+  (text.splitOn part).length > 1
+
 /-- The text of a set's root module, for the entry modules `entries` in the
 order they register and the config base `base` (`setBase`). It imports the
 core's base, `Editor`, for the link alone (`Editor/Main.lean`, "This module
@@ -841,6 +910,33 @@ directory. -/
 def main (args : List String) : IO UInt32 :=
   Editor.Main.run ({lists}) #[{supplied}] #[{names}] \{ setName := {setName.quote}, pin := {pin.quote} } args
 "
+
+/- Guards: the root the package-set build generates (`rootSource`). With no
+entry module (the core alone, or a set with no input-scheme package) it
+imports `Editor` and `Editor.Main` and nothing else, and hands `run` no
+package and no scheme; with two entry modules and a scheme it imports them
+in order after those two, appends their packages in order and hands the
+scheme; and the set's Lake name and the toolchain pin are handed as given,
+quoted, so the generated config's lakefile names the set and its
+`lean-toolchain` is the core's pin. -/
+#guard
+  (rootSource #[] #[] #[`Editor] "core-only" "leanprover/lean4:v4.35.0\n").startsWith
+    "import Editor\nimport Editor.Main\n\n/-!"
+
+#guard
+  holdsText (rootSource #[] #[] #[`Editor] "core-only" "leanprover/lean4:v4.35.0\n")
+    "Editor.Main.run (#[]) #[] #[`Editor] { setName := \"core-only\", pin := \"leanprover/lean4:v4.35.0\\n\" } args"
+
+#guard
+  (rootSource #[`A.EditorPackage, `B.EditorPackage] #[`B.EditorPackage]
+        #[`Editor, `A.EditorPackage, `B.EditorPackage] "s" "p\n").startsWith
+    "import Editor\nimport Editor.Main\nimport A.EditorPackage\nimport B.EditorPackage\n\n/-!"
+
+#guard
+  holdsText
+    (rootSource #[`A.EditorPackage, `B.EditorPackage] #[`B.EditorPackage]
+      #[`Editor, `A.EditorPackage, `B.EditorPackage] "s" "p\n")
+    "Editor.Main.run (A.EditorPackage.packages ++ B.EditorPackage.packages) #[B.EditorPackage.scheme] #[`Editor, `A.EditorPackage, `B.EditorPackage] { setName := \"s\", pin := \"p\\n\" } args"
 
 /-- The name of the root module the package-set build generates. No library
 declares it. -/
@@ -900,6 +996,18 @@ what config sees of the core does not change with the set
 def setBase (entries : Array SetEntry) : Array Name :=
   #[`Editor] ++ (entries.filter (!·.core)).map (·.module)
 
+/- Guards: the config base of a set (`setBase`). A set with no entry module,
+the empty set, has `Editor` alone; a core entry module stays out of it, and
+each package's is kept, after `Editor`, in order. -/
+#guard setBase #[] == #[`Editor]
+
+#guard
+  setBase
+      #[{ core := true, module := `Core.EditorPackage, scheme := false },
+        { core := false, module := `A.EditorPackage, scheme := false },
+        { core := false, module := `B.EditorPackage, scheme := true }] ==
+    #[`Editor, `A.EditorPackage, `B.EditorPackage]
+
 /-- The library a set's generated root module is a module of, named `name`
 in the set's package `pkg` (`setRoot`'s `EditorSet`, `fixturesRoot`'s
 `EditorSetFixtures`): no library of the set declares it, so it is a value
@@ -938,6 +1046,15 @@ def setRoot (pkg : Package) : FetchM Module := do
         (setBase entries) (pkg.baseName.toString (escape := false)) pin)
   return root
 
+/-- The `.olean` directories of a set whose core is the package `core`, its
+directory `coreDir`, and whose packages, in the order they register, are
+`packages`, each its key, whether it holds a Lean library and its
+directory: the core's first, then that of each other package that holds a
+library, in order (`moduleDirectories`). -/
+def moduleDirectoriesOf (core : Name) (coreDir : FilePath)
+    (packages : Array (Name × Bool × FilePath)) : Array FilePath :=
+  #[coreDir] ++ (packages.filter fun (key, hasLib, _) => key != core && hasLib).map (·.2.2)
+
 /-- The `.olean` directories of the set `pkg`: the core's first, then that
 of each other package of the set that holds a Lean library, in the order
 they register (`setPackages`). They are what the set's editor searches for
@@ -946,9 +1063,22 @@ def moduleDirectories (pkg : Package) : FetchM (Array FilePath) := do
   let ws ← getWorkspace
   let some core := ws.findPackageByKey? __name__
     | error "the core's package is not in the workspace"
-  let others :=
-    (setPackages ws pkg).filter fun dep => dep.keyName != __name__ && !dep.leanLibs.isEmpty
-  return #[core.leanLibDir] ++ others.map (·.leanLibDir)
+  return moduleDirectoriesOf __name__ core.leanLibDir
+      ((setPackages ws pkg).map fun dep => (dep.keyName, !dep.leanLibs.isEmpty, dep.leanLibDir))
+
+/- Guards: the `.olean` directories of a set (`moduleDirectoriesOf`, which
+`moduleDirectories` takes from Lake): the core's first, then each other
+package's that holds a library, in the order they register; a package with
+no library, and the core where the set's packages name it again, are
+dropped. -/
+#guard
+  moduleDirectoriesOf `core "/r/lean/.lake/build/lib/lean"
+      #[(`core, true, "/r/lean/.lake/build/lib/lean"), (`api, true, "/r/packages/api/lib"),
+        (`set, false, "/r/packages/lib"), (`compile, true, "/r/packages/compile/lib")] ==
+    (#["/r/lean/.lake/build/lib/lean", "/r/packages/api/lib", "/r/packages/compile/lib"] :
+      Array FilePath)
+
+#guard moduleDirectoriesOf `core "/c" #[] == (#["/c"] : Array FilePath)
 
 /-- The record of where the `.olean` files of a set's packages are, written
 beside the editor the set's build links, at `<executable>.oleans`: one
@@ -1008,18 +1138,70 @@ frameworks (`docs/design/packages.md`, "User package sets"). -/
 def buildVariables : Array String :=
   #["LEAN_CC", "MACOSX_DEPLOYMENT_TARGET"]
 
+/-- The text of the record `<executable>.build`, with `lookup` the value of
+a variable, none when it is unset: one line `NAME=value` for each of
+`buildVariables` that is set, in that order; nothing for one that is
+unset. -/
+def buildRecordOf (lookup : String → Option String) : String :=
+  buildVariables.foldl
+    (fun text name =>
+      match lookup name with
+      | some value => text ++ s!"{name}={value}\n"
+      | none => text)
+    ""
+
+/-- The record an app bundle ships as `Contents/Resources/editor.build`, from
+the set's `record` (`buildRecordOf`): its lines in order, but the
+`LEAN_CC` line, since a build from the bundle runs its own toolchain's
+compiler. The package-set build writes it beside the editor as
+`<executable>.shipped-build`. -/
+def shippedBuildRecord (record : String) : String :=
+  "".intercalate
+    (((record.splitOn "\n").filter fun line => !line.isEmpty && !line.startsWith "LEAN_CC=").map
+      (· ++ "\n"))
+
 /-- The text of the record `<executable>.build`: one line `NAME=value` for
 each of `buildVariables` that is set, in that order, as the environment of
-this build holds it; nothing for one that is unset. -/
-def buildRecordText : IO String :=
-  buildVariables.foldlM
-    (fun text name => do
-      match ← IO.getEnv name with
-      | some value =>
-        return text ++ s!"{name}={value}\n"
-      | none =>
-        return text)
-    ""
+this build holds it; nothing for one that is unset (`buildRecordOf`). -/
+def buildRecordText : IO String := do
+  let values ← buildVariables.mapM fun name => return (name, ← IO.getEnv name)
+  return buildRecordOf fun name => (values.find? (·.1 == name)).bind (·.2)
+
+/- Guards: the record `<executable>.build` (`buildRecordOf`): a line for each
+of `buildVariables` that is set, in that order, and nothing for one that is
+unset; and the record a bundle ships (`shippedBuildRecord`, written as
+`<executable>.shipped-build`): the same with its `LEAN_CC` line dropped,
+since a bundle builds with its own toolchain's compiler, and a record with
+no `LEAN_CC` line unchanged. -/
+#guard
+  buildRecordOf
+      (fun
+        | "LEAN_CC" => some "/usr/bin/cc"
+        | "MACOSX_DEPLOYMENT_TARGET" => some "26.0"
+        | _ => none) ==
+    "LEAN_CC=/usr/bin/cc\nMACOSX_DEPLOYMENT_TARGET=26.0\n"
+
+#guard
+  buildRecordOf
+      (fun
+        | "MACOSX_DEPLOYMENT_TARGET" => some "26.0"
+        | _ => none) ==
+    "MACOSX_DEPLOYMENT_TARGET=26.0\n"
+
+#guard buildRecordOf (fun _ => none) == ""
+
+#guard
+  shippedBuildRecord "LEAN_CC=/usr/bin/cc\nMACOSX_DEPLOYMENT_TARGET=26.0\n" ==
+    "MACOSX_DEPLOYMENT_TARGET=26.0\n"
+
+#guard shippedBuildRecord "MACOSX_DEPLOYMENT_TARGET=26.0\n" == "MACOSX_DEPLOYMENT_TARGET=26.0\n"
+
+/-- The core's identity from what it mixes (`coreIdentity`): the hashes of
+the objects of the core's modules, `objects`, the glue's, `glue`, the Rust
+archive's, `rust`, and the version of the Lean toolchain, `version`, mixed
+in that order, in hex. It takes no set. -/
+def coreIdentityOf (objects : Array Hash) (glue rust : Hash) (version : String) : String :=
+  ((objects ++ #[glue, rust, pureHash version]).foldl Hash.mix Hash.nil).hex
 
 /-- The core's identity, as a job: a hash, in hex, of what an editor links
 of the core, so two editors over one core have the same identity whatever
@@ -1049,9 +1231,22 @@ def coreIdentity (pkg : Package) : FetchM (Job String) := do
   let inputs :=
     (objects.zipWith (fun hashes _ => hashes) glueJob).zipWith (fun hashes _ => hashes) rustJob
   inputs.mapM fun hashes => do
-      let parts :=
-        hashes ++ #[glueJob.getTrace.hash, rustJob.getTrace.hash, pureHash Lean.versionString]
-      return (parts.foldl Hash.mix Hash.nil).hex
+      return coreIdentityOf hashes glueJob.getTrace.hash rustJob.getTrace.hash Lean.versionString
+
+/- Guards: the core's identity (`coreIdentityOf`, which `coreIdentity` mixes
+from Lake's traces): 16 lowercase hex digits, taking no set, and a change
+to any of its inputs (a module's object, the glue, the Rust archive or the
+toolchain's version) changes it. -/
+#guard
+  let identity := coreIdentityOf #[⟨1⟩, ⟨2⟩] ⟨3⟩ ⟨4⟩ "4.35.0"
+  identity.length == 16 && identity.all fun c => c.isDigit || ('a' ≤ c && c ≤ 'f')
+
+#guard
+  let identity := coreIdentityOf #[⟨1⟩, ⟨2⟩] ⟨3⟩ ⟨4⟩ "4.35.0"
+  [coreIdentityOf #[⟨1⟩, ⟨5⟩] ⟨3⟩ ⟨4⟩ "4.35.0", coreIdentityOf #[⟨1⟩] ⟨3⟩ ⟨4⟩ "4.35.0",
+        coreIdentityOf #[⟨1⟩, ⟨2⟩] ⟨5⟩ ⟨4⟩ "4.35.0", coreIdentityOf #[⟨1⟩, ⟨2⟩] ⟨3⟩ ⟨5⟩ "4.35.0",
+        coreIdentityOf #[⟨1⟩, ⟨2⟩] ⟨3⟩ ⟨4⟩ "4.36.0"].all
+    (· != identity)
 
 /-- The editor of a package set: `lake -d <set dir> build :editor` gives
 `<set>/.lake/build/bin/editor`.
@@ -1081,7 +1276,9 @@ package_facet editor pkg : FilePath := do
   writeModuleRecord pkg executable
   writeSetRecord pkg executable
   writeCoreDirRecord executable
-  writeIfChanged (executable.toString ++ ".build") (← buildRecordText)
+  let record ← buildRecordText
+  writeIfChanged (executable.toString ++ ".build") record
+  writeIfChanged (executable.toString ++ ".shipped-build") (shippedBuildRecord record)
   let identity ←
     (← coreIdentity pkg).mapM fun identity =>
         writeIfChanged (executable.toString ++ ".core") s!"{identity}\n"

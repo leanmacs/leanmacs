@@ -400,6 +400,23 @@ import exactly these twenty-seven modules (`lake -d ../packages query
 (`:editorBase`). The interface packages have no entry module, so neither
 names them; their modules come with their implementations' libraries.
 
+**The lakefile's pure helpers are guarded beside the code.** A lakefile
+cannot import a module of its package, so what the package-set build
+decides is written as pure functions over plain data, which the facets
+call with what Lake gives them, and each is held by a group of `#guard`s
+beside it in `lean/lakefile.lean`, under a comment that names what it
+holds. Lake elaborates the lakefile, and so runs every guard, on the first
+`lake` call after it changes, and a false guard fails that call by its exit
+status. They hold: the generated root (`rootSource`: no entry module
+imports `Editor` and `Editor.Main` alone; entry modules and the scheme in
+order; the set's name and the pin as given), the config base (`setBase`),
+the order packages register in (`requireOrderOf`, the walk
+`setPackages` makes), the `.olean` directories (`moduleDirectoriesOf`), the
+core's identity (`coreIdentityOf`), the build record and the one a bundle
+ships (`buildRecordOf`, `shippedBuildRecord`), and whether a set or a crate
+is in the repository (`isUnderRoot`, `outsideCrateRefusal?`, beside
+`rustSource`).
+
 #### The config base of a set
 
 **An editor elaborates config on its set's base: `Editor`, then the entry
@@ -1981,7 +1998,7 @@ with decoys of every tool first on the `PATH`.
 
 ### The records beside a set's editor
 
-The package-set build (the facet `editor`) writes three records beside the
+The package-set build (the facet `editor`) writes four records beside the
 executable it links, besides `editor.oleans` and `editor.set`:
 
 - **`editor.core`**: the core's identity, one line, 16 hex digits
@@ -2001,12 +2018,18 @@ executable it links, besides `editor.oleans` and `editor.set`:
   in a bundle, and beside the executable otherwise.
 - **`editor.build`**: the environment a rebuild must reproduce, one line
   `NAME=value` for each of `LEAN_CC` and `MACOSX_DEPLOYMENT_TARGET` that
-  was set when the build ran (`buildRecordText`). In a checkout
+  was set when the build ran (`buildRecordText`, over `buildRecordOf`). In a checkout
   `mise run lean` links with `LEAN_CC=/usr/bin/cc`; a user-set build run
   without it could re-key Lake's traces of the core's C, rebuild shared
   outputs in `lean/.lake`, or fail to link the system frameworks. The
   record says what the last build of the facet ran with: it is written
   whether or not the link itself had to run.
+- **`editor.shipped-build`**: the record a bundle ships, which is
+  `editor.build` without its `LEAN_CC` line (`shippedBuildRecord`), since a
+  build from a bundle runs its own toolchain's compiler. Until phase 8 of
+  the gates roadmap rewrites the stage script, `tools/stage-bundle.sh`
+  still writes `Contents/Resources/editor.build` itself, dropping the line
+  with `grep -v`; the rewrite copies this record there instead.
 - **`editor.coredir`**: the directory of the core the editor links, one
   absolute line: the workspace's `editor-core` package directory, the core
   Lake actually linked, as Lake spells it, never resolved through links.
