@@ -33,6 +33,7 @@
 bool editor_ffi_is_main_thread(void);
 bool editor_ffi_main_thread_probe(void);
 void editor_ffi_main_thread_open(void);
+void editor_ffi_library_start(void);
 _Noreturn void editor_ffi_main_thread_serve(void);
 
 // `Editor.Ffi.isMainThread : IO Bool`
@@ -2757,6 +2758,11 @@ int editor_entry(int argc, char **argv) {
   static struct entry_args args;
   args.argc = argc;
   args.argv = argv;
+
+  // Start what the library holds for the process (the process service as
+  // the stream source a package's crate takes a child over through) before
+  // anything can ask for it. It makes and starts nothing.
+  editor_ffi_library_start();
 
   // Open the service before Lean can ask it for anything.
   editor_ffi_main_thread_open();

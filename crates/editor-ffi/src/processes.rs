@@ -32,6 +32,13 @@
 //!   the adapter: the root `clippy.toml` refuses its constructor
 //!   everywhere else, so the unit tests below run on the fake and start no
 //!   process.
+//! - [`editor_ffi_library_start`] provides that service as
+//!   `editor-service`'s stream source (the private module `streams`, a
+//!   zero-sized value that forwards to the static), so a package's crate
+//!   takes over a streaming child a job opened through `editor-service`
+//!   alone ([`editor_service::stream::take_over`]). The child is then the
+//!   crate's to pull and write, and the job's read, write and close of it
+//!   are refused; its cancel and shutdown still end it.
 //!
 //! # How a command crosses
 //!
@@ -118,15 +125,16 @@
 //! | [`editor_ffi_processes_run_head`] | Starts a run fed its input as [`editor_ffi_processes_run_input`] does, that keeps the first `limit` bytes of its standard output and ends its child there (status 9) |
 //! | [`editor_ffi_processes_take`] | Fills a [`RawProcessResult`] and returns true, or returns false when the service keeps no result for the id |
 //! | [`editor_ffi_processes_open`] | Starts a streaming child. False, starting nothing, for words that spell no open, an id in use, or when the system refuses its thread |
-//! | [`editor_ffi_processes_read`] | Asks for a child's next delivery |
-//! | [`editor_ffi_processes_write`] | Copies the bytes and asks for them to be written to a child's input |
-//! | [`editor_ffi_processes_close_input`] | Closes a child's input |
+//! | [`editor_ffi_processes_read`] | Asks for a child's next delivery. False for a child a package's crate took over |
+//! | [`editor_ffi_processes_write`] | Copies the bytes and asks for them to be written to a child's input. False for a child taken over |
+//! | [`editor_ffi_processes_close_input`] | Closes a child's input. False for a child taken over |
 //! | [`editor_ffi_processes_take_stream`] | Fills a [`RawStreamReply`] and returns true, or returns false when the service keeps no reply for the wait |
 //! | [`editor_ffi_processes_held`] | Whether a child is held at its bound: 0 no, 1 yes, 2 no such child. A readout for tests |
 //! | [`editor_ffi_processes_await_held`] | Waits until a child is held at its bound, and says whether it was: false once the bound has passed first, and at once for no such child. A bound past what the clock can count is no bound. A readout for tests |
 //! | [`editor_ffi_processes_flush`] | Asks for an id to be completed once every run before it has ended and every child cancelled before it has been reaped; keeps no reply. False for an id in use |
 //! | [`editor_ffi_processes_cancel`] | Cancels a run, a streaming child or a wait on one, killing the child's group, and says whether there was anything to cancel |
 //! | [`editor_ffi_processes_pending`] | Runs and streaming children whose child is not yet reaped, results not taken, waits not answered or not taken, and the flushes waiting |
+//! | [`editor_ffi_library_start`] | Provides the process service as `editor-service`'s stream source, through which a package's crate takes over a streaming child a job opened (`editor_service::stream::take_over`); the entry point calls it before Lean runs. Idempotent |
 //! | [`editor_ffi_processes_shutdown`] | Kills every group, runs and streaming children alike, and returns once every child is reaped; a later run or open is refused as shut down |
 
 use std::path::PathBuf;
@@ -144,6 +152,8 @@ use crate::events;
 use crate::text;
 use crate::words::{self, Reader, Writer};
 
+mod streams;
+
 /// The id of the process service as an event's source: a completion of a
 /// run comes from the library source with this id.
 pub const SERVICE: u64 = 3;
@@ -159,6 +169,18 @@ static PROCESSES: LazyLock<Service<StdProcesses>> = LazyLock::new(|| {
         events::complete(SERVICE, id);
     })
 });
+
+/// Starts what the library holds for the process before Lean runs: it
+/// provides the process's process service as `editor-service`'s stream
+/// source ([`editor_service::stream::provide`]), so a package's crate can
+/// take over a streaming child a job opened. The entry point (`editor_entry`
+/// in `lean/ffi/glue.c`) calls it first, before Lean can ask the library
+/// for anything. It makes and starts nothing, and is safe to call again: a
+/// later call changes nothing.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_library_start() {
+    editor_service::stream::provide(&streams::PROVIDED);
+}
 
 /// The command and the limit that `words` and `strings` spell, in the
 /// layout the module docs give. `None` when they spell none.

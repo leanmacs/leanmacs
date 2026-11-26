@@ -317,7 +317,11 @@
 //! however fast the child writes, it is one completion on the queue.
 //! [`processes::editor_ffi_processes_held`] says, for tests, whether a
 //! child is held at its bound, and
-//! [`processes::editor_ffi_processes_await_held`] waits for it to be.
+//! [`processes::editor_ffi_processes_await_held`] waits for it to be. The
+//! service is also `editor-service`'s stream source, provided when the
+//! library starts ([`processes::editor_ffi_library_start`], which the
+//! entry point calls before Lean runs), so a package's crate can take over
+//! a streaming child a job opened.
 //!
 //! Tests: the unit tests of `processes.rs`, on the port's fake (a command's
 //! words and string read back, the refusals of words that spell none, and
@@ -334,7 +338,11 @@
 //! binary of its own because shutdown is for good, which shows that after
 //! shutdown the child and a streaming child held at its bound are reaped,
 //! the grandchild ends, a later run is refused as shut down and nothing is
-//! pending. The rules of a run are `editor-process`'s, pinned there on the
+//! pending; `tests/stream_source.rs`, a binary of its own because the
+//! source is process-wide, which shows that once the library has started a
+//! child opened through C is taken over through
+//! `editor_service::stream::take_over`, read and written to, and that the
+//! job's read of it is refused. The rules of a run are `editor-process`'s, pinned there on the
 //! fake and by the contract on real processes (`editor-process-std`'s
 //! `tests/contract.rs`). On the Lean side: the process checks of `ffi-test`
 //! (`processChecks`), and `contract-test`'s process properties.
