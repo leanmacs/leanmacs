@@ -521,8 +521,8 @@ run = [
   # (`Editor.Test.Fixture.RealThread`) leaves to the CLI, whose lines
   # follow. It fails on a fixture that differs, naming the first line, and
   # on a stale entry. Its output must hold a `stepped, as expected` line for
-  # each of the 29 it runs and its count line, 19 left to the CLI.
-  "out=$(../packages/.lake/build/bin/fixture-test \"$(lean --print-prefix)\" .lake/build/lib/lean --repo .. run ../tests/headless) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; { test \"$(printf '%s\\n' \"$out\" | grep -c ': stepped, as expected$')\" -eq 29 && printf '%s\\n' \"$out\" | grep -qxF 'fixture-test: ran 29 fixtures stepped under tests/headless, 19 left to the CLI'; } || { echo 'ffi-test: the fixture harness did not run the 29 fixtures of tests/headless stepped'; exit 1; }",
+  # each of the 30 it runs and its count line, 18 left to the CLI.
+  "out=$(../packages/.lake/build/bin/fixture-test \"$(lean --print-prefix)\" .lake/build/lib/lean --repo .. run ../tests/headless) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; { test \"$(printf '%s\\n' \"$out\" | grep -c ': stepped, as expected$')\" -eq 30 && printf '%s\\n' \"$out\" | grep -qxF 'fixture-test: ran 30 fixtures stepped under tests/headless, 18 left to the CLI'; } || { echo 'ffi-test: the fixture harness did not run the 30 fixtures of tests/headless stepped'; exit 1; }",
   # The CLI's runs over a real loop thread and the window scenarios, the
   # wiring set's (tools/wiring-runs.sh, which holds the lines that were
   # here, one case each, with their comments): what a case builds staged

@@ -2328,8 +2328,11 @@ script's path): the model directory `@DIR@` stands for and what `@FILE@`
 stands for, the checked-in files and trees copied into the file fake's
 model, what is scrubbed of the output (the directory, written back as
 `@DIR@`; the `job ` lines, where the gate dropped them), after-checks (a
-model file equal to a checked-in one, no line starting with a prefix) and
-scripted process answers. A script holding a placeholder no setup says
+model file equal to a checked-in one, no line starting with a prefix),
+scripted process answers, another working directory, and another config
+directory, a path from the repository's root read in place, never copied,
+in place of the one discovery found (`config`; `tests/headless/default-config`
+names the shipped `config/default`, as its CLI run copies it). A script holding a placeholder no setup says
 what it stands for is refused, and so is a fixture with no expected file
 and no after-check. **`expected` is never edited to fit a stepped run**:
 it is the CLI's. A stepped run that differs is a fake that answers unlike
@@ -2386,7 +2389,11 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   listing in `tests/headless/default-config`
   ([packages.md](../design/packages.md), "Registration order is
   visible"). `tests/headless/default-config` runs the default
-  config (`config/default`, copied into a temporary directory): `SPC :`
+  config (`config/default`), stepped on the fakes with the shipped
+  directory as its setup's config, in an empty working directory `/d/cwd`
+  whose `find` and `fzf` answer nothing as the real ones do there
+  (`Setup.core`, `emptyListing`), and through the CLI on a copy in a
+  temporary directory (`tools/wiring-runs.sh`): `SPC :`
   and `SPC ?`, run from the binding search as their keys would run, open
   the command prompt and the binding search. The binding search lists its
   workspace, project-search, working-set and `SPC b` keys, and `SPC f f`,

@@ -35,6 +35,12 @@ def fixtureSetupChecks : List Check :=
             Setup.of "tests/headless/no-such/script" == setup &&
             !Setup.declared "tests/headless/no-such/script" },
     { name :=
+        "a setup that names a config directory runs its fixture against that one, a path from the repository's root, in place of the one discovery found; a setup that names none keeps discovery's"
+      run :=
+        return { Setup.default with config := some "config/default" }.configOf (partsOf "t/script") ==
+              "config/default" &&
+            Setup.default.configOf (partsOf "t/script") == "t/config" },
+    { name :=
         "a script's placeholders are its @NAME@ parts of capitals and _, in order, each once, and an @ of an address or a lone @ is none"
       run :=
         return placeholders "commit e @DIR@/tree/\nrun @FILE@ @DIR@\nkey @ At -\nmail a@b.c @X_Y@" ==

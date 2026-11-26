@@ -185,7 +185,7 @@ def runStepped {scheme : InputScheme} (harness : Harness scheme) (fixture : Part
     { services, memory, journal := ← IO.mkRef (some journal)
       syntaxService := ← IO.mkRef (some syntaxFake) }
   let environments ← IO.mkRef ({ host := .headless } : Process.Environments)
-  let configDir := joinPath harness.repository fixture.config
+  let configDir := joinPath harness.repository (setup.configOf fixture)
   let shipped :=
     Headless.shippedOver scheme harness.packages harness.base harness.sysroot harness.oleans
       configDir (fun line => lines.modify (·.push line))

@@ -1040,8 +1040,9 @@ default packages of the features-as-packages roadmap's phase 4", below).
   of `ConfigTest.shippedChecks` over it, which all went with the core's
   list in phase 8) hosted the list alone, and stated that it held nothing
   of the four.
-- **`tests/headless/default-config`** runs the default config, copied into
-  a temporary directory, on the default set's editor: the binding search
+- **`tests/headless/default-config`** runs the default config, stepped on
+  the default set's harness against the shipped `config/default` its setup
+  names, and through the CLI on a copy in a temporary directory: the binding search
   lists `SPC f f  open-file`, and `SPC :` and `SPC ?`, accepted from the
   search, which feeds a binding's keys to the scheme from rest, open the
   command prompt and the binding search. A script's `key` cannot press

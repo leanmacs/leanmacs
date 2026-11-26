@@ -113,9 +113,6 @@ def entries : Array Entry :=
       subject :=
         .realEffect "the staged bundle's and the app's editor finding its modules from its own path"
       stepped := true },
-    cliOnly "tests/headless/default-config/script"
-      "the default config's sources over real processes found on PATH (the fzf stand-in) in a real empty working directory"
-      "ffi-test: the default-config line",
     cliOnly "tests/headless/dispatch/script"
       "A4: the library's interrupt flag, raised as C-g arrives while spin runs; a stepped host tells the library no interrupt key"
       "ffi-test: the dispatch line",
