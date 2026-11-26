@@ -271,7 +271,10 @@ fn source(library: &str, symbol: &str) -> GrammarSource {
 
 /// What [`crate::contract::registration::check`] holds [`Libraries`] over
 /// [`table`] to. `override_text`, `{a} (b)`, is a list and an atom to the
-/// registered `parens` and an atom and a list to the compiled-in one.
+/// registered `parens` and an atom and a list to the compiled-in one; the
+/// compiled-in `parens` ships highlights and is incremental, and
+/// `overriding` declares no policy, so the registered one ships none and is
+/// reparsed whole.
 pub fn corpus() -> RegistrationCorpus {
     RegistrationCorpus {
         new: source(GRAMMARS_LIBRARY, "tree_sitter_brackets"),

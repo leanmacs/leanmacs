@@ -2431,13 +2431,15 @@ field.
 - **The fake and the contract.** `fake::Libraries` is the fake with a
   table: it "loads" grammars of the fake's shape, each with its own list
   delimiters, from an in-memory table keyed by path, and nothing touches
-  the disk. The registration properties (success, the override of a
-  compiled-in name, the default policy, each refusal) are a contract of
-  their own, `contract::registration::check`, separate from
-  `contract::check`, held against the fake with its table and against the
-  real adapter on its fixture library; a syntax that loads no grammar runs
-  `contract::registration::check_unsupported`, as the fake with no table
-  does. Each property is seen to bite on a broken registering syntax.
+  the disk. The registration properties (success; the override of a
+  compiled-in name, after which the name ships no query and takes the
+  source's policy, not the compiled-in grammar's; the default policy; each
+  refusal) are a contract of their own, `contract::registration::check`,
+  separate from `contract::check`, held against the fake with its table
+  and against the real adapter on its fixture library; a syntax that loads
+  no grammar runs `contract::registration::check_unsupported`, as the fake
+  with no table does. Each property is seen to bite on a broken
+  registering syntax.
 - **The real adapter loads native libraries** (phase 2, 2026-11-26;
   "How grammars are loaded", above). Its `native` module refuses in this
   order: a path that is not absolute is not found, with nothing read

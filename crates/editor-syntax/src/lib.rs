@@ -59,8 +59,9 @@
 //! is the fake with a table: it "loads" grammars from an in-memory table of
 //! libraries keyed by path ([`fake::libraries::table`]).
 //! [`contract::registration::check`] holds a registering syntax to a
-//! [`contract::registration::RegistrationCorpus`] (success, the override of
-//! a compiled-in name, the default policy, each refusal): the fake with its
+//! [`contract::registration::RegistrationCorpus`] (success; the override of
+//! a compiled-in name, which then ships no query and takes the source's
+//! policy; the default policy; each refusal): the fake with its
 //! table keeps it here, and the real adapter, which loads native grammar
 //! libraries, on its fixture library in its own tests.
 //! [`contract::registration::check_unsupported`] holds a syntax that loads

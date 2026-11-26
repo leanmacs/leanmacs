@@ -43,7 +43,10 @@ fn corpus() -> RegistrationCorpus {
         new: source(fixture::LIBRARY, fixture::SYMBOL),
         overriding: source(fixture::LIBRARY, fixture::OVERRIDING_SYMBOL),
         // The compiled-in `json` parses it with errors, the fixture to a
-        // section with a pair.
+        // section with a pair. The compiled-in `json` also ships highlights
+        // and is incremental, and `overriding` declares no policy, so
+        // `OVERRIDES` sees the registered `json` ship none and reparse
+        // whole.
         override_text: "[a]\nk = v\n".to_owned(),
         not_found: source(absent_library(), fixture::SYMBOL),
         not_loadable: source(fixture::NOT_A_LIBRARY, fixture::SYMBOL),

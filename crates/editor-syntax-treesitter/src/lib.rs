@@ -153,13 +153,15 @@
 //! the fixture INI grammar (`editor-syntax-fixture-ini`) registered from
 //! its native library and drawn with the highlights query beside it.
 //! `tests/registration.rs` holds it to the registration contract on that
-//! fixture library: a new grammar, one that overrides `json`, and one
-//! source for each refusal; and pins that a loaded grammar outlives the
-//! syntax it was registered on. `native`'s unit tests pin the ABI range
-//! with version numbers and the refusal of a relative path. The unit tests
-//! here pin what the contract does not ask: a Rust function's name captured
-//! by a field, a predicate that reads text across two of the rope's chunks,
-//! and a query of a grammar that is not compiled in.
+//! fixture library: a new grammar, one that overrides `json` (after which
+//! `json` ships none of the compiled-in queries and is reparsed by the
+//! source's policy), and one source for each refusal; and pins that a
+//! loaded grammar outlives the syntax it was registered on. `native`'s unit
+//! tests pin the ABI range with version numbers and the refusal of a
+//! relative path. The unit tests here pin what the contract does not ask:
+//! a Rust function's name captured by a field, a predicate that reads text
+//! across two of the rope's chunks, and a query of a grammar that is not
+//! compiled in.
 
 #![deny(unsafe_code)]
 #![deny(clippy::undocumented_unsafe_blocks)]

@@ -32,7 +32,11 @@ use crate::port::{
 pub struct RegistrationCorpus {
     /// A source of a grammar that is not compiled in, which loads.
     pub new: GrammarSource,
-    /// A source of a grammar whose name is compiled in, which loads.
+    /// A source of a grammar whose name is compiled in, which loads. The
+    /// compiled-in grammar of that name ships a query, and its policy is
+    /// not the one this source gives (its declared policy, else whole), so
+    /// [`OVERRIDES`] tells the registered grammar's queries and policy from
+    /// the compiled-in one's.
     pub overriding: GrammarSource,
     /// A text the compiled-in grammar of `overriding`'s name and the one
     /// `overriding` loads parse to different trees.
@@ -66,11 +70,14 @@ impl RegistrationCorpus {
 /// once registered, the name is listed beside every grammar listed before,
 /// opens a parser, and ships no query of any kind.
 pub const REGISTERS: &str = "a registration answers its source's name, which is then listed beside every grammar listed before, opens a parser and ships no query";
-/// The overriding source's name is compiled in; registering it leaves the
-/// list as it was, with the name once; a parser opened afterwards parses
-/// the corpus's text to another tree than the compiled-in grammar, and a
-/// parser opened before still parses it as the compiled-in grammar does.
-pub const OVERRIDES: &str = "registering a compiled-in name lists it once, a parser opened afterwards parses with the registered grammar, and one opened before keeps the compiled-in grammar";
+/// The overriding source's name is compiled in, ships a query and has a
+/// policy other than the source's; registering it leaves the list as it
+/// was, with the name once; a parser opened afterwards parses the corpus's
+/// text to another tree than the compiled-in grammar, and a parser opened
+/// before still parses it as the compiled-in grammar does; the name then
+/// ships no query of any kind, and its policy is the source's (its
+/// declared policy, else whole), not the compiled-in one.
+pub const OVERRIDES: &str = "registering a compiled-in name lists it once, a parser opened afterwards parses with the registered grammar, one opened before keeps the compiled-in grammar, and the name ships no query and takes the source's policy";
 /// A registered grammar whose source declares no policy is reparsed whole,
 /// and the same source declaring incremental is reparsed incrementally.
 pub const DEFAULT_POLICY: &str = "a registered grammar with no declared policy is reparsed whole, and one declared incremental incrementally";
@@ -192,14 +199,25 @@ fn nodes_of<S: Syntax>(syntax: &S, parser: &mut S::Parser, text: &str) -> Vec<cr
     syntax.nodes(&syntax.parse(parser, &snapshot, None))
 }
 
+/// Whether `syntax` ships a query of any kind for `name`.
+fn ships_any<S: Syntax>(syntax: &S, name: &GrammarName) -> bool {
+    QueryKind::ALL
+        .iter()
+        .any(|kind| syntax.shipped_query(name, *kind).is_some())
+}
+
 /// [`OVERRIDES`], of the corpus's overriding source and text.
 fn overrides<S: Syntax>(syntax: &S, corpus: &RegistrationCorpus) -> bool {
     let name = corpus.overriding.name();
+    let policy = corpus.overriding.policy.unwrap_or(ReparsePolicy::Whole);
     let before = syntax.grammars();
     let Some(mut opened_before) = syntax.parser(&name) else {
         return false;
     };
-    if !before.contains(&name) {
+    if !before.contains(&name)
+        || !ships_any(syntax, &name)
+        || syntax.reparse_policy(&name) == Some(policy)
+    {
         return false;
     }
     let compiled = nodes_of(syntax, &mut opened_before, &corpus.override_text);
@@ -211,6 +229,8 @@ fn overrides<S: Syntax>(syntax: &S, corpus: &RegistrationCorpus) -> bool {
     };
     nodes_of(syntax, &mut opened_after, &corpus.override_text) != compiled
         && nodes_of(syntax, &mut opened_before, &corpus.override_text) == compiled
+        && !ships_any(syntax, &name)
+        && syntax.reparse_policy(&name) == Some(policy)
 }
 
 /// [`DEFAULT_POLICY`], of `source` declaring no policy and then declaring
@@ -285,13 +305,20 @@ mod tests {
         /// A parser reads which grammar its name has when it parses, not
         /// when it was opened.
         OpenParsersChange,
-        /// A registered grammar whose source declares no policy is
-        /// incremental.
+        /// A registered grammar not compiled in whose source declares no
+        /// policy is incremental.
         IncrementalByDefault,
         /// A registered grammar is whole, whatever its source declares.
         AlwaysWhole,
-        /// A registered grammar ships the fake's highlights.
+        /// A registered grammar not compiled in ships the fake's
+        /// highlights.
         ShipsForRegistered,
+        /// A compiled-in name ships its compiled-in queries, registered or
+        /// not.
+        ShipsAfterOverride,
+        /// A compiled-in name keeps its compiled-in policy, registered or
+        /// not.
+        CompiledPolicyAfterOverride,
         /// A library that is not there is refused as not loadable.
         NotLoadableForMissing,
         /// A file that is no library is refused as not found.
@@ -388,9 +415,13 @@ mod tests {
         }
 
         fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy> {
+            let compiled = Parens.reparse_policy(grammar);
             let source = self.source_of(grammar);
             match (self.flaw, source) {
-                (Flaw::IncrementalByDefault, Some(source)) if source.policy.is_none() => {
+                (Flaw::CompiledPolicyAfterOverride, _) if compiled.is_some() => compiled,
+                (Flaw::IncrementalByDefault, Some(source))
+                    if source.policy.is_none() && compiled.is_none() =>
+                {
                     Some(ReparsePolicy::Incremental)
                 }
                 (Flaw::AlwaysWhole, Some(_)) => Some(ReparsePolicy::Whole),
@@ -452,8 +483,13 @@ mod tests {
         }
 
         fn shipped_query(&self, grammar: &GrammarName, kind: QueryKind) -> Option<String> {
-            if self.flaw == Flaw::ShipsForRegistered && self.source_of(grammar).is_some() {
-                return (kind == QueryKind::Highlights).then(|| PARENS_HIGHLIGHTS.to_owned());
+            let compiled = Parens.grammars().contains(grammar);
+            match self.flaw {
+                Flaw::ShipsForRegistered if !compiled && self.source_of(grammar).is_some() => {
+                    return (kind == QueryKind::Highlights).then(|| PARENS_HIGHLIGHTS.to_owned());
+                }
+                Flaw::ShipsAfterOverride if compiled => return Parens.shipped_query(grammar, kind),
+                _ => {}
             }
             self.libraries.shipped_query(grammar, kind)
         }
@@ -541,6 +577,16 @@ mod tests {
     }
 
     #[test]
+    fn a_syntax_that_ships_the_compiled_in_queries_of_a_name_it_overrode_is_reported() {
+        assert_eq!(failed(Flaw::ShipsAfterOverride), [OVERRIDES]);
+    }
+
+    #[test]
+    fn a_syntax_that_keeps_the_compiled_in_policy_of_a_name_it_overrode_is_reported() {
+        assert_eq!(failed(Flaw::CompiledPolicyAfterOverride), [OVERRIDES]);
+    }
+
+    #[test]
     fn a_syntax_that_answers_not_loadable_for_a_missing_file_is_reported() {
         assert_eq!(failed(Flaw::NotLoadableForMissing), [NOT_FOUND]);
     }
@@ -567,6 +613,17 @@ mod tests {
         assert_eq!(
             check_unsupported(&syntax, &libraries::corpus().sources()),
             [UNSUPPORTED]
+        );
+    }
+
+    #[test]
+    fn an_overriding_source_that_declares_the_compiled_in_policy_fails_overrides() {
+        let mut corpus = libraries::corpus();
+        corpus.overriding.policy = Some(ReparsePolicy::Incremental);
+
+        assert_eq!(
+            check(|| Libraries::new(libraries::table()), &corpus),
+            [OVERRIDES]
         );
     }
 
