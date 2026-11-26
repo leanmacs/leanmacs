@@ -347,12 +347,14 @@ How often the task that enforces the time limit looks at the clock. -/
 def limitPoll : RealTime :=
   .under "how often the time limit's task looks at the window's clock" 50
 
-/-- The exit status of a check: 0 when the window opened, ran and closed, 1
-when it could not be opened or ran and never said that it opened
-(`Run.opened`). Whether keys arrived is for the reader of the report. -/
+/-- The exit status of a check: 0 when the window opened, ran and closed
+and at least one key event reached the loop; 1 when it could not be opened
+or ran and never said that it opened (`Run.opened`), and when no key
+reached the loop, which a window typed into must show. The rest of the
+report is for its reader. -/
 def status (run : Run) : UInt32 :=
   match run.opened with
-  | .ok _ => 0
+  | .ok _ => if run.tally.keys > 0 then 0 else 1
   | .error _ => 1
 
 /-- Runs the check on `window` and prints the report; see the module docs.

@@ -22,24 +22,17 @@
 #                  test runs once (tools/package-set.sh --wiring run)
 #   rust           cargo test --workspace --locked (opt-in)
 #   gate-ffi       mise run ffi-test, whole (opt-in, slow)
-#   probe          the shell command in STRESS_PROBE: a stand-in suite, for
-#                  tools/stress-probe.sh alone (opt-in)
 #
 # With no suite named it runs the four wiring suites: the wiring set, read
 # from code (the roots' check sets, which linter.wiringSet holds complete,
 # and FfiTest.windowScenarios, whose lines are mise.toml's
-# window-scenarios task), with no list here. Before the hogs start, a
-# prepare stage stages what the chosen suites build before their runs,
-# once (for `probe` the command in
-# STRESS_PROBE_STAGE, a stand-in for what is staged, if it is set), into a
-# temporary directory of its own, never under the logs, which the loop
-# removes when it ends, however it ends.
+# window-scenarios task), with no list here.
 #
 # The load is `2 x cores` processes of `yes >/dev/null` (cores from
 # `sysctl -n hw.ncpu` on macOS, `nproc` elsewhere; STRESS_HOGS overrides),
 # started before the first round and killed by a trap on EXIT, INT and TERM,
 # which first ends the round's suite run and its limit guard, each with its
-# whole process group (tools/stress-probe.sh proves it).
+# whole process group.
 # Each suite runs in the foreground under `taskpolicy -c utility` on macOS
 # and `nice -n 5` elsewhere, so the hogs win the CPU. The Linux niceness is
 # measured, not the lowest there is: at `nice -n 19` against hogs at 0 the
@@ -54,8 +47,8 @@
 # `config-wiring-<round>.timings` beside it (`config-test --timings`), which
 # the hang guards are sized from. A run that has not ended within STRESS_LIMIT seconds
 # (30 minutes) is killed with its whole process group and counts as failed,
-# its log ending `stress: a hang: ...`, so a hang shows as a failure (the
-# probe proves that too). Each run passes or fails by its exit status
+# its log ending `stress: a hang: ...`, so a hang shows as a failure. Each
+# run passes or fails by its exit status
 # alone; nothing reads its log to decide. At the end it prints `<suite>:
 # <passed>/<rounds>` for each suite, then each failing run with the names
 # of the checks and tests that failed and its hang lines, for people, and
@@ -87,7 +80,7 @@ case "$rounds" in '' | *[!0-9]*) usage ;; esac
 suites=${*:-config-wiring ffi-wiring contract linked-wiring}
 for suite in $suites; do
   case "$suite" in
-    config-wiring | ffi-wiring | contract | linked-wiring | rust | gate-ffi | probe) ;;
+    config-wiring | ffi-wiring | contract | linked-wiring | rust | gate-ffi) ;;
     *) usage ;;
   esac
 done
@@ -99,7 +92,6 @@ if [ -z "$single" ]; then
   # Absolute: config-test is handed a file beside its log from `lean/`.
   out=$(cd "$out" && pwd)
 fi
-prepared=${STRESS_PREPARED:-}
 
 # Whether the suite $1 is among those chosen.
 chosen() {
@@ -131,8 +123,7 @@ end_group() {
 
 # Ends everything this script started: the round's run and its guard, each
 # with its whole group, out of reach of a terminal's Ctrl-C, and waited
-# for; then the hogs; and last removes what the prepare stage staged, once
-# nothing that reads it is left running.
+# for; then the hogs.
 stop() {
   for group in $run $guard; do end_group "$group"; done
   for group in $run $guard; do wait "$group" 2>/dev/null || true; done
@@ -141,24 +132,10 @@ stop() {
   for pid in $pids; do kill "$pid" 2>/dev/null || true; done
   for pid in $pids; do wait "$pid" 2>/dev/null || true; done
   pids=
-  if [ -z "$single" ] && [ -n "$prepared" ]; then
-    rm -rf "$prepared"
-    prepared=
-  fi
 }
 trap stop EXIT
 trap 'stop; exit 130' INT
 trap 'stop; exit 143' TERM
-
-# What the prepare stage stages (for the probe alone), which a bounded
-# run (`--run`) reads: a fresh temporary directory of its own, never under
-# $out, the logs stress.yml uploads, and removed by `stop` when the loop
-# ends, however it ends (tools/stress-probe.sh).
-if [ -z "$single" ]; then
-  prepared=$(mktemp -d "${TMPDIR:-/tmp}/stress-prepared.XXXXXXXX")
-  STRESS_PREPARED=$prepared
-  export STRESS_PREPARED
-fi
 
 prefix=
 for suite in config-wiring linked-wiring; do
@@ -186,19 +163,7 @@ run_suite() {
     (cd "$root" && low cargo test --workspace --locked) >"$log" 2>&1 ;;
   gate-ffi)
     (cd "$root" && low mise run ffi-test) >"$log" 2>&1 ;;
-  probe)
-    sh -c "${STRESS_PROBE:?the probe suite runs STRESS_PROBE}" >"$log" 2>&1 ;;
   esac
-}
-
-# The prepare stage (the header): what the chosen suites build before their
-# runs, staged once into $prepared. It runs before the hogs start, at the
-# machine's own priority, and builds nothing the gate did not. A step that
-# fails ends the loop before a hog or a round starts (tools/stress-probe.sh).
-prepare() {
-  if chosen probe && [ -n "${STRESS_PROBE_STAGE:-}" ]; then
-    sh -c "$STRESS_PROBE_STAGE"
-  fi
 }
 
 # hang guard: each suite's run ending; only a hang reaches the limit, and
@@ -231,8 +196,7 @@ grouped() {
 # seconds, saying so in its log. The guard is killed with its own group once
 # the run ends, so no sleep is left behind; once its sleep has returned it
 # ignores TERM, so the run it kills ending first does not cut its line from
-# the log (tools/stress-probe.sh's limit case, which a guard slowed between
-# its kill and its line failed). Both are in `run` and `guard` while they
+# the log. Both are in `run` and `guard` while they
 # run, for `stop`: an INT or TERM that comes while they start is held until
 # both are there, then acted on.
 bounded() {
@@ -260,8 +224,6 @@ bounded() {
 }
 
 echo "stress: $rounds rounds of $suites, $hogs hogs on $cores cores, a limit of $limit s a run, logs in $out"
-echo "stress: prepare: staging the chosen suites' builds in $prepared"
-prepare
 i=0
 while [ "$i" -lt "$hogs" ]; do
   yes >/dev/null &

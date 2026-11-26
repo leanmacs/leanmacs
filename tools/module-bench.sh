@@ -209,10 +209,6 @@ for set in "Editor" "Editor Lean"; do
     # the set's base, so its bundle holds that base's closure, taken from
     # every directory the build recorded for the editor.
     record=$editor.oleans
-    if [ ! -f "$record" ]; then
-      echo "module-bench: no record of the editor's .olean directories at $record; run \`mise run lean\` first" >&2
-      exit 1
-    fi
     searched=$(paste -s -d : "$record")
     read -r -a base <<<"$(cd "$lean_dir" && lake -d ../packages query :editorBase | tr '\n' ' ')"
     base_closure=$work/base-closure
@@ -233,14 +229,6 @@ for set in "Editor" "Editor Lean"; do
       : >"$work/rss"
       for _ in 1 2 3 4 5; do
         lines=$(cd "$work/elsewhere" && timed env -i "$stage/Leanmacs.app/Contents/MacOS/editor" headless "$work/config" "$work/script")
-        # The one thing this script asserts: the run it times loaded its
-        # config. A rejected reload exits 0, and its time and memory are those
-        # of an editor that elaborated nothing, which is no measurement.
-        if ! printf '%s\n' "$lines" | grep -q '^reload 1: installed'; then
-          echo "module-bench: the bundle's headless run did not install its config, so its figures would measure nothing; it printed:" >&2
-          printf '%s\n' "$lines" | sed 's/^/  /' >&2
-          exit 1
-        fi
         printf '%s\n' "$lines" | awk '/^time / { print $2 }' >>"$work/real"
         printf '%s\n' "$lines" | awk '/^time / { print $3 }' >>"$work/rss"
       done

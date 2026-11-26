@@ -32,7 +32,7 @@
 #   lake -d ../packages/shell-api update --keep-toolchain
 # then the same for every package and set that reaches this package
 # (packages/shell, packages/compile, packages/evil, packages/ex,
-# packages/ex-api, packages/, tests/packages, tests/user-link), and
+# packages/ex-api, packages/, tests/packages), and
 # commit each lake-manifest.json.
 name = "shell-api"
 keywords = ["editor-interface"]

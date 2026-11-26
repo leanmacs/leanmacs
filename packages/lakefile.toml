@@ -47,7 +47,7 @@
 # After changing a `require`, run in lean/:
 #   lake -d ../packages update --keep-toolchain
 # and commit lake-manifest.json, here and in every set that requires this
-# one (tests/packages/, tests/user-link/): a build fetches nothing and fails on a dependency
+# one (tests/packages/): a build fetches nothing and fails on a dependency
 # its manifest does not hold.
 name = "default-set"
 

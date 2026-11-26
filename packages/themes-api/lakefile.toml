@@ -30,7 +30,7 @@
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/themes-api update --keep-toolchain
 # then the same for every package and set that reaches this package
-# (packages/themes, packages/, tests/packages, tests/user-link), and
+# (packages/themes, packages/, tests/packages), and
 # commit each lake-manifest.json.
 name = "themes-api"
 keywords = ["editor-interface"]

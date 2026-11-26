@@ -31,8 +31,7 @@
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/at-point update --keep-toolchain
-# then the same for every set that reaches this package (../, tests/packages,
-# tests/user-link), and commit each lake-manifest.json.
+# then the same for every set that reaches this package (../, tests/packages), and commit each lake-manifest.json.
 name = "at-point"
 testDriver = "«at-point-test»"
 defaultTargets = ["AtPoint", "AtPointTest"]

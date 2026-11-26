@@ -1,8 +1,7 @@
 //! The link stubs a relink of the editor needs where there is no macOS SDK
 //! (`docs/design/lean-runtime.md`, "A link on the user's machine,
 //! measured"): the app ships them in `Contents/Resources/lean/link-stubs`,
-//! and `tools/user-link-check.sh` stages them with the `link-stubs`
-//! binary.
+//! made by the `link-stubs` binary.
 //!
 //! For each dynamic library the executable loads (`otool -L`), other than
 //! `libSystem` and `libc++`, which the Lean toolchain ships a stub and a

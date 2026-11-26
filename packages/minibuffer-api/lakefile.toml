@@ -38,7 +38,7 @@
 #   lake -d ../packages/minibuffer-api update --keep-toolchain
 # then the same for every package and set that reaches this package
 # (packages/minibuffer, packages/compile, packages/execute-command,
-# packages/binding-search, packages/, tests/packages, tests/user-link), and
+# packages/binding-search, packages/, tests/packages), and
 # commit each lake-manifest.json.
 name = "minibuffer-api"
 keywords = ["editor-interface"]

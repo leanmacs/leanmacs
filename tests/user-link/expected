@@ -1,3 +1,0 @@
-reload 1: installed, 1 files, 0 commands
-run user-link-hello: ok
-echo "hello from a package linked on this machine"

@@ -11,7 +11,7 @@
 //! ```text
 //! clipboard contract                 hold the clipboard to the port's contract
 //! clipboard hold <text>              write <text>, and stay until stdin closes
-//! clipboard read                     print the text on the clipboard
+//! clipboard read <expected>          print the text on the clipboard
 //! ```
 //!
 //! `contract` keeps the text it finds on the clipboard, runs the contract,
@@ -28,7 +28,8 @@
 //! and stays alive until its standard input closes: the process that reads
 //! closes it once it has read, so the order is the pipe's and no time is
 //! waited out. `read` prints the text and nothing else, and exits 1 when
-//! the clipboard holds none.
+//! the clipboard holds none or holds other text than `<expected>`
+//! (`read_expected`, whose tests run on the clipboard port's fakes).
 
 use std::io::{Read, Write};
 use std::process::ExitCode;
@@ -86,6 +87,31 @@ fn held_to_the_contract(clipboard: &SystemClipboard) -> bool {
     failed.is_empty() && restored
 }
 
+/// Reads `clipboard` and prints the text it holds. Whether that text is
+/// `expected`: false, saying why on stderr, when it is other text, when the
+/// clipboard holds none, and when it cannot be read.
+fn read_expected(clipboard: &impl Clipboard, expected: &str) -> bool {
+    match clipboard.read() {
+        Ok(Some(text)) => {
+            println!("{text}");
+            if text == expected {
+                true
+            } else {
+                eprintln!("clipboard: FAILED: the clipboard holds {text:?}, not {expected:?}");
+                false
+            }
+        }
+        Ok(None) => {
+            eprintln!("clipboard: FAILED: the clipboard holds no text");
+            false
+        }
+        Err(error) => {
+            eprintln!("clipboard: FAILED: the clipboard could not be read: {error}");
+            false
+        }
+    }
+}
+
 /// What the command line asks for, done on `clipboard`. Whether it was
 /// done; `None` when the command line is not understood.
 fn run(clipboard: &SystemClipboard, arguments: &[String]) -> Option<bool> {
@@ -105,20 +131,7 @@ fn run(clipboard: &SystemClipboard, arguments: &[String]) -> Option<bool> {
             let _ = std::io::stdin().read_to_end(&mut Vec::new());
             Some(true)
         }
-        ["read"] => match clipboard.read() {
-            Ok(Some(text)) => {
-                println!("{text}");
-                Some(true)
-            }
-            Ok(None) => {
-                eprintln!("clipboard: the clipboard holds no text");
-                Some(false)
-            }
-            Err(error) => {
-                eprintln!("clipboard: FAILED: the clipboard could not be read: {error}");
-                Some(false)
-            }
-        },
+        ["read", expected] => Some(read_expected(clipboard, expected)),
         _ => None,
     }
 }
@@ -140,8 +153,36 @@ fn main() -> ExitCode {
         Some(true) => ExitCode::SUCCESS,
         Some(false) => ExitCode::FAILURE,
         None => {
-            eprintln!("usage: clipboard contract | hold <text> | read");
+            eprintln!("usage: clipboard contract | hold <text> | read <expected>");
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use editor_platform::clipboard::{Clipboard, FailingClipboard, MemoryClipboard};
+
+    use super::read_expected;
+
+    #[test]
+    fn a_read_holds_only_when_the_clipboard_holds_the_expected_text() {
+        let clipboard = MemoryClipboard::new();
+        assert!(
+            !read_expected(&clipboard, "held"),
+            "a clipboard that holds no text"
+        );
+        clipboard.write("other").expect("a write to the fake");
+        assert!(
+            !read_expected(&clipboard, "held"),
+            "a clipboard that holds other text"
+        );
+        clipboard.write("held").expect("a write to the fake");
+        assert!(read_expected(&clipboard, "held"));
+    }
+
+    #[test]
+    fn a_read_that_fails_does_not_hold() {
+        assert!(!read_expected(&FailingClipboard::new("no owner"), "held"));
     }
 }

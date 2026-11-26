@@ -430,10 +430,14 @@ def windowTallyChecks : List Check :=
                 (opened [pressed "a", pressed "\r", pressed "\"", pressed "b"]))[3]? ==
             some
               "keys: 4 key events reached the Lean loop (4 presses, 0 of them repeats, 0 releases); text: \"a\\x0d\\\"b\"") },
-    { name := "the exit status is 0 for a window that ran and 1 for one that could not open"
+    { name :=
+        "the exit status is 0 for a window that ran and that a key event reached, 1 for one that ran and that none reached, and 1 for one that could not open"
       run :=
         pure
-          (WindowCheck.status (opened []) == 0 &&
+          (WindowCheck.status (opened [pressed "a"]) == 0 &&
+            WindowCheck.status (opened [released]) == 0 &&
+            WindowCheck.status (opened []) == 1 &&
+            WindowCheck.status (opened [.focus true, .pointerPressed]) == 1 &&
             WindowCheck.status (unopened "no display") == 1) }]
 
 /-- The checks of the keyboard check itself (`WindowCheck.check`), on a fake
@@ -533,9 +537,10 @@ def windowLoopChecks : List Check :=
         -- hang guard: the run's end, once the limit's close has come; the
         -- limit looks on real ticks (`limitPoll`); follow-up
         -- window-check-limit-polls-the-clock.
+        -- No key reached the loop, so the status is 1.
         return checked.calls.eraseReps == ["probe", "run true", "close", "stop"] &&
             checked.lines.getLast? == some "ended: the time limit" &&
-            checked.status == some 0 },
+            checked.status == some 1 },
     { name :=
         "a time limit that has passed before the window's run has begun still ends the run: the close that came too early is forgotten, and the check asks again"
       run := do
@@ -547,7 +552,8 @@ def windowLoopChecks : List Check :=
         -- limit asks on real ticks (`limitPoll`), so how many closes were
         -- forgotten first is tolerated; follow-up
         -- window-check-limit-polls-the-clock.
-        return checked.forgotten >= 1 && checked.status == some 0 &&
+        -- No key reached the loop, so the status is 1.
+        return checked.forgotten >= 1 && checked.status == some 1 &&
             checked.lines[1]?.any (·.startsWith "window: opened by fake ") &&
             checked.lines.getLast? == some "ended: the time limit" },
     { name := "a window that is closed before the time limit is not said to have reached it"

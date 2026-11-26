@@ -34,8 +34,7 @@
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/frame-commands update --keep-toolchain
-# then the same for every set that reaches this package (../, tests/packages,
-# tests/user-link), and commit each lake-manifest.json.
+# then the same for every set that reaches this package (../, tests/packages), and commit each lake-manifest.json.
 name = "frame-commands"
 testDriver = "«frame-commands-test»"
 defaultTargets = ["FrameCommands", "FrameCommandsTest"]

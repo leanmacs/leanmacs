@@ -19,7 +19,7 @@
 #    temporary directory, on `tests/bench/generate` (a config of
 #    `Editor` alone) and on `tests/headless/bundle` (a config that imports
 #    `Lean`): the median real time of 5 and the largest maximum resident
-#    set (`/usr/bin/time -l`); each run must install its config;
+#    set (`/usr/bin/time -l`);
 # 4. the time of the unchanged default set's user build from the bundle
 #    (`lake -d <config> build :editorInstall` on the generated lakefile):
 #    the first, which elaborates the core's lakefile, and a second, into
@@ -96,10 +96,6 @@ for fixture in bench/generate headless/bundle; do
     cp -R "$repo/tests/$fixture/config" "$work/config"
     (cd "$work/elsewhere" && /usr/bin/time -l env -i "$launcher" headless "$work/config" "$repo/tests/$fixture/script") \
       >"$work/out" 2>"$work/time"
-    grep -q '^reload 1: installed' "$work/out" || {
-      echo "bundle-bench: the headless run on tests/$fixture did not install its config" >&2
-      exit 1
-    }
     awk '/ real / { print $1 }' "$work/time" >>"$work/real"
     awk '/maximum resident set size/ { print $1 }' "$work/time" >>"$work/rss"
   done

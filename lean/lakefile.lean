@@ -11,8 +11,7 @@ def coreLeanOptions : Array LeanOption :=
   #[⟨`linter.all, true⟩, ⟨`warningAsError, true⟩]
 
 /-- The editor's core, as a Lake package. Its name is what a package set
-and a package `require`, and what the staged core of the user-side link is
-called (`tools/user-link/core/lakefile.toml`).
+and a package `require`.
 
 Every Lean linter is on, and a warning fails the build, so `lake build` is
 also the lint gate (the Lean counterpart of `cargo clippy -- -D warnings`).
@@ -855,8 +854,8 @@ holds `version`: the two search paths, then a framework for each
 `<name>.framework` and a library for each `lib<name>.tbd`, in order of
 their names, then the platform version, `<minos> <sdk>`, so the
 executable records the SDK version the shipped editor's own link recorded.
-These are the arguments `tools/user-link/package/lakefile.lean` proved in
-phase 1 (`docs/design/lean-runtime.md`, "A link on the user's machine,
+These are the arguments the user-side link was measured with
+(`docs/design/lean-runtime.md`, "A link on the user's machine,
 measured"). A `platform-version` that is not two words is refused. -/
 def stubLinkArgs (stubs : FilePath) (names : Array String) (version : String) :
     Except String (Array String) := do
@@ -1479,10 +1478,8 @@ macOS, and there only, it signs the copied executable ad hoc
 (`setRoot`) and prints its path. It links nothing and builds no module.
 
 It is the generator of the package-set build on its own, for a link that
-is not Lake's here: the user-side link check stages the root of its
-fixture set with prebuilt pieces of the core and links them with the Lean
-toolchain's own linker (`tools/user-link-check.sh`), so that root is
-generated as the editor's is and written by no one. -/
+is not Lake's, so that such a link's root is generated as the editor's is
+and written by no one. -/
 package_facet editorRoot pkg : FilePath := do
   let root ← setRoot pkg
   return Job.pure root.leanFile

@@ -32,8 +32,7 @@
 #   lake -d ../packages/buffers-api update --keep-toolchain
 # then the same for every package and set that reaches this package
 # (packages/buffers, packages/version-control, packages/working-set,
-# packages/ex, packages/evil, packages/files, packages/, tests/packages,
-# tests/user-link), and commit each lake-manifest.json.
+# packages/ex, packages/evil, packages/files, packages/, tests/packages), and commit each lake-manifest.json.
 name = "buffers-api"
 keywords = ["editor-interface"]
 testDriver = "«buffers-api-test»"

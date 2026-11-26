@@ -32,7 +32,7 @@
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/vc-api update --keep-toolchain
 # then the same for every package and set that reaches this package
-# (packages/version-control, packages/working-set, packages/workspace, packages/, tests/packages, tests/user-link), and
+# (packages/version-control, packages/working-set, packages/workspace, packages/, tests/packages), and
 # commit each lake-manifest.json.
 name = "vc-api"
 keywords = ["editor-interface"]

@@ -62,8 +62,8 @@ module of the core's libraries and of every package under `packages/` and
 `tests/packages/` (`lintPlugin` in `lean/lakefile.lean`, `plugins` in each
 package's lakefile), which runs its `initialize` declarations, registering
 the two options and the two linters, and leaves no trace in what it
-elaborates. A package written as a user's is (`docs/packages/word-count`,
-`tests/user-link/package`) names no plugin: the linters hold this
+elaborates. A package written as a user's (`docs/packages/word-count`)
+names no plugin: the linters hold this
 repository's tests to its practice, not a user's package. The marks the linter
 reads are plain data in the editor's own modules, so the restricted waits
 are marked where they are declared, in one place each.

@@ -35,5 +35,13 @@ editor-platform = { path = "../editor-platform" }
 # display handle.
 arboard = { version = "=3.7.0", default-features = false }
 
+# The clipboard on demand, run by `mise run linux-window` and `mise run
+# clipboard-contract`. What it makes of the text it read is tested in the
+# gate all the same: `cargo test` runs the example's own unit tests, on the
+# clipboard port's fakes, which open no clipboard.
+[[example]]
+name = "clipboard"
+test = true
+
 [lints]
 workspace = true

@@ -33,7 +33,7 @@
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/completion-api update --keep-toolchain
 # then the same for every package and set that reaches this package
-# (packages/completion, packages/, tests/packages, tests/user-link), and
+# (packages/completion, packages/, tests/packages), and
 # commit each lake-manifest.json.
 name = "completion-api"
 keywords = ["editor-interface"]

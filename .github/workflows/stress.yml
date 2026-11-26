@@ -3,7 +3,7 @@ name: Stress
 # The stress loop (tools/stress.sh; docs/dev-practices/on-demand-checks.md,
 # "The stress loop, on demand") on both legs of the gate, ci.yml's: the
 # wiring set, the script's default suites (config-wiring, ffi-wiring,
-# contract, linked-wiring, cli-wiring and bundle-wiring), `rounds` rounds
+# contract and linked-wiring), `rounds` rounds
 # (50 by default) on each leg under 2 x cores CPU hogs, in five shards of a
 # fifth each. The loop names no suite, so it runs what the script reads
 # from code. Each shard's Stress step exits with the loop's status, which
@@ -81,10 +81,7 @@ jobs:
           [ $((ROUNDS % 5)) -eq 0 ] && [ "$ROUNDS" -gt 0 ] || { echo "stress: rounds must be a positive multiple of 5: $ROUNDS"; exit 2; }
           mkdir -p stress-out
           STRESS_OUT="$PWD/stress-out/logs" sh tools/stress.sh $((ROUNDS / 5)) | tee stress-out/summary.txt
-      # The shard's logs and its summary, for people, and nothing else:
-      # what the loop stages (the bundle and the greeting's install, about
-      # 4 GB) is in a temporary directory of its own, never under
-      # STRESS_OUT, and gone when the loop ends (tools/stress-probe.sh).
+      # The shard's logs and its summary, for people, and nothing else.
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

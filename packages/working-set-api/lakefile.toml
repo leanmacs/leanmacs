@@ -32,7 +32,7 @@
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/working-set-api update --keep-toolchain
 # then the same for every package and set that reaches this package
-# (packages/working-set, packages/, tests/packages, tests/user-link), and
+# (packages/working-set, packages/, tests/packages), and
 # commit each lake-manifest.json.
 name = "working-set-api"
 keywords = ["editor-interface"]

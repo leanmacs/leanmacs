@@ -49,7 +49,7 @@
 #   lake -d ../packages/compile-api update --keep-toolchain
 # then the same for every package and set that reaches this package
 # (packages/compile, packages/workspace, packages/project-api and what
-# requires it, packages/, tests/packages, tests/user-link), and
+# requires it, packages/, tests/packages), and
 # commit each lake-manifest.json.
 name = "compile-api"
 keywords = ["editor-interface"]
