@@ -1,6 +1,7 @@
 import AgentsApiTest.AgentsApi
 import AgentsApiTest.AgentsApi.Arguments
 import AgentsApiTest.AgentsApi.Policy
+import AgentsApiTest.AgentsApi.Table
 import AgentsApiTest.AgentsApi.View
 import AgentsApiTest.AgentsApiTest.Contract
 import AgentsApiTest.AgentsApiTest.Fake
@@ -32,6 +33,11 @@ imports the test modules and runs their checks:
   chooses an offered option or asks, and the point is a choice by name.
   The theorems that no policy answers with an option the request did not
   offer are built, not run (`AgentsApiTest/AgentsApi/Policy/Theorems.lean`);
+- `tableChecks`: the agent table (`AgentsApi/Table.lean`): the reducer's
+  attention and activity on a table of events, the list's order, the
+  minted id, the display name, a record across a restart and the table's
+  tree. The theorems that activity never feeds attention are built, not
+  run (`AgentsApiTest/AgentsApi/Table/Theorems.lean`);
 - `fakeChecks`: the fake of the service (`AgentsApiTest/Fake.lean`) at the
   runner's port: what each request answers and when a `next` completes;
 - `contractBiteChecks`: three flawed fakes, each refused by the contract on
@@ -45,6 +51,7 @@ def AgentsApiTest.checks : List AgentsApiTest.Check :=
   AgentsApiTest.protocolChecks ++ AgentsApiTest.agentsApiChecks ++ AgentsApiTest.argumentsChecks ++
     AgentsApiTest.viewChecks ++
     AgentsApiTest.policyChecks ++
+    AgentsApiTest.tableChecks ++
     AgentsApiTest.fakeChecks ++
     AgentsApiTest.contractBiteChecks
 

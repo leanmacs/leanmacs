@@ -16,6 +16,9 @@ with no protocol in sight (`docs/design/agent-hosting.md`, "ACP"):
   through (`AgentsApi/Job.lean`);
 - a session's values as command arguments, which a job that runs a session
   posts its events with (`AgentsApi/Arguments.lean`);
+- the agent table, a project's sessions as records with their attention
+  and activity, the pure reducer over each agent's events, and the
+  project's store it is kept in (`AgentsApi/Table.lean`);
 - how a conversation is shown, the extension point
   `AgentsApi.ConversationView`, a choice by name (`AgentsApi/View.lean`);
 - the permission policy, the extension point `AgentsApi.PermissionPolicy`,
@@ -38,5 +41,6 @@ theorem, the fake of the service and its contract.
 | A new order | A case of `Order`, its arguments in `Request.orderArguments` and `Request.order?`, the implementation's binding, and the fake |
 | A new request of the service | A case of `Request`, its encoding in `toPackage` and `ofPackage?`, a wrapper in `AgentsApi/Job.lean`, and a property of the contract (`AgentsApiTest/Contract.lean`) |
 | A new field a policy may read | A field of `PermissionRequest` (`AgentsApi/Policy.lean`), filled by the implementation |
+| A new axis or field of an agent | A field of `AgentRecord` (`AgentsApi/Table.lean`), the `Change` that sets it, and its encoding (`AgentRecord.encode`, `decode`) |
 | A new rule of the protocol | An action or a check of `AgentsApiTest/Protocol.lean`, and a theorem beside it |
 -/

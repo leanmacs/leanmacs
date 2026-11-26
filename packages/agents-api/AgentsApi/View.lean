@@ -1,5 +1,6 @@
 import AgentsApi.Policy
 import AgentsApi.Request
+import AgentsApi.Table
 import Editor.Extension
 
 /-!
