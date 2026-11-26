@@ -1,0 +1,17 @@
+#!/bin/sh
+# Stands for a login shell in the login-shell package's linked test:
+# `shell -l -c <command>`, run in a directory, clears its environment,
+# prints a line of noise, sources the file `profile` there (which the test
+# writes, and which prints noise and sets PATH), runs <command>, and prints
+# another line of noise. In a directory that holds the file `fixture-fail`
+# it fails, saying so on its standard error, and exits 1. It never runs the
+# user's own shell or reads their profile.
+if [ "$#" -ne 3 ] || [ "$1" != -l ] || [ "$2" != -c ]; then
+  printf 'login-shell fixture: expected the arguments -l -c <command>, got: %s\n' "$*" >&2
+  exit 2
+fi
+if [ -e fixture-fail ]; then
+  printf 'login-shell fixture: failing here\n' >&2
+  exit 1
+fi
+exec /usr/bin/env -i /bin/sh -c 'echo before-noise; . ./profile; eval "$1"; echo after-noise' sh "$3"

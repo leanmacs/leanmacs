@@ -1,0 +1,16 @@
+#!/bin/sh
+# Stands for a directory source such as mise in the login-shell package's
+# linked wiring check: run with no arguments in a directory, it prints one
+# NAME=value line, PATH=<the line of the file fixture-prepend there>:<the
+# PATH it was given>, so what it prints puts that directory first and keeps
+# the base's PATH after it, as mise does. Shell builtins only, so it runs
+# whatever PATH it is given.
+if [ "$#" -ne 0 ]; then
+  printf 'prepend fixture: expected no arguments, got: %s\n' "$*" >&2
+  exit 2
+fi
+if ! IFS= read -r first <fixture-prepend; then
+  printf 'prepend fixture: no line in fixture-prepend here\n' >&2
+  exit 2
+fi
+printf 'PATH=%s:%s\n' "$first" "$PATH"

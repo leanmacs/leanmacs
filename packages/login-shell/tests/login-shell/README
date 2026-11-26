@@ -1,0 +1,16 @@
+The fixtures of the login-shell package's linked test
+(packages/login-shell/LoginShellTest/Linked/LoginShell/Contract.lean and
+.../Real.lean), which the linked test reads from this directory, the
+package's tests/login-shell, and copies into each check's own temporary
+directory. Both must stay executable (mode 100755). No check runs the
+user's own shell or reads their profile.
+
+- shell: stands for a login shell. `shell -l -c <command>` clears its
+  environment, sources the file profile of the directory it runs in, which
+  each check writes beside it (setting PATH, and printing noise), runs the
+  command and prints noise before and after it. In a directory that holds
+  the file fixture-fail it prints `login-shell fixture: failing here` on
+  its standard error and exits 1.
+- prepend: stands for a directory source such as mise. Run with no
+  arguments, it prints `PATH=<the line in fixture-prepend>:<its PATH>`, so
+  a child gets that directory first and the base's PATH after it.
