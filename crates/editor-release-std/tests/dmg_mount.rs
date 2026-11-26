@@ -23,7 +23,7 @@
 //! 6. a user's package set builds from the read-only volume alone
 //!    (`docs/design/lean-runtime.md`, "The app ships the toolchain"): the
 //!    image's `leanmacs headless --generate`, on a temporary config of
-//!    `tests/headless/generate`'s `init.lean`, writes a lakefile naming the
+//!    `tests/bench/generate`'s `init.lean`, writes a lakefile naming the
 //!    volume's set and core (`Contents/Resources/lean/lean`); the volume's
 //!    own `lake -d <config> build :editorInstall`, with an empty environment
 //!    but `PATH=/usr/bin:/bin`, `HOME` in the temporary directory and the
@@ -248,7 +248,7 @@ fn the_packed_image_holds_the_app_the_link_the_licence_and_the_readme() {
     let home = dir.path().join("home");
     fs::create_dir_all(&config).expect("the config directory");
     fs::create_dir_all(&home).expect("the home directory");
-    let generate = workspace.join("tests").join("headless").join("generate");
+    let generate = workspace.join("tests").join("bench").join("generate");
     fs::copy(
         generate.join("config").join("init.lean"),
         config.join("init.lean"),

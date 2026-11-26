@@ -19,8 +19,9 @@ conventions they follow are in the module docs of `Editor/Ffi.lean`.
 
 Pinned by `FfiTest.ffiLaunchChecks`: a successful exec cannot run inside
 `ffi-test`, which it would replace, so the Rust contract
-(`crates/editor-launch-std/tests/contract.rs`) and the gate's restart
-fixtures (`tests/headless/restart`) pin it.
+(`crates/editor-launch-std/tests/contract.rs`) pins it, and the restart's
+hand-over and exec arguments are model-tested
+(`ModelTest/Editor/Restart/Handover.lean`).
 -/
 
 namespace Editor.Ffi

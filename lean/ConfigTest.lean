@@ -166,12 +166,8 @@ show:
   line, and the run goes on, as it does past a fixture whose run throws,
   which fails naming it and the error; a seeded file and its after-check
   pass, and a check against another file fails; a placeholder with no
-  setup and an abort outside the real-thread set are refused; an entry not stepped is
-  skipped with its site, and a stale entry fails the run, as a root with no
-  fixture does; and `compare` fails a CLI output that differs from the
-  stepped one, saying the lines each side alone has, and one that is the
-  stepped one but not the expected file, naming its first differing line,
-  and one whose run throws;
+  setup and an abort are refused; and a root with no fixture fails the
+  run;
 - `protocolContractChecks`: the runner's protocol contract
   (`Editor/Job/ProtocolContract.lean`) on a stepped host whose services
   record to the fake recorder: a nap the clock wakes and one the loop's end
@@ -551,9 +547,9 @@ directory the config-migrate binary makes of the old-form fixture
 `lsp` is the language server check (`ConfigTest.Lsp`,
 `ConfigTest/Lsp.lean`) on a directory it is given: it starts Lean's
 language server in a config directory and requires the root's one error
-where the command line says, and `tools/config-package-check.sh` runs it
-on a directory an editor generated. The run's own `lspChecks` runs the
-same check on a config package it writes.
+where the command line says, for a person to run on a directory an editor
+generated. The run's own `lspChecks` runs the same check on a config
+package it writes.
 
 `bench-start`, `bench-reload`, `bench-reload-directory`, `bench-soak` and
 `bench-soak-modules` are the benchmark (`ConfigTest.Bench`; `mise run config-bench`), which the gate

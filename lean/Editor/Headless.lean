@@ -775,40 +775,11 @@ script running; and a wait on a loop a command ended answers `ended`.
 `ConfigTest.fileChecks` are hosts over the
 library's file service, handed the file commands and their jobs as the
 `files` package registers them, on real files in temporary directories.
-The `ffi-test` task runs the real executable
-once, on the fixture under `tests/headless`, which covers the command line,
-the pump and the timer service: the fixture's job sleeps on the real clock.
-It runs it a second time on `tests/headless/keys-script`, which sends keys
-with their identity through the library's window input, a third on
-`tests/headless/scene-script`, which commits text, asks for the scene, and
-then reloads and runs a job once the frame exists, each followed by a
-scene, a fourth on `tests/headless/dispatch`, whose keys run commands
-config binds, one of which starts a job with an argument, and a fifth on
-`tests/headless/files`, which runs the file commands the executable ships
-and touches no file: `save-buffer` on the scratch buffer, and a command of
-config's that opens a path the library refuses before it asks the file
-system, and a sixth on `tests/headless/prompt`, under the Vim scheme the
-executable runs: a command of config's asks for a prompt, a committed text
-goes into the minibuffer, `<Enter>` accepts and config's command receives
-the answer, and `<Escape>` cancels. An eighth run is on
-`tests/headless/ex/script`, with no config: a name nobody bound, `w` in the
-scratch buffer, and `q`, which ends the loop before the script's last line;
-the first and the last line are opened with the `:` key, as a user opens
-them.
-Two more entries of the task run the executable on a real file, each in a
-shell of its own that makes a temporary directory, removes it by a trap,
-and writes the script there from a template with the file's path put in:
-`e`, an edit, `w`, `q` (`tests/headless/ex/save-quit-script`) and the same
-with `wq` (`tests/headless/ex/wq-script`), each checked by the exit status,
-the file's bytes and the absence of a `commands:` line. They are shell and
-not Lean because Lean spawns no child process
-(`docs/design/overview.md`).
-One more runs the executable with `--render` on milestone 1's fixture
-(`tests/headless/milestone`), in a temporary directory in the same way: an
-evil session on a source file ending in `:w`, checked by the file's bytes,
-`agree` after `C-f` and after the save, and `idle`, which must find
-nothing more drawn and nothing submitted once the session was handled and
-the render loop at rest. `ConfigTest.scriptChecks` check that `agree`, `idle` and `journal`
+The `ffi-test` task runs the fixtures under `tests/headless` on the
+default set's fixture harness, stepped on the fakes
+(`Editor/Test/Fixture/Stepped.lean`;
+`docs/dev-practices/headless-mode.md`, "How the gate runs a fixture").
+`ConfigTest.scriptChecks` check that `agree`, `idle` and `journal`
 are read, and what is refused.
 -/
 

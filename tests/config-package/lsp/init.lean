@@ -8,7 +8,7 @@ open Editor
 def wrong : Nat := "not a number"
 
 -- The root of the config Lean's language server is asked about in the gate
--- (tools/config-package-check.sh, `config-test lsp`): it imports `Lean`, a
+-- (config-test's `lspChecks`, lean/ConfigTest/Lsp.lean): it imports `Lean`, a
 -- module of a package of the default set and a config file, names a
 -- declaration of each, and holds one type error, on line 8, at column 19.
 -- The header and that line stay where they are: the check names the place.

@@ -189,17 +189,12 @@ Which runs the wiring set gets is read from code, but that each item has
 its run is no gate step: review holds it (`gates.md`). A gap here goes
 unrun with nothing to say so.
 
-- Every entry of `Editor.Test.Fixture.RealThread.entries` whose site
-  starts `ffi-test` has a case in `tools/wiring-runs.sh`, and every entry
-  whose site starts `bundle-test` a `headless` line in
-  `tools/bundle-test.sh`.
-- Every entry of `FfiTest.windowScenarios` has a case in
-  `tools/wiring-runs.sh`.
+- Every entry of `FfiTest.windowScenarios` has a line in mise.toml's
+  `window-scenarios` task.
 - A module of the wiring set's checks sit in a `.wired` group of its
   root's check set. `linter.wiringSet` already enforces this.
-- To check the first two, list the set with `fixture-test real-thread
-  --site <site>` and `ffi-test wiring-scenarios` and hold each line to
-  its case or `headless` line.
+- To check the first, list the scenarios with `ffi-test
+  wiring-scenarios` and hold each to its line.
 
 See `docs/dev-practices/real-thread-checks.md`, "How the set runs" and
 "Adding a check to the wiring set".

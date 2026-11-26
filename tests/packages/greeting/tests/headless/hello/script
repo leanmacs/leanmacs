@@ -2,11 +2,7 @@
 # (tools/package-set.sh run): the fixture set's harness runs it stepped
 # (`fixture-test`; docs/dev-practices/headless-mode.md, "How the gate runs a
 # fixture"), with the fixture set, which holds the package: its command
-# runs and the scene's echo area shows its text, exactly `expected`. It is
-# also in the real-thread set (`Editor.Test.Fixture.RealThread`): `mise run
-# ffi-test` runs it on a per-user install of the fixture set, through the
-# CLI, and on the editor built from the default set, which does not hold
-# the package and must answer `run greeting-hello: no such command`. It
+# runs and the scene's echo area shows its text, exactly `expected`. It
 # touches no file.
 
 reload

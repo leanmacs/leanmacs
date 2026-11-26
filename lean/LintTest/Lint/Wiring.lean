@@ -107,7 +107,7 @@ def lintWiringChecks : List Check :=
         "a module is under a root's first name component when its own first component is that one, and none is under no component"
       run :=
         return Lint.isUnder (some `FilesTest) `FilesTest.Linked.Files.Real &&
-            !Lint.isUnder (some `FilesTest) `Editor.Test.Fixture.RealThread &&
+            !Lint.isUnder (some `FilesTest) `Editor.Test.Fixture.Stepped &&
             !Lint.isUnder none `FilesTest.Linked && Lint.firstComponent `ConfigTest.Editor == some `ConfigTest &&
             Lint.moduleNamed "ConfigTest.Editor.Job.Real" == `ConfigTest.Editor.Job.Real },
     { name :=

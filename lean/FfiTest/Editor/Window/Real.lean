@@ -651,9 +651,9 @@ def windowScenarios.realHost : Editor.RealHost :=
 /-- The window scenarios, each a subcommand of `ffi-test` that parses its
 own arguments (`Editor.Scenario`): how the root's `main` reaches them, as
 the build's `linter.wiringSet` requires, and what `ffi-test
-wiring-scenarios` lists for reviewers holding each to its case in
-`tools/wiring-runs.sh` (`.agents/rules/structure.md`, "The wiring set's
-runs"). `window-host` with a file, `window-host-undrawn` and
+wiring-scenarios` lists for reviewers holding each to its line in
+mise.toml's `window-scenarios` task (`.agents/rules/structure.md`, "The
+wiring set's runs"). `window-host` with a file, `window-host-undrawn` and
 `window-host-generate` each run on a copy of what they are given, in a
 temporary directory of their own (`onCopyOf`), so a caller hands them a
 checked-in fixture as it is. -/

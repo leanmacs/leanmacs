@@ -29,9 +29,9 @@
 #   library. It runs the files' checks through the headless host over the
 #   real elaborator, the library's file service and its watch service.
 #
-# It has no headless fixture of its own: the core's fixtures
-# tests/headless/open-file and tests/headless/files, which run on the
-# default set's editor, open and save files through it.
+# It has no headless fixture of its own: the core's fixture
+# tests/headless/files, which runs on the default set's fixture harness,
+# saves files through it.
 #
 # Every Lean linter is on and a warning fails the build, as in the core,
 # and the build's own linters, the wait linters, are loaded as a Lean plugin

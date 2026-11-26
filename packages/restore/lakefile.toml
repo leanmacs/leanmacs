@@ -23,10 +23,9 @@
 #   the system compiler, which this executable has no flags for.
 # - `RestoreTest` holds the test modules.
 #
-# It has no headless fixture of its own: the core's fixtures
-# `tests/headless/restore` and `tests/headless/restart`, which run on the
-# default set's editor, restore and restart through it, and so do the
-# bundle test and the user sets test.
+# It has no headless fixture of its own: the journal, the index and the
+# restart's hand-over are model-tested in the core
+# (lean/ModelTest/Editor/Restore/, lean/ModelTest/Editor/Restart/).
 #
 # Every Lean linter is on and a warning fails the build, as in the core,
 # and the build's own linters, the wait linters, are loaded as a Lean plugin

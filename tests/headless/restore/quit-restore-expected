@@ -1,4 +1,0 @@
-text 0: ""
-scene 0x0, focused 0, echo "", echo padding 8, preedit -, theme "default"
-view 0 0,0 0x0: "", scroll 0, selections 0..0, padding 8 8
-status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "All" +4

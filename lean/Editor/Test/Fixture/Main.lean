@@ -22,8 +22,6 @@ the real pieces at the edge, and runs:
   editor finds its own;
 - the config files' module data in a temporary directory, removed at the
   end;
-- `real-thread [--site <prefix>]`, before any of that, the real-thread set's
-  listing (`RealThread.listed`), which wires nothing;
 - the report on stdout, and the exit status: 0 when everything held, 1
   when something failed, 2 for a command line it does not take, after its
   usage on stderr.
@@ -39,10 +37,6 @@ fixture `setups` the set's Lake packages declare, after the core's own
 (`Setup.core`), over the command line `arguments` (the module docs). -/
 def run (packages : Array Package) (schemes : Array SchemePackage) (base : Array Lean.Name)
     (setups : Array (String × Setup)) (arguments : List String) : IO UInt32 := do
-  if let some site := readListing arguments then
-    for line in RealThread.listed site do
-      IO.println line
-    return 0
   let invocation ←
     match read arguments with
     | .ok invocation =>
@@ -88,10 +82,6 @@ def run (packages : Array Package) (schemes : Array SchemePackage) (base : Array
       match invocation.command with
       | .run roots =>
         runRoots harness tree (← roots.mapM absolute)
-      | .compared =>
-        printCompared harness tree
-      | .compare script file =>
-        compare harness tree script file
     finally
       try
         files.remove

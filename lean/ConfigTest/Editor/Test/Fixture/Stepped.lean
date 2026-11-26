@@ -7,8 +7,8 @@ import Editor.Test.Linked.Host
 /-!
 # Config tests: `Editor/Test/Fixture/Stepped.lean`
 
-The tests of the headless fixture harness's stepped runs (`runRoots`,
-`compare`): `fixtureRunChecks`. Each writes its fixtures into a temporary
+The tests of the headless fixture harness's stepped runs (`runRoots`):
+`fixtureRunChecks`. Each writes its fixtures into a temporary
 directory the check owns, which is the harness's repository, and runs them
 over config-test's elaborator, with the test scheme and the packages the
 harness stands for (`HostContext.packages`): a script that runs a command
@@ -31,16 +31,15 @@ def nothingExpected : String :=
   "run nothing-at-all: no such command\n"
 
 /-- The harness over `repository`, with config-test's elaborator and the
-context's packages, the test scheme, `setups` and the real-thread set
-`entries`, its report kept in `said`. -/
+context's packages, the test scheme and `setups`, its report kept in
+`said`. -/
 def fixtureHarness (context : Context) (repository : System.FilePath) (said : IO.Ref (Array String))
-    (setups : Array (String × Setup) := #[]) (entries : Array RealThread.Entry := #[]) :
-    IO (Harness TestScheme.scheme) := do
+    (setups : Array (String × Setup) := #[]) : IO (Harness TestScheme.scheme) := do
   return {
       packages := context.packages, base := #[`Editor], sysroot := context.sysroot
       oleans := context.oleanDirs.map (·.toString), repository := repository.toString
       latest := ← IO.mkRef none, files := ← Config.Elaborate.ModuleFiles.temporary
-      elaborator := some context.elaborator, setups, entries
+      elaborator := some context.elaborator, setups
       say := fun line => said.modify (·.push line) }
 
 /-- Writes `files`, each a path under `repository` and its text, making the
@@ -58,18 +57,13 @@ def writeFixtures (repository : System.FilePath) (files : List (String × String
 /-- Runs the harness over the root `tests` of fixtures written from `files`
 (`writeFixtures`) in a temporary directory: its exit status and its report. -/
 def runFixtures (context : Context) (files : List (String × String))
-    (setups : Array (String × Setup) := #[]) (entries : Array RealThread.Entry := #[]) :
-    IO (UInt32 × Array String) :=
+    (setups : Array (String × Setup) := #[]) : IO (UInt32 × Array String) :=
   IO.FS.withTempDir fun repository => do
     writeFixtures repository files
     let said ← IO.mkRef #[]
-    let harness ← fixtureHarness context repository said setups entries
+    let harness ← fixtureHarness context repository said setups
     let status ← runRoots harness (realTree repository.toString) #["tests"]
     return (status, ← said.get)
-
-/-- A runner entry of the script `script`. -/
-def runnerEntry (script : String) : RealThread.Entry :=
-  { script, covers := "the runner", site := "a check", subject := .runner, stepped := true }
 
 /-- The checks of the harness's stepped runs. -/
 def fixtureRunChecks (context : Context) : List Check :=
@@ -85,7 +79,7 @@ def fixtureRunChecks (context : Context) : List Check :=
             (status == 0 && before == after &&
               said ==
                 #["fixture-test: tests/a/script: stepped, as expected",
-                  "fixture-test: ran 1 fixtures stepped under tests, 0 left to the CLI"])
+                  "fixture-test: ran 1 fixtures stepped under tests"])
             s!"status={status} said={said} queued {before} then {after}" },
     { name :=
         "a fixture whose expected file is wrong fails, naming the first line that differs, and the run goes on"
@@ -129,7 +123,7 @@ def fixtureRunChecks (context : Context) : List Check :=
                   "fixture-test: tests/a/script: refused: tests/a/script holds @FILE@")
             s!"status={status} said={said}" },
     { name :=
-        "an abort in a fixture outside the real-thread set is refused before it runs, and the run goes on, so the harness's process is never ended"
+        "an abort in a fixture is refused before it runs, and the run goes on, so the harness's process is never ended"
       run := do
         let (status, said) ←
           runFixtures context
@@ -142,27 +136,6 @@ def fixtureRunChecks (context : Context) : List Check :=
                   "fixture-test: tests/a/script: refused: tests/a/script aborts or waits for a restart") &&
               said.contains "fixture-test: tests/b/script: stepped, as expected")
             s!"status={status} said={said}" },
-    { name :=
-        "a fixture whose entry leaves it to the CLI is skipped, its line naming its site and what it covers; and an entry under the root that names no fixture fails the run as stale"
-      run := do
-        let left : RealThread.Entry :=
-          { script := "tests/a/script", covers := "a real effect", site := "a gate step"
-            subject := .realEffect "a real effect", stepped := false }
-        let stale : RealThread.Entry := { left with script := "tests/gone/script" }
-        let files :=
-          [("tests/a/script", "abort\n"), ("tests/a/expected", ""),
-            ("tests/b/script", nothingScript), ("tests/b/expected", nothingExpected)]
-        let (status, said) ← runFixtures context files (entries := #[left])
-        let (staleStatus, staleSaid) ← runFixtures context files (entries := #[left, stale])
-        saw
-            (status == 0 &&
-              said.contains
-                "fixture-test: tests/a/script: left to the CLI (a gate step): a real effect" &&
-              said.contains "fixture-test: ran 1 fixtures stepped under tests, 1 left to the CLI" &&
-              staleStatus == 1 &&
-              staleSaid.contains
-                "fixture-test: the real-thread set names tests/gone/script, which is no fixture under tests: a stale entry")
-            s!"status={status} said={said} stale={staleStatus} {staleSaid}" },
     { name := "a root that holds no fixture fails the run: nothing ran stepped there"
       run := do
         let (status, said) ← runFixtures context [("tests/notes.txt", "no fixture\n")]
@@ -190,57 +163,8 @@ def fixtureRunChecks (context : Context) : List Check :=
         saw
             (status == 1 && said.any threw &&
               said.contains "fixture-test: tests/b/script: stepped, as expected" &&
-              said.contains "fixture-test: ran 1 fixtures stepped under tests, 0 left to the CLI" &&
+              said.contains "fixture-test: ran 1 fixtures stepped under tests" &&
               hung == #[s!"its run threw: {hang}"])
-            s!"status={status} said={said} hung={hung}" },
-    { name := "compare fails a runner entry whose run throws, naming it and the error"
-      run :=
-        IO.FS.withTempDir fun repository => do
-          writeFixtures repository
-              [("tests/a/script", nothingScript), ("tests/a/expected", nothingExpected),
-                ("same", nothingExpected)]
-          let said ← IO.mkRef #[]
-          let harness ←
-            fixtureHarness context repository said
-                #[("tests/a/script", .oneFile "tests/a/missing.txt" "missing.txt")]
-                #[runnerEntry "tests/a/script"]
-          let status ←
-            compare harness (realTree repository.toString) "tests/a/script"
-                (repository / "same").toString
-          let said ← said.get
-          saw
-              (status == 1 &&
-                said.any fun line =>
-                  line.startsWith "fixture-test: tests/a/script: its run threw: " &&
-                    (line.splitOn "tests/a/missing.txt").length > 1)
-              s!"status={status} said={said}" },
-    { name :=
-        "compare passes a runner entry whose CLI output is its stepped output and its expected file, fails one whose CLI output differs, saying the lines each side alone has, and fails one whose CLI output is its stepped output but not its expected file, naming the first line that differs"
-      run :=
-        IO.FS.withTempDir fun repository => do
-          writeFixtures repository
-              [("tests/a/script", nothingScript), ("tests/a/expected", nothingExpected),
-                ("tests/b/script", nothingScript), ("tests/b/expected", "run nothing-at-all: ok\n"),
-                ("same", nothingExpected), ("other", "run nothing-at-all: ok\nmore\n")]
-          let said ← IO.mkRef #[]
-          let harness ←
-            fixtureHarness context repository said (entries :=
-                #[runnerEntry "tests/a/script", runnerEntry "tests/b/script"])
-          let tree := realTree repository.toString
-          let same ← compare harness tree "tests/a/script" (repository / "same").toString
-          let other ← compare harness tree "tests/a/script" (repository / "other").toString
-          let unexpected ← compare harness tree "tests/b/script" (repository / "same").toString
-          let said ← said.get
-          saw
-              (same == 0 && other == 1 && unexpected == 1 &&
-                said.contains
-                  "fixture-test: tests/a/script: the CLI over a real loop thread and the stepped run printed the same, and it is expected" &&
-                said.contains
-                  "fixture-test: tests/a/script: the CLI over a real loop thread (<) and the stepped run (>) printed otherwise: < 1: run nothing-at-all: ok; < 2: more; > 1: run nothing-at-all: no such command" &&
-                said.contains
-                  "fixture-test: tests/b/script: the CLI's output is not its expected file: line 1 differs: expected \"run nothing-at-all: ok\", got \"run nothing-at-all: no such command\"" &&
-                !said.any
-                    (·.startsWith "fixture-test: tests/b/script: the CLI over a real loop thread"))
-              s!"same={same} other={other} unexpected={unexpected} said={said}" }]
+            s!"status={status} said={said} hung={hung}" }]
 
 end ConfigTest

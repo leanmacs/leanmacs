@@ -14,8 +14,8 @@ config package an editor of the default set generates (`writePackage`:
 the lakefile `Editor.Config.LakePackage.lakefile` gives for the set, by
 its Lake name, and the core, and the core's toolchain pin) and the root and
 the config file of `tests/config-package/lsp`; so no run of the built
-editor is read. `tools/config-package-check.sh` runs `lsp` too, on a
-directory the built editor generated. It tests no module of the
+editor is read. `config-test lsp` runs the same check on a directory it
+is given, such as one the built editor generated. It tests no module of the
 editor, so it mirrors none; it sits beside the mirrored test modules under
 `ConfigTest/`, as the benchmark does.
 

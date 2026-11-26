@@ -1,0 +1,13 @@
+# The script a bundled editor's headless mode runs, with `--generate`,
+# against a temporary copy of the config in `config/`, which holds only
+# `init.lean`: the benchmarks time it (tools/module-bench.sh,
+# tools/bundle-bench.sh), and `mise run dmg-check` holds the lakefile it
+# generates to `expected-lakefile-bundle`
+# (crates/editor-release-std/tests/dmg_mount.rs).
+
+# The config directory's generated files are created before the root is
+# elaborated, and the config loads.
+reload
+settle
+
+run loaded

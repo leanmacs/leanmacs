@@ -53,9 +53,8 @@ they were modules of the core.
   run by the package steps in `mise run ffi-test`: the files through the
   headless host over the real elaborator and the library's file and watch
   services, in [`FilesTest/Linked/Files.lean`](FilesTest/Linked/Files.lean).
-- It has no headless fixture of its own. The core's
-  `tests/headless/open-file` and `tests/headless/files`, run on the default
-  set's editor, open and save files through it.
+- It has no headless fixture of its own. The core's `tests/headless/files`,
+  run on the default set's fixture harness, saves files through it.
 
 ## Dropping it
 

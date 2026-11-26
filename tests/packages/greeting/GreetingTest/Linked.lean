@@ -30,9 +30,8 @@ them"), and holds a check of each kind, and one of the package's own `initialize
   holds this package hands its editor, loads a config directory that binds
   a key to the package's command, and the key runs it (`configCheck`). The
   two directories it is handed are what that session elaborates on. It
-  needs no real loop thread: the real editor over this package is the CLI's
-  run of the fixture `tests/headless/hello`, which the fixture set's
-  real-thread entries run (`Editor.Test.Fixture.RealThread`).
+  needs no real loop thread: the fixture `tests/headless/hello` runs this
+  package's command stepped on the fixture set's harness.
 
 It imports the config base, `Editor`, for the link alone, as every root
 that links the elaborator does: the elaborator imports the base's modules

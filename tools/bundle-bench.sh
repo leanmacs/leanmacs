@@ -16,7 +16,7 @@
 # 2. the disk image's bytes and its share of GitHub's 2 GiB release-asset
 #    limit;
 # 3. for headless runs of the bundle's launcher, with `env -i`, from a
-#    temporary directory, on `tests/headless/generate` (a config of
+#    temporary directory, on `tests/bench/generate` (a config of
 #    `Editor` alone) and on `tests/headless/bundle` (a config that imports
 #    `Lean`): the median real time of 5 and the largest maximum resident
 #    set (`/usr/bin/time -l`); each run must install its config;
@@ -88,29 +88,29 @@ echo "bundle-bench: the disk image: $size bytes ($(mb "$size") MB), $(awk -v s="
 
 # 3. Start-up and resident memory.
 mkdir "$work/elsewhere"
-for fixture in generate bundle; do
+for fixture in bench/generate headless/bundle; do
   : >"$work/real"
   : >"$work/rss"
   for _ in 1 2 3 4 5; do
     rm -rf "$work/config"
-    cp -R "$repo/tests/headless/$fixture/config" "$work/config"
-    (cd "$work/elsewhere" && /usr/bin/time -l env -i "$launcher" headless "$work/config" "$repo/tests/headless/$fixture/script") \
+    cp -R "$repo/tests/$fixture/config" "$work/config"
+    (cd "$work/elsewhere" && /usr/bin/time -l env -i "$launcher" headless "$work/config" "$repo/tests/$fixture/script") \
       >"$work/out" 2>"$work/time"
     grep -q '^reload 1: installed' "$work/out" || {
-      echo "bundle-bench: the headless run on tests/headless/$fixture did not install its config" >&2
+      echo "bundle-bench: the headless run on tests/$fixture did not install its config" >&2
       exit 1
     }
     awk '/ real / { print $1 }' "$work/time" >>"$work/real"
     awk '/maximum resident set size/ { print $1 }' "$work/time" >>"$work/rss"
   done
-  echo "bundle-bench: headless, env -i, tests/headless/$fixture, 5 runs: median real $(median <"$work/real") s; largest maximum resident set $(mb "$(largest <"$work/rss")") MB"
+  echo "bundle-bench: headless, env -i, tests/$fixture, 5 runs: median real $(median <"$work/real") s; largest maximum resident set $(mb "$(largest <"$work/rss")") MB"
 done
 
 # 4. The unchanged default set, built from the bundle.
 config=$work/set-config
 mkdir "$config"
-cp "$repo/tests/headless/generate/config/init.lean" "$config/init.lean"
-(cd / && env -i HOME="$work/home" "$launcher" headless --generate "$config" "$repo/tests/headless/generate/script") >/dev/null
+cp "$repo/tests/bench/generate/config/init.lean" "$config/init.lean"
+(cd / && env -i HOME="$work/home" "$launcher" headless --generate "$config" "$repo/tests/bench/generate/script") >/dev/null
 record=$(cat "$resources/editor.build")
 build() {
   # shellcheck disable=SC2086 # the record's lines are NAME=value words

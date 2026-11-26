@@ -6,7 +6,6 @@ import Editor.Job.Fake
 import Editor.Job.Real
 import Editor.SyntaxTree.Fake
 import Editor.Test.Fixture.Discover
-import Editor.Test.Fixture.RealThread
 import Editor.Test.Fixture.Setup
 import Editor.Test.Linked.Services
 import Editor.Test.Linked.Stepping
@@ -44,13 +43,9 @@ number and both texts, or which check failed. A run that throws, a hang
 given up at its guard among them, fails under the fixture's name with the
 error, and the harness goes on to the next fixture (`caught`).
 
-`runRoots` runs every fixture of the discovery roots it is handed, but
-those the real-thread set leaves to the CLI (`RealThread.entries`), and
-fails a run whose root held no fixture or whose set names a script under
-the root that discovery did not find. `compare` runs a runner entry stepped
-and compares it with the CLI's output, both ways, and with its expected
-file. Its checks are `ConfigTest.fixtureRunChecks`
-(`ConfigTest/Editor/Test/Fixture/Stepped.lean`).
+`runRoots` runs every fixture of the discovery roots it is handed, and
+fails a run whose root held no fixture. Its checks are
+`ConfigTest.fixtureRunChecks` (`ConfigTest/Editor/Test/Fixture/Stepped.lean`).
 -/
 
 namespace Editor.Test.Fixture
@@ -61,7 +56,7 @@ open Editor.Test.Linked
 /-- What every stepped run of one harness shares: the set's packages, its
 input scheme and config base, the toolchain and `.olean` directories, the
 repository's root, the elaborator's shared base, the config files' module
-data, the setups and the real-thread set, and where its report goes. -/
+data, the setups, and where its report goes. -/
 structure Harness (scheme : InputScheme) where
   /-- The packages the set's editor registers. -/
   packages : Array Package
@@ -83,8 +78,6 @@ real elaborator of the toolchain and the `.olean` directories. -/
   elaborator : Option (Config.Elaborator Config.Elaborate.Base Config.Elaborate.Handle) := none
   /-- The setups of the fixtures that declare one. -/
   setups : Array (String × Setup) := Setup.core
-  /-- The real-thread set. -/
-  entries : Array RealThread.Entry := RealThread.entries
   /-- Where the report's lines go. -/
   say : String → IO Unit := IO.println
 
@@ -255,8 +248,7 @@ def runFixture {scheme : InputScheme} (harness : Harness scheme) (fixture : Part
   let script ← IO.FS.readFile (joinPath harness.repository fixture.script)
   let declared := Setup.declared fixture.script harness.setups
   let setup := Setup.of fixture.script harness.setups
-  let inSet := harness.entries.any (·.script == fixture.script)
-  if let some refused := refusal? fixture script (if declared then some setup else none) inSet then
+  if let some refused := refusal? fixture script (if declared then some setup else none) then
     return #[s!"refused: {refused}"]
   let expected ←
     match fixture.expected with
@@ -277,12 +269,11 @@ def caught (run : IO (Array String)) : IO (Array String) := do
     return #[s!"its run threw: {error}"]
 
 /-- Runs every fixture of each discovery root in `roots` (the module docs):
-each stepped, its line `fixture-test: <script>: stepped, as expected`, or
-skipped, left to the CLI by its entry, its line saying its site and what it
-covers; then the root's count line. A failure says what is wrong, and the
-run goes on to the next fixture, as it does when a fixture's run throws
-(`caught`). Exit 0 when every fixture held, and 1 otherwise, as for a root
-that held no fixture or a stale entry. -/
+each stepped, its line `fixture-test: <script>: stepped, as expected`; then
+the root's count line. A failure says what is wrong, and the run goes on to
+the next fixture, as it does when a fixture's run throws (`caught`). Exit 0
+when every fixture held, and 1 otherwise, as for a root that held no
+fixture. -/
 def runRoots {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO)
     (roots : Array String) : IO UInt32 := do
   let mut failed := false
@@ -300,21 +291,8 @@ def runRoots {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO)
       harness.say s!"fixture-test: {root} holds no headless fixture, so nothing ran stepped there"
       failed := true
       continue
-    for entry in harness.entries do
-      if isUnder root entry.script && !fixtures.any (·.script == entry.script) then
-        harness.say
-            s!"fixture-test: the real-thread set names {entry.script}, which is no fixture under {root}: a stale entry"
-        failed := true
     let mut stepped := 0
-    let mut left := 0
     for fixture in fixtures do
-      let entry := harness.entries.find? (·.script == fixture.script)
-      if let some entry := entry then
-        unless entry.stepped do
-          harness.say
-              s!"fixture-test: {fixture.script}: left to the CLI ({entry.site}): {entry.covers}"
-          left := left + 1
-          continue
       let problems ← caught (runFixture harness fixture)
       if problems.isEmpty then
         harness.say s!"fixture-test: {fixture.script}: stepped, as expected"
@@ -323,80 +301,7 @@ def runRoots {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO)
         for problem in problems do
           harness.say s!"fixture-test: {fixture.script}: {problem}"
         failed := true
-    harness.say
-        s!"fixture-test: ran {stepped} fixtures stepped under {root}, {left} left to the CLI"
+    harness.say s!"fixture-test: ran {stepped} fixtures stepped under {root}"
   return if failed then 1 else 0
-
-/-- The fixture whose script is `script`, found by discovering its
-directory, or the one above it, as a root. -/
-def locate (tree : Tree IO) (script : String) : IO (Except String Parts) := do
-  let directory := ((script.splitOn "/").dropLast).toArray
-  let roots :=
-    #["/".intercalate directory.toList, "/".intercalate (directory.pop).toList].filter (!·.isEmpty)
-  for root in roots do
-    if let .ok fixtures← discover tree root then
-      if let some fixture := fixtures.find? (·.script == script) then
-        return .ok fixture
-  return .error s!"{script} is no fixture discovery finds"
-
-/-- The runner entries of the set (`RealThread.compared`), each as
-`<script>\t<config>\t<expected>`, for `case_compare` in
-`tools/wiring-runs.sh`. Exit 1 when one is no fixture with an expected
-file. -/
-def printCompared {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO) : IO UInt32 :=
-  do
-  let mut failed := false
-  for entry in harness.entries.filter (·.subject == .runner) do
-    match ← locate tree entry.script with
-    | .ok { script, config, expected := some expected } =>
-      harness.say s!"{script}\t{config}\t{expected}"
-    | .ok _ =>
-      harness.say s!"fixture-test: {entry.script}, a runner entry, has no expected file"
-      failed := true
-    | .error reason =>
-      harness.say s!"fixture-test: {reason}"
-      failed := true
-  return if failed then 1 else 0
-
-/-- Runs the runner entry `script` stepped and compares it with the CLI's
-output read from `file` (`compared`): its line
-`fixture-test: <script>: the CLI over a real loop thread and the stepped run printed the same, and it is expected`,
-or what is wrong, the error among it when the run throws (`caught`). -/
-def compare {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO)
-    (script file : String) : IO UInt32 := do
-  let script := underRepository harness.repository script
-  let some entry := harness.entries.find? (·.script == script)
-    |
-    harness.say s!"fixture-test: {script} has no entry in the real-thread set"
-    return 1
-  unless entry.subject == .runner do
-    harness.say s!"fixture-test: {script} is no runner entry, so it is not compared both ways"
-    return 1
-  let fixture ←
-    match ← locate tree script with
-    | .ok fixture =>
-      pure fixture
-    | .error reason =>
-      harness.say s!"fixture-test: {reason}"
-      return 1
-  let some expectedPath := fixture.expected
-    |
-    harness.say s!"fixture-test: {script} has no expected file"
-    return 1
-  let setup := Setup.of script harness.setups
-  let problems ←
-    caught do
-        let text ← IO.FS.readFile (joinPath harness.repository script)
-        let ran ← runStepped harness fixture setup (setup.substitute text)
-        let cli := textLines (← IO.FS.readFile file)
-        let expected := textLines (← IO.FS.readFile (joinPath harness.repository expectedPath))
-        return ran.problems ++ compared cli ran.output expected
-  if problems.isEmpty then
-    harness.say
-        s!"fixture-test: {script}: the CLI over a real loop thread and the stepped run printed the same, and it is expected"
-    return 0
-  for problem in problems do
-    harness.say s!"fixture-test: {script}: {problem}"
-  return 1
 
 end Editor.Test.Fixture

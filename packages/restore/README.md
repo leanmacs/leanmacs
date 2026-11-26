@@ -51,10 +51,9 @@ module of the core.
   which mirrors the library module: the jobs restarted, the ex name, and
   the package held to the kit's stand-in the core's own checks of session
   restore run on.
-- **End to end**: the core's headless fixtures `tests/headless/restore`
-  and `tests/headless/restart`, the bundle test and the user sets test
-  ([the-gate.md](../../docs/dev-practices/the-gate.md)) restore and
-  restart through it, on an editor built from the default set.
+- **The core's**: the journal, the index and their formats are
+  model-tested in the core (`lean/ModelTest/Editor/Restore/`), and the
+  restart's hand-over in `ModelTest/Editor/Restart/Handover.lean`.
 
 The gate runs the driver over the fixture set and the default set
 ([the-gate.md](../../docs/dev-practices/the-gate.md), "The package steps").

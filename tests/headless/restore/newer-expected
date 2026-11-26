@@ -1,3 +1,0 @@
-text 0: ""
-text 3: "kept text"
-text 4: "restore: 1 buffers, 1 with unsaved text; see *restore*\nsession-5.json is of format 99, newer than this editor's 2: what is known of it is restored, and it is left as it is\nsession-5.json: the key layouts is not known\nsession-5.json: buffer 1: the key folds is not known\njournal 5-1-1: line 3 is of the kind marks, which this editor does not know: what came before is restored, and it is left as it is\n"

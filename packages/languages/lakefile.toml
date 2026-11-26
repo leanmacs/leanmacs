@@ -21,9 +21,7 @@
 # - `LanguagesTest` holds the test modules.
 #
 # It has no headless fixture: what it registers is pinned by its model
-# test, and the default editor opening a file in the mode `code` by the
-# core's fixture tests/headless/open-file, which runs on the default set's
-# editor.
+# test.
 #
 # Every Lean linter is on and a warning fails the build, as in the core,
 # and the build's own linters, the wait linters, are loaded as a Lean plugin

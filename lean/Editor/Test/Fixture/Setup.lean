@@ -37,16 +37,14 @@ lines stay its own. It declares:
 The harness refuses (`refusal?`), naming the fixture: a script that holds a
 placeholder (`@FILE@`, `@DIR@` or any other `@…@`) it has no setup for; a
 fixture with no expected file and no after-check; and a script that aborts
-or waits for a restart and has no entry in the real-thread set
-(`Editor/Test/Fixture/RealThread.lean`). So a fixture never passes stepped by
-accident. A stepped run that differs from its expected file never has its
-expected file edited: the fake is fixed, or the seed added here, or the
-fixture moved into the real-thread set with the reason.
+or waits for a restart, which a stepped run cannot do. So a fixture never
+passes stepped by accident. A stepped run that differs from its expected
+file never has its expected file edited: the fake is fixed, or the seed
+added here.
 
-Lines are compared as the shell's `diff` sees them (`textLines`): the first
-difference from an expected file (`firstDifference?`), the lines each side
-alone has (`bothWays`), and a runner entry's CLI output against its stepped
-run and its expected file (`compared`).
+Lines are compared as the shell's `diff` sees them (`textLines`), and a run
+is judged by its first difference from its expected file
+(`firstDifference?`).
 
 Pure: model-test pins it (`ModelTest/Editor/Test/Fixture/Setup.lean`).
 -/
@@ -292,11 +290,9 @@ def endsProcess (line : String) : Bool :=
   line == "abort" || line == "restarted" || line.startsWith "restarted "
 
 /-- Why the harness refuses to run `fixture` stepped, with `script` its
-script's text and `setup` its setup, if it has one of its own; `inSet` says
-whether it has an entry in the real-thread set (the module docs). None
-when it may run. -/
-def refusal? (fixture : Parts) (script : String) (setup : Option Setup) (inSet : Bool) :
-    Option String :=
+script's text and `setup` its setup, if it has one of its own (the module
+docs). None when it may run. -/
+def refusal? (fixture : Parts) (script : String) (setup : Option Setup) : Option String :=
   let held := placeholders script
   let replaced := (setup.map Setup.replaces).getD #[]
   let unreplaced := held.filter (!replaced.contains ·)
@@ -308,9 +304,8 @@ def refusal? (fixture : Parts) (script : String) (setup : Option Setup) (inSet :
     if fixture.expected.isNone && checks == 0 then
       some s!"{fixture.script} has no expected file and no after-check"
     else
-      if !inSet && (script.splitOn "\n").any endsProcess then
-        some
-          s!"{fixture.script} aborts or waits for a restart, which a stepped run cannot do, and has no entry in the real-thread set (Editor.Test.Fixture.RealThread)"
+      if (script.splitOn "\n").any endsProcess then
+        some s!"{fixture.script} aborts or waits for a restart, which a stepped run cannot do"
       else none
 
 /-- The lines of a text as `$(…)` and `diff` see them: split at line feeds,
@@ -336,36 +331,5 @@ def firstDifference? (expected actual : Array String) : Option String :=
       | none, none =>
         pure ()
     return none
-
-/-- The lines only one side holds, as `diff` puts them: each line of `left`
-not at the same place in `right`, with its number, marked `<`, then each of
-`right` not at the same place in `left`, marked `>`. Empty when they are the
-same. -/
-def bothWays (left right : Array String) : Array String :=
-  Id.run do
-    let mut said := #[]
-    for index in [0:left.size] do
-      if right[index]? != some left[index]! then
-        said := said.push s!"< {index + 1}: {left[index]!}"
-    for index in [0:right.size] do
-      if left[index]? != some right[index]! then
-        said := said.push s!"> {index + 1}: {right[index]!}"
-    return said
-
-/-- What is wrong with a runner entry's CLI output `cli`, against its
-stepped run `stepped` and its expected file `expected`: the lines each side
-alone has, both ways, and the first difference of the CLI's output from the
-expected file, which holds even when the two runs agree. Empty when the
-three agree. -/
-def compared (cli stepped expected : Array String) : Array String :=
-  let both := bothWays cli stepped
-  let differs :=
-    if both.isEmpty then #[]
-    else
-      #["the CLI over a real loop thread (<) and the stepped run (>) printed otherwise: " ++
-          "; ".intercalate both.toList]
-  match firstDifference? expected cli with
-  | some difference => differs.push s!"the CLI's output is not its expected file: {difference}"
-  | none => differs
 
 end Editor.Test.Fixture

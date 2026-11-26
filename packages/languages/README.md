@@ -41,9 +41,7 @@ The package is what registers it. Its declaration keeps its name,
   [`LanguagesTest/Languages/Compiled.lean`](LanguagesTest/Languages/Compiled.lean),
   which mirrors the library module: the package registers the shipped
   languages in order, the `code` mode, and no command.
-- It has no headless fixture of its own. The core's
-  `tests/headless/open-file`, run on the default set's editor, opens files
-  in the mode `code`.
+- It has no headless fixture of its own.
 
 ## Dropping it
 

@@ -13,7 +13,7 @@
 #   package evil's (packages/evil/, features-as-packages phase 7), so the
 #   headless mode and `--probe` each print `editor: no input scheme is
 #   installed: no package of this editor's package set supplies one` on
-#   stderr and exit 1 (tests/headless/no-input-scheme; docs/design/packages.md,
+#   stderr and exit 1 (docs/design/packages.md,
 #   "Input schemes"). While the core supplied the scheme, two fixtures ran
 #   on this editor, tests/headless/core-themes and
 #   tests/headless/core-ex-names; they are retired, and what they showed

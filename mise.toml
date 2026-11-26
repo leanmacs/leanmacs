@@ -153,9 +153,9 @@ run = [
   "sh ../tools/package-set.sh build ../tests/packages",
   # The editor of the set that holds no package, tests/empty-set, which
   # requires the core alone: the default set with its packages dropped,
-  # evil, which supplies the input scheme, among them. `ffi-test` runs it
-  # (tests/headless/no-input-scheme) to show that an editor of a set with
-  # no input-scheme package refuses to start.
+  # evil, which supplies the input scheme, among them. That it builds shows
+  # the core links an editor with no package; that such an editor refuses
+  # to start is ModelTest's (lean/ModelTest/Editor/Executable/Refusal.lean).
   "lake -d ../tests/empty-set build --wfail :editor",
 ]
 
@@ -221,12 +221,12 @@ run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xa
 # tasks ran beside it; it is to come down once a run on the runner confirms
 # the new time.
 [tasks.launcher]
-description = "Build the app's launcher and its test helper, release (crates/editor-launch-std: leanmacs and launch-probe), for the gate's restart entries"
+description = "Build the app's launcher and its test helper, release (crates/editor-launch-std: leanmacs and launch-probe), for `mise run edit`"
 run = "cargo build --quiet --locked --release -p editor-launch-std --bins"
 
 [tasks.ffi-test]
-description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), the editor executable built from the default package set, the headless fixtures under tests/headless on the set's fixture harness, stepped on the fakes, with the real-thread set's CLI runs and the window scenarios, one case each (tools/wiring-runs.sh: the runner's four compared both ways through the CLI and fixture-test compare, the others through the CLI, the restart through the launcher), and the linked test and headless fixtures of each package of the fixture set, which names every default package, so each linked test runs once, then the default set's headless fixtures alone (tools/package-set.sh --no-linked)"
-depends = ["lean", "launcher"]
+description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), cargo-deny over each set's generated crate, the headless fixtures under tests/headless on the default set's fixture harness, stepped on the fakes, and the linked test and headless fixtures of each package of the fixture set, which names every default package, so each linked test runs once, then the default set's headless fixtures alone (tools/package-set.sh --no-linked)"
+depends = ["lean"]
 dir = "lean"
 # Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max).
 timeout = "300s"
@@ -296,18 +296,9 @@ run = [
   # "How the gate runs a fixture"): the default set's fixture harness
   # (`fixture-test`, linked by `lean`) runs each stepped, on the fakes,
   # against its expected file and its setup's after-checks
-  # (`Editor.Test.Fixture.Setup`), but those the real-thread set
-  # (`Editor.Test.Fixture.RealThread`) leaves to the CLI, whose lines
-  # follow. It exits 1 on a fixture that differs, naming the first line, on
-  # a stale entry, and for a root that holds no fixture.
+  # (`Editor.Test.Fixture.Setup`). It exits 1 on a fixture that differs,
+  # naming the first line, and for a root that holds no fixture.
   "../packages/.lake/build/bin/fixture-test \"$(lean --print-prefix)\" .lake/build/lib/lean --repo .. run ../tests/headless",
-  # The CLI's runs over a real loop thread and the window scenarios, the
-  # wiring set's (tools/wiring-runs.sh, which holds the lines that were
-  # here, one case each, with their comments): what a case builds staged
-  # once, then every case run once, each passing or failing by its status.
-  # That each entry at ffi-test and each scenario has its case is a
-  # reviewer rule (.agents/rules/structure.md, "The wiring set's runs").
-  "dir=$(mktemp -d) && trap 'chmod -R u+w \"$dir\" 2>/dev/null; rm -rf \"$dir\"' EXIT && sh ../tools/wiring-runs.sh prepare \"$dir\" && sh ../tools/wiring-runs.sh run \"$dir\"",
   # The display fixture: the scene `editor-layout`'s own test lays out
   # (crates/editor-layout/tests/frame_fixture.rs), published from Lean
   # through the display's real binding, must give the frame checked in at
@@ -346,6 +337,36 @@ run = [
   # own harness and no linked test runs twice.
   "sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
   "sh ../tools/package-set.sh --no-linked run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
+]
+
+# The window scenarios of the wiring set (`FfiTest.windowScenarios`,
+# lean/FfiTest/Editor/Window/Real.lean), one line each: the window mode's
+# wiring, `Editor.Window.host`, on the library's scripted platform, each a
+# process of its own with a real editor loop thread. Each opens no window
+# of the desktop's and passes by its exit status; a scenario handed a file
+# or a config directory it may write runs on a copy in a temporary
+# directory of its own. That every scenario has its line here is a
+# reviewer rule (.agents/rules/structure.md, "The wiring set's runs"). It
+# runs the built ffi-test alone, so it needs just `lean` before it. The
+# time limit is a guard against a hang only: each takes a second or two.
+[tasks.window-scenarios]
+description = "Run each window scenario of ffi-test (FfiTest.windowScenarios: the window mode's wiring on the library's scripted platform), each by its exit status"
+depends = ["lean"]
+dir = "lean"
+timeout = "120s"
+run = [
+  ".lake/build/bin/ffi-test window-host ../tests/headless/ex/note.txt",
+  # With no file, as Finder starts the app.
+  ".lake/build/bin/ffi-test window-host",
+  ".lake/build/bin/ffi-test window-host-config \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/title-bar/config",
+  ".lake/build/bin/ffi-test window-host-restart \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/title-bar/config",
+  ".lake/build/bin/ffi-test window-host-base \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/base/config",
+  ".lake/build/bin/ffi-test window-host-generate \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/title-bar/config",
+  # As the default set's editor and the fixture set's start it when run
+  # directly, finding their `.olean` directories by default.
+  ".lake/build/bin/ffi-test window-host-direct ../packages/.lake/build/bin/editor \"$(lean --print-prefix)\" ../tests/window/title-bar/config",
+  ".lake/build/bin/ffi-test window-host-direct ../tests/packages/.lake/build/bin/editor \"$(lean --print-prefix)\" ../tests/window/title-bar/config",
+  ".lake/build/bin/ffi-test window-host-undrawn ../tests/headless/ex/note.txt",
 ]
 
 # The build ID (crates/editor-release, `build_id`): LEANMACS_BUILD_ID when
@@ -643,10 +664,9 @@ run = "tools/user-link-check.sh lean"
 # Opt-in, never part of `ci` or hk.pkl: it runs for hours and loads every
 # core. The stress loop (tools/stress.sh; docs/dev-practices/on-demand-checks.md,
 # "The stress loop, on demand"): `mise run stress -- <rounds> [suite ...]`
-# runs the wiring set, read from code (its five default suites: config-test's
-# and ffi-test's wiring groups and the window scenarios, contract-test, each
-# linked test's wiring groups, and the CLI's runs of the real-thread
-# entries at ffi-test;
+# runs the wiring set, read from code (its four default suites: config-test's
+# and ffi-test's wiring groups and the window scenarios, contract-test, and
+# each linked test's wiring groups;
 # docs/dev-practices/real-thread-checks.md, "How the set runs"), or the
 # suites named (`rust`, `gate-ffi` for the whole of ffi-test), that many
 # times under `2 x cores` `yes` hogs at lowered priority, decides each run
@@ -1229,7 +1249,7 @@ run = [
 
 [tasks.ci]
 description = "The whole gate; the pre-commit hook and `hk check` run this, and it gates review and landing (rdm's dispatch.verify)"
-depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "c-fmt", "workflow-lint"]
+depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "window-scenarios", "c-fmt", "workflow-lint"]
 
 # Never part of `ci` or hk.pkl: `linux-ci` runs `ci` in a copy of the
 # checkout with no history, where a history scan has nothing to read.

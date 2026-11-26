@@ -22,7 +22,7 @@
 #
 # And once, after the set `Editor`, the bundle as it is shipped: five runs
 # of a staged bundle's headless mode, with `env -i`, as the app runs
-# it, on each of two configs: `tests/headless/generate`, whose root imports
+# it, on each of two configs: `tests/bench/generate`, whose root imports
 # `Editor` alone, so the editor elaborates it on the base it starts with;
 # and `tests/headless/bundle`, whose root imports `Lean`, so the base grows
 # to hold it. For each, the median real time and the largest maximum
@@ -225,10 +225,10 @@ for set in "Editor" "Editor Lean"; do
     mkdir -p "$work/elsewhere"
     # Two configs: one whose root imports `Editor` alone, and one whose root
     # imports `Lean`, on which the base grows.
-    for fixture in generate bundle; do
+    for fixture in bench/generate headless/bundle; do
       rm -rf "$work/config"
-      cp -R "$lean_dir/../tests/headless/$fixture/config" "$work/config"
-      cp "$lean_dir/../tests/headless/$fixture/script" "$work/script"
+      cp -R "$lean_dir/../tests/$fixture/config" "$work/config"
+      cp "$lean_dir/../tests/$fixture/script" "$work/script"
       : >"$work/real"
       : >"$work/rss"
       for _ in 1 2 3 4 5; do

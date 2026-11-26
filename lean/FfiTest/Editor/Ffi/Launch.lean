@@ -8,8 +8,8 @@ The tests of `Editor/Ffi/Launch.lean`: `ffiLaunchChecks`. The root module
 `FfiTest` runs them, and each list's own doc says what it checks.
 
 A successful exec cannot run inside `ffi-test`, which it would replace: the
-launcher's Rust contract (`crates/editor-launch-std/tests/contract.rs`) and
-the gate's restart fixtures (`tests/headless/restart`) pin that.
+launcher's Rust contract (`crates/editor-launch-std/tests/contract.rs`)
+pins that.
 -/
 
 namespace FfiTest

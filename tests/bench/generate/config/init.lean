@@ -1,7 +1,7 @@
 -- A config directory that holds only its root. An editor that may write
 -- here creates the directory's `lakefile.toml` and `lean-toolchain` before
--- it elaborates this file; the gate runs it on a temporary copy of this
--- directory, never here (tools/config-package-check.sh).
+-- it elaborates this file; it is run on a temporary copy of this
+-- directory, never here (tests/bench/generate/script).
 
 import Editor
 

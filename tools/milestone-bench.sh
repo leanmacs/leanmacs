@@ -26,7 +26,7 @@ editor="$lean_dir/../packages/.lake/build/bin/editor"
 sysroot=$(cd "$lean_dir" && lean --print-prefix)
 oleans="$lean_dir/.lake/build/lib/lean"
 config="$lean_dir/../tests/headless/config"
-small="$lean_dir/../tests/headless/milestone/source.txt"
+small="$lean_dir/../tests/bench/milestone/source.txt"
 
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
