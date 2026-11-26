@@ -28,8 +28,8 @@ not; 2 for a command line that is not the two directories, with `--write`
 after them or not. The exit is explicit, as the core's picture scenario's
 is: a task of the library may still be running. -/
 def main (arguments : List String) : IO UInt32 := do
-  -- No module of the wiring set: it lists none (`tools/package-set.sh
-  -- wiring-modules`), and the stress loop's `linked-wiring` skips it.
+  -- No module of the wiring set: it lists none, so `tools/package-set.sh
+  -- --wiring run`, the stress loop's `linked-wiring`, skips it.
   if arguments == ["wiring-modules"] then
     return 0
   let write ←

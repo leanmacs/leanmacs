@@ -618,8 +618,9 @@ def windowScenarios.realHost : Editor.RealHost :=
 /-- The window scenarios, each a subcommand of `ffi-test` that parses its
 own arguments (`Editor.Scenario`): how the root's `main` reaches them, as
 the build's `linter.wiringSet` requires, and what `ffi-test
-wiring-scenarios` lists for the gate's once-check and the stress loop
-(`tools/wiring-runs.sh`). -/
+wiring-scenarios` lists for reviewers holding each to its case in
+`tools/wiring-runs.sh` (`.agents/rules/structure.md`, "The wiring set's
+runs"). -/
 def windowScenarios : List Editor.Scenario :=
   [{  command := "window-host"
       run := fun

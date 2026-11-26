@@ -80,10 +80,8 @@ the gate runs this executable (`syntaxFixtures`).
 Its checks are a check set (`EvilTest.Linked.checks`, `Editor.CheckGroup`,
 `docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
 the lists of its modules of the wiring set in groups of their module, which
-the build's `linter.wiringSet` holds true and complete. A run prints, after
-its count, `wiring-set: ran evil <module> <n> checks` for each module of
-the wiring set it ran, which the gate's once-check reads
-(`tools/wiring-ledger.sh`). With `--wiring` after the two directories it
+the build's `linter.wiringSet` holds true and complete. With `--wiring`
+after the two directories it
 runs those groups alone, the stress loop's `linked-wiring` suite
 (`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
 modules, one a line, building nothing.
@@ -140,9 +138,7 @@ def EvilTest.Linked.checks : List (Editor.CheckGroup EvilTest.Linked.Context Evi
       EvilTest.Linked.evilChecks context ++ EvilTest.Linked.evilLeaderChecks context]
 
 /-- Runs the checks `mode` selects from the check set
-(`Editor.CheckGroup.select`), and says which failed, or how many passed;
-then a line for each module of the
-wiring set the run ran (`Editor.CheckGroup.ranLines`). -/
+(`Editor.CheckGroup.select`), and says which failed, or how many passed. -/
 private def EvilTest.Linked.runSelected (sysroot oleans : String) (mode : Editor.CheckGroup.Mode) :
     IO UInt32 := do
   let fixtures ← IO.FS.realPath syntaxFixtures
@@ -156,10 +152,6 @@ private def EvilTest.Linked.runSelected (sysroot oleans : String) (mode : Editor
             IO.eprintln s!"FAILED: {name}"
           if failed.isEmpty then
             IO.println s!"evil linked test: {checks.length} {mode.what} passed"
-          for line in
-            Editor.CheckGroup.ranLines "evil" (Editor.CheckGroup.wiring EvilTest.Linked.checks)
-              (context, fixtures) do
-            IO.println line
           return failed)
         (imports := #[`Editor, `Evil.EditorPackage])
   (← IO.getStdout).flush

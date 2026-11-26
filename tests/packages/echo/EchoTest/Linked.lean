@@ -24,10 +24,8 @@ so, counting the contract's properties.
 Its checks are a check set (`EchoTest.Linked.checks`, `Editor.CheckGroup`,
 `docs/dev-practices/real-thread-checks.md`, "How stress runs the set"):
 the lists of its modules of the wiring set in groups of their module, which
-the build's `linter.wiringSet` holds true and complete. A run prints, after
-its count, `wiring-set: ran echo <module> <n> checks` for each module of
-the wiring set it ran, which the gate's once-check reads
-(`tools/wiring-ledger.sh`). With `--wiring` after the two directories it
+the build's `linter.wiringSet` holds true and complete. With `--wiring`
+after the two directories it
 runs those groups alone, the stress loop's `linked-wiring` suite
 (`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
 modules, one a line, building nothing.
@@ -47,9 +45,7 @@ def EchoTest.Linked.checks : List (Editor.CheckGroup Editor.Job.Completions Echo
 /-- Runs the checks `mode` selects from the check set
 (`Editor.CheckGroup.select`) over the services and
 pump, started here, and says which failed, or that the contract's
-properties held; then a line for each module of the wiring set the run ran
-(`Editor.CheckGroup.ranLines`), and that the pump ended once the queues
-were quit. The exit is explicit, after the queues are quit, as the core's
+properties held, and that the pump ended once the queues were quit. The exit is explicit, after the queues are quit, as the core's
 linked tests' is: a task may still be blocked in the library. -/
 private def EchoTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : IO UInt32 := do
   let services ← Editor.Test.Linked.Services.start
@@ -60,10 +56,6 @@ private def EchoTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : IO UIn
   if failed.isEmpty then
     IO.println
         s!"echo linked test: the contract's {Echo.Contract.properties.length} properties hold on the Rust-backed binding, each request completed through the completion queue"
-  for line in
-    Editor.CheckGroup.ranLines "echo" (Editor.CheckGroup.wiring EchoTest.Linked.checks)
-      services.completions do
-    IO.println line
   (← IO.getStdout).flush
   let stopped ← services.stop
   unless stopped do

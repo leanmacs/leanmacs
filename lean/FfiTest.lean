@@ -128,15 +128,6 @@ def checks : List (Editor.CheckGroup Unit Check) :=
         paddingChecks () ++
         renderChecks ()]
 
-/-- Runs `selected` as `run` does under the name `scenario`, then prints a
-line for each module of the wiring set it ran (`Editor.CheckGroup.ranLines`);
-its exit status. -/
-def runSelected (scenario : String) (selected : List Check) : IO UInt8 := do
-  let status ← run scenario selected
-  for line in Editor.CheckGroup.ranLines "ffi-test" (Editor.CheckGroup.wiring checks) () do
-    IO.println line
-  return status
-
 /-- The `theme-pictures` scenario: the theme picture check
 (`Themes.Picture.themePicturesScenario`) over the reference images in
 `dir` and the font file `font`, on the theme `default` (`defaultRoles`),
@@ -177,7 +168,7 @@ def main (args : List String) : IO UInt32 := do
   match Editor.CheckGroup.Mode.ofSubcommand? args with
   | some mode =>
     let name := if mode == .wiring then "ffi-test wiring" else "ffi-test"
-    let status ← FfiTest.runSelected name (Editor.CheckGroup.select mode FfiTest.checks ())
+    let status ← FfiTest.run name (Editor.CheckGroup.select mode FfiTest.checks ())
     if status == 0 && mode == .all then
       return 0
     else
