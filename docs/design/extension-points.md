@@ -232,7 +232,13 @@ extension points is:
 - **A choice** uses one value, by name (`named`), as Emacs uses
   `completing-read-function` and as the editor uses `useStyle`. The latest
   registration of a name wins, so config's value replaces a package's value
-  of the same name.
+  of the same name. `agents-api`'s agent registration point,
+  `AgentsApi.Agent`, is one (`AgentsApi.Agent.named`, the pure choice
+  `AgentsApi.Agent.choose`): an agent is chosen by its name, and config's
+  agent of a name replaces a package's. Its fields are everything a session
+  is started with (the program, its arguments, its environment and the MCP
+  servers), and none for a session mode or the agent's own configuration
+  ([agent-hosting.md](agent-hosting.md), "The ACP client, as built").
 
 ### How the values travel
 

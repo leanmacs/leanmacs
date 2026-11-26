@@ -1832,7 +1832,7 @@ package's tests are by convention are in
   only when it runs, so when the file is gone and the archive is fresh the
   build cleans the generated crate and builds it again (`buildRust` in
   `lean/lakefile.lean`). `ffi-test` deletes the fixture set's file
-  (`target/editor-rust/echo/native-static-libs`), builds `lake -d
+  (`target/editor-rust/echo-acp/native-static-libs`), builds `lake -d
   ../tests/packages build --wfail :editorRust`, and requires the file back
   holding the same line, which names `-lz`. It is the one step of
   `ffi-test` that builds: it runs Cargo alone, on an archive `lean` built,

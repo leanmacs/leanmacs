@@ -429,10 +429,17 @@ that holds the process's one process service provides it:
   (`EchoTest/Linked/Echo/Packages.lean`), and the crate's lib test of an
   attach cancelled while its consumer is held in a pull.
 - **Threads.** Each child keeps its waiter, two readers and its writer,
-  and the consumer adds its own: for ACP one thread that runs the
-  protocol's connection (the SDK's future under a plain `block_on`, no
-  runtime, [agent-hosting.md](agent-hosting.md), "The ACP spike") and one
-  that pulls into it. Six or so a session, for a handful of sessions.
+  and the consumer adds its own. For ACP, as built (acp-agents phase 4),
+  `acp-service`'s real connector (`Threads`, `packages/acp/rust/src/lib.rs`)
+  starts two a session: `acp-session`, which runs the protocol's connection
+  (the SDK's future under a plain `futures::executor::block_on`, no
+  runtime) and writes every line the SDK sends straight through
+  `ChildStreams::write`, so the child has one writer; and `acp-pull`, which
+  pulls the child's standard output into the connection's lines and drops
+  its standard error (`src/stream.rs`). Both end once the child has; those
+  that have ended are joined at the next session's start. Six or so a
+  session, for a handful of sessions. The crate's tests run the same
+  session future on a `LocalPool` the test steps on its own thread.
 
 **`Content-Length` framing**, which an LSP client needs, is the third
 `Framing` beside `Lines` and `Bytes`, in `editor_service::frame`:
@@ -539,9 +546,12 @@ first prompt (its list of commands), and a tool call's update carries the
 edited file whole, in its diff and again in `_meta`
 ([agent-hosting.md](agent-hosting.md), "The ACP spike"), so a line is
 about three times the largest file it edits. A line longer than the bound
-kills the agent (`LineTooLong`). The bound for an agent's stream must be
-megabytes, not kilobytes, and whether an over-long line should end the
-session or be skipped is the ACP roadmap's to decide.
+kills the agent (`LineTooLong`). Decided (acp-agents phase 4): the bound is
+sixteen mebibytes a stream (`AgentsApi.lineBound`), which takes files of
+about 5 MB, and an over-long line ends the session (`ended lineTooLong`),
+never is skipped: skipping a JSON-RPC line could drop a response and
+leave a request waiting for ever, while ending is safe and seen
+([agent-hosting.md](agent-hosting.md), "The ACP client, as built").
 
 ## Files and watching
 

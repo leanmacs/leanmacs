@@ -593,9 +593,10 @@ globs = ["Config.+"]
   `completion`'s, `mode-line`'s, `minibuffer`'s, `shipped-themes`',
   `execute-command-api`'s, `execute-command`'s, `binding-search-api`'s,
   `binding-search`'s, `compile`'s, `at-point`'s and `languages`'), and the
-  fixture set's forty-nine, the core's, `greeting-api`'s, `greeting`'s,
-  `greeting-loud`'s, `echo`'s, the default set's forty-three in that order,
-  and `word-count`'s, each holding its package's modules.
+  fixture set's fifty-one, the core's, `greeting-api`'s, `greeting`'s,
+  `greeting-loud`'s, `echo`'s, the opt-in `agents-api`'s and `acp`'s, the
+  default set's forty-three in that order, and `word-count`'s, each holding
+  its package's modules.
 - **A directory given on the command line is a search path**, one
   directory or several joined with `:`, and outside a bundle the recorded
   directories are searched after the ones given (`ModuleLookup.resolve`).
@@ -1871,11 +1872,13 @@ guide quotes.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the twenty-five default packages and the eleven interface packages, then `word-count` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the opt-in packages `agents-api` and `acp` (below), then the default set, and through it the twenty-five default packages and the eleven interface packages, then `word-count` |
 | `tests/packages/greeting-api/` | The interface package `greeting-api` (`keywords = ["editor-interface"]`): the name `greeting-reply` (`GreetingApi.replyName`) and every name it declares (`GreetingApi.names`); in its test library, the fake `GreetingApiTest.fake` and the contract check `GreetingApiTest.contractChecks`, and its test driver, which holds the fake to the contract and shows the contract refuse a package that lacks or misspells the name. It has no entry module and registers nothing |
 | `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
 | `tests/packages/echo/` | The Lake package `echo`, which holds Rust ("Rust in a package", below): its crate `echo-service` (`rust/`), its glue (`ffi/glue.c`), the port of its service with a pure model, a contract and the Rust-backed binding, its test driver (`EchoTest/Model.lean`) and its linked test (`EchoTest/Linked.lean`). Its crate also takes over a streaming child a job opened, through `editor-service`'s stream source alone (`rust/src/attach.rs`, bound as `Echo.Real.attach` and `attachTake`), which the linked test's wiring module `EchoTest/Linked/Echo/Real/Attach.lean` runs. It registers the package `echo`: the jobs and commands `echo-say` and `echo-attach`, `echo-attach-cancel`, and its service, which a running job reaches through the runner's package port (`Package.services`; "Behind a port, so it stays replaceable", below) |
+| `packages/agents-api/` | The interface package of agents (`keywords = ["editor-interface"]`), opt-in and outside the default set: the plain events and orders of a session, the agent registration point `AgentsApi.Agent`, and the package service `agents` with its request vocabulary, its replies and the job wrappers (`AgentsApi/Job.lean`). Its test library publishes the protocol's pure model with three theorems (`AgentsApiTest/Protocol.lean`, `Protocol/Theorems.lean`), the service's fake built on that model (`AgentsApiTest/Fake.lean`, handed a stepped stage as a package's own fake, `Job.PackageFake`) and the contract (`AgentsApiTest/Contract.lean`); its linked test runs a session over the fake on the stepped host (`AgentsApiTest/Linked.lean`). It registers nothing ([agent-hosting.md](agent-hosting.md), "The ACP client, as built") |
+| `packages/acp/` | The implementation of `agents-api`'s service over the Agent Client Protocol's Rust SDK, opt-in and outside the default set, which holds Rust ("Rust in a package", below): its crate `acp-service` (`rust/`), which pins the SDK and keeps its types inside, its glue (`ffi/glue.c`), the codec of the crate's text (`Acp/Codec.lean`), the service over the binding (`Acp/Service.lean`, `Acp/Real.lean`), its test driver (`AcpTest/Model.lean`) and its linked test (`AcpTest/Linked.lean`), which runs `agents-api`'s contract and a whole session on the real crate over a scripted agent executable. It registers the package `acp`, which brings the service `agents` and nothing else (`Package.services`). No package imports it |
 | `docs/packages/word-count/` | The Lake package `word-count`, the example the guide to writing a package ([writing-a-package.md](../packages/writing-a-package.md)) quotes: the command `word-count` (`WordCount.lean`), its entry module, its test driver (`WordCountTest/Model.lean`, which runs `WordCountTest/WordCount.lean`) and three fixtures: `count`, the command compiled in; `as-config`, the same code as a config file; and `from-config`, a config that imports the package's module. It has no linked test |
 
 - **A package outside the core is built by the package-set build and its
@@ -2973,9 +2976,10 @@ packages that hold Rust, built on a user's machine, are still packages
 phases 8 and 9's ("Who can build it", below).
 
 A package may need code that exists as a Rust crate, as the agent client
-protocol does: the ACP client could run on the protocol's Rust SDK instead
-of writing JSON-RPC and the protocol's types again in Lean
-([agent-hosting.md](agent-hosting.md), "Open questions"). A package brings
+protocol does: the ACP client runs on the protocol's Rust SDK instead of
+writing JSON-RPC and the protocol's types again in Lean (the package
+`acp`'s crate `acp-service`, [agent-hosting.md](agent-hosting.md), "The
+ACP client, as built"). A package brings
 Rust as a crate of its own, a C file of glue and Lean bindings, and the
 package-set build links all of it into the one executable. A Lean binding is
 an `@[extern]` declaration of a glue function, which turns Lean objects into
@@ -3004,7 +3008,8 @@ way (`lean/lakefile.lean`):
   set: `target/editor-rust/core/` (crate `editor-rust`, archive
   `target/release/libeditor_rust.a`) for a set with none, and
   `target/editor-rust/<packages>/` (`editor-rust-<packages>`) otherwise,
-  `echo`'s being `editor-rust-echo`, archive `libeditor_rust_echo.a`. So
+  `echo`'s alone being `editor-rust-echo`, archive `libeditor_rust_echo.a`,
+  and the fixture set's, `echo`'s and `acp`'s, `editor-rust-echo-acp`. So
   the core's executables, the default set, `tests/empty-set` and every
   linked test of a package without Rust share one archive, the core's
   (`rustlib`). Its `Cargo.toml` is a `staticlib` whose dependencies are
@@ -3104,7 +3109,11 @@ test driver runs the contract against the model, and its linked test
 against the binding over the linked test kit's table of waits and
 completion pump, where each request completes through the completion
 queue. Its port holds no Rust, so splitting it out later is a move of
-modules.
+modules. The first package service an interface package declares is
+`agents` (acp-agents phase 4): `agents-api` owns its request vocabulary,
+its reply types, its fake and its contract, and `acp` implements it over
+its crate, `acp-service` ([agent-hosting.md](agent-hosting.md), "The ACP
+client, as built").
 
 **How a package adds a service a running job reaches.** A package lists
 the services it brings in its record, `Package.services`
@@ -3181,7 +3190,10 @@ package's crate, as built"); `echo`'s crate does it in the fixture set's
 linked test, which shows that a package's crate reaches the core's one
 process service that way. The SDK changes
 major version every month or two, which the exact pin in the root lock
-absorbs, and the port keeps its types out of Lean.
+absorbs, and the port keeps its types out of Lean. Built so in
+acp-agents phase 4: the package `acp`'s crate `acp-service`
+(`packages/acp/rust/`) is the second package crate, after `echo`'s, and
+the root `deny.toml` lets no other crate depend on the SDK.
 
 ### Who can build it
 
@@ -3423,6 +3435,21 @@ points it registers at and reads, and the names it declares or reaches.
 | `compile` | implementation | `minibuffer-api`, `compile-api`, `shell-api` | `Compile.Contribution` | `Compile.Contribution`, `Compile.ProjectCommands`, `FilesApi.Files` | registers the compile mode's commands and its six ex names; reaches `minibuffer-api`'s names and `shell-api`'s history |
 | `at-point` | implementation | `at-point-api`, `evil-api` | none | none | registers `at-point-api`'s names; reaches `insert-newline` and `insert-tab` by `evil-api`'s constants |
 | `languages` | implementation | none | none | none | registers the `code` mode and the languages that ship |
+
+Two first-party packages live under `packages/` and have no row, as they
+are not of the default set: the agents packages, opt-in and built with
+the user's own Cargo (owner decision, 2026-11-26; `packages/lakefile.toml`'s
+header). A user adds both to their own set, whose build asks for rustup's
+Cargo (`cargoRequired`, "Who can build it", below); loading a package's
+native library at run time instead is later work
+(rdm:task/packages-load-native-libraries-at-run-time), and `dlopen` stays
+set aside ("One Rust archive per editor, generated from the set"). The
+fixture set requires both, so the gate covers them.
+
+| Package | Layer | Requires, beside the core | Extension points it registers at | Extension points it reads | Names it declares, or reaches |
+|---|---|---|---|---|---|
+| `agents-api` | interface | none | none | none | declares the point `AgentsApi.Agent`, a choice by name (`AgentsApi.Agent.named`, an `Extension.named`), the package service `agents` (`AgentsApi.serviceName`) with its vocabulary and replies, the protocol's model and theorems, the service's fake and its contract |
+| `acp` | implementation | `agents-api` | none | none | brings the service `agents` (`Package.services`) over its crate `acp-service`; registers nothing; no package imports it |
 
 Review holds this table and the one above to the tree
 ([structure.md](../../.agents/rules/structure.md), "Module map"): a change

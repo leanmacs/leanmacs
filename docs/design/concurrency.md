@@ -2397,9 +2397,30 @@ this order:
 
 The request was withdrawn first, so the crate keeps nothing and posts
 nothing ("a request cancelled first gets none"); a completion it posted
-just before, already on the queue, finds no wait and is dropped. How a
-session's end is shown in the conversation is the ACP roadmap's phase 4: a
-job cannot post once it is cancelled. Pinned on the stepped host with the
+just before, already on the queue, finds no wait and is dropped.
+
+**A session's long poll, and how its end is shown** (acp-agents phase 4).
+A session's job loops on `agents-api`'s `next`, a package wait that is a
+long poll: it completes once the session holds an event, and the crate's
+flush does not wait for it, as echo's does not wait for an attach. Orders
+come from other jobs (`send`), so a prompt does not hold the session job,
+and an answer to a permission request goes out while the prompt is
+pending. When the agent ends by itself, the crate puts `ended` last in the
+final batch, which the session job reads, and a later `next` is refused.
+When the session job is cancelled, the order above holds: the runner
+withdraws its `next` first, then ends the child, and the crate posts
+nothing for the withdrawn wait; the job's own outcome, `cancelled`, is the
+end the editor sees, since a job cannot post once it is cancelled. Inside
+the crate a cancel of the turn (`Order.cancel`) answers every parked
+permission request of the turn `cancelled` and posts each `withdrawn`
+before it sends `session/cancel`. The orders are proved on the protocol's
+model (`agents-api`'s `AgentsApiTest/Protocol/Theorems.lean`), forced on
+the stepped host over the fake, a package's own fake
+(`AgentsApiTest/Linked/AgentsApi/Session.lean`), and in the crate's
+`LocalPool` tests. A long poll holds its job's unit of the host's
+activity for the session's life, as a service wait does, so a real host's
+headless `settle` would not settle while a session is open; that is left
+to phase 5. Pinned on the stepped host with the
 service's fake and the process fake's hand-off (`FakeProcesses.handOff`)
 by `EchoTest/Linked/Echo/Packages.lean`'s two forced orders: (a) the
 consumer held, the job's wait withdrawn at the service before the process

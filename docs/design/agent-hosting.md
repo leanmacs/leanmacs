@@ -67,6 +67,128 @@ package `agents-api`; decided by the owner, 2026-11-23):**
 - Permission policy and presentation.
 - Everything in the agent table.
 
+### The ACP client, as built (acp-agents phase 4)
+
+Two packages, both opt-in: **`agents-api`** (`packages/agents-api/`), the
+interface, and **`acp`** (`packages/acp/`), its implementation, whose crate
+`acp-service` (`packages/acp/rust/`) runs the SDK. The default set requires
+neither (owner decision, 2026-11-26): `acp`'s crate needs Cargo, which the
+app never ships, and the bundle ships the core's prebuilt archive alone. A
+user who wants them adds both to their own set and builds `acp`'s crate
+with their own Cargo, which the package-set build asks for
+(`cargoRequired`); the fixture set (`tests/packages/`) requires them, so
+the gate covers them. Loading a package's native library at run time is
+later work (rdm:task/packages-load-native-libraries-at-run-time).
+
+- **The port is a package service, `agents`** (`AgentsApi.serviceName`),
+  whose vocabulary and reply types `agents-api` owns
+  (`AgentsApi/Request.lean`): `open` hands the service a streaming child a
+  job opened (`AgentsApi.Job.open` starts the agent's command with its
+  input piped and each stream bounded at `AgentsApi.lineBound`) with the
+  session's directory and MCP servers, and answers the session (`Opened`:
+  the service's number for it, the agent's session id, the mode and the
+  modes); `next` waits for the session's next events (`Batch`); `send`
+  hands it an order from any job (`Sent`). `acp` registers the service
+  through `Package.services`, as echo does; consumers import
+  `agents-api` alone, and nothing imports `acp`.
+- **A session is one long-lived job** that opens it and loops on `next`;
+  the session's child is that job's, so it ends with it. `next` is a long
+  poll: a flush of the service does not wait for it, and a second `next` of
+  a session while one is pending is refused at its start. A prompt does not
+  block: `send (.prompt text)` is answered once the prompt is on its way,
+  with its turn, and the turn's end is an event, so an answer to a
+  permission request goes out while the prompt is pending.
+- **The plain events** (`AgentsApi/Event.lean`): a chunk of the reply
+  with its message id; a tool call, whole, its updates merged (the fields
+  present change the held call, and content and locations replace the
+  held ones, so a diff is replaced, never appended); a permission request
+  parked under a ticket in its turn, with the agent's options; a ticket
+  withdrawn by a cancel; usage, with the cost's amount as decimal text;
+  the title; the mode; a turn's end with its stop reason; and the
+  session's end, its last event. Dropped: the commands list, the
+  configuration options, thought chunks, plans, every `_meta`, the agent's
+  standard error, and `auth/status_update` and `_auth/status_update`,
+  which the session registers no handler for, so the SDK ignores them and
+  nothing formats them; the crate installs no logger.
+- **The orders** (`AgentsApi/Order.lean`): `prompt`, `cancel`, `setMode`
+  and `answer ticket optionId`. A cancel answers every parked request of
+  the current turn `cancelled` (posting `withdrawn`), marks the turn
+  cancelled, so a later request of it is answered `cancelled` at once and
+  posted withdrawn, and then sends `session/cancel`. An answer goes
+  straight to the parked `Responder` from the caller's thread, under the
+  tickets' lock; a second answer, or one to a ticket never asked, is
+  refused. A response whose id matches no request the client sent is
+  dropped by the SDK, routed to nobody, and the session goes on.
+- **What the client offers and sends**: `initialize` offers no `fs` and no
+  `terminal` (the SDK's defaults); nothing in the crate sends
+  `session/set_mode`, `session/set_config_option` or `CLAUDE_CONFIG_DIR` by
+  itself, and `AgentsApi.Agent` has no field for a mode or for Claude's
+  config. `setMode` exists because the protocol has it, and goes out only
+  when a caller orders it.
+- **Across the C boundary** the crate's replies are text that `acp` alone
+  defines (`rust/src/event.rs`; one event a line, a kind word and
+  tab-separated escaped `name=value` fields), which `Acp/Codec.lean` reads
+  into `agents-api`'s types; both are pinned on the same golden lines. A
+  line that does not read is a refusal, never a panic. Not JSON, which
+  would need a JSON reader no package's library may import; not glue that
+  builds Lean objects, which would put every field in C.
+- **The line bound** is sixteen mebibytes a stream (`AgentsApi.lineBound`).
+  The adapter's largest observed line is 27,490 bytes and a whole-file
+  edit about three times the file, so this takes files of about 5 MB. A
+  line past it ends the session (`ended lineTooLong`): skipping a JSON-RPC
+  line could drop a response and leave a request waiting for ever, while
+  ending is safe and seen.
+- **How a session's end is shown**: when the agent ends by itself, the
+  crate puts `ended how` last in the final batch, and a later `next` is
+  refused; when the session job is cancelled, the runner withdraws its
+  `next` first, the crate posts nothing, and the job's own outcome,
+  `cancelled`, is the end the editor sees.
+- **The protocol's rules are proved** on a pure model in `agents-api`'s
+  test library (`AgentsApiTest/Protocol.lean`,
+  `AgentsApiTest/Protocol/Theorems.lean`): every response answers exactly
+  one outstanding request, every parked request is answered exactly once,
+  and after a cancel no permission request of that turn is pending. The
+  fake of the service (`AgentsApiTest/Fake.lean`) keeps its bookkeeping
+  with the model's step, and the contract (`AgentsApiTest/Contract.lean`)
+  holds the fake and the crate to the same properties.
+- **Tests**: the crate's session runs on a `LocalPool` its tests step over
+  a scripted transport; the replay of three hand-written fixtures
+  (`rust/tests/fixtures/`) pins what the client sends and the events it
+  produces; a session over the fake runs on the stepped host
+  (`AgentsApiTest/Linked/AgentsApi/Session.lean`); and `acp`'s linked test
+  runs the contract and a whole session on the real crate over a scripted
+  agent executable, a POSIX `sh` script that exits 0 only if it read
+  exactly the lines it expects (`AcpTest/ScriptedAgent.lean`).
+
+### Upgrading the SDK
+
+The SDK is pinned exactly (`agent-client-protocol = "=5.5.1"`, which pins
+its schema at `=1.21.2`), and only `acp-service` may depend on it
+(`deny.toml`). To upgrade: bump the pin, run `cargo test -p acp-service`,
+and treat any change to a `tests/fixtures/*.events` file, or a failed
+replay, as a change of wire shape to review.
+
+The replay fixtures are hand-written and synthetic: the repository is
+public, and no recorded transcript is committed, verbatim or scrubbed
+(owner decision, 2026-11-26). They reproduce the shapes of the adapter
+0.110.0, as a local recording kept out of the repository showed them, and
+of the schema for what that recording lacks (a cancel,
+`current_mode_update`), with placeholder values only
+(`rust/tests/fixtures/README.md`).
+
+- **What they catch**: a change in how the SDK reads or writes the shapes
+  they hold: a renamed or newly required field, an unknown field or
+  method refused (`name`, `_meta`, the auth notifications), a changed id
+  or outcome encoding, or a change in what our client sends.
+- **What they do not catch**: a change in what the adapter sends. They are
+  frozen at the adapter's shapes of 0.110.0 and, being hand-written, can be
+  wrong where their author misread a shape. A new update kind, a renamed
+  adapter field or a new auth flow goes unnoticed until someone runs the
+  real adapter. When the SDK or the adapter changes, compare a fresh local
+  recording, kept out of the repository, with the fixtures' shapes by
+  hand, and update the fixtures with placeholder values only. Phase 5's
+  dogfooding is the first run against the live adapter.
+
 ### What ACP does not cover
 
 | Gap | How it is filled |
@@ -89,8 +211,10 @@ below).
 
 A time-boxed spike checked the SDK, the stream hand-off and what Claude
 Code's adapter sends. Its code and the scrubbed transcripts are on the
-spike's branch under `spike/` (not landed); the transcripts are to seed
-the client's fixture tests. Each fact says how it is known.
+spike's branch under `spike/` (not landed). The transcripts were to seed
+the client's fixture tests; the owner decided on 2026-11-26 that no
+recorded transcript is committed, so the fixtures are hand-written
+("Upgrading the SDK"). Each fact says how it is known.
 
 **The SDK** (read in the source of 5.5.1 and on crates.io; the stream point
 proved by running code):
@@ -98,7 +222,7 @@ proved by running code):
 | | |
 |---|---|
 | Crates | `agent-client-protocol` 5.5.1 (2026-11-21), the connection, from github.com/agentclientprotocol/rust-sdk; it pins the wire types, `agent-client-protocol-schema`, exactly (`=1.21.2`) and re-exports them as `agent_client_protocol::v1::schema`, which is how they are to be named. Its `-derive` crate comes with it; `-rmcp`, `-conductor`, `-http` and others are separate and not needed |
-| Licence | Apache-2.0 for the three crates it pulls in; the rest of its normal tree is MIT, Apache-2.0, Zlib, Unlicense OR MIT and Unicode-3.0. All are compatible with the editor's GPL-3.0-or-later. `deny.toml` checks bans only, no licences, so nothing in the gate would catch a change |
+| Licence | Apache-2.0 for the three crates it pulls in; the rest of its normal tree is MIT, Apache-2.0, Zlib, Unlicense OR MIT and Unicode-3.0. All are compatible with the editor's GPL-3.0-or-later. `deny.toml` checks bans only: checking licences waits on the owner's call on MPL-2.0 (`nucleo-matcher`, already in the tree), so acp-agents phase 4 checked the SDK's licences by hand and filed a task. Advisories, run by hand once then (`cargo deny check advisories`, which needs the network, so no gate step): none in the SDK's tree; the one finding, RUSTSEC-2026-0192 (`ttf-parser` unmaintained), comes through winit |
 | Edition, MSRV | 2024, `rust-version = 1.88.0` |
 | Runtime | None. No default features; tokio is a dev-dependency only. The connection is one future the caller polls (`futures::executor::block_on` on a plain thread in the spike); its tasks run inside that future. Everything is `Send`; no `spawn_local`, no `LocalSet` |
 | Streams it did not open | Yes. `connect_with` takes any transport: `ByteStreams` over futures-io `AsyncRead`/`AsyncWrite`, `Lines` over a `Sink<String>` and a `Stream` of lines, or a channel of frames. The spike fed `Lines` from a plain thread doing blocking reads, as a consumer pulling a handed-over child would, and wrote through another plain thread |
@@ -411,20 +535,22 @@ pins that with the mode off no watch is open; the phase is
   Claude Code's adapter does: from the tool call's final diff and its
   `_meta` patch, reconciled with the buffer as an external change. Whether
   the adapter can be made to use `fs/write_text_file` is unchecked.
-- **The line bound** for an agent's stream: a line is about three times
-  the largest file an edit touches, and a line past the bound ends the
-  agent ([rust-library.md](rust-library.md), "Handing a streaming child to
-  a package's crate, as built").
+- **The line bound** for an agent's stream: decided, sixteen mebibytes,
+  and a line past it ends the session ("The ACP client, as built";
+  [rust-library.md](rust-library.md), "The bound for ACP").
 - **The user's Claude settings**: decided 2026-11-23, no longer open. The
   editor uses the host's Claude settings as they are, with no session mode
   and no config of its own ("The ACP spike", "The user's environment leaks
   in").
 - **Non-standard notifications** (`auth/status_update`,
-  `_auth/status_update`) carry account details; the client should ignore
-  them and never log them unscrubbed.
-- **Keeping up with the SDK**: four major versions in five months. Who
-  upgrades it, and how the fixture transcripts catch a change of wire
-  shape, is open.
+  `_auth/status_update`) carry account details: decided, the client drops
+  them before anything formats them ("The ACP client, as built").
+- **Keeping up with the SDK**: four major versions in five months.
+  Answered for the SDK's side: the exact pin and the replay of the
+  hand-written fixtures catch a change in how it reads or writes the
+  shapes they hold ("Upgrading the SDK"). Still open: noticing a change in
+  what the adapter sends, which only a run against the live adapter shows;
+  no recurring check of it is planned.
 - **A detached supervisor**: should agent processes be children of the
   editor, or of a small separate process that outlives it, as VS Code now
   does? Persisted records plus resume may be enough at first.
