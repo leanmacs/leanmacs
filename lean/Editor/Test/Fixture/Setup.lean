@@ -289,6 +289,12 @@ def endsProcess (line : String) : Bool :=
   let line := line.trimAscii.toString
   line == "abort" || line == "restarted" || line.startsWith "restarted "
 
+/-- Whether a line of a script is a directive whose subject is the
+library's real parse, which a stepped run, over the syntax service's fake,
+does not do: a `highlights`. -/
+def needsRealParse (line : String) : Bool :=
+  line.trimAscii.toString == "highlights"
+
 /-- Why the harness refuses to run `fixture` stepped, with `script` its
 script's text and `setup` its setup, if it has one of its own (the module
 docs). None when it may run. -/
@@ -306,7 +312,11 @@ def refusal? (fixture : Parts) (script : String) (setup : Option Setup) : Option
     else
       if (script.splitOn "\n").any endsProcess then
         some s!"{fixture.script} aborts or waits for a restart, which a stepped run cannot do"
-      else none
+      else
+        if (script.splitOn "\n").any needsRealParse then
+          some
+            s!"{fixture.script} asks highlights, whose subject is the library's real parse, which a stepped run does not do"
+        else none
 
 /-- The lines of a text as `$(…)` and `diff` see them: split at line feeds,
 with the empty lines at the end dropped. -/

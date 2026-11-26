@@ -621,8 +621,15 @@ echo area (`Running.said`). No script directive sends them.
 `run <name>`, `spawn <name>`, `show`, `scene` and `agree` are requests, and
 `settle`, `settle <milliseconds>`, `join [<seconds>]`, `idle`,
 `journal`, `journalled`, `indexed [<seconds>]`, `installed`,
-`restarted [<seconds>]`, `key <logical> <physical> <modifiers>`,
-`commit <text>` and `resize <width> <height>` are the driver's own. An
+`highlights`, `restarted [<seconds>]`, `key <logical> <physical> <modifiers>`,
+`commit <text>` and `resize <width> <height>` are the driver's own. A
+`highlights` settles, waits for the library to deliver the tree of the
+snapshot the focused view of the last scene shows (`Progress.focused`,
+`Ffi.syntaxSettle`, a wait in the library under the run's patience, which
+makes `Editor.Headless` a subject of that wait's mark), then has the editor
+thread print the faces of that text's captures (`Request.highlights`,
+`highlights`): the readout an installed editor's highlighting is checked by
+(`docs/dev-practices/on-demand-checks.md`). An
 `installed` settles, then fails the run (`Failure.notInstalled`) unless
 the last reload that finished installed its config
 (`Progress.installed`): for a script that must not go on, or exit 0, on a
@@ -827,6 +834,11 @@ inductive Request where
   from run to run, while what was published last does not. A script asks
   for the count only where the publish rule fixes it. -/
   | published
+  /-- Print the faces the focused view's text is drawn in, with their
+  ranges (`Running.highlights`): the second half of the script's
+  `highlights`, which the driver sends once the library has delivered the
+  text's tree. -/
+  | highlights
   deriving DecidableEq, Repr
 
 /-- The render loop a host's frames are drawn by, as its driver reads it:
@@ -1207,6 +1219,7 @@ def Signal.encode : Signal → UInt64 × String
   | .request .workspaces => (11, "")
   | .probe => (12, "")
   | .request .published => (13, "")
+  | .request .highlights => (14, "")
 
 /-- The signal an event's code and text stand for, if they stand for one. -/
 def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
@@ -1225,6 +1238,7 @@ def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
   | 11 => some (.request .workspaces)
   | 12 => some .probe
   | 13 => some (.request .published)
+  | 14 => some (.request .highlights)
   | _ => none
 
 mutual
@@ -2288,6 +2302,52 @@ def agree (collaborators : Collaborators β σ scheme) (running : Running β σ 
     collaborators.emit (agreement scene anchor (before ++ since) (← frameRows view.id))
   return running
 
+/-- What `highlights` prints of the view `view` whose text is drawn in
+`faces` (`Highlight.capturedFaces`): `highlights <view>: <face> <start>..<stop> …`,
+or `none` for a text with no syntax tree. -/
+def highlightsLine (view : ViewId) (faces : Option (Array (FaceName × Nat × Nat))) : String :=
+  match faces with
+  | none => s!"highlights {view.index}: none"
+  | some faces =>
+    let each := faces.toList.map fun (face, start, stop) => s!"{face.name} {start}..{stop}"
+    s!"highlights {view.index}: {" ".intercalate each}"
+
+/-- Prints the faces the focused view's text is drawn in (`highlightsLine`):
+its buffer's tree, its major mode's lineage over its language's tree
+resolved as the loop resolves it (`Loop.Registered.treeOfLanguage`,
+`Mode.syntaxTreeOf`), read with `Highlight.capturedFaces`; `none` for a
+buffer with no tree or a text the library has not attached, and the
+refusal for any other. With no frame, `highlights: no frame`. -/
+def highlights (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
+    IO (Running β σ scheme) := do
+  let some frame := running.frame |
+    collaborators.emit "highlights: no frame"
+    return running
+  let state := frame.state
+  let view := state.frame.focused
+  let some target := state.target? view |
+    collaborators.emit (highlightsLine view none)
+    return running
+  let registered := running.config.registry.registered
+  let buffer := target.buffer
+  let tree :=
+    (buffer.major.bind registered.entering).bind fun lineage =>
+      Mode.syntaxTreeOf lineage (registered.treeOfLanguage state buffer.language)
+  let some tree := tree |
+    collaborators.emit (highlightsLine view none)
+    return running
+  let (read, texts) ←
+    (Highlight.capturedFaces buffer.text tree).runReal running.texts running.display.handle
+        (syntaxTree := running.syntaxTree)
+  match read with
+  | .ok (.ok faces) =>
+    collaborators.emit (highlightsLine view faces)
+  | .ok (.error refusal) =>
+    collaborators.emit s!"highlights {view.index}: refused: {refusal.describe}"
+  | .error refusal =>
+    collaborators.emit s!"highlights {view.index}: refused: {refusal.describe}"
+  return { running with texts }
+
 /-- Prints the commands, the texts and the stores. -/
 def «show» (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) : IO Unit := do
   collaborators.emit (" ".intercalate ("commands:" :: running.config.registry.names.toList))
@@ -2349,6 +2409,7 @@ def request (collaborators : Collaborators β σ scheme) (running : Running β �
     return running
   | .scene => running.scene collaborators
   | .agree => running.agree collaborators
+  | .highlights => running.highlights collaborators
   | .restore named => do
     let some directory := collaborators.stateDirectory | return running
     let arguments := [Argument.str directory.toString] ++ (named.map (.str ·.toString)).toList
@@ -2484,6 +2545,10 @@ structure Progress where
   /-- Whether the last reload that finished installed its config, none
   before one has: what a script's `installed` reads. -/
   installed : Option Bool := none
+  /-- The snapshot the focused view of the last scene published shows, none
+  before a scene is: what a script's `highlights` waits for the library to
+  deliver the tree of (`Running.publishedProgress`). -/
+  focused : Option SnapshotId := none
 
 /-- What the editor thread holds as its loop starts: the config state its
 packages make (`Config.State.ofPackages`: each of `collaborators.packages`
@@ -2546,6 +2611,16 @@ def Running.progress {β σ : Type} {scheme : InputScheme} (running : Running β
     handOver := running.handOver
     installed := running.installed }
 
+/-- `running.progress`, with the snapshot the focused view of the last
+scene published shows (`Progress.focused`): what the loop publishes after
+each event. -/
+def Running.publishedProgress {β σ : Type} {scheme : InputScheme} (running : Running β σ scheme) :
+    BaseIO Progress := do
+  let focused :=
+    (← running.display.last?).bind fun scene =>
+      (scene.focused.bind fun id => scene.views.find? (·.id == id)).map (·.snapshot)
+  return { running.progress with focused }
+
 /-- The loop's end, the editor thread's and a stepped host's alike: nothing
 will deal with a result any more, so every job is cancelled, and every pause
 and the hint delay withdrawn; and the reload job is the loop's, so the end
@@ -2606,7 +2681,7 @@ def loop {β σ : Type} {scheme : InputScheme} (collaborators : Collaborators β
     running ← running.turn collaborators event
     if running.stopped then
       break
-    progress.set running.progress
+    progress.set (← running.publishedProgress)
     -- A marker or a probe the driver waits on is answered once the progress
     -- it reads has been published: one look at the armed marker, and only
     -- after an event that moved the count of markers.
@@ -3428,6 +3503,14 @@ inductive Directive where
   reload, or none finished, ends the script here with status 1, where it
   would otherwise be something to print. The driver's own. -/
   | installed
+  /-- Settle as `settle` does, then wait for the library to deliver the tree
+  of the snapshot the focused view of the last scene shows
+  (`Progress.focused`, `Ffi.syntaxSettle`, a wait in the library, under the
+  run's patience as a hang guard), then ask the editor thread to print the
+  faces its text is drawn in (`Request.highlights`). The driver's own. Its
+  subject is the library's real parse, so the fixture harness refuses it
+  stepped. -/
+  | highlights
   deriving DecidableEq, Repr
 
 /-- The name a directive gives after its keyword, which is the first
@@ -3565,34 +3648,39 @@ def directive? (line : String) : Except String (Option Directive) :=
                                     else
                                       if line == "installed" then .ok (some .installed)
                                       else
-                                        if line == "restarted" || line.startsWith "restarted " then
-                                          match named line 9 with
-                                          | none => .ok (some (.restarted none))
-                                          | some text =>
-                                            match text.toNat? with
-                                            | some seconds => .ok (some (.restarted (some seconds)))
-                                            | none =>
-                                              .error
-                                                s!"`{line}` is not a restarted: expected restarted [<seconds>], one number"
+                                        if line == "highlights" then .ok (some .highlights)
                                         else
-                                          if line == "idle" then .ok (some .idle)
-                                          else
-                                            if line.startsWith "idle " then
-                                              .error
-                                                s!"`{line}` is not an idle: expected idle, with nothing after it: it waits until the host and the render loop are at rest, never for a time"
-                                            else
-                                              if
-                                                  line == "advance" ||
-                                                    line.startsWith "advance " then
-                                                match (named line 7).bind String.toNat? with
-                                                | some milliseconds =>
-                                                  .ok (some (.advance milliseconds))
-                                                | none =>
-                                                  .error
-                                                    s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
-                                              else
+                                          if
+                                              line == "restarted" ||
+                                                line.startsWith "restarted " then
+                                            match named line 9 with
+                                            | none => .ok (some (.restarted none))
+                                            | some text =>
+                                              match text.toNat? with
+                                              | some seconds =>
+                                                .ok (some (.restarted (some seconds)))
+                                              | none =>
                                                 .error
-                                                  s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, published, agree, settle, settle <milliseconds>, join [<seconds>], idle, advance <milliseconds>, journal, journalled, indexed [<seconds>], installed, abort, restarted [<seconds>], key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
+                                                  s!"`{line}` is not a restarted: expected restarted [<seconds>], one number"
+                                          else
+                                            if line == "idle" then .ok (some .idle)
+                                            else
+                                              if line.startsWith "idle " then
+                                                .error
+                                                  s!"`{line}` is not an idle: expected idle, with nothing after it: it waits until the host and the render loop are at rest, never for a time"
+                                              else
+                                                if
+                                                    line == "advance" ||
+                                                      line.startsWith "advance " then
+                                                  match (named line 7).bind String.toNat? with
+                                                  | some milliseconds =>
+                                                    .ok (some (.advance milliseconds))
+                                                  | none =>
+                                                    .error
+                                                      s!"`{line}` is not an advance: expected advance <milliseconds>, one number"
+                                                else
+                                                  .error
+                                                    s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, workspaces, scene, published, agree, settle, settle <milliseconds>, join [<seconds>], idle, advance <milliseconds>, journal, journalled, indexed [<seconds>], installed, highlights, abort, restarted [<seconds>], key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -3995,6 +4083,18 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
         let wait ← await line.number
         if wait == .settled && (← driven.progress).installed != some true then
           return (some (.notInstalled line.number), none)
+        pure wait
+      | .highlights =>
+        let wait ← await line.number
+        if wait == .settled then
+          -- The library's delivery of the focused view's tree, waited for in
+          -- the library, never for time; `false` at once for a text that is
+          -- not attached, whose line then says `none`. Then the editor
+          -- thread reads the captures of the delivered tree.
+          if let some snapshot := (← driven.progress).focused then
+            if let some found← collaborators.published.find? snapshot then
+              discard (Ffi.syntaxSettle found waitGuard)
+          driven.send .highlights
         pure wait
       | .abort =>
         -- The headless mode's ends the process (`abortProcess`); one that

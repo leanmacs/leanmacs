@@ -212,7 +212,9 @@ show:
   search by the library's grep service, each end to end;
 - `realSyntaxChecks` (`ConfigTest/Editor/SyntaxTree/Real.lean`, of the
   wiring set): a parse the library's syntax service delivers makes a real
-  host publish a scene;
+  host publish a scene, and the script's `highlights` on a real host prints
+  the faces of a TOML text's captures once the library delivered its tree,
+  and `none` for a buffer with no syntax tree;
 - `realRunnerChecks` (`ConfigTest/Editor/Headless/Real/Runner.lean`, of the
   wiring set): the CLI's runner over a real loop: a stage's host handed to
   `Headless.run` gets its reload's wake-up, and the run disposes once its
@@ -233,8 +235,8 @@ show:
   that package's own tests'. The ex line through the host
   (`exChecks`, `exScriptChecks`) is the package `ex`'s linked test's
   (`ExTest.Linked`, `packages/ex/`);
-- `scriptChecks`: the headless mode's script (its `indexed` and
-  `workspaces` directives among them) and its driver, and the editor
+- `scriptChecks`: the headless mode's script (its `indexed`, `workspaces`
+  and `highlights` directives among them) and its driver, and the editor
   loop through the host: a commit and the scene it prints, read from the
   library, a scene published after a reload's install and a job's command
   once the frame exists, the scene whose echo is the refusal once a command

@@ -1447,6 +1447,18 @@ wait 2" with
                 (message.splitOn " workspaces,").length == 2
             | .ok _ => false },
     { name :=
+        "highlights is read with no argument, and refused with one, and the error message of a line that is no directive lists it"
+      run :=
+        pure <|
+          (Headless.script "scene\n  highlights  \n").toOption ==
+              some #[⟨1, .request .scene⟩, ⟨2, .highlights⟩] &&
+            (match Headless.script "scene\nhighlights 0" with
+            | .error message => message.startsWith "line 2: "
+            | .ok _ => false) &&
+            match Headless.script "scene\nwait 2" with
+            | .error message => (message.splitOn " highlights,").length == 2
+            | .ok _ => false },
+    { name :=
         "an advance directive is a number of milliseconds, with its line's number; one with no number, two or a part that is no number is refused with its line, and the error message of a line that is no directive lists it"
       run :=
         pure <|

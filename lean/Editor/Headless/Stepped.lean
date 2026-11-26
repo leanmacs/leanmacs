@@ -347,7 +347,7 @@ def withStepped {α β σ : Type} {scheme : InputScheme} (collaborators : Collab
             progress.modify fun progress => { progress with handOver := some plan }
           ending.set (some (.ok ()))
         else
-          progress.set running.progress
+          progress.set (← running.publishedProgress)
       catch error =>
         ending.set (some (.error error))
   let stepped : Stepped :=

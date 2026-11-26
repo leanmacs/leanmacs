@@ -12,8 +12,10 @@ mirrors the real adapter's module, `RealSyntaxTree`.
 back over the library's editor queue. **Why a real thread.** A stepped host
 never pulls that queue, and a stray `parsed` would reach the next real host.
 
-`realSyntaxChecks`: a parse of a highlighted text the library delivers
-makes the real host publish a scene; that a delivered parse publishes one
+`realSyntaxChecks`: the script's `highlights`, which waits on the library's
+delivery of the focused view's tree and prints the faces of its captures;
+and a parse of a highlighted text the library delivers makes the real host
+publish a scene; that a delivered parse publishes one
 scene is the loop's, `ModelTest/Editor/Loop.lean` ("a parse delivered
 leaves the state as it was ... and publishes one scene"). Its helpers,
 `recordedStage` and `withRealRecordedSyntaxTree`, are marked.
@@ -133,8 +135,53 @@ def parseHighlightedTextLibraryCheck (context : Context) : Check :=
           return false
         return (← published) > before + 1 }
 
+/-- A config that defines the mode `toml`, whose syntax tree is the
+compiled-in TOML grammar, and the command `open-toml`, which puts a TOML
+table in the scratch text and sets the focused view's major mode to it. -/
+def tomlText : String :=
+  "def openToml : EditorM Unit := do
+  (⟨0⟩ : TextId).insert 0 \"[package]\\nname = \\\"x\\\"\\n\"
+  discard <| (⟨0⟩ : ViewId).setMajorMode \"toml\"
+
+def setup : SetupM Unit := do
+  defineMode { name := \"toml\", syntaxTree := some { grammar := \"toml\" } }
+  command \"open-toml\" openToml
+"
+
+/-- A check of `realSyntaxChecks`, a declaration of its own. -/
+def highlightsDirectiveCheck (context : Context) : Check :=
+  { name :=
+      "a real host's script that opens a TOML file in the code mode and asks highlights prints the faces of its table header, keys and values at their ranges, after the library delivered its tree; on a buffer with no syntax tree it prints none"
+    run :=
+      -- Wiring only: the directive waits on the library's delivery of the
+      -- focused view's tree and reads its captures through the real
+      -- binding. That it is read, and refused stepped, is
+      -- `scriptChecks`' and `ModelTest.fixtureSetupChecks`'.
+      IO.FS.withTempDir fun directory => do
+        writeConfig directory [("init.lean", tomlText)]
+        let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+        let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
+          return (← RealSyntaxTree.new snapshots).handle
+        let collaborators := { stage.collaborators with syntaxTree }
+        let script ←
+          IO.ofExcept
+              ((Headless.script
+                    "reload\nresize 160 64\nsettle\nhighlights\nrun open-toml\nsettle\nhighlights\n").mapError
+                IO.userError)
+        let (failure, _) ←
+          Headless.runOn
+              (Headless.Hosting.real hangGuard (some hangGuard) IO.eprintln fun _ => pure ())
+              collaborators script hangGuard
+        let lines := (← stage.output.get).filter (·.startsWith "highlights ")
+        saw
+            (failure.isNone &&
+              lines ==
+                #["highlights 0: none",
+                  "highlights 0: syntax.punctuation 0..1 syntax.type 1..8 syntax.punctuation 8..9 syntax.property 10..20 syntax.type 10..14 syntax.operator 15..16 syntax.string 17..20"])
+            s!"failure={repr failure} lines={lines}" }
+
 /-- The checks of the library's syntax service under a real host. -/
 def realSyntaxChecks (context : Context) : List Check :=
-  [parseHighlightedTextLibraryCheck context]
+  [parseHighlightedTextLibraryCheck context, highlightsDirectiveCheck context]
 
 end ConfigTest

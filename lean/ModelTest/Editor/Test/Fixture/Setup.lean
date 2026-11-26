@@ -98,6 +98,13 @@ def fixtureSetupChecks : List Check :=
             named (refusal? (partsOf "t/c/script") "show\n  abort\n" none) "t/c/script" &&
             named (refusal? (partsOf "t/c/script") "restarted 30\n" none) "t/c/script" &&
             refusal? (partsOf "t/c/script") "# abort\nshow\n" none == none },
+    { name := "a script holding highlights is refused stepped, naming it"
+      run :=
+        let refused := refusal? (partsOf "t/d/script") "show\n highlights\n" none
+        return refused ==
+              some
+                "t/d/script asks highlights, whose subject is the library's real parse, which a stepped run does not do" &&
+            refusal? (partsOf "t/d/script") "# highlights\nshow\n" none == none },
     { name :=
         "lines are compared as the shell's diff sees them: trailing empty lines dropped, and the first difference named with its number and both texts"
       run :=

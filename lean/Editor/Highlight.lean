@@ -264,4 +264,31 @@ drops its highlights. -/
 def leave (text : TextId) : EditorM Unit :=
   text.withSnapshot fun snapshot => discard (SyntaxTree.lift (SyntaxTree.detach snapshot))
 
+/-- The faces `text` is drawn in under `syntaxTree`, as a readout: the
+captures over the whole text of its highlights query (the tree's own, or
+the grammar's shipped one), each capture's face by the tree's mapping
+(`faceOf`), with its range; a capture that draws nothing is left out. None
+when the text is not attached, or the grammar ships no highlights query and
+the tree gives none; any other refusal of the port is handed back. What
+the headless mode's `highlights` prints (`Editor/Headless.lean`). -/
+def capturedFaces (text : TextId) (syntaxTree : Mode.SyntaxTree) :
+    EditorM (Except SyntaxTreeError (Option (Array (FaceName × Nat × Nat)))) := do
+  let length := (← text.read).utf8ByteSize
+  text.withSnapshot fun snapshot => do
+      let read : SyntaxTreeM (Option (Array (FaceName × Nat × Nat))) := do
+        let some source ← sourceOf syntaxTree syntaxTree.highlights .highlights | return none
+        withQuery syntaxTree.grammar source fun query => do
+            let names ← SyntaxTree.captureNames query
+            let captures ← SyntaxTree.captures snapshot query 0 length
+            return some <|
+                captures.filterMap fun captured => do
+                  let name ← names[captured.capture]?
+                  let face ← faceOf syntaxTree.captures name
+                  return (face, captured.start, captured.stop)
+      match ← SyntaxTree.lift read with
+      | .error .notAttached =>
+        return .ok none
+      | answer =>
+        return answer
+
 end Editor.Highlight

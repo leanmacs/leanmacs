@@ -815,7 +815,8 @@ The job system is tested here with no Rust library:
   and its config chosen in order, a directory holding no script skipped,
   a fixture with no config refused), the path helpers; the setups' defaults,
   placeholders, substitution and scrubbing, the model a setup makes, the
-  after-checks over it, the harness's refusals and the lines compared as
+  after-checks over it, the harness's refusals (a script asking
+  `highlights` among them) and the lines compared as
   the shell's diff sees them; a package's fixture support merged after
   the core's setups, its fakes gathered, and a script two declare a setup
   of refused; and the harness's command line;
