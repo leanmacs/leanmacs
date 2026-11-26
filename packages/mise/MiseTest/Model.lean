@@ -17,7 +17,8 @@ The test module mirrors the modules it tests: the checks of `Mise.lean` and
   which looks nothing up in the headless mode and in the window mode runs
   mise at the first of the usual places there is (`Mise.candidates`);
   `Mise.executable` refuses a relative path and replaces the package's
-  value in its place; the source's command, parser and stamp paths; and
+  value in its place, and a second call in one `setup` is refused, beside
+  the package's own value; the source's command, parser and stamp paths; and
   `environment-api`'s directory-source contract
   (`EnvironmentApiTest.directoryContract`) on the model rig.
 - `miseLookupChecks`: a child's environment looked up by mise on the job

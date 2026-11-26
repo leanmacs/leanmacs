@@ -250,6 +250,38 @@ def extensionChecks : List Check :=
         let impostor : Package :=
           { name := "impostor", setup := Extension.add ({ n := 3 } : Impostor) }
         let (state, refused) := Config.State.ofPackages #[impostor, gitPackage, namesJobPackage]
-        pure (refused.isEmpty && finderJobNames state == some (.finished #["git"])) }]
+        pure (refused.isEmpty && finderJobNames state == some (.finished #["git"])) },
+    { name :=
+        "a package's setting (`Extension.setting`) registers its value at the point as `add` does; a setup that gives one setting twice is refused with a message naming it, and one that gives two settings, or a setting beside plain values of the point, is not"
+      run :=
+        let setting (name root : String) : SetupM Unit :=
+          Extension.setting "Project.finder" ({ name, find := fun _ => pure (some root) } : Finder)
+        let refused (setup : SetupM Unit) : Option String :=
+          match Config.Registrations.ofSetup setup with
+          | .error said => some said
+          | .ok _ => none
+        let (state, _) : ModelState × Array String := Config.State.ofPackages #[gitPackage]
+        let installed := reloadedTo state (setting "git" "config's")
+        pure
+          (chosen installed "git" == some (some "config's") &&
+            finderNames installed == some #["git", "git"] &&
+            refused
+                (do
+                  setting "a" "/a"
+                  setting "b" "/b") ==
+              some (Config.Registrations.settingTwice "Project.finder") &&
+            Config.Registrations.settingTwice "Project.finder" ==
+              "the setting `Project.finder` is set twice" &&
+            refused
+                (do
+                  setting "a" "/a"
+                  Extension.setting "Project.other" ({ n := 3 } : Impostor)) ==
+              none &&
+            refused
+                (do
+                  findingAs "a" "/a"
+                  setting "b" "/b"
+                  findingAs "c" "/c") ==
+              none) }]
 
 end ModelTest

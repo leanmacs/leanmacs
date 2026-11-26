@@ -700,6 +700,10 @@ inductive SetupRequest where
   /-- Register `value` at the extension point `key`, the name of the type
   `value` was made from (`Editor/Extension.lean`). -/
   | extend (key : Lean.Name) (value : Dynamic)
+  /-- Say that this `setup` gives the package's setting `name`, which one
+  `setup` gives once (`Extension.setting`, `Editor/Extension.lean`): a second
+  is refused (`Config.Registrations.settingTwice`). -/
+  | setting (name : String)
   /-- Register the job called `name` over the extension point `key`: its
   work is made each time it is started, by `work` applied to the values
   registered at `key` then, in registration order, and the arguments it is
@@ -750,6 +754,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .useAtPoint .. => Unit
   | .menu _ => Unit
   | .extend .. => Unit
+  | .setting _ => Unit
   | .jobOver .. => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/

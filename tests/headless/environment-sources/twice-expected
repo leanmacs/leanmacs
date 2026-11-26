@@ -1,0 +1,2 @@
+reload 1: rejected
+diagnostic: setup:0:0: error: the setting `Mise.executable` is set twice

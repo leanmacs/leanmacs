@@ -1040,7 +1040,9 @@ The config session's decisions are tested here too, with no elaborator:
   over a point (`Extension.workJob`) is made, when it is started, from the
   values registered there then, in registration order, from none when
   none is, from config's once a reload installs it and the package's alone
-  after one drops it, and never from another type's point;
+  after one drops it, and never from another type's point; and a
+  package's setting (`Extension.setting`) registers as `add` does, and a
+  `setup` that gives one setting twice is refused, naming it;
 - the shipped styles and displays are the default package `completion`'s
   (`packages/completion/`), the shipped segments the default package
   `mode-line`'s (`packages/mode-line/`), and the `code` mode with the

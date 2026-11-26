@@ -1458,6 +1458,10 @@ accepted names at most one (`theme`). -/
   /-- The values registered at extension points (`Extension.add`), each with
   its point's key, in the order they were registered. -/
   extensions : Array (Lean.Name × Dynamic) := #[]
+  /-- The packages' settings the `setup` gave (`Extension.setting`), by
+  name, in order: a setting once at most, in a `setup` that is not
+  refused. -/
+  settings : Array String := #[]
 
 namespace Registrations
 
@@ -1615,6 +1619,7 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .menu menu, collected => ((), { collected with menus := collected.menus.push menu })
   | .extend key value, collected =>
     ((), { collected with extensions := collected.extensions.push (key, value) })
+  | .setting name, collected => ((), { collected with settings := collected.settings.push name })
   | .jobOver key name work reported restarted, collected =>
     ((),
       { collected with
@@ -1622,6 +1627,11 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
           collected.jobs.push
             { name, work := fun _ _ => throw (JobRegistration.overMessage name), reported, restarted
               over := some (key, work) } })
+
+/-- What a `setup` that gives the package's setting `name` twice is refused
+with (`Extension.setting`). -/
+def settingTwice (name : String) : String :=
+  s!"the setting `{name}` is set twice"
 
 /-- What a `setup` that sets auto-reload twice is refused with. -/
 def autoReloadTwice : String :=
@@ -1693,7 +1703,7 @@ theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
 twice, the layout chosen twice, the tab bar chosen twice, the title bar chosen twice, the leader set twice (`leaderTwice`), the localleader set twice (`localLeaderTwice`), a key sequence bound twice (compared as written, whatever states each binding names; `problemUnder?` compares the keys as they expand), a binding of
 no keys, an ex name bound twice, the base environment chosen twice,
-auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a command over a store that is not declared, a store kept across a restart twice, a mode name defined twice, a
+auto-reload set twice, a package's setting given twice (`settingTwice`), a workspace root declared twice, the shell time limit set twice, a command over a store that is not declared, a store kept across a restart twice, a mode name defined twice, a
 mode with a problem under any scheme (`Mode.problems`), of which the first
 is named, a language name defined twice, a language with a pattern no
 file name can be meant by (`Language.problems`), of which the first is
@@ -1750,6 +1760,8 @@ def problem? (collected : Registrations) : Option String := do
     return "the base environment is chosen twice"
   if collected.autoReload.size > 1 then
     return autoReloadTwice
+  if let some name := repeated? collected.settings then
+    return settingTwice name
   if let some root := repeated? (collected.workspaceRoots.map (Process.trimmed ·.root)) then
     return workspaceTwice root
   if let some scope := repeated? (collected.workspaceListers.map (·.scope.trimmed)) then

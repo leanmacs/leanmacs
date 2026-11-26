@@ -28,8 +28,10 @@ for each directory, kept by the stamps of mise's config files
 - **The setting.** `Mise.executable "/path"` in config registers a value of
   the same name, `mise`, at `/path`, in every mode (`at`); the hook replaces
   the package's value with it in its place (`EnvironmentApi.DirectorySource.ordered`).
-  A relative path is refused (`relativePath`). It replaces the retired
-  `processEnvironment (.mise (some path))`.
+  A relative path is refused (`relativePath`), and so is a second call in
+  one `setup` (`Extension.setting`, `Config.Registrations.settingTwice`), as
+  the retired `processEnvironment (.mise (some path))`, which it replaces,
+  refused a second.
 - **No lookup at all**: leave this package out of the package set, which
   replaces the retired `processEnvironment .inherited`.
 - **The lookup** (`lookupCommand`): `<mise> env --json` in the directory,
@@ -101,10 +103,11 @@ def relativePath (path : System.FilePath) : String :=
 absolute path, in place of looking for it in the usual places, in every
 mode. It registers a value of the name `mise`, which replaces the package's
 in its place. It replaces the retired `processEnvironment (.mise (some
-path))`. Refuses the `setup` for a path that is not absolute. -/
+path))`. Refuses the `setup` for a path that is not absolute, and, as the
+core's settings are, for calling it twice (`Extension.setting`). -/
 def executable (path : System.FilePath) : SetupM Unit := do
   unless path.isAbsolute do
     throw (relativePath path)
-  Extension.add («at» path)
+  Extension.setting "Mise.executable" («at» path)
 
 end Mise

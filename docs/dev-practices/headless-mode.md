@@ -2272,7 +2272,9 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   with `Mise.executable "/opt/mise"` in config (`executable-config/`),
   `mise at /opt/mise` in both, config's value replacing the package's. A
   set that drops `mise`, from its lakefile's requires or its entry
-  modules, says `none` for both and rejects the second config. It starts
+  modules, says `none` for both and rejects the second config. A config
+  that calls `Mise.executable` twice (`twice-config/`) is rejected, its
+  diagnostic saying the setting `Mise.executable` is set twice. It starts
   no child.
 - **The fixtures of the four features that moved in the
   features-as-packages roadmap's phase 3 are their packages'**:

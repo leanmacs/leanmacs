@@ -97,6 +97,23 @@ def miseChecks : List Check :=
             ordered.all fun value =>
               sourceShape value .headless == some ("mise", .at "/opt/mise", Mise.stampNames)) },
     { name :=
+        "Mise.executable called twice in one setup is refused with a message naming the setting, whatever the paths; the package's own setup, and one call in config's, are each accepted"
+      run :=
+        let refused (setup : SetupM Unit) : Option String :=
+          match Config.Registrations.ofSetup setup with
+          | .error said => some said
+          | .ok _ => none
+        let twice (first second : System.FilePath) : SetupM Unit := do
+          Mise.executable first
+          Mise.executable second
+        pure
+          (refused (twice "/opt/mise" "/usr/local/bin/mise") ==
+              some (Config.Registrations.settingTwice "Mise.executable") &&
+            refused (twice "/opt/mise" "/opt/mise") ==
+              some (Config.Registrations.settingTwice "Mise.executable") &&
+            refused Mise.package.setup == none &&
+            refused (Mise.executable "/opt/mise") == none) },
+    { name :=
         "the mise source runs mise env --json in the directory over the environment so far, and reads a JSON object of strings"
       run :=
         let source := Mise.source (.at "/m")

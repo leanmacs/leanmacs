@@ -269,6 +269,17 @@ environment; a name nothing answers to refuses the config at reload, with a
 diagnostic that lists the bases there are, and children keep the base they
 had.
 
+**A package's setting** is a function config calls to register config's
+value at a point in place of the package's, as `Mise.executable` does. It
+registers with `Extension.setting`, which names the setting beside the
+value, so a `setup` that gives one setting twice is refused
+(`Config.Registrations.settingTwice`: the setting `Mise.executable` is set
+twice), as the core's own settings are: the second call would silently
+win. The package's own value comes from another `setup`, so config's one
+call beside it is accepted. Pinned by `ModelTest.extensionChecks` on the
+model, by `MiseTest.miseChecks` for mise's, and over the real elaborator by
+the standing fixture `tests/headless/environment-sources` (`twice-config`).
+
 ### How the values travel
 
 The mechanism is one generic registration added to the core, taking the
