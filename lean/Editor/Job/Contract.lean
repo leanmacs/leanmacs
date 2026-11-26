@@ -36,7 +36,11 @@ against the model, and against the runner over the fake clock and over the
 library's timer service, each with a host that records what it is handed.
 The snapshot read has one too, `snapshotProperties`, last: against the
 model, the runner over the fake clock and the runner over the library's
-published table. The fuzzy request has one too, `fuzzyProperties`, after them: against the
+published table. A package's service has one of its own, `packageProperties`, last, run on
+a rig (`PackageRig`): against the model of package services and against
+the runner over the fake package service by `model-test`, and against the
+runner over echo's crate by echo's linked test.
+The fuzzy request has one too, `fuzzyProperties`, after them: against the
 model, against the runner over the fake clock given the fuzzy model's
 handler, and against the runner given the library's binding. What needs
 equality (that the request registers no wait and moves no clock) is
@@ -1812,5 +1816,126 @@ where
         return some s!"{name} (the job failed with `{message}`)"
       | .cancelled =>
         return some s!"{name} (the job was cancelled)"
+
+/-! ## A package's services
+
+A property of a package's service (`JobRequest.package`,
+`Editor/PackageService.lean`) runs on a rig (`PackageRig`): a subject, the
+service with two requests it answers and what each reply must be, and what
+the rig can do with it: run a job to its end, and, where the rig has a
+runner, run two jobs whose requests are in flight together, cancel a job
+held in its package wait, and flush the service behind a request. A rig
+that cannot do one, the model, keeps that property trivially, as a flush
+rig that cannot hold work does (`FlushContract.heldBehind`). The same list
+runs three ways: against the model of package services (`JobModel.packages`)
+and against the runner over the fake (`FakePackageService`), by
+`model-test` (`ModelTest.packageServiceChecks`), and against the runner
+over a package's own crate, echo's, by its linked test
+(`EchoTest.Linked.echoJobChecks`). -/
+
+/-- The service a package property is run on, and two requests it answers,
+each with what its reply must be. -/
+structure PackageSubject where
+  /-- The service's name. -/
+  service : String
+  /-- A request the service answers. -/
+  request : PackageRequest
+  /-- Whether a reply is the one `request` must have. -/
+  answers : Dynamic → Bool
+  /-- Another request it answers, with a reply of its own. -/
+  other : PackageRequest
+  /-- Whether a reply is the one `other` must have. -/
+  otherAnswers : Dynamic → Bool
+
+/-- What a package property is run on: the subject, and what the rig can do
+with it. -/
+structure PackageRig where
+  /-- Which rig, as a failure names it. -/
+  name : String
+  /-- The service and its requests. -/
+  subject : PackageSubject
+  /-- Runs a job to its end: how it ended. -/
+  run : JobM Bool → IO (Job.Outcome Bool)
+  /-- Runs two jobs whose package requests are in flight together, each
+  started before either's reply is taken: how each ended. None for a rig
+  that runs one job at a time, which runs them in turn. -/
+  both : Option (JobM Bool → JobM Bool → IO (Job.Outcome Bool × Job.Outcome Bool)) := none
+  /-- Runs a job of the rig's that is held in a package wait the service
+  does not end by itself, cancels it there, and says how it ended. None for
+  a rig with no runner. -/
+  cancelled : Option (IO (Job.Outcome Bool)) := none
+  /-- Starts the subject's request at the service as a wait of its own, then
+  flushes the service: whether the flush completed, and whether the
+  request's wait had ended by then. None for a rig with no runner. -/
+  flushed : Option (IO (Bool × Bool)) := none
+
+/-- One property of a package's service. -/
+structure PackageProperty where
+  /-- What must hold, as a sentence. -/
+  name : String
+  /-- Observes it on a rig: whether it holds, or why not, thrown. -/
+  holds : PackageRig → IO Bool
+
+/-- A job that asks `request` and holds when its reply `answers`. -/
+def askedAnswers (request : PackageRequest) (answers : Dynamic → Bool) : JobM Bool := do
+  match ← PackageService.ask request with
+  | .ok reply =>
+    return answers reply
+  | .error _ =>
+    return false
+
+/-- Whether `outcome` is a job that finished holding. -/
+def heldTrue (outcome : Job.Outcome Bool) : Bool :=
+  outcome == .finished true
+
+/-- The properties every implementation of a package's service has, run on
+a runner. -/
+def packageProperties : List PackageProperty :=
+  [{  name := "a package's request completes with its reply"
+      holds := fun rig => do
+        return heldTrue (← rig.run (askedAnswers rig.subject.request rig.subject.answers)) },
+    { name := "a request to a service the runner was not given is answered noSuchService"
+      holds := fun rig => do
+        let unknown := s!"{rig.subject.service}-unknown"
+        let job : JobM Bool := do
+          match ← PackageService.ask { rig.subject.request with service := unknown } with
+          | .error (.noSuchService named) =>
+            return named == unknown
+          | _ =>
+            return false
+        return heldTrue (← rig.run job) },
+    { name := "two requests in flight each get their own reply"
+      holds := fun rig => do
+        let first := askedAnswers rig.subject.request rig.subject.answers
+        let second := askedAnswers rig.subject.other rig.subject.otherAnswers
+        match rig.both with
+        | some both =>
+          let (one, two) ← both first second
+          return heldTrue one && heldTrue two
+        | none =>
+          return heldTrue (← rig.run first) && heldTrue (← rig.run second) },
+    { name := "a job cancelled in its package wait ends cancelled"
+      holds := fun rig => do
+        let some cancelled := rig.cancelled | return true
+        return (← cancelled) == .cancelled },
+    { name := "a flush completes after a request started before it"
+      holds := fun rig => do
+        let some flushed := rig.flushed | return true
+        let (completed, before) ← flushed
+        return completed && before }]
+
+/-- Runs every package property on each of `rigs`, and returns the failures,
+each named `<rig>: <property>`, with what was thrown. -/
+def packageFailures (rigs : List PackageRig) : IO (List String) := do
+  let mut failed := []
+  for rig in rigs do
+    for property in packageProperties do
+      let name := s!"{rig.name}: {property.name}"
+      try
+        unless ← property.holds rig do
+          failed := failed ++ [name]
+      catch error =>
+        failed := failed ++ [s!"{name} ({error})"]
+  return failed
 
 end Editor.JobContract

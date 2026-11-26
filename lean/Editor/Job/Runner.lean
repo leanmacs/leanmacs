@@ -2,6 +2,7 @@ import Editor.Bound
 import Editor.Job
 import Editor.Job.Activity
 import Editor.Job.Protocol
+import Editor.PackageService
 import Std.Data.HashMap
 import Std.Sync.Mutex
 
@@ -99,6 +100,15 @@ cancellation is built here.
 
 - **What a cancelled job loaded is released**, like everything else it
   holds ("What a job holds", below).
+- **A cancelled job's package wait is withdrawn at the service.**
+  `Handle.drop` tells every package service the runner was given, each of
+  which is safe for an id it does not know, so a package's service keeps
+  nothing of a cancelled job's request and posts no completion for it.
+  A child the job handed to a package's crate is still the job's
+  (`Handle.children`): `Handle.conclude` ends it after the wait is
+  withdrawn, and the crate's consumer, blocked in a pull, is answered
+  `Cancelled`, its last event (`docs/design/concurrency.md`, "A long-lived
+  job owns a handed-over child").
 - **A cancelled job's child is killed.** A job in a process wait is
   withdrawn like any other, and withdrawing tells the process service,
   whose real implementation cancels the run in the library: `Handle.cancel`
@@ -297,6 +307,20 @@ through the port when the wait ends and then resolves the task, so a caller
 that drops the task leaves the service keeping nothing. A handle is for one
 request's reply; a flush is for everything handed before. The handle's
 contract is `Editor/Job/HandleContract.lean`.
+
+`PackageService` is the port of a package's service
+(`Editor/PackageService.lean`), beside them: start a request as a wait,
+which says whether the service took it, take its reply once the wait has
+completed, and withdraw a wait. A runner is given them by name
+(`PackageServices`, `Services.packages`): the program's edge hands it every
+package's (`Package.services`, `Headless.shipped`), and a check the fakes
+(`FakePackageService`, `Editor/Job/Fake.lean`). A request to a service the
+runner was not given is answered `noSuchService` at once, with nothing
+started; one the service does not take finishes its wait at once and is
+answered `refused`. A package's wait is a service wait: it keeps its job's
+unit ("Activity", above), and a cancel withdraws it at every package
+service (`Handle.drop`). It has a `flush` too (`Service.package`), with no
+default. A runner that is given none has `PackageServices.absent`.
 
 `Environments` is the port of the environments a host's jobs share, which
 answers at once and registers no wait (`Environments.inherited`, the
@@ -766,6 +790,26 @@ def sharedEnvironments (state : IO.Ref Process.Environments) (report : String �
       report text
     return reply
 
+/-- The package services a runner is given, by name
+(`Editor/PackageService.lean`): the program's edge hands it every
+package's (`Package.services`), and a check the fakes. -/
+structure PackageServices where
+  /-- The services, in the order they were given; of two of one name, the
+  first is found. -/
+  services : Array PackageService := #[]
+
+/-- No package service: every package request is `noSuchService`. -/
+def PackageServices.absent : PackageServices :=
+  {}
+
+/-- The services `services`, found by name. -/
+def PackageServices.of (services : Array PackageService) : PackageServices :=
+  { services }
+
+/-- The service called `name`, if the runner was given one. -/
+def PackageServices.find? (packages : PackageServices) (name : String) : Option PackageService :=
+  packages.services.find? (·.name == name)
+
 /-- The scheduler port: where the runner runs a job's code. `start` is handed
 the job's first run, the code up to its first wait, and `resume` the rest of
 the job after a wait, with the wait's task and what to run once it has
@@ -805,6 +849,10 @@ structure Services where
   diffs : Diffs := Diffs.absent completions
   /-- The searches. A runner that is given none has `Greps.absent`. -/
   greps : Greps := Greps.absent completions
+  /-- The package services, by name. A runner that is given none has
+  `PackageServices.absent`, so every package request is
+  `noSuchService`. -/
+  packages : PackageServices := PackageServices.absent
   /-- The environments its jobs share. A runner that is given none has
   `Environments.inherited`. -/
   environments : Environments := Environments.inherited
@@ -873,6 +921,8 @@ inductive Service where
   | diffs
   /-- The searches. -/
   | greps
+  /-- The package service called `name`. -/
+  | package (name : String)
   deriving DecidableEq, Repr, Inhabited
 
 /-- The flush of `target` among `services`. -/
@@ -883,6 +933,12 @@ def Services.flushOf (services : Services) : Service → (UInt64 → BaseIO Unit
   | .fileWatches => services.fileWatches.flush
   | .diffs => services.diffs.flush
   | .greps => services.greps.flush
+  | .package name =>
+    match services.packages.find? name with
+    | some service => service.flush
+    -- No such service, so nothing to wait for: completed at once, as an
+    -- absent port's flush is.
+    | none => fun id => services.completions.finish id .completed
 
 /-- Flushes `target`: registers a wait in the table, hands its id to the
 service's `flush`, and returns the task that ends with the wait: `completed`
@@ -1010,8 +1066,9 @@ def settle (handle : Handle) : BaseIO Unit := do
     handle.services.files.release snapshot
 
 /-- Tells the clock, the file service, the process service, the watch
-service, the diff service and the grep service to drop the wait `id`, each
-of which is safe for an id it does not know; the table is not told. -/
+service, the diff service, the grep service and every package service to
+drop the wait `id`, each of which is safe for an id it does not know; the
+table is not told. -/
 def drop (handle : Handle) (id : UInt64) : BaseIO Unit := do
   handle.services.timers.cancel id
   handle.services.files.cancel id
@@ -1019,6 +1076,8 @@ def drop (handle : Handle) (id : UInt64) : BaseIO Unit := do
   handle.services.fileWatches.cancel id
   handle.services.diffs.cancel id
   handle.services.greps.cancel id
+  for service in handle.services.packages.services do
+    service.cancel id
 
 /-- Withdraws the wait `id`: tells the clock, the file service, the
 process service and the watch service to drop it, each of which is safe for
@@ -1314,6 +1373,21 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     | .error error =>
       return .now (.error s!"fuzzy: {error}")
   | .snapshot id => return .now (← handle.services.snapshots id)
+  | .package request => do
+    -- A service the runner was not given starts nothing, as a child the
+    -- job does not hold does not.
+    let some service :=
+      handle.services.packages.find?
+        request.service | return .now (.error (.noSuchService request.service))
+    let (id, wait) ← handle.ask
+    if ← service.start id request then
+      return .later id wait (service.take id request)
+    else
+      -- The service did not take it, so nothing will complete the wait:
+      -- the runner finishes it, and the job is answered the refusal.
+      handle.services.completions.finish id .completed
+      return .later id wait
+          (pure (.error (.refused s!"{request.service} did not take {request.operation}")))
   | .fileWatch (.next watch) => do
     -- A watch is named for the job that started it, and for no other.
     unless (← handle.watches.get).contains watch do

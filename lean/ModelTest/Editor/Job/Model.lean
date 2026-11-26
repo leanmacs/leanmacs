@@ -15,6 +15,7 @@ import Editor.Program
 import Editor.Test.Jobs
 import Editor.Text.Model
 import ModelTest.Check
+import ModelTest.Support.Packages
 
 /-!
 # Model tests: `Editor/Job/Model.lean`
@@ -222,6 +223,21 @@ def jobModelChecks : List Check :=
           (modelled ranked { now := 4 } == (.finished (FuzzyModel.rank "w" candidates), 4) &&
             modelled caught { fuzzyRefusal := some "broken" } == (.finished "fuzzy: broken", 1) &&
             modelled ranked { fuzzyRefusal := some "broken" } == (.failed "fuzzy: broken", 0)) },
+    { name :=
+        "in the job model, a package request is answered by the model's packages at once, read back typed, a refusal as a value, and a service the model does not know is noSuchService"
+      run :=
+        let job : JobM (Option Nat × Bool × Bool × Nat) := do
+          let counted ← PackageService.askAs CountReply (countAfter 4)
+          let refused ← PackageService.askAs CountReply { countAfter 0 with operation := "back" }
+          let unknown ← PackageService.ask { countAfter 0 with service := "elsewhere" }
+          return (counted.toOption.map (·.value), refused matches .error (.refused _),
+              unknown matches .error (.noSuchService "elsewhere"), ← now)
+        let unknownByDefault : JobM Bool := do
+          return (← PackageService.ask (countAfter 1)) matches .error (.noSuchService _)
+        pure
+          (modelled job { now := 3, packages := countModel } ==
+              (.finished (some 5, true, true, 3), 3) &&
+            modelled unknownByDefault == (.finished true, 0)) },
     { name :=
         "a contract property whose job returns false, throws or is cancelled has not held, and each is named with how it ended"
       run := do

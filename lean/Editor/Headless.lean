@@ -4273,8 +4273,9 @@ mode's and the window mode's, which run the input scheme `scheme`, with
 registers: `shippedOver` the library's timer service,
 file service, process service, watch service and diff service for the
 jobs, the library's matcher (`Fuzzy.real`), which the loop's match jobs ask,
-and the environments they share for the mode `host` (`reportedEnvironments`).
-Config is elaborated on `base`, which every caller names (`shippedOver`).
+the environments they share for the mode `host` (`reportedEnvironments`),
+and the services the packages bring (`Package.services`), by name: the edge
+where a package's real adapters meet the runner. Config is elaborated on `base`, which every caller names (`shippedOver`).
 
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
@@ -4316,7 +4317,9 @@ def shipped (scheme : InputScheme) (packages : Array Package) (base : Array Lean
         diffs := Job.realDiffs completions published.reader held refusedDiffs
         greps := Job.realGreps completions published.reader held greps
         environments := reportedEnvironments environments 4 Queue.library, fuzzy := Fuzzy.real
-        snapshots := Job.realSnapshots published.reader } published held files stateDirectory
+        snapshots := Job.realSnapshots published.reader
+        packages := Job.PackageServices.of (packages.flatMap (·.services)) } published held files
+      stateDirectory
   return { collaborators with clock }
 
 /-- What generates the lakefile and the toolchain file of the config

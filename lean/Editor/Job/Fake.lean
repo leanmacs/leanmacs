@@ -3,15 +3,18 @@ import Editor.FileWatch.Model
 import Editor.Grep.Model
 import Editor.Job.Pump
 import Editor.Job.Runner
+import Editor.PackageService
 import Editor.Process.Model
 
 /-!
 # The fakes of the job runner's services
 
-Four fakes, published for `model-test` and `config-test`: the fake clock,
-below, the fake file service (`FakeFiles`, after it), the fake process
-service (`FakeProcesses`) and the fake watch service (`FakeFileWatches`),
-each of whose doc comment has its rules; the fake scheduler
+Five fakes, published for `model-test`, `config-test` and the packages'
+linked tests: the fake clock, below, the fake file service (`FakeFiles`,
+after it), the fake process service (`FakeProcesses`), with its hand-off
+of a child to a package's crate (`FakeProcesses.handOff`), the fake of a
+package's service (`FakePackageService`) and the fake watch service
+(`FakeFileWatches`), each of whose doc comment has its rules; the fake scheduler
 (`FakeScheduler`), which runs a job's code only when a check steps it; the
 fake completion pump (`FakePump`), the one step point they answer through
 in their step mode; and the fake of the recording port (`FakeRecorder`, at the end of this
@@ -1213,6 +1216,40 @@ inductive FakeProcesses.Order where
   | withdraw (id : UInt64)
   /-- The streaming child `id` killed. -/
   | kill (id : UInt64)
+  /-- The streaming child `id` handed over to a package's crate
+  (`FakeProcesses.handOff`). -/
+  | handOff (id : UInt64)
+
+/-- How a child handed over to a package's crate ended, as its consumer's
+last pull says (`FakeProcesses.handOff`): it exited, or it was cancelled,
+killed with its job. -/
+inductive FakeProcesses.Ending where
+  /-- The child exited so, and every line was delivered. -/
+  | exited (exit : Process.Exit)
+  /-- The child was cancelled: its job ended, or the job's cancel reached it. -/
+  | cancelled
+  deriving DecidableEq, Repr
+
+/-- What the consumer of a child handed over to it read at the child's end
+(`FakeProcesses.handOff`): the lines of its standard output not yet taken,
+and how it ended. -/
+structure FakeProcesses.Handed where
+  /-- The lines, each without its line feed. -/
+  lines : Array String
+  /-- How the child ended. -/
+  ended : FakeProcesses.Ending
+  deriving DecidableEq, Repr
+
+/-- Why a hand-off was refused (`FakeProcesses.handOff`), as
+`editor_service::stream::take_over` refuses one. -/
+inductive FakeProcesses.Refusal where
+  /-- No live child has this number: none started, or its end was taken. -/
+  | noSuchChild
+  /-- A read of the job's is pending on the child. -/
+  | readPending
+  /-- The child was handed over already. -/
+  | taken
+  deriving DecidableEq, Repr
 
 /-- What a fake process service holds. -/
 structure FakeProcesses.State where
@@ -1240,6 +1277,9 @@ structure FakeProcesses.State where
   pending wait and kills of a streaming child. A cancel of an id it does not
   hold is not logged. -/
   log : Array (FakeProcesses.Order × UInt64) := #[]
+  /-- The children handed over and not yet ended, oldest first, each with
+  what is told its end (`handOff`). -/
+  handedOff : Array (UInt64 × (FakeProcesses.Handed → BaseIO Unit)) := #[]
 
 /-- The fake of the process port (`Job.Processes`, `Editor/Job/Runner.lean`):
 the pure model of processes (`Editor/Process/Model.lean`) behind a
@@ -1258,6 +1298,17 @@ requests run on the runner with no library and no process.
   service kills one, and records the id as withdrawn.
 - A streaming child is named by the id of its start's wait, as the
   library's is: `take` of a start has the model give it that id.
+- `handOff` hands a streaming child over to a package's crate, as
+  `editor_service::stream::take_over` does, by its rules: it refuses a
+  child that is not live (`noSuchChild`), one with a read of the job's
+  pending (`readPending`) and one handed over already (`taken`). From then
+  on the job's read, write and close of the child are `noSuchProcess`, and
+  the child's end is told to the consumer's `onEnd`, on the thread that
+  ends it: a kill (`cancel`) tells it the lines not yet taken and
+  `cancelled`; a child that had exited before its hand-off tells it at the
+  hand-off its lines and its exit, and is forgotten, as the consumer's last
+  pull forgets one. Nothing else moves a handed child, so one that pauses
+  is held until it is killed.
 - `ran` is told the command of every run it takes, after the run: a test
   connects it to what the run changes, so that the fake watch service sees
   a job's command change the disk (`FakeFileWatches.ran`). By default it
@@ -1276,6 +1327,13 @@ structure FakeProcesses where
   answer : FakeAnswer := .atOnce
 
 namespace FakeProcesses
+
+/-- The lines of `child`'s standard output not yet taken, each without its
+line feed, a last partial line among them, read as UTF-8. -/
+def linesOf (child : ProcessModel.Child) : Array String :=
+  let (lines, rest) := ProcessModel.Child.splitLines child.stdout
+  let lines := if rest.size > 0 then lines.push rest else lines
+  lines.map fun line => (String.fromUTF8? line).getD ""
 
 /-- A process service over `model`, through the table `completions`, with no
 request started, which tells `ran` the command of each run once it has
@@ -1326,15 +1384,28 @@ def take (processes : FakeProcesses) (id : UInt64) (request : ProcessRequest) :
     BaseIO request.Reply := do
   let (reply, ran) ←
     processes.state.modifyGet fun state =>
-        if state.pending.any (·.1 == id) then
-          -- A child is named by the wait of its start, as the library's is.
-          let model :=
-            if let .start .. := request then { state.model with next := id.toNat } else state.model
-          let (reply, model, _) := model.handle 0 none request
-          ((reply, true),
+        -- A child handed over is the consumer's: the job reaches it no
+        -- more, as the library's service refuses it.
+        let handed :=
+          match request with
+          | .read child | .write child _ | .closeInput child =>
+            state.handedOff.any (·.1 == child.number.toUInt64)
+          | _ => false
+        if handed && state.pending.any (·.1 == id) then
+          ((request.refused .noSuchProcess, false),
             { state with
-              model, pending := state.pending.filter (·.1 != id), taken := state.taken.push id })
-        else ((request.refused (.failed "the request is not pending"), false), state)
+              pending := state.pending.filter (·.1 != id), taken := state.taken.push id })
+        else
+          if state.pending.any (·.1 == id) then
+            -- A child is named by the wait of its start, as the library's is.
+            let model :=
+              if let .start .. := request then { state.model with next := id.toNat }
+              else state.model
+            let (reply, model, _) := model.handle 0 none request
+            ((reply, true),
+              { state with
+                model, pending := state.pending.filter (·.1 != id), taken := state.taken.push id })
+          else ((request.refused (.failed "the request is not pending"), false), state)
   if ran then
     match request with
     | .run command _ | .runWithin command _ _ | .runInput command _ _ _ | .runHead command _ _ _ =>
@@ -1349,19 +1420,83 @@ model's, ends it as the library kills one: the model records it as killed
 and forgets it. -/
 def cancel (processes : FakeProcesses) (id : UInt64) : BaseIO Unit := do
   let thread ← IO.getTID
-  processes.state.modify fun state =>
-      if state.pending.any (·.1 == id) then
-        { state with
-          pending := state.pending.filter (·.1 != id)
-          parked := state.parked.filter (· != id)
-          withdrawn := state.withdrawn.push id
-          log := state.log.push (.withdraw id, thread) }
-      else
-        if state.model.children.any (·.id == id.toNat) then
-          { state with
-            model := state.model.kill id.toNat, withdrawn := state.withdrawn.push id
-            log := state.log.push (.kill id, thread) }
-        else state
+  let told ←
+    processes.state.modifyGet fun state =>
+        if state.pending.any (·.1 == id) then
+          (none,
+            { state with
+              pending := state.pending.filter (·.1 != id)
+              parked := state.parked.filter (· != id)
+              withdrawn := state.withdrawn.push id
+              log := state.log.push (.withdraw id, thread) })
+        else
+          match state.model.children.find? (·.id == id.toNat) with
+          | some child =>
+            -- A child handed over tells its consumer it was cancelled, with
+            -- the lines it had not taken.
+            let told :=
+              (state.handedOff.find? (·.1 == id)).map fun (_, onEnd) =>
+                (onEnd, { lines := FakeProcesses.linesOf child, ended := .cancelled : Handed })
+            (told,
+              { state with
+                model := state.model.kill id.toNat, withdrawn := state.withdrawn.push id
+                log := state.log.push (.kill id, thread)
+                handedOff := state.handedOff.filter (·.1 != id) })
+          | none => (none, state)
+  if let some (onEnd, handed) := told then
+    onEnd handed
+
+/-- Hands the streaming child `child` over to a package's crate, as
+`editor_service::stream::take_over` does, and tells `onEnd` its end, on the
+thread that ends it (the rules are in `FakeProcesses`' doc): refused as
+`noSuchChild` for a child that is not live, `readPending` while a read of
+the job's is pending on it, and `taken` once handed over. A child that had
+exited is told at once, here, with its lines and its exit, and forgotten. -/
+def handOff (processes : FakeProcesses) (child : UInt64) (onEnd : Handed → BaseIO Unit) :
+    BaseIO (Except Refusal Unit) := do
+  let thread ← IO.getTID
+  let decided : Except Refusal (Option Handed) ←
+    processes.state.modifyGet fun state =>
+        let pending :=
+          state.pending.any fun (_, request) =>
+            match request with
+            | .read read => read.number.toUInt64 == child
+            | _ => false
+        if state.handedOff.any (·.1 == child) then (.error .taken, state)
+        else
+          if pending then (.error .readPending, state)
+          else
+            match state.model.children.find? (·.id == child.toNat) with
+            | none => (.error .noSuchChild, state)
+            | some found =>
+              let log := state.log.push (.handOff child, thread)
+              if found.done then
+                -- Exited before it was handed over: the consumer's first pull
+                -- is its last, and the service forgets it.
+                (.ok
+                    (some
+                      ({ lines := linesOf found, ended := .exited found.script.exit } : Handed)),
+                  { state with
+                    log,
+                    model :=
+                      { state.model with
+                        children := state.model.children.filter (·.id != child.toNat) } })
+              else
+                (.ok none,
+                  { state with
+                    log, handedOff := state.handedOff.push (child, onEnd) })
+  match decided with
+  | .error refusal =>
+    return .error refusal
+  | .ok (some handed) =>
+    onEnd handed
+    return .ok ()
+  | .ok none =>
+    return .ok ()
+
+/-- The children handed over and not yet ended, oldest first. -/
+def handed (processes : FakeProcesses) : BaseIO (Array UInt64) :=
+  return (← processes.state.get).handedOff.map (·.1)
 
 /-- Flushes the processes as the wait `id`: completed at once, unless
 completions are held, when it is parked behind them and `letGo` completes it
@@ -1419,6 +1554,238 @@ def quiescent (processes : FakeProcesses) : BaseIO Bool := do
   return state.pending.isEmpty && state.parked.isEmpty
 
 end FakeProcesses
+
+/-- One thing a fake package service was handed or told, in its log
+(`FakePackageService.log`). -/
+inductive FakePackageService.Order where
+  /-- A request started as the wait `id`. -/
+  | start (id : UInt64) (request : PackageRequest)
+  /-- The reply of the wait `id` taken. -/
+  | take (id : UInt64)
+  /-- The wait `id` withdrawn while its request was pending. -/
+  | withdraw (id : UInt64)
+  /-- A flush of the service as the wait `id`. -/
+  | flush (id : UInt64)
+  /-- The consumer of the child the request `id` handed over read its last
+  event (`FakeProcesses.handOff`): what it read. Told whether or not the
+  request is still pending. -/
+  | ended (id : UInt64) (read : FakeProcesses.Handed)
+
+/-- How a fake package service answers a request that hands a child over to
+its crate, as echo's `attach` does: which child a request hands over, and
+the reply it answers once the consumer has read the child's end. -/
+structure FakePackageService.HandOff where
+  /-- The child `request` hands over, if it is such a request. -/
+  child : (request : PackageRequest) → Option UInt64
+  /-- The reply, from what the consumer read. -/
+  reply : FakeProcesses.Handed → Dynamic
+
+/-- What a fake package service is made of: what it answers, which a check
+of a package's hands the stepped stage (`Stage.stepped`). -/
+structure FakePackageService.Spec where
+  /-- The service's name. -/
+  name : String
+  /-- What each request answers, the package's pure model. A request the
+  model does not know is answered as `noSuchService` would be. -/
+  model : PackageModel
+  /-- How a request that hands a child over is answered; none for a service
+  that takes no child. -/
+  handOff : Option FakePackageService.HandOff := none
+
+/-- What a fake package service holds. -/
+structure FakePackageService.State where
+  /-- The requests that were started and have been neither taken nor
+  withdrawn, each with its wait's id, oldest first. -/
+  pending : Array (UInt64 × PackageRequest) := #[]
+  /-- The replies of pending hand-offs whose consumer has read the child's
+  end, by wait. -/
+  replies : Array (UInt64 × PackageReply) := #[]
+  /-- Whether completions are held: one made while they are is not handed
+  on until the test lets go. -/
+  holding : Bool := false
+  /-- The waits whose completion is held, oldest first. -/
+  parked : Array UInt64 := #[]
+  /-- Every order that changed what the service holds, and every end a
+  consumer read, in arrival order, each with the thread that handed or told
+  it. A cancel of an id it does not hold is not logged. -/
+  log : Array (FakePackageService.Order × UInt64) := #[]
+
+/-- The fake of a package's service (`PackageService`,
+`Editor/PackageService.lean`), published for `model-test` and for the
+packages' linked tests: a package's pure model behind a reference, so a
+job's package requests run on the runner with no crate.
+
+- `start` records the request and completes its wait: at once, or on the
+  check's step through a fake pump (`FakeAnswer.onStep`), or, while the
+  test holds completions (`holdCompletions`), when the test lets go
+  (`letGo`).
+- `take` answers from the model, once.
+- A request that hands a child over (`Spec.handOff`) hands it to the fake
+  process service (`FakeProcesses.handOff`), as a crate takes a child over:
+  its start is refused when the hand-off is, and it completes once the
+  consumer has read the child's end, with the reply made of what it read.
+  The end is logged whether or not the request is still pending; a request
+  withdrawn first posts no completion and keeps nothing, as a crate's
+  cancelled request does.
+- `cancel` withdraws a request that was started and not taken, and is safe
+  for any id.
+- `flush` completes once every completion held before it has been let go,
+  behind them, as a crate's flush is queued behind the replies it covers. A
+  hand-off whose child lives is not waited for.
+
+It logs every order with the thread that handed it, and says when it holds
+nothing in flight (`quiescent`). -/
+structure FakePackageService where
+  /-- What it answers. -/
+  spec : FakePackageService.Spec
+  /-- The table the service completes its waits through. -/
+  completions : Completions
+  /-- The fake process service a hand-off takes its child from; none for a
+  service that takes no child. -/
+  processes : Option FakeProcesses := none
+  /-- How it answers: at once, or on the check's step through a fake pump
+  (`FakeAnswer.onStep`). -/
+  answer : FakeAnswer := .atOnce
+  /-- What the service holds. Every change to it is one atomic step. -/
+  state : IO.Ref FakePackageService.State
+
+namespace FakePackageService
+
+/-- A fake service of `spec`, through the table `completions`, answering as
+`answer` says, its hand-offs taken from `processes`. -/
+def new (completions : Completions) (spec : Spec) (processes : Option FakeProcesses := none)
+    (answer : FakeAnswer := .atOnce) : BaseIO FakePackageService :=
+  return { spec, completions, processes, answer, state := ← IO.mkRef {} }
+
+/-- Holds every completion from now on: one made from now is not handed on
+until `letGo`. So a check can act while a job is in a package wait whose
+reply is ready. -/
+def holdCompletions (service : FakePackageService) : BaseIO Unit :=
+  service.state.modify fun state => { state with holding := true }
+
+/-- Completes every wait whose completion is held, oldest first, and holds
+none from now on. -/
+def letGo (service : FakePackageService) : BaseIO Unit := do
+  let parked ←
+    service.state.modifyGet fun state =>
+        (state.parked,
+          { state with
+            holding := false, parked := #[] })
+  for id in parked do
+    service.answer.complete service.completions id
+
+/-- Completes the wait `id` unless completions are held, when it is parked. -/
+private def complete (service : FakePackageService) (id : UInt64) : BaseIO Unit := do
+  let held ←
+    service.state.modifyGet fun state =>
+        if state.holding then (true, { state with parked := state.parked.push id })
+        else (false, state)
+  unless held do
+    service.answer.complete service.completions id
+
+/-- What the consumer of the child the request `id` handed over read at its
+end: logged, and, while the request is pending, its reply held and its wait
+completed. -/
+private def ended (service : FakePackageService) (handOff : HandOff) (id : UInt64)
+    (read : FakeProcesses.Handed) : BaseIO Unit := do
+  let thread ← IO.getTID
+  let pending ←
+    service.state.modifyGet fun state =>
+        let state := { state with log := state.log.push (.ended id read, thread) }
+        if state.pending.any (·.1 == id) then
+          (true, { state with replies := state.replies.push (id, .ok (handOff.reply read)) })
+        else (false, state)
+  if pending then
+    service.complete id
+
+/-- Starts `request` as the wait `id`: a hand-off hands its child over and
+completes once the consumer has read its end, refused when the hand-off is;
+any other request completes now, unless completions are held. -/
+def start (service : FakePackageService) (id : UInt64) (request : PackageRequest) : BaseIO Bool :=
+  do
+  let thread ← IO.getTID
+  service.state.modify fun state =>
+      { state with
+        pending := state.pending.push (id, request)
+        log := state.log.push (.start id request, thread) }
+  let handed? := service.spec.handOff.bind fun handOff => (handOff.child request).map (handOff, ·)
+  match handed?, service.processes with
+  | some (handOff, child), some processes =>
+    match ← processes.handOff child (service.ended handOff id) with
+    | .ok () =>
+      return true
+    | .error _ =>
+      service.state.modify fun state => { state with pending := state.pending.filter (·.1 != id) }
+      return false
+  | some _, none =>
+    -- A hand-off with no process service to take a child from.
+    service.state.modify fun state => { state with pending := state.pending.filter (·.1 != id) }
+    return false
+  | none, _ =>
+    service.complete id
+    return true
+
+/-- The reply to `request`, which was started as the wait `id`: a
+hand-off's, made of what its consumer read, or the model's. A request that
+is not pending is refused. -/
+def take (service : FakePackageService) (id : UInt64) (request : PackageRequest) :
+    BaseIO PackageReply := do
+  let thread ← IO.getTID
+  service.state.modifyGet fun state =>
+      if state.pending.any (·.1 == id) then
+        let reply :=
+          ((state.replies.find? (·.1 == id)).map (·.2)).getD (service.spec.model.answer request)
+        (reply,
+          { state with
+            pending := state.pending.filter (·.1 != id)
+            replies := state.replies.filter (·.1 != id)
+            log := state.log.push (.take id, thread) })
+      else (.error (.refused "the request is not pending"), state)
+
+/-- Withdraws the wait `id`, if its request is pending: it is never
+completed here, and its reply is dropped. A hand-off's consumer still reads
+its child to the end, and that end completes nothing. -/
+def cancel (service : FakePackageService) (id : UInt64) : BaseIO Unit := do
+  let thread ← IO.getTID
+  service.state.modify fun state =>
+      if state.pending.any (·.1 == id) then
+        { state with
+          pending := state.pending.filter (·.1 != id)
+          replies := state.replies.filter (·.1 != id)
+          parked := state.parked.filter (· != id)
+          log := state.log.push (.withdraw id, thread) }
+      else state
+
+/-- Flushes the service as the wait `id`: completed behind every completion
+held before it, when they are let go, and at once otherwise. -/
+def flush (service : FakePackageService) (id : UInt64) : BaseIO Unit := do
+  let thread ← IO.getTID
+  service.state.modify fun state => { state with log := state.log.push (.flush id, thread) }
+  service.complete id
+
+/-- The service as the port the runner is given. -/
+def service (fake : FakePackageService) : PackageService :=
+  { name := fake.spec.name, start := fake.start, take := fake.take, cancel := fake.cancel
+    flush := fake.flush }
+
+/-- How many requests are pending: started, and neither taken nor
+withdrawn. -/
+def waiting (service : FakePackageService) : BaseIO Nat :=
+  return (← service.state.get).pending.size
+
+/-- Every order the service was handed and every end a consumer read, in
+arrival order, each with the thread that handed or told it
+(`State.log`). -/
+def log (service : FakePackageService) : BaseIO (Array (Order × UInt64)) :=
+  return (← service.state.get).log
+
+/-- Whether nothing of the service is in flight: no request pending, no
+reply held, no completion parked. -/
+def quiescent (service : FakePackageService) : BaseIO Bool := do
+  let state ← service.state.get
+  return state.pending.isEmpty && state.replies.isEmpty && state.parked.isEmpty
+
+end FakePackageService
 
 /-- One thing a fake watch service was handed, in its log. -/
 inductive FakeFileWatches.Order where
