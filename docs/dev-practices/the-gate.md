@@ -2272,12 +2272,22 @@ wrapper of `editor-ffi` and of each package crate, and
 
 - **It holds of the fixture set and of the default set**: `ffi-test` runs
   it on each, and passes by cargo-deny's exit status.
-- Seen to bite once by hand, on 2026-11-25: over a set of two packages
-  whose crates were no members of the root workspace, `bans-ffi`, which
-  depended on `editor-ffi`, and `bans-peer`, which depended on
-  `bans-ffi`'s crate, cargo-deny exited 2 with `crate 'editor-ffi =
-  0.1.0' is explicitly banned` and `crate 'bans-ffi = 0.1.0' is
-  explicitly banned`.
+- **It bites**: `ffi-test` runs it, without `-D unused-wrapper`, over the
+  two bite sets of `tests/rust-bans/`, each with one edge the rule
+  refuses, and requires exit status 2 from each, cargo-deny's status when
+  the bans check alone fails (a bit for each failed check, the bans' being
+  2; seen with cargo-deny 0.19.9). `ffi`, whose package `bans-ffi`'s crate
+  depends on `editor-ffi`, holds the config's `editor-ffi` entry; `peer`,
+  whose package `bans-peer`'s crate depends on `bans-base`'s, which
+  depends on nothing, holds the package crates' entries. Drop either kind
+  of entry, make it a no-op, or name each package crate a wrapper of the
+  others, and that set's run exits 0, so the step fails. A stale wrapper
+  stays a warning there: as an error it would fail the bans, and give 2,
+  for a config that refuses nothing. A config cargo-deny cannot parse or a
+  manifest it cannot load exits 1, and a missing config file exits 0, so
+  neither passes. Neither set's crates are members of the root workspace,
+  so the bad edges never enter the root graph, and nothing compiles them:
+  cargo-deny reads metadata.
 - It writes the generated crates under `target/editor-rust/` and Lake's
   configuration in the sets' `.lake`, which no other task reads.
 

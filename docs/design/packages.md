@@ -1898,7 +1898,9 @@ guide quotes.
 - **Every fixture lakefile is TOML but `echo`'s**, turns every Lean linter
   on with `warningAsError`, as the core does, and names default targets.
   `echo`'s is Lean, because a TOML lakefile cannot declare a target that
-  compiles C, `moreLinkObjs`, or the crate's target. A package's test
+  compiles C, `moreLinkObjs`, or the crate's target; so are those of the
+  three packages of the Rust bans check's bite sets (`tests/rust-bans/`),
+  which declare a crate and hold no Lean. A package's test
   driver is not a default target, as the core's
   `model-test` is not: `mise run lean` links with the system compiler,
   which a TOML lakefile has no flags for.
@@ -1920,7 +1922,9 @@ interface packages of the default set (`project-api`, `vc-api`,
 `at-point-api`), the fixture
 set, each fixture package (`echo` among them), the writing guide's
 example package (`docs/packages/word-count/`), the empty set, the
-user-side link's set and its package, and the formatter's host.
+user-side link's set and its package, the Rust bans check's two bite sets
+(`tests/rust-bans/ffi`, `tests/rust-bans/peer`) and their three packages,
+and the formatter's host.
 
 - **A set's manifest holds path entries only.** With it present, a
   dependency the manifest does not hold fails the build (`dependency … not
@@ -1952,8 +1956,9 @@ runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
 default set and its forty-three packages, the twenty-five default
 packages and the eighteen interface packages, the fixture set and its
 four packages, the writing guide's example package `word-count`, the
-empty set, the user-side link's set and its package, the user sets'
-fixtures, and the formatter's host): `lean-fmt` refuses a root with no
+empty set, the user-side link's set and its package, the Rust bans
+check's two bite sets and their three packages, the user sets' fixtures,
+and the formatter's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file, through the link, when Lake is
 run in that directory. So there is no copy to fall behind, and a bump of
 the pin (`AGENTS.md`, "Toolchains") changes one file. A new Lake root
@@ -3084,8 +3089,11 @@ parents under `wrappers = []` and fails a wrapper it never meets under
 generator writes a `deny.toml` beside the generated crate in which the
 generated crate is the one wrapper of `editor-ffi` and of each package
 crate, and `ffi-test` runs cargo-deny's bans over it, for the fixture set
-and the default set, passing by cargo-deny's exit status
-(`docs/dev-practices/the-gate.md`, "The Rust bans check").
+and the default set, passing by cargo-deny's exit status. It shows them
+bite over `tests/rust-bans/`: two sets, one whose package's crate depends
+on `editor-ffi` and one whose package's crate depends on another
+package's, where cargo-deny must exit 2, its status when the bans refuse a
+crate (`docs/dev-practices/the-gate.md`, "The Rust bans check").
 
 ### Behind a port, so it stays replaceable
 

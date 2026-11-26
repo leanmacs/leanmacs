@@ -508,6 +508,24 @@ run = [
   # the root's.
   "dir=$(lake -d ../tests/packages query :editorRustCrate) && cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" -D unused-wrapper bans",
   "dir=$(lake -d ../packages query :editorRustCrate) && cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" -D unused-wrapper bans",
+  # And the bans bite: over each bite set of tests/rust-bans, whose one
+  # bad edge the generated config must refuse, the same command must exit
+  # 2, cargo-deny's status when the bans check alone fails (a bit for each
+  # failed check, the bans' being 2; seen with cargo-deny 0.19.9). It runs
+  # without `-D unused-wrapper`, so a stale wrapper stays a warning and the
+  # one error left that the generated config can raise is a banned crate:
+  # with it, a config that named each package crate a wrapper of the
+  # others would still exit 2, for the wrappers it never meets. A config
+  # it cannot parse or a manifest it cannot load exits 1, and a missing
+  # config file, or bans that refuse nothing, exit 0, so none of them
+  # passes here. A command line cargo-deny refuses also exits 2, but this
+  # one's flags are those of the two steps above, which must exit 0. Its
+  # report is shown only when the status is not 2.
+  # - tests/rust-bans/ffi, whose package's crate depends on `editor-ffi`,
+  #   holds rustDenyConfig's `editor-ffi` entry (lean/lakefile.lean).
+  # - tests/rust-bans/peer, whose package `bans-peer`'s crate depends on
+  #   `bans-base`'s, holds its entries for the package crates.
+  "for s in ffi peer; do dir=$(lake -d ../tests/rust-bans/$s query :editorRustCrate) || exit 1; status=0; out=$(cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" bans 2>&1) || status=$?; test \"$status\" -eq 2 || { printf '%s\\n' \"$out\"; echo \"ffi-test: cargo-deny exited $status over tests/rust-bans/$s, not 2, its status when the bans refuse a crate\"; exit 1; }; done",
   # The package graph the pre-commit hook decides over
   # (tools/hook-targets.sh; the facet `editorPackageGraph`;
   # docs/dev-practices/the-gate.md, "The pre-commit hook"). On the fixture

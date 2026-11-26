@@ -258,7 +258,12 @@ package's crate is banned; and `editor-release-std`, the release tooling's
 adapters, is banned outright. A package crate may depend on
 `editor-service`, which has no entry. The root `deny.toml` cannot say this:
 nothing in the root graph depends on `editor-ffi` or on a package crate,
-and cargo-deny bans a crate with no parents under `wrappers = []`. -/
+and cargo-deny bans a crate with no parents under `wrappers = []`. That
+these entries refuse is held by `ffi-test` too, over the bite sets of
+`tests/rust-bans/`: `ffi`, whose package's crate depends on `editor-ffi`,
+holds the `editor-ffi` entry, and `peer`, whose one package's crate depends
+on the other's, holds the package crates' entries; over each, cargo-deny
+must exit 2, its status when the bans refuse a crate. -/
 def rustDenyConfig (name : String) (crates : Array RustCrate) : String :=
   let wrapped (crate : String) : String :=
     s!"  \{ crate = {tomlString crate}, wrappers = [{tomlString name}], reason = \"a package's crate depends on editor-service and on nothing else of the editor's: only the generated crate links editor-ffi and each package's crate\" },\n"
