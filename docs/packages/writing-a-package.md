@@ -386,9 +386,21 @@ it"](../design/packages.md#who-can-build-it)).
   with an `@[extern]` declaration, compile the C with the toolchain's
   compiler as Lake builds the core's glue (`buildLeanO`), and link its
   object through the library's `moreLinkObjs`. That needs a
-  `lakefile.lean`, since a TOML lakefile cannot declare the C target.
-  [`tests/user-sets/c-glue`](../../tests/user-sets/c-glue/) is the
-  example.
+  `lakefile.lean`, since a TOML lakefile cannot declare the C target:
+
+  ```lean
+  /-- The package's C source, compiled against the toolchain's `lean.h`. -/
+  target glue.o pkg : FilePath := do
+    let srcJob ← inputTextFile <| pkg.dir / "c" / "glue.c"
+    buildLeanO (pkg.buildDir / "c" / "glue.o") srcJob #[] #["-O2", "-Wall", "-Werror"]
+
+  /-- The package's library, linked with its C object. -/
+  lean_lib MyPackage where
+    moreLinkObjs := #[glue.o]
+  ```
+
+  The fixture package [`echo`](../../tests/packages/echo/lakefile.lean)
+  declares its glue this way (`echoGlue.o`), beside a crate of its own.
 - **What builds from the app**: C that includes `lean/lean.h` alone and
   calls only the system functions the shipped editor itself uses. C that
   includes a system header (`<stdio.h>`), or links another framework or
