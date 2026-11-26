@@ -3747,8 +3747,10 @@ otherwise be a cycle).
     replaces it for buffers highlighted after the registration. A refusal
     is said in the echo area, ``grammar `<name>`: <why>, so <what stays>``:
     "the compiled-in grammar stays" (a `.lean` buffer keeps the compiled-in
-    `lean`), "the grammar registered before stays", or "its languages have
-    no syntax tree" (the buffer stays open as plain text). A query file
+    `lean`), "the grammar registered before stays" (its buffers keep the
+    queries read at that registration, which the answers keep for each
+    name this process registered), or "its languages have no syntax tree"
+    (the buffer stays open as plain text). A query file
     that cannot be read for another reason than being missing is said too,
     with its path.
   - *Limits.* A declaration a later reload drops stays registered in the

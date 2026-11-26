@@ -40,6 +40,27 @@ query directory. -/
 def declaredHighlights : String :=
   "(number) @number"
 
+/-- The reload reducer's state with a registry holding the shipped languages
+and modes, and nothing installed. -/
+def shippedState : ModelState :=
+  {
+    registry :=
+      (({} : Config.Registry).replaceLanguages .compiled Language.shipped).replaceModes .compiled
+        Language.modes }
+
+/-- The reducer's state once a reload from `state` has installed a config
+whose `setup` is `setup`, with the generation and the grammars of the
+registration the install asked for; `none` when it asked for none. -/
+def installOver (state : ModelState) (setup : SetupM Unit) :
+    Option (ModelState × Nat × Array Language.Grammar) := do
+  let (state, _) := Config.step state .requested
+  let (state, effects) := Config.step state (.finished (accepted ["a"] setup))
+  let (generation, grammars) ←
+    effects.findSome? fun
+        | .registerGrammars generation grammars => some (generation, grammars)
+        | _ => none
+  return (state, generation, grammars)
+
 /-- The loop's driver once a config whose `setup` is `setup` has been
 installed over a registry holding the shipped languages and modes, and
 the work of the registration its install asked for has been started
@@ -51,17 +72,7 @@ directories `directories`. `none` when the install asked for no
 registration. -/
 def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
     (files : Array (String × String)) (directories : Array String := #[]) : Option TestDriver := do
-  let start : ModelState :=
-    {
-      registry :=
-        (({} : Config.Registry).replaceLanguages .compiled Language.shipped).replaceModes .compiled
-          Language.modes }
-  let (state, _) := Config.step start .requested
-  let (state, effects) := Config.step state (.finished (accepted ["a"] setup))
-  let (generation, grammars) ←
-    effects.findSome? fun
-        | .registerGrammars generation grammars => some (generation, grammars)
-        | _ => none
+  let (state, generation, grammars) ← installOver shippedState setup
   let keys : Loop.Keys TestScheme.scheme := { registered := state.registry.registered }
   let model := { editorModel with syntaxTree := { compiled := #["json", "lean"] } }
   let fileModel :=
@@ -99,12 +110,17 @@ def highlighters (driver : TestDriver) : Array (Array String) :=
 def shippedLeanFaces : Array String :=
   #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
 
-/-- The `setup` that declares the grammar `ini` from `/g/libtree-sitter-ini.so`
-and the language `ini` of `*.ini` that names it. -/
-def declaresIni : SetupM Unit := do
-  defineGrammar "ini" "/g/libtree-sitter-ini.so"
+/-- The `setup` that declares the grammar `ini` from `library` and the
+language `ini` of `*.ini` that names it. -/
+def declaresIniFrom (library : System.FilePath) : SetupM Unit := do
+  defineGrammar "ini" library
   defineLanguage
       { name := "ini", patterns := [.extension "ini"], syntaxTree := { grammar := "ini" } }
+
+/-- The `setup` that declares the grammar `ini` from `/g/libtree-sitter-ini.so`
+and the language `ini` of `*.ini` that names it. -/
+def declaresIni : SetupM Unit :=
+  declaresIniFrom "/g/libtree-sitter-ini.so"
 
 /-- The checks of the core's `register-grammars` job and its command
 (`Editor/Language/Grammar/Register.lean`), driven from the reducer's effect
@@ -206,7 +222,8 @@ def grammarRegisterChecks : List Check :=
                 s!"grammar `ini`: /g/queries/indents.scm: {FileError.notAFile.describe}" &&
               answered.loop.state.grammars.answerOf? 1 "ini" ==
                 some (.registered { highlights := some declaredHighlights, indents := none }) &&
-              answered.loop.state.grammars.registered == #["ini"] },
+              answered.loop.state.grammars.registered ==
+                #[("ini", { highlights := some declaredHighlights, indents := none })] },
     { name :=
         "the command of a job of an older config generation than the recorded answers' records nothing, highlights nothing again and says nothing: a .ini buffer opened before it stays plain and the newer answers stay"
       run :=
@@ -228,6 +245,36 @@ def grammarRegisterChecks : List Check :=
             delivered.isSome && answered.loop.state.grammars == newer &&
               attachedGrammars answered == #[] &&
               highlighters answered == #[] &&
-              answered.loop.state.echo == "" }]
+              answered.loop.state.echo == "" },
+    { name :=
+        "a grammar registered by one install and refused by the next is said to stay as registered before, and a .ini buffer highlighted again by the second job's command keeps the highlights read at the first registration"
+      run :=
+        pure <|
+          let libraries :=
+            #[("/g/libtree-sitter-ini.so", .exports #[("tree_sitter_ini", .grammar)])]
+          match
+            installedWith declaresIni libraries
+              #[("/g/queries/highlights.scm", declaredHighlights)],
+            installOver shippedState declaresIni with
+          | some driver, some (first, _) =>
+            let (answered, _) := driver.finish 1
+            let opened := openedIn answered "/w/a.ini"
+            match installOver first (declaresIniFrom "/h/libtree-sitter-ini.so") with
+            | none => false
+            | some (second, generation, grammars) =>
+              let reinstalled :=
+                { opened with
+                  keys := { opened.keys with registered := second.registry.registered } }
+              let started :=
+                reinstalled.startWork Language.Grammar.jobName
+                  (Language.Grammar.work generation grammars)
+              let (refused, delivered) := started.finish 2
+              generation == 2 && delivered.isSome && attachedGrammars opened == #["ini"] &&
+                highlighters opened == #[#["syntax.number"]] &&
+                refused.loop.state.echo ==
+                  "grammar `ini`: the grammar was refused: no file is at the grammar's path, so the grammar registered before stays" &&
+                attachedGrammars refused == #["ini"] &&
+                highlighters refused == #[#["syntax.number"]]
+          | _, _ => false }]
 
 end ModelTest

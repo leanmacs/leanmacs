@@ -105,10 +105,10 @@ def stateRequestChecks : List Check :=
       run :=
         pure <|
           let first : Language.Grammar.Answers :=
-            { generation := 1, answers := #[("ini", .registered {})], registered := #["ini"] }
+            { generation := 1, answers := #[("ini", .registered {})], registered := #[("ini", {})] }
           let second : Language.Grammar.Answers :=
             { generation := 2, answers := #[("conf", .refused (.refused .notFound) false)]
-              registered := #["ini"] }
+              registered := #[("ini", {})] }
           let (_, once) := EditorState.none.handle (.setGrammars first)
           let (_, twice) := once.handle (.setGrammars second)
           let (_, rehighlighted) := twice.handle (.rehighlight #["ini"])

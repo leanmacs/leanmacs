@@ -39,8 +39,10 @@ query directory (`Language.Grammar.queryFiles`) under
    sentence (`Language.Grammar.unread`). `SyntaxTree.grammars` is asked
    once, so a refused name is known to be still listed (compiled in, or
    registered before) or not; the refusal's sentence says which
-   (`Language.Grammar.said`). Every name registered is added to the names
-   this process has registered (`Answers.registered`).
+   (`Language.Grammar.said`). Every name registered is recorded among the
+   names this process has registered, with the queries just read in place
+   of any read at an earlier registration (`Answers.registered`), so a
+   later refusal of the name keeps them.
 2. **Recorded** in the editor state, stamped with the generation the
    install set (`setGrammarAnswers`).
 3. **Highlighted again**: every open buffer whose language names a declared
@@ -129,12 +131,11 @@ def answersOf (previous : Answers) (generation : Nat) (replies : Array Reply) :
     | .error error =>
       let kept := known.contains name
       answers := answers.push (name, .refused error kept)
-      sentences := sentences.push (said name error kept (previous.registered.contains name))
+      sentences := sentences.push (said name error kept (previous.registeredQueries? name).isSome)
     | .ok loads =>
       let (queries, unreadSentences) ← queriesOf reply.grammar loads
       answers := answers.push (name, .registered queries)
-      unless registered.contains name do
-        registered := registered.push name
+      registered := (registered.filter (·.1 != name)).push (name, queries)
       sentences := sentences ++ unreadSentences
   return ({ generation, answers, registered }, sentences)
 

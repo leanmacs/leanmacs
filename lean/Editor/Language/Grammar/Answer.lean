@@ -19,9 +19,13 @@ so the state requests can name it without importing the language table, as
   applies.
 - **`answers`** holds each declared name's answer, in declaration order.
 - **`registered`** is every name this process has registered, across
-  generations: phase 1 has no unregister, so a name stays registered in the
-  library once it was. It says which consequence a refusal's sentence names
-  (`Language.Grammar.said`).
+  generations, with the queries read at its last registration
+  (`Answers.registeredQueries?`): phase 1 has no unregister, so a name
+  stays registered in the library once it was, as the grammar of its last
+  registration. It says which consequence a refusal's sentence names
+  (`Language.Grammar.said`), and a later refusal of the name keeps those
+  queries (`Language.Grammar.treeOf`), since the library still parses with
+  the grammar they were read for.
 
 Pinned by `ModelTest.grammarAnswerChecks`.
 -/
@@ -57,9 +61,16 @@ structure Language.Grammar.Answers where
   generation : Nat := 0
   /-- Each declared name's answer, in declaration order. -/
   answers : Array (String × Language.Grammar.Answer) := #[]
-  /-- Every name this process has registered, across generations. -/
-  registered : Array String := #[]
+  /-- Every name this process has registered, across generations, with the
+  queries read at its last registration. -/
+  registered : Array (String × Language.Grammar.Queries) := #[]
   deriving DecidableEq, Repr
+
+/-- The queries read at the last registration of `name` by this process;
+`none` when it never registered `name`. -/
+def Language.Grammar.Answers.registeredQueries? (answers : Language.Grammar.Answers)
+    (name : String) : Option Language.Grammar.Queries :=
+  (answers.registered.find? (·.1 == name)).map (·.2)
 
 /-- The answer recorded for `name` under `generation`; `none` when none is,
 or the answers are of another generation. -/

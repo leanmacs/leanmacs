@@ -240,7 +240,7 @@ def iniModel : EditorModel :=
 /-- The answers of generation 1 that record `ini` registered with
 `queries`. -/
 def iniAnswered (queries : Language.Grammar.Queries) : Language.Grammar.Answers :=
-  { generation := 1, answers := #[("ini", .registered queries)], registered := #["ini"] }
+  { generation := 1, answers := #[("ini", .registered queries)], registered := #[("ini", queries)] }
 
 /-- The checks of a mode's on-enter action, on the editor's models: a
 command asks for a major mode by the request, and the loop that runs the

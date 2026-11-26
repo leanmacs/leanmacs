@@ -23,13 +23,23 @@ def grammarAnswerChecks : List Check :=
           { generation := 3
             answers :=
               #[("ini", .registered queries), ("conf", .refused (.refused .notFound) false)]
-            registered := #["ini"] }
+            registered := #[("ini", queries)] }
         pure
           (answers.answerOf? 3 "ini" == some (.registered queries) &&
             answers.answerOf? 3 "conf" == some (.refused (.refused .notFound) false) &&
             answers.answerOf? 3 "toml" == none &&
             answers.answerOf? 2 "ini" == none &&
             answers.answerOf? 4 "ini" == none &&
-            ({} : Language.Grammar.Answers).answerOf? 0 "ini" == none) }]
+            ({} : Language.Grammar.Answers).answerOf? 0 "ini" == none) },
+    { name :=
+        "the queries of a name's last registration are found under any generation, and none for a name this process never registered"
+      run :=
+        let queries : Language.Grammar.Queries := { highlights := some "(number) @number" }
+        let answers : Language.Grammar.Answers :=
+          { generation := 3, answers := #[("ini", .refused (.refused .notFound) true)]
+            registered := #[("ini", queries)] }
+        pure
+          (answers.registeredQueries? "ini" == some queries &&
+            answers.registeredQueries? "conf" == none) }]
 
 end ModelTest

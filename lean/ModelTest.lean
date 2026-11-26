@@ -1207,7 +1207,8 @@ names a scheme's key:
   keymaps;
 - `grammarAnswerChecks`: the answers recorded for config's declared
   grammars (`Editor/Language/Grammar/Answer.lean`), pure: an answer is
-  found only under the generation it was recorded for;
+  found only under the generation it was recorded for, and the queries of
+  a name's last registration under any;
 - `grammarDeclarationChecks`: a grammar declaration
   (`Editor/Language/Grammar.lean`), pure: its defaults, the values it is
   given, the problems of a symbol that registers another name and of a
@@ -1223,9 +1224,11 @@ names a scheme's key:
   after; a refused new grammar said, its buffers left plain; a refused
   declaration of the compiled-in `lean` said to keep it, and its buffers
   keeping it; a registered `lean` taking the compiled-in one's place; a
-  query file that cannot be read said, the grammar still registered; and
-  the command of an older generation's job doing nothing over the answers
-  of a later one;
+  query file that cannot be read said, the grammar still registered; the
+  command of an older generation's job doing nothing over the answers of
+  a later one; and a grammar registered by one install and refused by the
+  next said to stay, its buffer highlighted again with the queries read
+  at the first registration;
 - `modeRegistryChecks`: modes in the registry
   (`Editor/Config/Registry.lean`): a mode's lineage, and the active keymaps
   of a view, in precedence order;

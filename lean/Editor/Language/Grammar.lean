@@ -57,9 +57,13 @@ of the current config generation (`Editor/Language/Grammar/Answer.lean`):
 3. Declared and registered: the entry's tree with the queries read from
    the directory filled in where the entry gives none
    (`Queries.over`). The entry's own source wins over a file.
-4. Declared and refused, and the service still lists the name (compiled
-   in, or registered earlier): the entry's tree, unchanged, so a `.lean`
-   buffer keeps the compiled-in `lean`.
+4. Declared and refused, and the service still lists the name: compiled
+   in and never registered by this process, the entry's tree, unchanged,
+   so a `.lean` buffer keeps the compiled-in `lean`; registered earlier,
+   the entry's tree with the queries read at the name's last registration
+   filled in as in case 3 (`Answers.registeredQueries?`), since the
+   library still parses with that registration's grammar, which ships no
+   query of its own.
 5. Declared and refused, and the service does not list the name: no tree.
    The buffer stays open as plain text.
 
@@ -82,7 +86,8 @@ One sentence for each refusal, joined by `; ` into one echo text:
 ``grammar `<name>`: <GrammarError.describe>, so <consequence>``, the
 consequence "the compiled-in grammar stays" when the service still lists
 the name and this process never registered it, "the grammar registered
-before stays" when it did, and "its languages have no syntax tree"
+before stays" when it did (and its buffers keep the queries read then:
+case 4 above), and "its languages have no syntax tree"
 otherwise; and ``grammar `<name>`: <file>: <FileError.describe>`` for a
 query file that could not be read.
 
@@ -186,7 +191,13 @@ def treeOf (declared : List Language.Grammar) (answers : Answers) (generation : 
     match answers.answerOf? generation tree.grammar with
     | none => none
     | some (.registered queries) => some (queries.over tree)
-    | some (.refused _ kept) => if kept then some tree else none
+    | some (.refused _ kept) =>
+      if kept then
+        some <|
+          match answers.registeredQueries? tree.grammar with
+          | some queries => queries.over tree
+          | none => tree
+      else none
 
 /-- What a refusal leaves, when the service still lists the name and this
 process never registered it. -/

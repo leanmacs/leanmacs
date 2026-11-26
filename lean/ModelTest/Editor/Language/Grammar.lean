@@ -67,7 +67,7 @@ def grammarDeclarationChecks : List Check :=
         let laterIni := Language.Grammar.declare "ini" "/b/libini.so"
         pure (Language.Grammar.over [laterIni] [earlierIni, conf] == [laterIni, conf]) },
     { name :=
-        "a grammar no declaration names keeps the entry's tree; a declared one with no answer of this generation has no tree; registered, it takes the read queries where the entry gives none and keeps the entry's own; refused and still known it keeps the entry's tree; refused and unknown it has none; an answer of another generation counts as none"
+        "a grammar no declaration names keeps the entry's tree; a declared one with no answer of this generation has no tree; registered, it takes the read queries where the entry gives none and keeps the entry's own; refused and still known it keeps the entry's tree, with the queries read at its last registration when this process registered it; refused and unknown it has none; an answer of another generation counts as none"
       run :=
         let declared := [Language.Grammar.declare "ini" "/g/libini.so"]
         let tree : Mode.SyntaxTree := { grammar := "ini", indents := some "(own) @indent" }
@@ -87,6 +87,12 @@ def grammarDeclarationChecks : List Check :=
                 { grammar := "ini", highlights := some "(number) @number"
                   indents := some "(own) @indent" } &&
             resolve (answered (.refused (.refused .notFound) true)) == some tree &&
+            resolve
+                { answered (.refused (.refused .notFound) true) with
+                  registered := #[("ini", read)] } ==
+              some
+                { grammar := "ini", highlights := some "(number) @number"
+                  indents := some "(own) @indent" } &&
             resolve (answered (.refused (.refused .notFound) false)) == none &&
             resolve (answered (.registered read)) (generation := 3) == none) },
     { name :=
