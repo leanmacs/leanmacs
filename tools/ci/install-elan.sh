@@ -11,7 +11,7 @@
 # use.
 #
 # ELAN_VERSION must equal the Dockerfile's, and the Linux checksums are the
-# Dockerfile's (tools/workflow-check.sh fails when the versions differ). The
+# Dockerfile's (a reviewer rule, .agents/rules/workflows.md). The
 # download is checked against the SHA-256 of the release file before it
 # runs.
 #

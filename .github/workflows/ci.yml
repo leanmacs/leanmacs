@@ -55,16 +55,17 @@ jobs:
           persist-credentials: false
       # mise at the version the Linux container uses (tools/linux/Dockerfile,
       # MISE_VERSION), and only the tools `mise run ci` runs: Rust, and
-      # cargo-deny, clang-format and the workflow lint's three as prebuilt,
+      # cargo-deny, clang-format and the workflow lint's two as prebuilt,
       # checksum-checked binaries. pipx, through which mise installs
       # clang-format, is on both runner images. The cache of mise's installs
-      # is saved from main only, like every cache here. workflow-check's
-      # install-args rule holds this list to mise.toml's [tools].
+      # is saved from main only, like every cache here. That this list is
+      # the [tools] of mise.toml the gate runs is a reviewer rule
+      # (.agents/rules/workflows.md).
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           version: 2026.11.2
           install: true
-          install_args: rust aqua:EmbarkStudios/cargo-deny pipx:clang-format aqua:rhysd/actionlint aqua:zizmorcore/zizmor aqua:mikefarah/yq
+          install_args: rust aqua:EmbarkStudios/cargo-deny pipx:clang-format aqua:rhysd/actionlint aqua:zizmorcore/zizmor
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       # elan and the Lean toolchains it installed, keyed on the toolchain pin
       # and on the script that pins elan. Restored on any ref; saved after

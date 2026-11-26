@@ -14,8 +14,9 @@ what it printed.
 - The Rust tests: `cargo test`, integration tests under `tests/` included.
 - The Lean test executables, and the packages' linked tests and fixtures.
 - The formatters: `cargo fmt`, lean-fmt, clang-format.
-- The structural tools: clippy, `cargo-deny`, the Lean linter plugin, and
-  the workflow linters.
+- The structural tools: clippy, `cargo-deny`, the Lean linter plugin, the
+  workflow linters (actionlint, zizmor), and gitleaks, which decides the
+  secret scan's workflow step.
 - A thin driver that only invokes these and passes their exit status
   through is allowed. It decides nothing of its own.
 

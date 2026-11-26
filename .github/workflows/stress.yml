@@ -51,7 +51,7 @@ jobs:
         with:
           version: 2026.11.2
           install: true
-          install_args: rust aqua:EmbarkStudios/cargo-deny pipx:clang-format aqua:rhysd/actionlint aqua:zizmorcore/zizmor aqua:mikefarah/yq
+          install_args: rust aqua:EmbarkStudios/cargo-deny pipx:clang-format aqua:rhysd/actionlint aqua:zizmorcore/zizmor
           cache_save: ${{ github.ref == 'refs/heads/main' }}
       - id: elan
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
