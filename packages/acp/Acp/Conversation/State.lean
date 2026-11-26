@@ -165,7 +165,8 @@ def userMessageOf? (conversation : Conversation) : Option String → Option Nat
     | _ => none
 
 /-- `conversation` with the ticket `ticket` moved to `state`, when it is
-pending: both other states are final. -/
+pending: every state but pending, `withdrawn`, `answered` and `closed`, is
+final. -/
 def settle (conversation : Conversation) (ticket : Nat) (state : PermissionState) : Conversation :=
   { conversation with
     items :=
