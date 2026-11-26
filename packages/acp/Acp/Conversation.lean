@@ -1,12 +1,13 @@
 import Acp.ClaudeCode
 import Acp.Conversation.Render
 import Acp.Conversation.State
+import Acp.Conversation.Store
 import Acp.Conversation.View
+import Acp.Generated
 import AgentsApi
 import BuffersApi
 import Editor.Api
 import Editor.Command.Call
-import Editor.Jumps
 import Editor.Mode
 
 /-!
@@ -143,77 +144,14 @@ def takeLimit : Nat :=
 def sessionKey (number : Nat) : String :=
   s!"{sessionJob} {number}"
 
-/-- Every conversation, in the unscoped store. -/
-def store : Store (Array Conversation) :=
-  { name := "acp-conversations", version := 1, initial := #[]
-    encode := fun all => .list (all.toList.map Conversation.encode)
-    decode := fun
-      | .list items => items.toArray.mapM Conversation.decode
-      | _ => none }
-
 /-! ## The conversations and their buffers -/
-
-/-- Every conversation, oldest first. -/
-def conversations : EditorM (Array Conversation) := do
-  return (← editorState).workspaces.getUnscoped store
-
-/-- The conversation `number`, if there is one. -/
-def conversation? (number : Nat) : EditorM (Option Conversation) := do
-  return (← conversations).find? (·.number == number)
-
-/-- The conversation the buffer `buffer` shows, if it is one's. -/
-def ofBuffer? (buffer : BufferId) : EditorM (Option Conversation) := do
-  return (← conversations).find? (·.buffer == some buffer.index)
-
-/-- Keeps `conversation` in the store, in place of the one of its number. -/
-def save (conversation : Conversation) : EditorM Unit := do
-  let all ← conversations
-  let all :=
-    if all.any (·.number == conversation.number) then
-      all.map fun held => if held.number == conversation.number then conversation else held
-    else all.push conversation
-  Workspace.setUnscoped store all
-
-/-- The view a conversation is shown with: the one chosen at the extension
-point, or the default view when none is registered. -/
-def chosenView : EditorM ConversationView := do
-  return (← ConversationView.named).getD defaultView
-
-/-- The row of the cursor of `view` in `text`, if it has one. -/
-def cursorRow (view : ViewId) (text : TextId) : EditorM (Option Nat) := do
-  match ← view.selection with
-  | .ok selection =>
-    let head := (selection.ranges[selection.primary]?.map (·.head)).getD 0
-    return some (← text.pointOf head).row
-  | .error _ =>
-    return none
 
 /-- Writes the text of `conversation`'s buffer again (the module docs): a view
 whose cursor is on the last line, or the empty row after it, follows the
 end; every other keeps its cursor's row, clamped to the text. -/
 def redraw (conversation : Conversation) : EditorM Unit := do
   let some index := conversation.buffer | return
-  let id : BufferId := ⟨index⟩
-  let .ok text ← id.text | return
-  let state ← editorState
-  let content := Acp.Conversation.text (← chosenView) conversation
-  let count ← text.lineCount
-  let mut followers := #[]
-  let mut kept := #[]
-  for window in state.windows.filter (·.buffer == id) do
-    if let some row← cursorRow window.id text then
-      if row + 1 ≥ count then
-        followers := followers.push window.id
-      else
-        kept := kept.push (window.id, row)
-  id.writing do
-      text.replaceRange 0 (← text.byteLength) content
-  let count ← text.lineCount
-  let last ← text.offsetOf { row := count - 1, column := 0 }
-  for view in followers do
-    Jumps.placeCursor view last
-  for (view, row) in kept do
-    Jumps.placeCursor view (← text.offsetOf ⟨min row (count - 1), 0⟩)
+  Generated.rewrite ⟨index⟩ (Acp.Conversation.text (← chosenView) conversation) (follow := true)
 
 /-- Applies `change` to the conversation `number`, keeps it and writes its
 buffer again; nothing for a conversation there is none of. -/
@@ -463,7 +401,7 @@ def stopCommand (call : Call) : EditorM Unit := do
 /-- `agent-toggle` (the module docs). -/
 def toggleCommand (call : Call) : EditorM Unit := do
   let some conversation ← ofCall? toggleName call | return
-  let some row ← cursorRow call.target.window.id call.target.buffer.text | return
+  let some row ← Generated.cursorRow call.target.window.id call.target.buffer.text | return
   match (render (← chosenView) conversation).2[row]? with
   | some (some id) =>
     update conversation.number (·.toggled id)

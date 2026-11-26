@@ -27,8 +27,9 @@ that declares the crate.
 - `Acp` is the package's library: the codec of the crate's text
   (`Acp.Codec`), the service over a binding (`Acp.Service`), Claude Code's
   adapter (`Acp.ClaudeCode`), the sessions and the conversation buffer
-  (`Acp.Conversation` and the modules under it), its list of packages and
-  its entry module. It requires `buffers-api` for the hook
+  (`Acp.Conversation` and the modules under it), the rewrite of a buffer
+  whose text it generates (`Acp.Generated`), its list of packages and its
+  entry module. It requires `buffers-api` for the hook
   `BuffersApi.Closing`, at which a closed conversation buffer stops its
   session. `AcpReal` is the Rust-backed binding alone,
   whose `moreLinkObjs` is the glue, so the glue is linked into exactly the
@@ -86,7 +87,7 @@ of the package but its tests and the binding. -/
 @[default_target] lean_lib Acp where
   globs :=
   #[.one `Acp.Codec, .one `Acp.Service, .one `Acp.ClaudeCode, .andSubmodules `Acp.Conversation,
-    .one `Acp.Packages, .one `Acp.EditorPackage]
+    .one `Acp.Generated, .one `Acp.Packages, .one `Acp.EditorPackage]
   plugins := lintPlugin
 
 /-- The Rust-backed binding, with the package's glue. -/
