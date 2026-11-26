@@ -127,6 +127,12 @@ impl Rig {
         self.agent.close_channel();
     }
 
+    /// Ends the agent's output with no ending recorded, as no pump would:
+    /// the transport closed without saying how the child ended.
+    fn close(&mut self) {
+        self.agent.close_channel();
+    }
+
     /// Opens the session: answers `initialize` and `session/new` with two
     /// modes, and gives the two lines the client wrote and what it posted.
     fn open(&mut self) -> (Value, Value, Vec<Output>) {
@@ -411,4 +417,50 @@ fn a_mode_is_set_only_when_a_caller_orders_it() {
     assert_eq!(rig.posted(), vec![Output::Sent(13, Ok(None))]);
     rig.answer(&lines[0], json!({}));
     assert!(rig.posted().is_empty());
+}
+
+#[test]
+fn a_prompt_the_agent_answers_with_an_error_ends_its_turn_with_the_stop_reason_error() {
+    let (mut rig, prompt) = Rig::prompted();
+    rig.send(&json!({"jsonrpc": "2.0", "id": prompt["id"],
+        "error": {"code": -32603, "message": "an example failure"}}));
+    assert_eq!(
+        rig.posted(),
+        vec![Output::Event(Event::TurnEnded {
+            turn: 1,
+            stop_reason: "error".into()
+        })],
+        "the failed turn ends, and the session goes on"
+    );
+    assert!(rig.link.order(14, Order::Prompt("again".into())));
+    assert_eq!(rig.lines()[0]["method"], "session/prompt");
+    assert_eq!(rig.posted(), vec![Output::Sent(14, Ok(Some(2)))]);
+}
+
+#[test]
+fn an_initialize_the_agent_answers_with_an_error_fails_the_connection_and_ends_the_session_as_a_protocol_error()
+ {
+    let mut rig = Rig::new();
+    let initialize = rig.lines().remove(0);
+    rig.send(&json!({"jsonrpc": "2.0", "id": initialize["id"],
+        "error": {"code": -32603, "message": "an example failure"}}));
+    let posted = rig.posted();
+    assert!(
+        matches!(&posted[..], [Output::Event(Event::Ended(Ending::ProtocolError(words)))]
+            if words.contains("an example failure")),
+        "{posted:?}"
+    );
+    assert!(!rig.link.order(15, Order::Cancel), "the session has ended");
+}
+
+#[test]
+fn an_output_that_ends_with_no_ending_recorded_ends_the_session_failed_as_closed() {
+    let (mut rig, _prompt) = Rig::prompted();
+    rig.close();
+    assert_eq!(
+        rig.posted(),
+        vec![Output::Event(Event::Ended(Ending::Failed(
+            "the session was closed".into()
+        )))]
+    );
 }

@@ -38,6 +38,14 @@
 //!   event says how the child ended ([`Event::Ended`]), or that the
 //!   connection failed.
 //!
+//! A prompt the agent answers with an error ends its turn with the stop
+//! reason `error`, and the session goes on. A request of the opening the
+//! agent answers with an error fails the connection, which ends the
+//! session as [`Ending::ProtocolError`] with the error's words. A session
+//! that ends with no ending recorded (every [`Link`] to it dropped, or an
+//! output that ends without the pump having said how the child ended) ends
+//! as [`Ending::Failed`]: the session was closed.
+//!
 //! A response whose id matches no request the client sent is dropped by the
 //! SDK, which routes it to nobody, and the session goes on.
 
