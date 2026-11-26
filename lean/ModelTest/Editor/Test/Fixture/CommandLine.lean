@@ -15,16 +15,19 @@ open Editor.Test.Fixture
 
 /-- The checks of the harness's command line, each pure. -/
 def fixtureCommandLineChecks : List Check :=
-  [{  name := "run, compared and compare are read after the toolchain, the .olean directories and the repository"
+  [{  name := "run, compared, compare and expect, with or without --dir, are read after the toolchain, the .olean directories and the repository"
       run :=
         let head := ["/sys", "/a:/b", "--repo", ".."]
         let invocation (command : Command) : Invocation :=
           { sysroot := "/sys", oleans := "/a:/b", repository := "..", command }
         return (read (head ++ ["run", "x", "y"])).toOption == some (invocation (.run #["x", "y"])) &&
             (read (head ++ ["compared"])).toOption == some (invocation .compared) &&
-            (read (head ++ ["compare", "s", "f"])).toOption == some (invocation (.compare "s" "f")) },
+            (read (head ++ ["compare", "s", "f"])).toOption == some (invocation (.compare "s" "f")) &&
+            (read (head ++ ["expect", "s", "f"])).toOption == some (invocation (.expect "s" "f" none)) &&
+            (read (head ++ ["expect", "s", "f", "--dir", "/tmp/x"])).toOption ==
+              some (invocation (.expect "s" "f" (some "/tmp/x"))) },
     { name :=
-        "a command line with nothing is the usage alone, and one with no root to run, an unknown command, no command, or no --repo says why"
+        "a command line with nothing is the usage alone, and one with no root to run, an unknown command, no command, an expect of another shape, or no --repo says why"
       run :=
         let head := ["/sys", "/a", "--repo", ".."]
         let says (arguments : List String) : Bool :=
@@ -33,6 +36,8 @@ def fixtureCommandLineChecks : List Check :=
           | .ok _ => false
         return (match read [] with | .error "" => true | _ => false) && says (head ++ ["run"]) && says (head ++ ["bogus"]) && says head &&
             says ["/sys", "/a", "run", "x"] && says (head ++ ["compare", "s"]) &&
+            says (head ++ ["expect", "s"]) && says (head ++ ["expect", "s", "f", "--dir"]) &&
+            says (head ++ ["expect", "s", "f", "--root", "d"]) &&
             (usage.splitOn "compared").length == 2 },
     { name :=
         "real-thread, with no toolchain, directories or repository, lists the real-thread set, all of it or the entries whose site begins with --site's prefix, and nothing else is the listing"

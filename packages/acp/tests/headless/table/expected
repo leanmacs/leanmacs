@@ -1,0 +1,14 @@
+reload 1: installed, 1 files, 0 commands
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+key arrived: : Semicolon shift
+key arrived: <Enter> Enter -
+scene 0x0, focused 6, echo "", echo padding 8, preedit -, theme "default"
+view 0 0,0 0x0: "first line\nsecond line\n", scroll 0, selections 0..0, padding 8 8
+status 0 in mode-line.inactive: mode-line.inactive "note.txt" +4, mode-line.inactive "@DIR@/work" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "Top" +4
+view 4 0,0 0x0: "claude-code in @DIR@/work\ntitle: (untitled)\nmode: -\nusage: -\n\n-- starting claude-code in @DIR@/work\n-- session ended: the agent exited 0\n", scroll 0, selections 0..0, padding 8 8
+status 4 in mode-line.inactive: mode-line.inactive "*agent: claude-code work@work*" +4, mode-line.inactive "●" +4 | mode-line.inactive "agent-conversation" +4, mode-line.inactive "1:1" +4, mode-line.inactive "Top" +4
+view 6 0,0 0x0: "agents of work\n1 session\n\n1 claude-code 1: finished, unread, nothing in flight — claude-code in @DIR@/work, session sess-0001, not running; ended: the agent exited 0\n", scroll 0, selections 0..0, padding 8 8
+status 6 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buffer "*agents: work*" +4, mode-line.modified "●" +4 | mode-line.secondary "agent-list" +4, mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4

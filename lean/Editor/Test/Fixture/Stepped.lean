@@ -408,4 +408,44 @@ def compare {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO)
     harness.say s!"fixture-test: {script}: {problem}"
   return 1
 
+/-- Holds the CLI's output read from `file`, of the real-effect entry of
+`script`, to the fixture's expected file (`expectedDifference?`), the run's
+directory `dir` written `@DIR@`: exit 0 and the line
+`fixture-test: <script>: the CLI's output is its expected file`, or 1 and
+what is wrong. It refuses a script with no entry, a runner entry, which
+`compare` holds both ways, and a fixture with no expected file. -/
+def expect {scheme : InputScheme} (harness : Harness scheme) (tree : Tree IO) (script file : String)
+    (dir : Option String) : IO UInt32 := do
+  let script := underRepository harness.repository script
+  let some entry := harness.entries.find? (·.script == script)
+    |
+    harness.say s!"fixture-test: {script} has no entry in the real-thread set"
+    return 1
+  if entry.subject == .runner then
+    harness.say s!"fixture-test: {script} is a runner entry, which compare holds both ways"
+    return 1
+  let fixture ←
+    match ← locate tree script with
+    | .ok fixture =>
+      pure fixture
+    | .error reason =>
+      harness.say s!"fixture-test: {reason}"
+      return 1
+  let some expectedPath := fixture.expected
+    |
+    harness.say s!"fixture-test: {script} has no expected file"
+    return 1
+  let problems ←
+    caught do
+        let cli := textLines (← IO.FS.readFile file)
+        let expected := textLines (← IO.FS.readFile (joinPath harness.repository expectedPath))
+        return ((expectedDifference? cli expected dir).map
+              (s!"the CLI's output is not its expected file: {·}")).toArray
+  if problems.isEmpty then
+    harness.say s!"fixture-test: {script}: the CLI's output is its expected file"
+    return 0
+  for problem in problems do
+    harness.say s!"fixture-test: {script}: {problem}"
+  return 1
+
 end Editor.Test.Fixture

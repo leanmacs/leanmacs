@@ -113,6 +113,16 @@ def fixtureSetupChecks : List Check :=
               #["the CLI's output is not its expected file: line 1 differs: expected \"a\", got \"b\""] &&
             compared #["b"] #["a"] #["a"] ==
               #["the CLI over a real loop thread (<) and the stepped run (>) printed otherwise: < 1: b; > 1: a",
-                "the CLI's output is not its expected file: line 1 differs: expected \"a\", got \"b\""] }]
+                "the CLI's output is not its expected file: line 1 differs: expected \"a\", got \"b\""] },
+    { name :=
+        "a real-effect entry's CLI output is held to its expected file: its directory written @DIR@, its job and commands lines dropped, equal texts passing and the first difference named"
+      run :=
+        let cli := #["open /tmp/x/work/note.txt", "job hold: running", "commands: a b", "done"]
+        return expectedDifference? cli #["open @DIR@/work/note.txt", "done"] (some "/tmp/x") == none &&
+            expectedDifference? cli #["open /tmp/x/work/note.txt", "job hold: running", "commands: a b", "done"]
+                none == some "line 2 differs: expected \"job hold: running\", got \"done\"" &&
+            expectedDifference? #["a"] #["a", "b"] none == some "line 2 is missing: expected \"b\"" &&
+            expectedDifference? #["a", "c"] #["a", "b"] (some "/d") ==
+              some "line 2 differs: expected \"b\", got \"c\"" }]
 
 end ModelTest

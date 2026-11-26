@@ -38,7 +38,8 @@ fixture moved into the real-thread set with the reason.
 Lines are compared as the shell's `diff` sees them (`textLines`): the first
 difference from an expected file (`firstDifference?`), the lines each side
 alone has (`bothWays`), and a runner entry's CLI output against its stepped
-run and its expected file (`compared`).
+run and its expected file (`compared`); and a real-effect entry's CLI
+output with its expected file alone (`expectedDifference?`).
 
 Pure: model-test pins it (`ModelTest/Editor/Test/Fixture/Setup.lean`).
 -/
@@ -347,5 +348,17 @@ def compared (cli stepped expected : Array String) : Array String :=
   match firstDifference? expected cli with
   | some difference => differs.push s!"the CLI's output is not its expected file: {difference}"
   | none => differs
+
+/-- The first difference of a real-effect entry's CLI output `cli` from its
+expected file `expected` (`fixture-test … expect`), as the restore cases
+compare one: the run's directory `dir`, when given, written `@DIR@`, and
+the lines starting `job ` and `commands:` dropped. None when they agree. -/
+def expectedDifference? (cli expected : Array String) (dir : Option String) : Option String :=
+  let scrubbed :=
+    match dir with
+    | some directory => cli.map fun (line : String) => line.replace directory "@DIR@"
+    | none => cli
+  let kept := scrubbed.filter fun line => !line.startsWith "job " && !line.startsWith "commands:"
+  firstDifference? expected kept
 
 end Editor.Test.Fixture
