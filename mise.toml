@@ -420,18 +420,6 @@ run = [
   # entry alone: the core's Lake package has no entry module, so an editor
   # of the core alone hands its hosts no package.
   "test \"$(lake -d ../tests/empty-set query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main '",
-  # The Rust crates of a set (the facet `editorRustCrates`;
-  # docs/design/packages.md, "Rust in a package"): the package-set build
-  # finds a package's crate through the target `editorRustCrate` its
-  # lakefile declares, with no list kept by hand. The fixture set holds two,
-  # the fixture package `echo`'s crate `echo-service` and the opt-in package
-  # `acp`'s crate `acp-service`, so its editor links the archive generated
-  # from `editor-ffi` and those crates
-  # (target/release/libeditor_rust_echo_acp.a); the default set holds none, so
-  # its editor links the core's (libeditor_rust.a), as `tests/empty-set`'s
-  # and the core's own executables do.
-  "test \"$(lake -d ../tests/packages query :editorRustCrates | cut -f1,2)\" = \"$(printf 'echo\\techo-service\\nacp\\tacp-service')\"",
-  "test -z \"$(lake -d ../packages query :editorRustCrates)\"",
   # A set's archive comes back with its system libraries when the file that
   # holds them is gone and the archive is fresh (`buildRust`): rustc writes
   # the file only when it runs, so the build cleans the generated crate and

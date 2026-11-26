@@ -1820,13 +1820,6 @@ package's tests are by convention are in
   `run` with exit 2.
 - **`run` builds nothing**, so `ffi-test` still only runs what `lean`
   built, and may run beside `lean-fmt`.
-- **A set's Rust crates.** `ffi-test` requires the fixture set's package
-  crates to be `echo`'s `echo-service` (`lake -d ../tests/packages query
-  :editorRustCrates`, its first two fields) and the default set's to be
-  none, so the fixture set's editor and `echo`'s linked test link the
-  archive generated from `editor-ffi` and `echo-service`, and the default
-  set's editor the core's ([packages.md](../design/packages.md), "Rust in a
-  package").
 - **A set's system libraries come back.** rustc writes the file of system
   libraries beside a generated crate (`target/editor-rust/<key>/native-static-libs`)
   only when it runs, so when the file is gone and the archive is fresh the
