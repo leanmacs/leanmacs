@@ -20,8 +20,10 @@ the runner with no crate and no child.
   to the first permission request gives the completed call and the turn's
   end; `cancellable`, the canonical one whose cancel leaves the session
   open; `conversation`, a turn with a reply, a tool call whose diff is
-  replaced by the whole file's, usage, a title and a mode; and `burst`, a
-  prompt's many chunks. Between orders the agent may also send by itself
+  replaced by the whole file's, usage, a title and a mode;
+  `permissionRequest`, a prompt that parks a permission request for an edit
+  with its raw input and diff, offering the adapter's three options, whose
+  answer ends the turn; and `burst`, a prompt's many chunks. Between orders the agent may also send by itself
   (`Fake.agentSends`), through the same model.
 - **A request completes** as the stage says (`FakeAnswer`): `open` and
   `send` at once; `next` at once when the session holds events, and
@@ -195,6 +197,35 @@ def conversation : Script where
       .event (.toolCall editCompleted), .event (.usage 1200 200000 (some ("0.01", "USD"))),
       .event (.title "Example title"), .endTurn "end_turn"]
   onAnswer _ _ := []
+  onCancel := [.endTurn "cancelled"]
+
+/-- The edit as the agent asks permission for it: the pending call with
+its raw input, the edit's own strings, as the adapter sends it
+(`docs/design/agent-hosting.md`, "The ACP spike"); every value synthetic. -/
+def editAsked : ToolCall :=
+  { editPending with
+    rawInput :=
+      "{\"file_path\":\"/work/example/notes.txt\",\"old_string\":\"beta\",\"new_string\":\"gamma\"}" }
+
+/-- The options the adapter builds for an edit's permission request: allow
+once, allow for the session, and reject once; never `reject_always`. -/
+def adapterOptions : Array PermissionOption :=
+  #[{ id := "allow-once", name := "Yes", kind := "allow_once" },
+    { id := "allow-session", name := "Yes, for this session", kind := "allow_always" },
+    { id := "reject", name := "No", kind := "reject_once" }]
+
+/-- An agent that asks permission for its edit: a prompt gives the call
+`editPending` and then parks a permission request for `editAsked` with
+`adapterOptions`; the answer to ticket 1 gives the call completed and the
+turn's end, `end_turn`; a cancel ends the turn `cancelled` and the session
+goes on. -/
+def permissionRequest : Script where
+  sessionId := Contract.sessionId
+  mode := some "mode-auto"
+  modes := Contract.modes
+  onPrompt _ _ := [.event (.toolCall editPending), .ask editAsked adapterOptions]
+  onAnswer ticket _ :=
+    if ticket == 1 then [.event (.toolCall editCompleted), .endTurn "end_turn"] else []
   onCancel := [.endTurn "cancelled"]
 
 /-- The canonical agent, but a cancel ends the turn `cancelled` and the

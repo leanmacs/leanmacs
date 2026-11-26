@@ -8,8 +8,9 @@ import AcpTest.Acp.Conversation.State
 `renderChecks`: a conversation's text as the default view shows it, its
 header's mode line from the session's open and a mode event, a tool call
 folded by default and unfolded through `unfolded`, the map of rows and
-`rowOf`, and a view whose field gives a line feed split into rows. The
-test driver's root, `AcpTest/Model.lean`, runs them.
+`rowOf`, a view whose field gives a line feed split into rows, and a
+permission request as the queue lists it (`queued`). The test driver's
+root, `AcpTest/Model.lean`, runs them.
 -/
 
 namespace AcpTest
@@ -94,6 +95,26 @@ def renderChecks : List Check :=
       run := do
         let view := { defaultView with message := fun text => #[s!"one\n{text}"] }
         let (lines, map) := render view talked
-        saw (lines.extract 6 8 == #["one", "Done."] && map.size == lines.size) s!"{lines}" }]
+        saw (lines.extract 6 8 == #["one", "Done."] && map.size == lines.size) s!"{lines}" },
+    { name :=
+        "the default view lists a queued request by its agent, root, conversation, ticket and title, then its input, its diff and its options"
+      run := do
+        let request : PermissionRequest :=
+          { agent := "claude-code", root := "/work/example", sessionId := Contract.sessionId
+            ticket := 1, turn := some 1, call := Fake.editAsked, options := Fake.adapterOptions }
+        let lines := defaultView.queued 2 request
+        let bare := defaultView.queued 2 { request with call := { id := "call-2", title := "Run" } }
+        saw
+            (lines ==
+                #["? claude-code in /work/example, conversation 2, ticket 1: Edit notes.txt",
+                  "  input: {\"file_path\":\"/work/example/notes.txt\",\"old_string\":\"beta\",\"new_string\":\"gamma\"}",
+                  "  /work/example/notes.txt", "    - beta", s!"    {noLineFeed}", "    + gamma",
+                  s!"    {noLineFeed}",
+                  "  options: allow-once (Yes), allow-session (Yes, for this session), reject (No)"] &&
+              bare ==
+                #["? claude-code in /work/example, conversation 2, ticket 1: Run",
+                  "  input: (none)",
+                  "  options: allow-once (Yes), allow-session (Yes, for this session), reject (No)"])
+            s!"{lines}; bare {bare}" }]
 
 end AcpTest

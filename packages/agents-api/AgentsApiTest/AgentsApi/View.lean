@@ -20,7 +20,7 @@ open AgentsApi
 def lineView (name line : String) : ConversationView :=
   { name, header := fun _ => #[line], prompt := fun _ => #[line], message := fun _ => #[line]
     toolCall := fun _ _ => #[line], permission := fun _ _ _ _ => #[line]
-    turnEnded := fun _ _ => #[line], note := fun _ => #[line] }
+    turnEnded := fun _ _ => #[line], note := fun _ => #[line], queued := fun _ _ => #[line] }
 
 /-- The views `packages` register, in registration order. -/
 def registeredViews (packages : Array Package) : Array ConversationView :=

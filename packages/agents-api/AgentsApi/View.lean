@@ -1,3 +1,4 @@
+import AgentsApi.Policy
 import AgentsApi.Request
 import Editor.Extension
 
@@ -18,6 +19,10 @@ and config may register its own, built from that one with a field changed.
 
 A reader splits any line feed a field's line holds, so a view cannot break
 the reader's map of rows.
+
+Besides the conversation's own items, it shows a permission request as the
+queue of a project's pending requests lists it (`queued`), so config
+restyles a queued request as it restyles a conversation's item.
 -/
 
 namespace AgentsApi
@@ -82,6 +87,10 @@ structure ConversationView where
   turnEnded : (turn : Nat) → (stopReason : String) → Array String
   /-- A note of the client's: a refusal, the session's end. -/
   note : (text : String) → Array String
+  /-- A pending permission request of the conversation `conversation`, as
+  the queue of a project's pending requests lists it: the tool call's
+  title, its input, its diff and its options. -/
+  queued : (conversation : Nat) → (request : PermissionRequest) → Array String
   deriving TypeName
 
 namespace ConversationView

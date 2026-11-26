@@ -9,7 +9,8 @@ reaches it through, over a table of waits whose completions it finishes at
 once: what `open`, `next` and `send` answer, when a `next` completes, a
 cancel's withdrawals, a withdrawn `next`, and when it holds nothing; a
 fresh fake's independent state, the agent's own sends into a parked
-`next`, and a cancel that leaves the `cancellable` session open. The test
+`next`, a cancel that leaves the `cancellable` session open, and the
+`permissionRequest` agent's parked request and its answer. The test
 driver's root, `AgentsApiTest/Model.lean`, runs them.
 -/
 
@@ -121,6 +122,34 @@ def fakeChecks : List Check :=
               (session.map (·.protocol.parked)) == some [] &&
               sentFor again (some 2))
             s!"events {repr events}" },
+    { name :=
+        "the permission-request agent's prompt gives the pending edit and parks ticket 1 for the edit with its raw input and diff, offering the adapter's three options; its answer completes the call and ends the turn"
+      run := do
+        let fake ← Fake.new Fake.permissionRequest
+        let completions ← Editor.Job.Completions.new
+        let service := fake.service completions
+        discard <| answered service completions (.open 0 Contract.cwd #[])
+        discard <| answered service completions (.send 1 (.prompt Contract.promptText))
+        let asked ← eventsNow service completions
+        let parked := (← fake.session?).map (·.protocol.parked)
+        let sent ← answered service completions (.send 1 (.answer 1 "allow-once"))
+        let after ← eventsNow service completions
+        saw
+            (asked ==
+                some
+                  #[.toolCall Fake.editPending,
+                    .permission 1 (some 1) Fake.editAsked Fake.adapterOptions] &&
+              parked == some [(1, some 1)] &&
+              Fake.editAsked.rawInput ==
+                "{\"file_path\":\"/work/example/notes.txt\",\"old_string\":\"beta\",\"new_string\":\"gamma\"}" &&
+              Fake.editAsked.content == #[.diff Fake.notesPath (some "beta") "gamma"] &&
+              (Fake.adapterOptions.map fun option => (option.id, option.name, option.kind)) ==
+                #[("allow-once", "Yes", "allow_once"),
+                  ("allow-session", "Yes, for this session", "allow_always"),
+                  ("reject", "No", "reject_once")] &&
+              sentFor sent none &&
+              after == some #[.toolCall Fake.editCompleted, .turnEnded 1 "end_turn"])
+            s!"asked {repr asked}, parked {repr parked}, after {repr after}" },
     { name := "open answers a session of the script's session id, mode and modes"
       run := do
         let fake ← Fake.new

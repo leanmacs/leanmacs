@@ -25,6 +25,11 @@ name, built from this one with a field changed if it likes
   it is.
 - **The end of a turn**: `-- turn <n>: <stop reason>`. **A note**:
   `-- <text>`.
+- **A queued request**, as the queue of a project's pending requests lists
+  it: `? <agent> in <root>, conversation <n>, ticket <t>: <title>`, then
+  `  input: <raw input>` (`(none)` when the agent sent none), each item of
+  the call's content as an unfolded call shows it, so a diff is its path
+  and its change, and `  options: <id> (<name>), …`.
 -/
 
 namespace Acp.Conversation
@@ -88,6 +93,16 @@ def permissionRow (ticket : Nat) (call : ToolCall) (options : Array PermissionOp
       s!" (answered {chosen.getD optionId})"
   s!"? permission {ticket}: {call.title} [{names}]{suffix}"
 
+/-- A queued permission request's lines (the module docs). -/
+def queuedLines (conversation : Nat) (request : PermissionRequest) : Array String :=
+  let input := if request.call.rawInput.isEmpty then "(none)" else request.call.rawInput
+  let options :=
+    ", ".intercalate (request.options.toList.map fun option => s!"{option.id} ({option.name})")
+  #[s!"? {request.agent} in {request.root}, conversation {conversation}, ticket {request.ticket}: {request.call.title}",
+      s!"  input: {input}"] ++
+    request.call.content.flatMap contentLines ++
+    #[s!"  options: {options}"]
+
 /-- How `acp` shows a conversation (the module docs). -/
 def defaultView : ConversationView where
   name := ConversationView.defaultName
@@ -102,5 +117,6 @@ def defaultView : ConversationView where
   permission ticket call options state := #[permissionRow ticket call options state]
   turnEnded turn stopReason := #[s!"-- turn {turn}: {stopReason}"]
   note text := #[s!"-- {text}"]
+  queued := queuedLines
 
 end Acp.Conversation
