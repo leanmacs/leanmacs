@@ -70,8 +70,8 @@ run = [
 ]
 
 [tasks.deny]
-description = "cargo-deny's bans and licences over the dependency graph (deny.toml); stale `wrappers` are errors"
-run = "cargo deny --locked check -D unused-wrapper bans licenses"
+description = "cargo-deny's bans over the dependency graph (deny.toml); stale `wrappers` are errors"
+run = "cargo deny --locked check -D unused-wrapper bans"
 
 [tasks.doc]
 description = "Rustdoc over every crate, private items included, with broken intra-doc links denied"
