@@ -110,10 +110,24 @@ def Record.line : Record → String
   | .closed conversation ticket reason =>
     lineOf "closed" (named conversation ticket ++ [("reason", reason)])
 
+/-- A `closed` record, for `reason`, for each ticket of `conversation` still
+pending as it ends. -/
+def closedRecords (conversation : Conversation) (reason : String) : Array Record :=
+  conversation.pending.map fun ticket => .closed conversation.number ticket reason
+
+/-- The reason of the `closed` records of a session that ended `how`. -/
+def endedReason (how : String) : String :=
+  s!"session ended: {how}"
+
 /-- The records of `batch` applied to `conversation`, the conversation after
 it, in the project `project`, in event order: each request's `asked`, then
-its decision by the policy `policy` when `decided` holds one, and each
-withdrawal's `withdrawn`. -/
+its decision by the policy `policy` when `decided` holds one, each
+withdrawal's `withdrawn`, and, when the batch holds the session's end, a
+`closed` record for each ticket it leaves pending. A conversation's pending
+tickets are closed once, by whatever ends it first: the batch that holds
+the session's end, here, or `agent-stop`, the buffer's close or the
+session job's own end (`closeTickets`, `Acp/Conversation.lean`), which
+skip a conversation already ended. -/
 def recordsOf (project : String) (conversation : Conversation) (batch : Batch) (policy : String)
     (decided : Array (PermissionRequest × Option PermissionOption)) : Array Record :=
   batch.events.flatMap fun event =>
@@ -125,11 +139,7 @@ def recordsOf (project : String) (conversation : Conversation) (batch : Batch) (
       | some (_, answer) => #[asked, .decided conversation.number ticket policy (answer.map (·.id))]
       | none => #[asked]
     | .withdrawn ticket => #[.withdrawn conversation.number ticket]
+    | .ended how => closedRecords conversation (endedReason (Acp.Conversation.describeEnding how))
     | _ => #[]
-
-/-- A `closed` record, for `reason`, for each ticket of `conversation` still
-pending as it ends. -/
-def closedRecords (conversation : Conversation) (reason : String) : Array Record :=
-  conversation.pending.map fun ticket => .closed conversation.number ticket reason
 
 end Acp.Permissions

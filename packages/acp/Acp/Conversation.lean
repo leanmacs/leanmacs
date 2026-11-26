@@ -195,7 +195,9 @@ def update (number : Nat) (change : Conversation → Conversation) : EditorM Uni
   Permissions.redrawQueues
 
 /-- Records in the audit log that `conversation`'s pending tickets are
-closed, for `reason`, unless it has ended already. -/
+closed, for `reason`, unless it has ended already: whoever ends a
+conversation closes its tickets, once. Its session's end that comes as a
+batch closes them as the batch is audited (`Permissions.recordsOf`). -/
 def closeTickets (conversation : Conversation) (reason : String) : EditorM Unit := do
   if conversation.ended.isNone then
     Permissions.audit (Permissions.closedRecords conversation reason)
@@ -209,10 +211,12 @@ def sendArguments (number session : Nat) (origin : Permissions.Origin) (order : 
   [.nat number, .nat session, .str origin.word] ++ Request.orderArguments order
 
 /-- The command a finished session job hands the loop: how the session
-ended is kept and noted, and its pending tickets audited closed. -/
+ended is kept and noted, and its pending tickets audited closed unless the
+conversation has ended already (`closeTickets`): the batch of its end, or
+`agent-stop`, closed them. -/
 def endedCommand (number : Nat) (how : String) : EditorM Unit := do
   if let some conversation← conversation? number then
-    Permissions.audit (Permissions.closedRecords conversation s!"session ended: {how}")
+    closeTickets conversation (Permissions.endedReason how)
   update number fun conversation =>
       { conversation with
             ended := conversation.ended.orElse fun _ => some how, turn := none }.noted

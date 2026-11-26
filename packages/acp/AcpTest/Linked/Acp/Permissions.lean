@@ -22,8 +22,11 @@ are told apart.
   lived through the reload.
 - **AC4**: every request and its answer are appended to the audit log
   under the host's state directory, by the orders the file fake was handed,
-  for an answer from the queue, a policy's answer, a withdrawal and a
-  close; and nothing but appends, after the directory's make, names it.
+  for an answer from the queue, a policy's answer, a withdrawal, a stop,
+  the agent's own exit and the conversation buffer's close; and nothing
+  but appends, after the directory's make, names it. A stop typed between
+  the batch of the session's end and the job's end, the host's queue
+  ordered so (`closedOnceChecks`), closes the request once.
 - **The writer** (`writerChecks`): a record made while a write is in
   flight, the file fake holding its completions, waits for it and goes in
   the next write; a refused append loses no record, and is said once; and
@@ -163,6 +166,10 @@ def allowOncePolicy : Package :=
         ({  name := PermissionPolicy.defaultName
             decide := fun request => .ofKind request "allow_once" } : PermissionPolicy) }
 
+/-- The `closed` line of ticket 1 when the agent exits 0 with it parked. -/
+def exitedClosedLine : String :=
+  "closed\tconversation=1\tticket=1\treason=session ended: the agent exited 0"
+
 /-- One case of AC4: how the request is answered, and the log it leaves. -/
 structure AuditCase where
   /-- What the case is. -/
@@ -170,15 +177,15 @@ structure AuditCase where
   /-- The packages after acp's. -/
   extra : Array Package := #[]
   /-- What the check does once the request is parked, from the conversation
-  buffer: whether it was handled. -/
-  answer : Session → IO Bool
+  buffer, or as the agent through the fake: whether it was handled. -/
+  answer : Session → Fake → IO Bool
   /-- The log's lines after it. -/
   expected : List String
 
 /-- The cases of AC4. -/
 def auditCases : List AuditCase :=
   [{  name := "asked and answered by the user from the queue"
-      answer := fun session => do
+      answer := fun session _ => do
         unless ← exStepped session Acp.Conversation.queueName do
           return false
         unless ← exStepped session s!"{cursorToRequest} 1 1" do
@@ -189,18 +196,30 @@ def auditCases : List AuditCase :=
           "answered\tconversation=1\tticket=1\toption=allow-once\tby=user"] },
     { name := "decided by a policy"
       extra := #[allowOncePolicy]
-      answer := fun _ => return true
+      answer := fun _ _ => return true
       expected :=
         [askedLine, decidedLine "allow-once",
           "answered\tconversation=1\tticket=1\toption=allow-once\tby=policy"] },
     { name := "withdrawn by a cancel"
-      answer := fun session => exStepped session Acp.Conversation.cancelName
+      answer := fun session _ => exStepped session Acp.Conversation.cancelName
       expected := [askedLine, decidedLine "ask", "withdrawn\tconversation=1\tticket=1"] },
     { name := "closed by agent-stop"
-      answer := fun session => exStepped session Acp.Conversation.stopName
+      answer := fun session _ => exStepped session Acp.Conversation.stopName
       expected :=
         [askedLine, decidedLine "ask",
-          "closed\tconversation=1\tticket=1\treason=session stopped"] }]
+          "closed\tconversation=1\tticket=1\treason=session stopped"] },
+    { name := "closed once by the session's own end, the agent exiting with it parked"
+      answer := fun _ fake => do
+        fake.agentSends 1 [.exit 0]
+        return true
+      expected := [askedLine, decidedLine "ask", exitedClosedLine] },
+    { name := "closed by closing the conversation buffer, through buffers-api's fake"
+      answer := fun session _ => do
+        session.ask [.run BuffersApi.closeName]
+        session.step
+        return true
+      expected :=
+        [askedLine, decidedLine "ask", "closed\tconversation=1\tticket=1\treason=buffer closed"] }]
 
 /-- The checks of AC4, one a case, each on a fresh stage. -/
 def auditChecks (context : HostContext) (packages : Array Package) : List Check :=
@@ -214,7 +233,7 @@ def auditChecks (context : HostContext) (packages : Array Package) : List Check 
             return false
           unless ← prompted session do
             return false
-          unless ← case.answer session do
+          unless ← case.answer session fake do
             return false
           settledAfter session
           let orders ← logOrders fakes
@@ -238,6 +257,39 @@ def auditChecks (context : HostContext) (packages : Array Package) : List Check 
                 held == expected &&
                 policyHeld)
               s!"orders {repr orders}; text {repr text}; held {repr held}; answers {repr answers}; queue {queue}" }
+
+/-- The check of the order that lost a `closed` record: the batch of the
+session's end handled, then `agent-stop`, whose cancel drops the job's
+finished command. -/
+def closedOnceChecks (context : HostContext) (packages : Array Package) : List Check :=
+  [{  name :=
+        "AC4: a session that ends with a request parked, its end's batch handled before an agent-stop that cancels its job ahead of the job's own end, has the request audited closed exactly once"
+      run :=
+        withConversation context packages Fake.permissionRequest (state := some stateDirectory)
+          fun session fake fakes => do
+          unless ← started session do
+            return false
+          unless ← prompted session do
+            return false
+          fake.agentSends 1 [.exit 0]
+          -- The session job takes its end's batch, posts it and ends: two
+          -- events in the host's queue, the post and then the job's end.
+          discard <| stepFakes fakes
+          let queued ← fakes.memory.size
+          -- The stop typed between them, as on a real host a key can come
+          -- between the job's post and its end, each pushed apart from the
+          -- job's thread: the forced order.
+          let some post ← fakes.memory.take? | return false
+          let some ending ← fakes.memory.take? | return false
+          discard <| fakes.memory.push post
+          sendEx session Acp.Conversation.stopName
+          discard <| fakes.memory.push ending
+          unless ← session.handled do
+            return false
+          settledAfter session
+          let held ← logHeld fakes
+          saw (queued == 2 && held == logText [askedLine, decidedLine "ask", exitedClosedLine])
+              s!"queued {queued}; held {repr held}" }]
 
 /-- Changes the file fake's model by `change`, as a check sets up or clears
 what the log's path holds. -/
@@ -599,7 +651,7 @@ def permissionChecks (context : HostContext) (packages : Array Package) : List C
                   text.contains "-- turn 1: end_turn" &&
                   after == #["permissions of example", "nothing pending"])
                 s!"before {before}; installed {installed}; waiting {waiting}; shown {shown}; again {again}; answers {repr answers}; text {text}; after {after}" }] ++
-    auditChecks context packages ++ writerChecks context packages ++
-    supportingChecks context packages
+    auditChecks context packages ++ closedOnceChecks context packages ++
+    writerChecks context packages ++ supportingChecks context packages
 
 end AcpTest.Linked

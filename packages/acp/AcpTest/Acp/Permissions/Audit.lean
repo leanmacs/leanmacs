@@ -8,8 +8,9 @@ import AcpTest.Acp.Permissions.Policy
 `auditChecks`: the audit log's records as lines, each held as a golden
 literal; a tab and a line feed in a field escaped, so a record is one line,
 and read back by `Acp.Codec.split`; a batch's records in event order, each
-request's `decided` right after its `asked`; and a `closed` record for each
-ticket still pending when a conversation ends. The test driver's root,
+request's `decided` right after its `asked`, and a batch that ends the
+session closing each ticket it leaves pending; and a `closed` record for
+each ticket still pending when a conversation ends. The test driver's root,
 `AcpTest/Model.lean`, runs them.
 -/
 
@@ -94,6 +95,24 @@ def auditChecks : List Check :=
             (records ==
               #[.asked "example" 1 askedRequest, .decided 1 1 "default" none,
                 .asked "example" 1 { askedRequest with ticket := 2 }, .withdrawn 1 2])
+            s!"{records.map (·.line)}" },
+    { name :=
+        "a batch that ends the session closes each ticket it leaves pending, after the batch's other records, and none withdrawn in it; the policy decides nothing of an ended conversation"
+      run := do
+        let batch :=
+          {
+            events :=
+              askedBatch.events ++
+                #[.permission 2 (some 1) Fake.editAsked Fake.adapterOptions, .withdrawn 2,
+                  .ended (.exited 0)] }
+        let after := openedExample.applyBatch batch
+        let made := decisions PermissionPolicy.ask after batch
+        let records := recordsOf "example" after batch PermissionPolicy.defaultName made
+        saw
+            (records ==
+              #[.asked "example" 1 askedRequest,
+                .asked "example" 1 { askedRequest with ticket := 2 }, .withdrawn 1 2,
+                .closed 1 1 "session ended: the agent exited 0"])
             s!"{records.map (·.line)}" },
     { name := "a conversation that ends closes each ticket still pending, and none other"
       run := do

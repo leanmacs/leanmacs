@@ -343,7 +343,14 @@ does everything that acts.
   service's words, `AgentsApi.Refusal.describe`), `withdrawn` (a cancel
   answered it `cancelled`) and `closed` (its conversation ended with it
   pending: the session's end, `agent-stop`, or its buffer closed). So
-  every request has an answer record. There is no time stamp: the job
+  every request has an answer record. `closed` is written once, by
+  whatever ends the conversation first: the batch that holds the session's
+  end (`recordsOf`), the session job's own end when no such batch came (a
+  refused `next`), `agent-stop` or the buffer's close; each later one finds
+  the conversation ended and writes nothing. The batch closes the tickets
+  itself because `agent-stop`'s cancel drops the job's finished command, so
+  a stop typed between the batch and the job's end would otherwise leave
+  them unclosed. There is no time stamp: the job
   port has no wall clock, and the order of the lines is the order of the
   events.
 - **The writer.** Records go to an outbox in an unscoped store, whose
@@ -383,7 +390,9 @@ does everything that acts.
   `agents-api`'s fake (`AcpTest/Linked/Acp/Permissions.lean`): two
   sessions' requests in one queue, answered from it by session; a request
   across a reload; the log's orders to the file fake for an answer from
-  the queue, a policy's answer, a withdrawal and a close; a record made
+  the queue, a policy's answer, a withdrawal, `agent-stop`, the agent's
+  own exit and the buffer's close; a stop typed between the batch of the
+  session's end and the job's end, closed once; a record made
   while a write is in flight, which waits for the next write; a refused
   append that loses no record; a user's answer racing the policy's,
   audited `refused`; silence; the queue's refusals and prompt; and closing
