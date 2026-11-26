@@ -75,6 +75,10 @@ struct Request {
     attached: bool,
     /// Its answer, once it is ready.
     reply: Option<Answer>,
+    /// Whether its report has been made: set only once the completer has
+    /// taken it, so a flush made between the reply and its report still
+    /// waits for it, and is reported behind it.
+    reported: bool,
 }
 
 /// What a request answers, once it is ready.
@@ -195,7 +199,7 @@ impl<C: Completer + 'static> Echo<C> {
             let waiting: Vec<u64> = state
                 .requests
                 .values()
-                .filter(|request| !request.attached && request.reply.is_none())
+                .filter(|request| !request.attached && !request.reported)
                 .map(|request| request.start)
                 .collect();
             if !waiting.is_empty() {
@@ -227,6 +231,7 @@ impl<C: Completer + 'static> Echo<C> {
                     start,
                     attached,
                     reply: None,
+                    reported: false,
                 },
             );
             start
@@ -314,18 +319,29 @@ impl<C: Completer + 'static> Echo<C> {
 
 impl<C: Completer> Shared<C> {
     /// Holds `reply` as the answer of the request `id` of the start
-    /// `start`, and reports it, unless that request was cancelled; then
-    /// reports each flush that waited only for it, behind it.
+    /// `start`, and reports it, unless that request was cancelled; then,
+    /// once the report is made, marks it reported and reports each flush
+    /// that waited only for it, behind it. A flush made between the reply
+    /// and its report still waits for it, as the request is not yet
+    /// marked reported.
     fn finish(&self, id: u64, start: u64, reply: Answer) {
-        let ready = {
+        {
             let mut state = self.state();
             match state.requests.get_mut(&id) {
                 Some(request) if request.start == start => request.reply = Some(reply),
                 _ => return,
             }
+        }
+        self.completer.complete(id);
+        let ready = {
+            let mut state = self.state();
+            if let Some(request) = state.requests.get_mut(&id)
+                && request.start == start
+            {
+                request.reported = true;
+            }
             state.settled(start)
         };
-        self.completer.complete(id);
         for flush in ready {
             self.completer.complete(flush);
         }
@@ -417,6 +433,7 @@ mod tests {
                 start: 0,
                 attached: false,
                 reply: None,
+                reported: false,
             },
         );
         assert_eq!(echo.take(8), None);
@@ -440,6 +457,7 @@ mod tests {
                 start: 99,
                 attached: false,
                 reply: None,
+                reported: false,
             },
         );
         echo.shared.finish(2, 1, Answer::Echoed(Reply::to("stale")));
@@ -490,6 +508,7 @@ mod tests {
                     start: 1,
                     attached: false,
                     reply: None,
+                    reported: false,
                 },
             );
             state.requests.insert(
@@ -498,6 +517,7 @@ mod tests {
                     start: 2,
                     attached: true,
                     reply: None,
+                    reported: false,
                 },
             );
             state.starts = 2;
@@ -516,6 +536,60 @@ mod tests {
     }
 
     #[test]
+    fn a_flush_made_while_a_request_s_report_is_held_is_reported_behind_it() {
+        use editor_service::wait::recv;
+        use std::sync::mpsc::{Receiver, Sender, channel};
+
+        /// A recording completer whose first report of `held` is held: it
+        /// says it is reporting, and records the report only once the test
+        /// lets it, so the test flushes after the worker has worked the
+        /// reply and before its report lands, every run.
+        struct Gated {
+            completer: RecordingCompleter,
+            held: u64,
+            reporting: Mutex<Option<Sender<()>>>,
+            release: Mutex<Receiver<()>>,
+        }
+
+        impl Completer for Gated {
+            fn complete(&self, request: u64) -> bool {
+                if request == self.held
+                    && let Some(reporting) = self.reporting.lock().expect("unpoisoned").take()
+                {
+                    reporting.send(()).expect("the test waits for the report");
+                    let release = self.release.lock().expect("unpoisoned");
+                    recv(&release, DEADLINE).expect("the test lets the report go");
+                }
+                self.completer.complete(request)
+            }
+        }
+
+        let (reporting, reported) = channel();
+        let (release, released) = channel();
+        let gated: &'static Gated = Box::leak(Box::new(Gated {
+            completer: RecordingCompleter::new(),
+            held: 8,
+            reporting: Mutex::new(Some(reporting)),
+            release: Mutex::new(released),
+        }));
+        let echo = Echo::new(gated);
+
+        assert!(echo.start(8, "held"));
+        recv(&reported, DEADLINE).expect("the worker reports");
+        // The reply is worked and its report not yet made: the flush covers
+        // the request all the same.
+        echo.flush(20);
+        release.send(()).expect("the worker is held in its report");
+        echo.join_workers();
+
+        assert_eq!(
+            gated.completer.take(),
+            [8, 20],
+            "the flush is reported after the request it covers"
+        );
+    }
+
+    #[test]
     fn a_flush_held_by_a_request_is_reported_once_that_request_is_cancelled() {
         let echo = echo();
         echo.shared.state().requests.insert(
@@ -524,6 +598,7 @@ mod tests {
                 start: 1,
                 attached: false,
                 reply: None,
+                reported: false,
             },
         );
         echo.flush(20);
