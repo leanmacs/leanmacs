@@ -1,6 +1,7 @@
 #!/bin/sh
-# Checks that config in the old form is refused, and that
-# tools/config-migrate.sh converts it so that it loads
+# Checks that config in the old form is refused, and that the
+# `config-migrate` binary (crates/editor-config-migrate-std) converts it so
+# that it loads
 # (docs/dev-practices/the-gate.md, "The config directory").
 #
 #   tools/config-migrate-check.sh <editor> <sysroot> <olean dir>
@@ -20,7 +21,7 @@
 #    and `mise run config-migrate`. The headless mode writes nothing, so the
 #    fixture is not written to.
 # 2. A copy of `chunks/` in a temporary directory, converted by
-#    tools/config-migrate.sh, must hold `init.lean` and `Config/Leader.lean`
+#    the `config-migrate` binary, must hold `init.lean` and `Config/Leader.lean`
 #    and no other file, and on it the editor must print exactly
 #    `migrated-expected`: the config loads and its command runs.
 # 3. More shapes of the old form, each written in the temporary directory,
@@ -39,8 +40,8 @@
 #      `init.lean`, since a private name is visible in its own module alone;
 #    - a `setup` that no line is seen to declare (a doc comment before its
 #      `def` on the line): every file becomes `init.lean`, each but the
-#      last in a section of its own, and the script says so.
-# 4. The script refuses, with status 1 and the directory left as it was: a
+#      last in a section of its own, and config-migrate says so.
+# 4. The binary refuses, with status 1 and the directory left as it was: a
 #    directory that already holds an `init.lean`; one where two files give
 #    one module name; a file whose name gives no module name, having no
 #    letter after its digits; a `Config/<Name>.lean` that is already
@@ -65,7 +66,9 @@ sysroot=$2
 oleans=$3
 root=$(cd "$(dirname "$0")/.." && pwd)
 fixture=$root/tests/config-migrate
-migrate=$root/tools/config-migrate.sh
+# Built once, so no compiler output reaches the refusals it reads.
+cargo build --quiet --locked --manifest-path "$root/Cargo.toml" -p editor-config-migrate-std --bin config-migrate
+migrate=$root/target/debug/config-migrate
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -82,7 +85,7 @@ printf '%s\n' "$out" | diff "$fixture/refused-expected" - ||
 
 # 2. A converted copy loads.
 cp -R "$fixture/chunks" "$work/config"
-sh "$migrate" "$work/config" >"$work/moves"
+"$migrate" "$work/config" >"$work/moves"
 held=$(cd "$work/config" && find . -type f | LC_ALL=C sort | tr '\n' ' ')
 [ "$held" = "./Config/Leader.lean ./init.lean " ] ||
   fail "the converted directory holds $held, not init.lean and Config/Leader.lean"
@@ -101,7 +104,7 @@ write() {
 # has the editor load it and run the command `$3`: it must print the
 # report line `$4` and then `run $3: ok`. `$5` says which shape it is.
 converted() {
-  sh "$migrate" "$1" >"$work/moves" || fail "$5: the script refused it"
+  "$migrate" "$1" >"$work/moves" || fail "$5: config-migrate refused it"
   held=$(cd "$1" && find . -type f | LC_ALL=C sort | tr '\n' ' ')
   [ "$held" = "$2" ] || fail "$5: the converted directory holds $held, not $2"
   printf 'reload\nsettle\nrun %s\n' "$3" >"$work/run-script"
@@ -195,7 +198,7 @@ converted "$work/private" "./init.lean " tell "reload 1: installed, 1 files, 1 c
   "a private declaration a later file uses"
 
 # A `setup` declared so that no line starts its declaration (here a doc
-# comment before `def` on its line): the script cannot tell where `setup`
+# comment before `def` on its line): config-migrate cannot tell where `setup`
 # is, and every file goes in `init.lean`, each but the last in a section of
 # its own, which loads.
 write "$work/unseen/10-greet.lean" <<'LEAN'
@@ -223,16 +226,16 @@ LEAN
 converted "$work/unseen" "./init.lean " again "reload 1: installed, 1 files, 2 commands" \
   "a setup no line is seen to declare"
 grep -q 'no line of any file was seen to define setup' "$work/moves" ||
-  fail "a setup no line is seen to declare: the script did not say it kept every file together"
+  fail "a setup no line is seen to declare: config-migrate did not say it kept every file together"
 
-# 4. What the script refuses is left as it was.
+# 4. What config-migrate refuses is left as it was.
 refused() {
   before=$(cd "$1" && find . -type f -exec cksum {} + | LC_ALL=C sort)
   status=0
-  sh "$migrate" "$1" >/dev/null 2>"$work/refusal" || status=$?
-  [ "$status" -eq 1 ] || fail "$2: the script exited $status, not 1"
+  "$migrate" "$1" >/dev/null 2>"$work/refusal" || status=$?
+  [ "$status" -eq 1 ] || fail "$2: config-migrate exited $status, not 1"
   after=$(cd "$1" && find . -type f -exec cksum {} + | LC_ALL=C sort)
-  [ "$before" = "$after" ] || fail "$2: the script changed the directory it refused"
+  [ "$before" = "$after" ] || fail "$2: config-migrate changed the directory it refused"
 }
 
 mkdir "$work/rooted"
@@ -318,9 +321,9 @@ grep -q 'init.lean' "$work/refusal" ||
 
 mkdir "$work/empty"
 printf 'notes\n' >"$work/empty/notes.txt"
-sh "$migrate" "$work/empty" >/dev/null ||
-  fail "a directory with no .lean file: the script did not exit 0"
+"$migrate" "$work/empty" >/dev/null ||
+  fail "a directory with no .lean file: config-migrate did not exit 0"
 [ "$(cd "$work/empty" && find . -type f)" = "./notes.txt" ] ||
-  fail "a directory with no .lean file: the script changed it"
+  fail "a directory with no .lean file: config-migrate changed it"
 
-echo "config-migrate: the old form was refused, converted copies of it loaded, and what the script refuses was left as it was"
+echo "config-migrate: the old form was refused, converted copies of it loaded, and what config-migrate refuses was left as it was"

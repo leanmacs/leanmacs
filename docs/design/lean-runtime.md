@@ -981,7 +981,7 @@ lean-toolchain       generated when absent
   with no header, which the editor loaded before config was modules. The
   reload is rejected with one diagnostic that names the files and the fix,
   `mise run config-migrate`, which converts the directory so that it loads
-  as it did (`tools/config-migrate.sh`).
+  as it did (the `config-migrate` binary, `editor_config_migrate::migrate`).
   - The files, in byte order, are cut at the first that defines `setup` or
     declares something `private`. Each file before it becomes
     `Config/<Name>.lean`, with the header and an import of the file before

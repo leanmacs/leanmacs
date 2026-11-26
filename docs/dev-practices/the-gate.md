@@ -1547,7 +1547,7 @@ directory the script makes and removes.
   1. On it the editor must print `refused-expected`: `reload 1: rejected`
      and one diagnostic that names the two files and
      `mise run config-migrate`.
-  2. A temporary copy, converted by `tools/config-migrate.sh`, must hold
+  2. A temporary copy, converted by the `config-migrate` binary, must hold
      `init.lean` and `Config/Leader.lean` and no other file, and on it the
      editor must print `migrated-expected`: the config loads and its command
      runs.
@@ -1560,7 +1560,7 @@ directory the script makes and removes.
      `setup` defined in the first of two; a `private` declaration that
      a later file uses; and a `setup` that no line is seen to declare,
      where every file must become `init.lean`.
-  4. The script must refuse, with status 1 and the directory left as it
+  4. The binary must refuse, with status 1 and the directory left as it
      was: a directory that already holds an `init.lean`; two files that
      give one module name; a file whose name has no letter after its
      digits; a `Config/<Name>.lean` that is already there; a file that
@@ -1601,7 +1601,7 @@ directory the script makes and removes.
   `packages/`. It gives up after three minutes.
 
 `mise run config-migrate` itself is run by hand, on a real config directory
-([`on-demand-checks.md`](on-demand-checks.md)); the gate runs its script on
+([`on-demand-checks.md`](on-demand-checks.md)); the gate runs its binary on
 the copy alone.
 
 ## Structure rules are reviewer rules

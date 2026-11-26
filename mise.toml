@@ -539,11 +539,11 @@ run = [
   "dir=$(mktemp -d) && trap 'chmod -R u+w \"$dir\" 2>/dev/null; rm -rf \"$dir\"' EXIT && sh ../tools/wiring-runs.sh prepare \"$dir\" && sh ../tools/wiring-runs.sh run \"$dir\"",
   # The old form (tests/config-migrate): a config directory of files in byte
   # order with no header is refused, with a diagnostic that names the files
-  # and `mise run config-migrate`; a copy that tools/config-migrate.sh
+  # and `mise run config-migrate`; a copy that the config-migrate binary
   # converted loads, and so do directories of one file, of three, with
   # `setup` defined before the last file, with a private declaration a
   # later file uses, and with a `setup` no line is seen to declare; and
-  # what that script refuses, a file already headed among it, it leaves as
+  # what that binary refuses, a file already headed among it, it leaves as
   # it was (tools/config-migrate-check.sh).
   "sh ../tools/config-migrate-check.sh ../packages/.lake/build/bin/editor \"$(lean --print-prefix)\" .lake/build/lib/lean",
   # The display fixture: the scene `editor-layout`'s own test lays out
@@ -826,18 +826,19 @@ run = "cargo test --locked -p editor-release-std --test nightly_mount -- --ignor
 
 # Opt-in, by hand: converts a config directory from the old form, `.lean`
 # files in byte order with no header, to the form the editor loads, a root
-# `init.lean` and modules under `Config/` (tools/config-migrate.sh, whose
-# header says what it moves and what it refuses). With no argument it
+# `init.lean` and modules under `Config/` (the config-migrate binary of
+# crates/editor-config-migrate-std, over editor_config_migrate::migrate,
+# whose module docs say what it moves and what it refuses). With no argument it
 # converts `${XDG_CONFIG_HOME:-$HOME/.config}/leanmacs`; `mise run
 # config-migrate -- <dir>` converts another. The file that defines `setup`
 # becomes `init.lean`, with the files after it, and the files before it
 # become `Config/<Name>.lean`, so the converted config loads as the old one
-# did. The gate runs the script on copies of a fixture and on directories
+# did. The gate runs the binary on copies of a fixture and on directories
 # it writes (`ffi-test`, tools/config-migrate-check.sh), never on a real
 # config.
 [tasks.config-migrate]
-description = "Opt-in, never part of ci: convert a config directory of .lean files in byte order with no header to init.lean and Config/<Name>.lean (tools/config-migrate.sh); `mise run config-migrate -- [<config dir>]`, default ~/.config/leanmacs. The file that defines setup, and the files after it, become init.lean"
-run = "sh tools/config-migrate.sh"
+description = "Opt-in, never part of ci: convert a config directory of .lean files in byte order with no header to init.lean and Config/<Name>.lean (the config-migrate binary, crates/editor-config-migrate-std); `mise run config-migrate -- [<config dir>]`, default ~/.config/leanmacs. The file that defines setup, and the files after it, become init.lean"
+run = "cargo run --quiet --locked -p editor-config-migrate-std --bin config-migrate --"
 
 # Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
 # hk.pkl: it writes outside the checkout. After `app-check`,

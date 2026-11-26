@@ -1,12 +1,12 @@
 # The script `mise run ffi-test` has the default set's editor run twice
-# (tools/config-migrate.sh, docs/dev-practices/the-gate.md).
+# (the config-migrate binary, docs/dev-practices/the-gate.md).
 #
 # First against `chunks/`, a config directory kept in the old form, files in
 # byte order with no header and no `init.lean`. What it prints must be
 # exactly `refused-expected`: the reload is rejected, and its one diagnostic
 # names the files and the command that converts them.
 #
-# Then against a temporary copy of `chunks/` that `tools/config-migrate.sh`
+# Then against a temporary copy of `chunks/` that the config-migrate binary
 # has converted. What it prints must be exactly `migrated-expected`: the
 # config loads, as a root and one config file, and its command runs.
 reload

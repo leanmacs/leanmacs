@@ -1,0 +1,16 @@
+[package]
+name = "editor-config-migrate"
+version = "0.1.0"
+description = "Converting a config directory of the old form to init.lean and Config/<Name>.lean: the line rules, the command line and the conversion, over a files port, with its fake and contract"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# No dependency and no dev-dependency: the port names no library, and every
+# test runs on the published fake. The real adapter and the `config-migrate`
+# binary are `editor-config-migrate-std`. The editor never links either
+# (deny.toml).
+[dependencies]
+
+[lints]
+workspace = true

@@ -429,6 +429,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-config-migrate"
+version = "0.1.0"
+
+[[package]]
+name = "editor-config-migrate-std"
+version = "0.1.0"
+dependencies = [
+ "editor-config-migrate",
+ "tempfile",
+]
+
+[[package]]
 name = "editor-diff"
 version = "0.1.0"
 

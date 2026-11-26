@@ -1,0 +1,21 @@
+[package]
+name = "editor-config-migrate-std"
+version = "0.1.0"
+description = "Config conversion's real files adapter, over std::fs, and the config-migrate binary"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The port, its fake and contract, and the conversion this crate wires. Only
+# this crate depends on it, and the editor links neither (deny.toml).
+editor-config-migrate = { path = "../editor-config-migrate" }
+
+[dev-dependencies]
+# The temporary directories of the contract and of the binary's wiring
+# tests. Pinned exactly, as in `editor-fs-std`, whose manifest says why this
+# library and no other; `deny.toml` lists the crates that may depend on it.
+tempfile = { version = "=3.27.0", default-features = false }
+
+[lints]
+workspace = true

@@ -77,10 +77,11 @@ mise run config-migrate -- <config dir>  # another directory
 
 This converts a config directory from the form the editor no longer loads,
 `.lean` files in byte order with no header, to a root `init.lean` and
-modules under `Config/` (`tools/config-migrate.sh`, whose header says what
-it moves and what it refuses). It is run by hand, on a real config
-directory, which is why it is no part of the gate: the gate runs the same
-script on a temporary copy of a fixture
+modules under `Config/` (the `config-migrate` binary of
+`crates/editor-config-migrate-std`, over `editor_config_migrate::migrate`,
+whose module docs say what it moves and what it refuses). It is run by
+hand, on a real config directory, which is why it is no part of the gate:
+the gate runs the same binary on a temporary copy of a fixture
 ([the-gate.md](the-gate.md), "The config directory").
 
 - The files, in byte order, are cut at the first that defines `setup` or
