@@ -119,7 +119,7 @@ pub enum GrammarStatus {
 impl From<RegistrationRefusal> for GrammarStatus {
     /// Each refusal crosses as a status of its own, so this matches every
     /// variant: a new refusal is a new status, which Lean's binding then
-    /// reads (`Ffi.grammarsTake`).
+    /// reads (`Ffi.grammarTakeOf`).
     fn from(refusal: RegistrationRefusal) -> Self {
         match refusal {
             RegistrationRefusal::NotFound => Self::NotFound,

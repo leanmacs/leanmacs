@@ -122,7 +122,8 @@ id, and its answer is taken by the id once, each of the library's refusals
 as `GrammarError.refused` of its own (`grammarAnswerOf`). One the library
 does not take is completed here, at once, `failed`, as a diff the library
 does not take is. Until the library loads native libraries, its answer is
-the unsupported refusal.
+the unsupported refusal, so `contract-test`'s `ContractTest.grammarChecks`
+pins `policyTag` and `grammarAnswerOf` themselves.
 
 ## The file watches
 

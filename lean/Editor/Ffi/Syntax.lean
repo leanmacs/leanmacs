@@ -307,29 +307,32 @@ private structure RawRegistered where
 @[extern "editor_glue_grammars_take"]
 private opaque grammarsTakeRaw (id : UInt64) : IO RawRegistered
 
+/-- The answer a take's `status` says, with `name` the name lent beside it:
+the statuses of `GrammarStatus` in `crates/editor-ffi/src/grammars.rs`, 0
+registered, 1 to 5 the refusals in `GrammarTakeRefusal`'s order, 6 no answer
+and 7 dropped; `none` for a status the library has no word for. -/
+def grammarTakeOf (status : UInt64) (name : String) : Option (Except GrammarTakeRefusal String) :=
+  match status with
+  | 0 => some (.ok name)
+  | 1 => some (.error .notFound)
+  | 2 => some (.error .notLoadable)
+  | 3 => some (.error .unsupportedAbi)
+  | 4 => some (.error .missingSymbol)
+  | 5 => some (.error .unsupported)
+  | 6 => some (.error .noAnswer)
+  | 7 => some (.error .dropped)
+  | _ => none
+
 /-- Hands over the answer of the registration `id`, once: the registered
-name, or why not. A status the library has no word for is an `IO` error. -/
+name, or why not (`grammarTakeOf`). A status the library has no word for is
+an `IO` error. -/
 def grammarsTake (id : UInt64) : IO (Except GrammarTakeRefusal String) := do
   let raw ← grammarsTakeRaw id
-  match raw.status with
-  | 0 =>
-    return .ok raw.name
-  | 1 =>
-    return .error .notFound
-  | 2 =>
-    return .error .notLoadable
-  | 3 =>
-    return .error .unsupportedAbi
-  | 4 =>
-    return .error .missingSymbol
-  | 5 =>
-    return .error .unsupported
-  | 6 =>
-    return .error .noAnswer
-  | 7 =>
-    return .error .dropped
-  | status =>
-    throw (IO.userError s!"the library answered a registration with the status {status}")
+  match grammarTakeOf raw.status raw.name with
+  | some answer =>
+    return answer
+  | none =>
+    throw (IO.userError s!"the library answered a registration with the status {raw.status}")
 
 /-- Withdraws the registration wait `id`, and returns whether there was
 anything to withdraw: its answer is dropped and never completed, though a

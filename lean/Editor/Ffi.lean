@@ -377,12 +377,14 @@ and returns at once; the completion is a `completion` event from the library
 source 6, the syntax service's. `grammarsTake` hands the answer over once,
 the registered name or a refusal (`GrammarTakeRefusal`: the library's five
 refusals, `noAnswer` for an id with no answer kept, and `dropped` when the
-worker ended first); an unknown status is an `IO` error. `grammarsCancel`
+worker ended first), each read from its status by `grammarTakeOf`; an
+unknown status is an `IO` error. `grammarsCancel`
 withdraws a wait, `grammarsFlush` is completed behind every registration
 started before it, and `grammarsPending` counts what is left, for tests. Its
 one caller is the job runner's real grammar service (`Job.realGrammars`,
-`Editor/Job/Real.lean`). Tests: the registration check of `ffi-test`
-(`FfiTest.syntaxChecks`), `contract-test`'s grammar properties, and the unit
+`Editor/Job/Real.lean`). Tests: the registration checks of `ffi-test`
+(`FfiTest.syntaxChecks`), a registration crossing and every status read by
+`grammarTakeOf`, `contract-test`'s grammar properties, and the unit
 tests of `grammars.rs` and `tests/grammars.rs` in `editor-ffi`.
 
 ### The window

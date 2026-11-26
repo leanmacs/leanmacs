@@ -43,7 +43,8 @@ import Editor.Watch
 
 The tests of `Editor/Job/Real.lean`: `fileWatchChecks`, `processChecks`,
 `jobChecks`, `fileChecks` and `grepChecks`, what only the runner over the library's services
-shows, and `warmPatience`. The root module `ContractTest` runs them; its module
+shows, `grammarChecks`, how the grammar service's adapter encodes what
+crosses to the library, and `warmPatience`. The root module `ContractTest` runs them; its module
 doc says what each shows.
 -/
 
@@ -792,5 +793,29 @@ def grepChecks (completions : Job.Completions) : List Check :=
                             .complete 2 3))
                   (pure ())
             endedAs handle (.finished #["true"]) }]
+
+/-- The checks of how the grammar service's adapter (`Job.realGrammars`)
+encodes what crosses to the library: the tag each policy crosses as
+(`Job.policyTag`), the tags `policy_of` reads in
+`crates/editor-ffi/src/grammars.rs`, and the port's answer for each answer
+the binding hands over (`Job.grammarAnswerOf`), each refusal of the
+library's as that refusal and each of the service's as `failed`. The library
+loads no grammar yet, so no registration reaches a refusal of its own, and
+these pin the mapping itself. -/
+def grammarChecks (_ : Unit) : List Check :=
+  [{  name := "each policy crosses as the tag `policy_of` names it by: none 0, incremental 1, whole 2"
+      run :=
+        return [none, some .incremental, some .whole].map Job.policyTag == [0, 1, 2] },
+    { name :=
+        "each answer a registration's take hands over is the port's answer of its own: the name, each refusal of the library's as that refusal, and the service's as failed"
+      run :=
+        return Job.grammarAnswerOf (.ok "python") matches .ok "python" &&
+            Job.grammarAnswerOf (.error .notFound) matches .error (.refused .notFound) &&
+            Job.grammarAnswerOf (.error .notLoadable) matches .error (.refused .notLoadable) &&
+            Job.grammarAnswerOf (.error .unsupportedAbi) matches .error (.refused .unsupportedAbi) &&
+            Job.grammarAnswerOf (.error .missingSymbol) matches .error (.refused .missingSymbol) &&
+            Job.grammarAnswerOf (.error .unsupported) matches .error (.refused .unsupported) &&
+            Job.grammarAnswerOf (.error .noAnswer) matches .error (.failed _) &&
+            Job.grammarAnswerOf (.error .dropped) matches .error (.failed _) }]
 
 end ContractTest

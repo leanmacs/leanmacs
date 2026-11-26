@@ -52,7 +52,9 @@ needs a clause in the job model (`JobModel.handle`, over
 runner (`Editor/Job/Fake.lean`, `Editor/Job/Real.lean`), and a property in
 `JobContract.grammarProperties`. A new refusal is a constructor of
 `RegistrationRefusal`, with its status in the binding
-(`Ffi.grammarsTake`) and in `crates/editor-ffi/src/grammars.rs`.
+(`Ffi.grammarTakeOf`, pinned by `FfiTest.syntaxChecks`) and in
+`crates/editor-ffi/src/grammars.rs`, and its answer in the real grammar
+service (`Job.grammarAnswerOf`, pinned by `ContractTest.grammarChecks`).
 -/
 
 namespace Editor

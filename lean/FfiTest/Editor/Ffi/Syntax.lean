@@ -57,7 +57,9 @@ def namesWhileHeld (grammar source : String) : IO (Option (Array String × UInt6
 
 /-- The checks of the syntax service's bindings: a list of strings out, a
 query as a handle with its refusals as a status, a tag and an offset, and
-captures as words with their refusals as statuses. What is parsed and what a
+captures as words with their refusals as statuses, and a registration's
+answer read from its status, every status, so that Lean's half of the
+encoding is held to the numbers the Rust side pins. What is parsed and what a
 query answers are the library's rules; these pin that each request, its
 answer and each refusal cross. -/
 def syntaxChecks (_ : Unit) : List Check :=
@@ -266,6 +268,18 @@ def syntaxChecks (_ : Unit) : List Check :=
         return started && !again && completed && taken matches .error .unsupported &&
             second matches .error .noAnswer &&
             (← Editor.Ffi.grammarsPending) == 0 },
+    { name :=
+        "each status a registration's take crosses as is read as its own answer, the statuses `GrammarStatus` gives in crates/editor-ffi/src/grammars.rs, and a status past them as none"
+      run :=
+        let take := (Editor.Ffi.grammarTakeOf · "python")
+        return take 0 matches some (.ok "python") && take 1 matches some (.error .notFound) &&
+            take 2 matches some (.error .notLoadable) &&
+            take 3 matches some (.error .unsupportedAbi) &&
+            take 4 matches some (.error .missingSymbol) &&
+            take 5 matches some (.error .unsupported) &&
+            take 6 matches some (.error .noAnswer) &&
+            take 7 matches some (.error .dropped) &&
+            take 8 matches none },
     { name := "the text of a file the file service loaded is of no document, and is refused as that"
       run :=
         inOwnDirectory fun directory => do
