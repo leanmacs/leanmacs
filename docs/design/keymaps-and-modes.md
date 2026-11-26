@@ -3699,9 +3699,62 @@ otherwise be a cycle).
 - **A config mode with its own tree wins when the user sets it**: it never
   looks at the language. One derived from `code` with no tree takes the
   language's.
-- **A grammar loaded at run time** (deferred) would be a registration that
-  makes a name known to the syntax service; entries name grammars and need
-  no new field.
+- **A grammar config declares** (`defineGrammar`,
+  `lean/Editor/Language/Grammar.lean`, roadmap `syntax-runtime-grammars`
+  phase 4) is loaded from a native library at run time, and a language
+  names it by name as it names a compiled-in one: entries need no new
+  field.
+
+  ```lean
+  def setup : SetupM Unit := do
+    defineGrammar "python" "/opt/grammars/libtree-sitter-python.dylib"
+    defineLanguage { name := "python", patterns := [.extension "py"], syntaxTree := { grammar := "python" } }
+  ```
+
+  - *Defaults and the name rule.* The symbol defaults to
+    `tree_sitter_<name>` and the query directory to `queries/` in the
+    library's own directory, holding the query files directly; a
+    declaration may give either, and a reparse policy (`whole` when it
+    gives none). Its symbol must register its declared name
+    (`GrammarSource.name symbol == name`), so another symbol is one
+    without the `tree_sitter_` prefix: one name end to end, which languages
+    name, an override replaces and the echo area says, with no change to the
+    registration's port. A declaration whose symbol registers another
+    name, a library or query directory that is not absolute, and a name
+    declared twice refuse the `setup`. A declaration is held by owner in
+    the registry (`Registry.grammars`), config's over a package's by name.
+  - *The query files* are `highlights.scm`, `injections.scm`,
+    `indents.scm` and `textobjects.scm`, the names nvim-treesitter and
+    Helix use, read from the query directory and filled into the
+    language's tree where the entry gives no source of its own: the
+    entry's own override wins over a file. A missing file ships no query of
+    its kind, as a compiled-in grammar that ships none.
+  - *The order.* Each install whose grammar table is not empty starts the
+    core's job `register-grammars` for its config generation, owned by
+    `config`, after cancelling the old config's jobs
+    (`lean/Editor/Language/Grammar/Register.lean`). The job registers each
+    declaration and reads its query files; its command records the answers
+    in the editor state, stamped with the generation, highlights every
+    open buffer of a declared grammar's language again (detaching first,
+    so an overridden grammar's buffer gets the new parser), and says the
+    refusals last. A buffer whose mode is set while the job runs is drawn
+    plain, with nothing attached and nothing said, until the command
+    highlights it; answers of an older generation are never read
+    (`Language.Grammar.treeOf`). The editor thread waits for none of it.
+  - *Overrides and refusals.* A declaration named as a compiled-in grammar
+    replaces it for buffers highlighted after the registration. A refusal
+    is said in the echo area, ``grammar `<name>`: <why>, so <what stays>``:
+    "the compiled-in grammar stays" (a `.lean` buffer keeps the compiled-in
+    `lean`), "the grammar registered before stays", or "its languages have
+    no syntax tree" (the buffer stays open as plain text). A query file
+    that cannot be read for another reason than being missing is said too,
+    with its path.
+  - *Limits.* A declaration a later reload drops stays registered in the
+    library until the editor restarts (the library has no unregister); its
+    languages fall back as `treeOf` says. The declared queries fill only
+    the language's tree, not a mode's own tree that names the grammar,
+    and are not used for an injected language: the injections step asks
+    each grammar's shipped highlights, and a registered grammar ships none.
 - **The indent unit is read by `=` and by the commands that open a
   line** (`Target.indentUnit`): the unit of the buffer's language's entry,
   which a command asks the loop for by name (`indentUnitOf`, answered from
@@ -3721,7 +3774,16 @@ Pinned by `ModelTest.languageMatchChecks` (the rule and the table, pure),
 config's override of Rust's query, through the host and the real syntax
 binding), and `ContractTest`'s checks that a TOML text is drawn by the real
 display with its keys, string and brackets in their faces' colours, and a
-Lean text with its keyword, string and comment in theirs.
+Lean text with its keyword, string and comment in theirs. A declared
+grammar is pinned by `ModelTest.grammarDeclarationChecks` (the defaults,
+the problems and `treeOf`, pure), `ModelTest.setupChecks` and
+`ConfigTest.grammarSetupChecks` (a declaration as config writes it),
+`ModelTest.reloadChecks` (the registry and the reducer's effect),
+`ModelTest.modeEnterChecks` (the resolution and highlighting again),
+`ModelTest.grammarRegisterChecks` (the job and its command, through the
+loop's driver), `ConfigTest.reloadEchoChecks` (the host's start of the
+job) and `ContractTest.grammarDeclarationChecks` (the fixture grammar
+library declared, registered, read and drawn over the real library).
 
 ### Why this shape
 

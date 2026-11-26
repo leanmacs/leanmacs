@@ -22,9 +22,16 @@ entries (`Language.forPath`); config only supplies entries.
 - **`syntaxTree`** is a `Mode.SyntaxTree` (`Editor/Mode.lean`): the grammar
   name and the same optional query and capture overrides a mode takes, so
   setting a buffer's mode hands it to `Editor/Highlight.lean` unchanged.
-  The grammar is named as the library's syntax service knows it; a grammar
-  loaded from a path at run time would be a registration that makes a name
-  known to the service, and an entry would still name it.
+  The grammar is named as the library's syntax service knows it. A grammar
+  config declares (`defineGrammar`, `Editor/Language/Grammar.lean`) is
+  loaded from a native library at run time, by a registration that makes
+  its name known to the service, and an entry names it like any other;
+  once it registered, the queries read from its directory fill the
+  entry's empty sources, and until its registration has answered, a
+  buffer of the entry is drawn plain (`Language.Grammar.treeOf`, which the
+  loop applies to the language's tree). A mode with its own tree naming a
+  declared grammar gets the grammar but not the declared queries: the
+  resolution is applied to the language's tree only.
 - **`indentUnit`** is one level of indentation: a number of spaces, or a
   tab (`Editor/Language/IndentUnit.lean`, its own module so the state
   requests can name it). An entry that says none has four spaces
@@ -111,6 +118,7 @@ and one that holds `/`, which a base name never does.
 | Something more a language says of how it is edited | A field of `Language`, read by its consumer |
 | Something the `code` mode does for every language | `codeMode`, reading what it needs from the buffer's language |
 | A new kind of pattern | A variant of `Language.Pattern`, its pass in `forPath`, and its case in `problems` |
+| A grammar loaded at run time | A declaration in config (`defineGrammar`, `Editor/Language/Grammar.lean`), named by an entry's `syntaxTree.grammar`; nothing here |
 
 Pinned by `ModelTest.languageMatchChecks` (the rule, pure) and
 `ModelTest.modeRecordChecks` (the `code` mode's tree).

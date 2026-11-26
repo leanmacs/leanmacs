@@ -481,7 +481,7 @@ def setup : SetupM Unit := do
 
 The symbol defaults to `tree_sitter_<name>` and the query directory to
 `queries/` beside the library; `(symbol := "python")`,
-`(queries := "/opt/python-queries")` and `(policy := .incremental)` give
+`(queries := "/opt/python-queries")` and `(policy := ReparsePolicy.incremental)` give
 others. A declaration whose symbol registers another name, a library or a
 query directory that is not absolute, and a name declared twice are
 refused. Each install registers the declared grammars in a job, and the

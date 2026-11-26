@@ -902,7 +902,17 @@ and changes on disk:
   name or a refusal as a value. The editor thread never waits for it: a
   command cannot make the request, and the editor thread reads the grammars
   listed through the syntax tree interface, a lookup under the adapter's
-  registry lock, never a parse or a load.
+  registry lock, never a parse or a load. Config's declared grammars
+  (`defineGrammar`) are registered by the core's job `register-grammars`
+  (`lean/Editor/Language/Grammar/Register.lean`), which the reload reducer
+  starts at each install whose grammar table is not empty and the next
+  install cancels, owned by `config`. The job registers each grammar and
+  loads its query files; its command, on the editor thread, reads the
+  loaded texts, asks the grammars listed once, records the answers stamped
+  with the config generation and highlights the open buffers of those
+  grammars' languages again. A buffer whose mode is set before the command
+  is drawn plain until it, so no buffer's tree depends on when the job
+  ends, and the editor thread waits for none of it.
 - **A project search is a request a job awaits** (`lean/Editor/Grep.lean`):
   `Grep.start` names a root, a pattern, open buffers' snapshots as overlays
   (named as a save names its source), limits and a bound, and replies with
