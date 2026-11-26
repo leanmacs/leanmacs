@@ -195,8 +195,8 @@ service alone: its setup (`Acp.setup`) registers what follows.
   `agent-prompt [text]` sends a prompt, or asks for one, refusing before
   the session is open and while a prompt is on its way or a turn is in
   flight; `agent-answer <ticket> <option-id>` answers a pending permission
-  request with an option it offered, and sends nothing otherwise, a
-  minimal path phase 6's queue, policy and audit log are built over;
+  request with an option it offered, and sends nothing otherwise, the one
+  path the queue's answer shares ("Permissions, as built");
   `agent-cancel` cancels the turn in flight; `agent-stop` cancels the
   session's job by its key, ending its child; and `agent-toggle`, the
   mode's `toggle`, folds or unfolds the tool call on the cursor's row. Each
@@ -263,6 +263,120 @@ service alone: its setup (`Acp.setup`) registers what follows.
   `next` holds no activity unit is not needed yet (rdm task
   `acp-session-outside-mark-for-next`, before a conversation runs on a real
   host in a check or a CLI fixture).
+
+### Permissions, as built (acp-agents phase 6)
+
+What "Permissions" below asks for, in `agents-api` and `acp`. The
+interface declares the policy and how a queued request is shown; `acp`
+does everything that acts.
+
+- **The policy cannot invent an answer.** `AgentsApi.PermissionPolicy`
+  (`packages/agents-api/AgentsApi/Policy.lean`) is a choice by name, the
+  latest registered under `default` winning, so config's replaces the
+  package's. Its `decide` maps a `PermissionRequest` (the agent, the
+  root, the agent's session id, the ticket, the turn, the tool call and
+  the offered options) to a `Decision request`: `ask`, or `choose` with a
+  `Fin request.options.size`, an index into that request's own options.
+  There is no constructor that takes an option or an id. The theorem
+  `answer_offered` (`AgentsApiTest/AgentsApi/Policy/Theorems.lean`)
+  states that every policy's answer is none or an offered option, by that
+  type alone, with its axioms pinned by `#print axioms`; `lake build`
+  checks it. Config writes a policy with `Decision.ofKind` or
+  `Decision.ofId`, which choose the first offered option of a protocol
+  kind or an id and ask when none is offered, so it writes no proof.
+- **The default asks.** `acp` registers `PermissionPolicy.ask` under
+  `default`, and the reader falls back to it when nobody registered one.
+- **When it runs.** Once, as a batch is applied (`agent-events`): each
+  permission request the batch leaves pending, of a conversation that has
+  not ended, is decided (`Acp/Permissions/Policy.lean`). A choice is sent
+  by `agent-send` as the indexed option's own id, with the origin
+  `policy`; an `ask` sends nothing, and the request waits in the queue. A
+  request still pending after a reload or a change of policy is not
+  decided again: it stays the user's. A policy's answer and the user's can
+  race for one ticket while the policy's send is queued; the protocol
+  takes the first and refuses the second, which is noted and audited
+  `refused`.
+- **Silence is normal.** A session whose mode resolves permissions itself
+  never asks: its batches decide nothing, send nothing and write nothing,
+  its queue says `nothing pending`, and nothing in `acp` waits on a
+  request.
+- **The queue.** One buffer a project, `*agent permissions: <project>*`
+  (`agent-queue`, from any buffer of the project; read-only, the major
+  mode `agent-permissions`, in the workspace of the buffer it was opened
+  from). It is derived from the conversations on every redraw
+  (`Acp/Permissions/Queue.lean`), never kept apart: every pending request
+  of every conversation of the project that has not ended, by
+  conversation number and then by place, so oldest session first and
+  then oldest request. A strict arrival order across sessions would need
+  a stamp on each request in the conversation store; phase 7 moves the
+  records into the project's store and may revisit it. Its text is
+  `permissions of <project>`, `<k> pending` or `nothing pending`, then
+  each request as the view's `queued` field lists it: by default
+  `? <agent> in <root>, conversation <n>, ticket <t>: <title>`, the raw
+  input, the call's content as an unfolded call shows it (so a diff is its
+  path and its change), and `options: <id> (<name>), …`. Two sessions
+  number their tickets apart, so a request is named by its conversation
+  and its ticket together, never by the ticket alone.
+- **Answering from the queue.** `agent-queue-answer [option-id]` (the
+  mode's localleader `a`) answers the request on the cursor's row, or asks
+  `Answer <ticket> (<ids>): `, the prompt's continuation carrying the
+  conversation and the ticket, so a queue that changed while the prompt
+  was open still answers the request it asked about. It and `agent-answer`
+  share one path (`answerTicket`), which refuses a ticket that is not
+  pending and an option the request did not offer.
+- **A reload loses nothing.** The pending request is an item of its
+  conversation in `acp`'s unscoped store, which a reload leaves; the queue
+  is derived from it; the queue buffers' numbers and the audit's outbox
+  are unscoped stores too; and the session job is a package's, which an
+  install does not cancel.
+- **The audit log.** `<state>/agents/permissions.log`, under the host's
+  state directory (`EditorState.stateDirectory`: `XDG_STATE_HOME` or
+  `HOME`, never a checkout), one file for the editor, each record naming
+  its project, root, agent, the agent's session id, conversation and
+  ticket. With no state directory nothing is logged. One record a line,
+  as the crate's lines: a kind word, then tab-separated `name=value`
+  fields, each value escaped (`Acp.Codec.escape`), so `Acp.Codec.split`
+  reads a line back (`Acp/Permissions/Audit.lean`). In the order things
+  happen: `asked` (the request whole: title, kind, raw input, each content
+  item, each option), `decided` (the policy's name and `ask` or the chosen
+  id), `answered` (with `by=user` or `by=policy`), `refused` (with the
+  service's words, `AgentsApi.Refusal.describe`), `withdrawn` (a cancel
+  answered it `cancelled`) and `closed` (its conversation ended with it
+  pending: the session's end, `agent-stop`, or its buffer closed). So
+  every request has an answer record. There is no time stamp: the job
+  port has no wall clock, and the order of the lines is the order of the
+  events.
+- **The writer.** Records go to an outbox in an unscoped store; when no
+  write is in flight its lines are handed to one job, `agent-audit`, which
+  makes the log's directory and appends the text, and returns the result
+  as a value. Its command drops what it wrote, says a refusal once
+  (`agent audit log: <path> not written: <reason>`), and starts the next.
+  So appends reach the file service one at a time and in order
+  ([concurrency.md](concurrency.md), "The permission audit log's writer").
+- **Why it is safe.** The only order sent for the log is an append, after
+  a make of its directory: nothing saves over it, removes it or reads it.
+  A record holds what the queue shows the user (title, raw input, diff,
+  options) and identifiers; no environment, no Claude configuration, no
+  `_meta`, no standard error and nothing of the auth notifications, which
+  the crate drops before Lean sees them. A raw input may hold what the
+  agent typed into a tool call, a shell command's arguments included,
+  which is what the user is shown when asked. The file is the user's,
+  under their state directory, with the file service's default
+  permissions. It grows without bound for now (rdm task for rotation).
+- **An ended session's pending tickets** leave the queue and are audited
+  `closed`; its conversation buffer still labels them pending, since
+  `PermissionState` has no `closed`: cosmetic, left to phase 7.
+- **Tests**: the theorem and `policyChecks` in `agents-api`; the
+  decisions, the queue and the records' golden lines in `acp-test`
+  (`AcpTest/Acp/Permissions/`); and on the stepped host over
+  `agents-api`'s fake (`AcpTest/Linked/Acp/Permissions.lean`): two
+  sessions' requests in one queue, answered from it by session; a request
+  across a reload; the log's orders to the file fake for an answer from
+  the queue, a policy's answer, a withdrawal and a close; silence; the
+  queue's refusals and prompt; and closing the queue buffer. A
+  conversation no view shows is read from `acp`'s store by the check's
+  `test-probe-conversation`, so two conversations of one header are told
+  apart.
 
 ### Upgrading the SDK
 
@@ -528,6 +642,9 @@ The design that satisfies both:
 
 A pending request is compiled Lean state, so a config reload while a
 request is waiting loses nothing.
+
+As built, in `agents-api` and `acp`: "Permissions, as built (acp-agents
+phase 6)", above.
 
 ## Sessions and workspaces
 

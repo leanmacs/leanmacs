@@ -244,7 +244,14 @@ extension points is:
   how each item of a conversation is shown, chosen by the name `default`,
   which `acp` registers and config replaces with a view of that name
   ([agent-hosting.md](agent-hosting.md), "Sessions and the conversation,
-  as built").
+  as built"); its `queued` field lists a pending permission request as the
+  queue of a project's requests shows it. `agents-api`'s
+  `AgentsApi.PermissionPolicy` is a third (`PermissionPolicy.named`, which
+  falls back to the policy that asks, and the pure choice
+  `PermissionPolicy.choose`): what answers a permission request, chosen by
+  the name `default`, whose type admits only one of the request's own
+  options or "ask" ([agent-hosting.md](agent-hosting.md), "Permissions, as
+  built").
 
 ### How the values travel
 

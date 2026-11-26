@@ -2443,6 +2443,22 @@ handled it, so a take cannot include what arrives after it; nothing here
 promises more than that, per take. Pinned on the stepped host
 (`packages/acp/AcpTest/Linked/Acp/Conversation.lean`, AC3: a thousand
 events in ten pieces, both ways, one memory-queue event and one scene).
+
+**The permission audit log's writer** (acp-agents phase 6;
+`packages/acp/Acp/Permissions.lean`). Every permission request and its
+answer are appended to `<state>/agents/permissions.log` through the job
+port's file requests. Records are made on the editor thread, in the order
+things happen, and queued in an outbox kept in an unscoped store. One job
+at a time, `agent-audit`, takes the outbox's lines as one text, makes the
+log's directory and appends the text, and returns the file service's
+answer as a value; its command drops the lines it wrote, says a refusal
+once, and hands the next lines to a new job. So the appends reach the file
+service in the order the records were made, though jobs run on a pool: two
+append jobs at once could land out of order, and a keyed job would cancel
+an older one and lose its records, so it is neither. The outbox and a
+write in flight live through a reload, the store being unscoped and the
+job a package's. Pinned on the stepped host by the orders the file fake
+was handed (`packages/acp/AcpTest/Linked/Acp/Permissions.lean`, AC4).
 Pinned on the stepped host with the
 service's fake and the process fake's hand-off (`FakeProcesses.handOff`)
 by `EchoTest/Linked/Echo/Packages.lean`'s two forced orders: (a) the
