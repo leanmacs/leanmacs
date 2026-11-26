@@ -26,7 +26,10 @@
 #   owner of a port publishes its fake and its contract check (AGENTS.md,
 #   "Testing with hand-written mocks"), its own tests, and the root of its
 #   linked test (`AgentsApiTest/Linked.lean`), which runs a session through
-#   the headless host stepped on the check's thread, over the fake.
+#   the headless host stepped on the check's thread, over the fake; and its
+#   fixture support (`AgentsApiTest/FixtureSupport.lean`), the fake handed
+#   to a set's stepped fixture harness, which only that harness's generated
+#   root imports.
 # - `agents-api-test` is its test driver (`lake test`), rooted at
 #   `AgentsApiTest/Model.lean`. It is no default target, as the core's
 #   `model-test` is not.

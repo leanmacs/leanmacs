@@ -239,6 +239,12 @@ extension points is:
   is started with (the program, its arguments, its environment and the MCP
   servers), and none for a session mode or the agent's own configuration
   ([agent-hosting.md](agent-hosting.md), "The ACP client, as built").
+  `agents-api`'s `AgentsApi.ConversationView` is another
+  (`ConversationView.named`, the pure choice `ConversationView.choose`):
+  how each item of a conversation is shown, chosen by the name `default`,
+  which `acp` registers and config replaces with a view of that name
+  ([agent-hosting.md](agent-hosting.md), "Sessions and the conversation,
+  as built").
 
 ### How the values travel
 

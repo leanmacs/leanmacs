@@ -400,6 +400,15 @@ import exactly these twenty-seven modules (`lake -d ../packages query
 (`:editorBase`). The interface packages have no entry module, so neither
 names them; their modules come with their implementations' libraries.
 
+The fixture harness's root, `EditorSetFixtures`, is written beside it the
+same way (`fixturesRootSource`) and calls `Editor.Test.Fixture.Main.run`
+with the same packages, schemes and base, and then the `support` of each
+package's fixture support module (`<P>Test.FixtureSupport`, found by name
+as an entry module is: `fixtureSupportModule?`), which it alone imports:
+`#[]` for the default set, which holds none, and for the fixture set
+`agents-api`'s and `acp`'s ("A package's tests and the gate's steps over
+them", below). So no fake is linked into an editor.
+
 #### The config base of a set
 
 **An editor elaborates config on its set's base: `Editor`, then the entry
@@ -662,7 +671,15 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   `expected`, run stepped by the fixture harness built from the set
   (`fixture-test`, the `editorFixtures` facet;
   [headless-mode.md](../dev-practices/headless-mode.md), "How the gate
-  runs a fixture"), but those the real-thread set leaves to the CLI.
+  runs a fixture"), but those the real-thread set leaves to the CLI;
+- **its fixture support**, `<P>Test.FixtureSupport`, when the package has
+  one, declares `support : Editor.Test.Fixture.Support`: the setups of its
+  fixtures' scripts and the fakes of the package services they ask
+  (`lean/Editor/Test/Fixture/Support.lean`). The package-set build finds it
+  by its name, as it finds an entry module (`fixtureSupportModule?`), and
+  only the fixture harness's generated root imports it ("The generated
+  root", above), so no editor links a fake. `agents-api`'s brings its
+  service's fake, `acp`'s its conversation fixture's setup.
 
 | Step | Per package | In task |
 |---|---|---|
@@ -1877,8 +1894,8 @@ guide quotes.
 | `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
 | `tests/packages/echo/` | The Lake package `echo`, which holds Rust ("Rust in a package", below): its crate `echo-service` (`rust/`), its glue (`ffi/glue.c`), the port of its service with a pure model, a contract and the Rust-backed binding, its test driver (`EchoTest/Model.lean`) and its linked test (`EchoTest/Linked.lean`). Its crate also takes over a streaming child a job opened, through `editor-service`'s stream source alone (`rust/src/attach.rs`, bound as `Echo.Real.attach` and `attachTake`), which the linked test's wiring module `EchoTest/Linked/Echo/Real/Attach.lean` runs. It registers the package `echo`: the jobs and commands `echo-say` and `echo-attach`, `echo-attach-cancel`, and its service, which a running job reaches through the runner's package port (`Package.services`; "Behind a port, so it stays replaceable", below) |
-| `packages/agents-api/` | The interface package of agents (`keywords = ["editor-interface"]`), opt-in and outside the default set: the plain events and orders of a session, the agent registration point `AgentsApi.Agent`, and the package service `agents` with its request vocabulary, its replies and the job wrappers (`AgentsApi/Job.lean`). Its test library publishes the protocol's pure model with three theorems (`AgentsApiTest/Protocol.lean`, `Protocol/Theorems.lean`), the service's fake built on that model (`AgentsApiTest/Fake.lean`, handed a stepped stage as a package's own fake, `Job.PackageFake`) and the contract (`AgentsApiTest/Contract.lean`); its linked test runs a session over the fake on the stepped host (`AgentsApiTest/Linked.lean`). It registers nothing ([agent-hosting.md](agent-hosting.md), "The ACP client, as built") |
-| `packages/acp/` | The implementation of `agents-api`'s service over the Agent Client Protocol's Rust SDK, opt-in and outside the default set, which holds Rust ("Rust in a package", below): its crate `acp-service` (`rust/`), which pins the SDK and keeps its types inside, its glue (`ffi/glue.c`), the codec of the crate's text (`Acp/Codec.lean`), the service over the binding (`Acp/Service.lean`, `Acp/Real.lean`), its test driver (`AcpTest/Model.lean`) and its linked test (`AcpTest/Linked.lean`), which runs `agents-api`'s contract and a whole session on the real crate over a scripted agent executable. It registers the package `acp`, which brings the service `agents` and nothing else (`Package.services`). No package imports it |
+| `packages/agents-api/` | The interface package of agents (`keywords = ["editor-interface"]`), opt-in and outside the default set: the plain events and orders of a session, the agent registration point `AgentsApi.Agent`, the conversation's view point `AgentsApi.ConversationView`, the package service `agents` with its request vocabulary, its replies and the job wrappers (`AgentsApi/Job.lean`), and a session's values as command arguments (`AgentsApi/Arguments.lean`). Its test library publishes the protocol's pure model with three theorems (`AgentsApiTest/Protocol.lean`, `Protocol/Theorems.lean`), the service's fake built on that model (`AgentsApiTest/Fake.lean`, handed a stepped stage as a package's own fake, `Job.PackageFake`), the contract (`AgentsApiTest/Contract.lean`) and its fixture support (`AgentsApiTest/FixtureSupport.lean`); its linked test runs a session over the fake on the stepped host (`AgentsApiTest/Linked.lean`). It registers nothing ([agent-hosting.md](agent-hosting.md), "The ACP client, as built") |
+| `packages/acp/` | The implementation of `agents-api`'s service over the Agent Client Protocol's Rust SDK, opt-in and outside the default set, which holds Rust ("Rust in a package", below): its crate `acp-service` (`rust/`), which pins the SDK and keeps its types inside, its glue (`ffi/glue.c`), the codec of the crate's text (`Acp/Codec.lean`), the service over the binding (`Acp/Service.lean`, `Acp/Real.lean`), Claude Code's adapter (`Acp/ClaudeCode.lean`), the sessions and the conversation buffer (`Acp/Conversation.lean` and `Acp/Conversation/`), its test driver (`AcpTest/Model.lean`), its fixture support (`AcpTest/FixtureSupport.lean`), its headless fixture (`tests/headless/conversation/`) and its linked test (`AcpTest/Linked.lean`), which runs the conversation on the stepped host over `agents-api`'s fake, and `agents-api`'s contract and a whole session on the real crate over a scripted agent executable. It registers the package `acp`, which brings the service `agents` (`Package.services`) and registers the conversation ([agent-hosting.md](agent-hosting.md), "Sessions and the conversation, as built"). No package imports it |
 | `docs/packages/word-count/` | The Lake package `word-count`, the example the guide to writing a package ([writing-a-package.md](../packages/writing-a-package.md)) quotes: the command `word-count` (`WordCount.lean`), its entry module, its test driver (`WordCountTest/Model.lean`, which runs `WordCountTest/WordCount.lean`) and three fixtures: `count`, the command compiled in; `as-config`, the same code as a config file; and `from-config`, a config that imports the package's module. It has no linked test |
 
 - **A package outside the core is built by the package-set build and its
@@ -3448,8 +3465,8 @@ fixture set requires both, so the gate covers them.
 
 | Package | Layer | Requires, beside the core | Extension points it registers at | Extension points it reads | Names it declares, or reaches |
 |---|---|---|---|---|---|
-| `agents-api` | interface | none | none | none | declares the point `AgentsApi.Agent`, a choice by name (`AgentsApi.Agent.named`, an `Extension.named`), the package service `agents` (`AgentsApi.serviceName`) with its vocabulary and replies, the protocol's model and theorems, the service's fake and its contract |
-| `acp` | implementation | `agents-api` | none | none | brings the service `agents` (`Package.services`) over its crate `acp-service`; registers nothing; no package imports it |
+| `agents-api` | interface | none | none | none | declares the points `AgentsApi.Agent` and `AgentsApi.ConversationView`, each a choice by name (`AgentsApi.Agent.named`, `AgentsApi.ConversationView.named`, each an `Extension.named`), the package service `agents` (`AgentsApi.serviceName`) with its vocabulary, its replies and their argument encoding (`AgentsApi/Arguments.lean`), the protocol's model and theorems, the service's fake, its contract and its fixture support |
+| `acp` | implementation | `agents-api`, `buffers-api` | `AgentsApi.Agent` (`claude-code`), `AgentsApi.ConversationView` (`default`), `BuffersApi.Closing` | `AgentsApi.Agent` (the session job, an `Extension.workJob`, and `agent-start`), `AgentsApi.ConversationView` | brings the service `agents` (`Package.services`) over its crate `acp-service`; registers the session commands `agent-start`, `agent-prompt`, `agent-answer`, `agent-cancel`, `agent-stop` and `agent-toggle` with five ex names, the jobs `agent-session` and `agent-send`, and the mode `agent-conversation`; no package imports it |
 
 Review holds this table and the one above to the tree
 ([structure.md](../../.agents/rules/structure.md), "Module map"): a change

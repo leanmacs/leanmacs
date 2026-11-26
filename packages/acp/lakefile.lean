@@ -25,18 +25,26 @@ that declares the crate.
 - `acpGlue.o` is the package's glue, `ffi/glue.c`, compiled against the
   toolchain's `lean.h`.
 - `Acp` is the package's library: the codec of the crate's text
-  (`Acp.Codec`), the service over a binding (`Acp.Service`), its list of
-  packages and its entry module. `AcpReal` is the Rust-backed binding alone,
+  (`Acp.Codec`), the service over a binding (`Acp.Service`), Claude Code's
+  adapter (`Acp.ClaudeCode`), the sessions and the conversation buffer
+  (`Acp.Conversation` and the modules under it), its list of packages and
+  its entry module. It requires `buffers-api` for the hook
+  `BuffersApi.Closing`, at which a closed conversation buffer stops its
+  session. `AcpReal` is the Rust-backed binding alone,
   whose `moreLinkObjs` is the glue, so the glue is linked into exactly the
   executables that import `Acp.Real`: the set's editor, through the entry
   module, and the linked test.
-- `acp-test` is its test driver (`lake test`): the codec's golden lines and
-  the service over a binding written in the test, which need no Rust,
-  rooted at `AcpTest/Model.lean`.
+- `acp-test` is its test driver (`lake test`): the codec's golden lines,
+  the service over a binding written in the test, and the conversation's
+  pure parts and registration, which need no Rust, rooted at
+  `AcpTest/Model.lean`.
 - `AcpTest` holds the test modules, `AcpTest/Linked.lean` among them: the
   root of the executable the core's `editorLinked` facet links as the
-  editor is linked, which runs `agents-api`'s contract and the wiring check
-  on the real crate.
+  editor is linked, which runs the conversation on the stepped host over
+  `agents-api`'s fake, and `agents-api`'s contract and the wiring check on
+  the real crate; and `AcpTest/FixtureSupport.lean`, the setup of the
+  headless fixture `tests/headless/conversation/`, which only the fixture
+  harness's generated root imports.
 
 After changing a `require`, run in lean/:
   lake -d ../packages/acp update --keep-toolchain

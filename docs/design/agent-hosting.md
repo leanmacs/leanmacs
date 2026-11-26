@@ -148,7 +148,12 @@ later work (rdm:task/packages-load-native-libraries-at-run-time).
   its state at that end rather than holding its events for a `next` that
   cannot come. A session whose job is cancelled with no request of it in
   flight, between two `next`s, is not yet freed: the crate never hears of
-  that cancel, and holds its last events.
+  that cancel, and holds its last events. The conversation's pause between
+  takes (below) makes this the usual way `agent-stop` and a closed buffer
+  end a session; what is held is at most one pause's events, freed at the
+  process's exit (rdm task `acp-session-cancelled-between-nexts-keeps-tail`,
+  which needs a release request of the service, with phase 7's session
+  lifecycle).
 - **The protocol's rules are proved** on a pure model in `agents-api`'s
   test library (`AgentsApiTest/Protocol.lean`,
   `AgentsApiTest/Protocol/Theorems.lean`): every response answers exactly
@@ -165,6 +170,99 @@ later work (rdm:task/packages-load-native-libraries-at-run-time).
   runs the contract and a whole session on the real crate over a scripted
   agent executable, a POSIX `sh` script that exits 0 only if it read
   exactly the lines it expects (`AcpTest/ScriptedAgent.lean`).
+
+### Sessions and the conversation, as built (acp-agents phase 5)
+
+The conversation is `acp`'s (`packages/acp/Acp/Conversation.lean` and the
+modules under `Acp/Conversation/`), written over the editor API and
+`agents-api` alone, so `acp`'s tests run it with no Rust; how each item is
+shown is `agents-api`'s extension point. `acp` no longer registers the
+service alone: its setup (`Acp.setup`) registers what follows.
+
+- **Claude Code's adapter is registered by `acp`** (`Acp.claudeCode`,
+  `Acp/ClaudeCode.lean`): `claude-agent-acp` with no arguments, the
+  editor's environment as it is (nothing cleared, set or unset, so no
+  `CLAUDE_CONFIG_DIR`) and no MCP server, named `claude-code`, the name the
+  commands start (`Acp.defaultAgent`). Not a default package: `acp` and
+  `agents-api` stay out of the default set (owner decision, 2026-11-26),
+  and only an ACP implementation can drive the adapter, so the registration
+  is the default exactly when `acp` is in the user's set. Config replaces
+  it by registering an `AgentsApi.Agent` of that name.
+- **The commands**: `agent-start [root]` starts a session in one of the
+  focused buffer's project's workspaces (the one whose root the text names,
+  or the buffer's own), refusing a buffer with no workspace, a location
+  where commands cannot run and an agent nobody registered;
+  `agent-prompt [text]` sends a prompt, or asks for one, refusing before
+  the session is open and while a prompt is on its way or a turn is in
+  flight; `agent-answer <ticket> <option-id>` answers a pending permission
+  request with an option it offered, and sends nothing otherwise, a
+  minimal path phase 6's queue, policy and audit log are built over;
+  `agent-cancel` cancels the turn in flight; `agent-stop` cancels the
+  session's job by its key, ending its child; and `agent-toggle`, the
+  mode's `toggle`, folds or unfolds the tool call on the cursor's row. Each
+  but the last has an ex name. **No command, job or handler sends
+  `session/set_mode` or a configuration option**: the session keeps the
+  mode the user's Claude settings give it, and the buffer shows the mode
+  the session reports, from `session/new` and each `current_mode_update`.
+- **One post a batch.** The session job (`agent-session`, registered over
+  `AgentsApi.Agent`) opens the session, posts it, and loops on `next`:
+  each batch, everything the service held when it was taken, is **one**
+  post of `agent-events`, so one editor-queue event, one turn of the loop
+  and one published scene. After each post the job sleeps
+  `Acp.Conversation.batchPause`, 50 ms, on the job clock (JobM's `sleep`,
+  as compile's run does): the library's timers in the editor, the fake
+  clock on a stepped host. So, per take: on a stepped host every event
+  queued between two turns, into a parked `next` or across a pause, is in
+  one batch; on a real host the job takes at most once a pause, about
+  twenty posts a second a session, each carrying everything since the last
+  take, never one event a post. A post cannot wait until the loop has
+  handled it, so no take can include what arrives after it; that holds
+  per take, and is all the docs promise. Each order goes out from a job of
+  its own (`agent-send`), whose reply its command applies.
+- **The conversation's state is a store** (`Acp.Conversation.store`, in
+  the unscoped store, so it survives a reload of config; a restart is
+  phase 7's), and the buffer's text is regenerated from it after each
+  change (`Acp/Conversation/State.lean`, `Render.lean`): a chunk joins the
+  message of its id, a tool call replaces the item of its id whole, so the
+  pre-run diff of the edit's own strings is replaced by the whole file's,
+  a permission request is pending until the service withdraws it or acp's
+  answer to it is taken, both final, and a turn's end marks no ticket.
+- **The buffer** is read-only, named `*agent: <agent> <label>*`, in the
+  session's workspace and the major mode `agent-conversation` (`toggle`,
+  and the localleader's `p`, `c` and `k`), and shown where the display
+  rules say for the opener `agent-start`. It is ordinary buffer text, so
+  evil's motions and search work in it. A view whose cursor is on the last
+  line follows the end; every other keeps its row. Closing it stops the
+  session (`BuffersApi.Closing`).
+- **How each item is shown is a choice** (`AgentsApi.ConversationView`,
+  `AgentsApi/View.lean`): a structure of pure functions, one an item kind,
+  chosen by the name `default`; `acp` registers its default view
+  (`Acp.Conversation.defaultView`) and config replaces it by registering
+  one of that name, built from it with a field changed if it likes. The
+  default prints the header (agent and root, title, mode, usage), `> ` and
+  the prompt, the message's text, a tool call folded as `[+] <kind>:
+  <title> (<status>) <location>`, unfolded with its content, a diff as its
+  path and its middle with two lines of context
+  (`Acp/Conversation/Diff.lean`: the shared head and tail dropped, linear,
+  right for the adapter's diffs; a hunked review is the review interface's
+  later work), a permission request with its options and where it stands,
+  and a turn's end. A field's line feeds are split into rows, so the map
+  of rows `agent-toggle` reads stays true.
+- **Tests**: the pure parts in `acp-test`; the commands on the stepped host
+  over `agents-api`'s fake in `acp`'s linked test
+  (`AcpTest/Linked/Acp/Conversation.lean`: the reply, tool call and final
+  diff; no `setMode` and the registration's command as the child's; a
+  thousand events in one turn and one scene; an answer and a cancel forced
+  in both orders); and the headless fixture
+  `packages/acp/tests/headless/conversation/`, run stepped only, since
+  through the CLI it would start the user's real adapter. It gets its
+  service fake and its setup from the packages' fixture supports
+  (`AgentsApiTest/FixtureSupport.lean`, `AcpTest/FixtureSupport.lean`;
+  `docs/dev-practices/headless-mode.md`, "A package's fixtures"). No check
+  of this phase runs a session on a real host, so the mark that a parked
+  `next` holds no activity unit is not needed yet (rdm task
+  `acp-session-outside-mark-for-next`, before a conversation runs on a real
+  host in a check or a CLI fixture).
 
 ### Upgrading the SDK
 

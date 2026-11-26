@@ -2337,6 +2337,20 @@ its adapter, fixed with a failing property of that port's contract first;
 else a missing seed, added to the setup; else a real effect, moved into
 the real-thread set with what it is.
 
+**A package's fixture support brings setups and service fakes**
+(`lean/Editor/Test/Fixture/Support.lean`): a package whose fixtures need a
+setup, or a package service the stepped host does not have (its package
+services are its fakes alone), declares `support :
+Editor.Test.Fixture.Support` in its module `<P>Test.FixtureSupport`. The
+package-set build finds that module by its name, as it finds an entry
+module, and only the harness's generated root imports it, handing
+`Main.run` the supports in the set's order; the editor's root imports
+none, so no fake is linked into an editor. The harness's setups are the
+core's, then each support's (`Support.merge`, which refuses a script two
+declare a setup of, naming both), and each run makes each support's fakes
+afresh (`Harness.fakes`), held to quiescence at the end like the rest. A
+set with no support runs as before.
+
 ## A package's fixtures
 
 A package outside the core keeps its headless fixtures in its own
@@ -2445,6 +2459,18 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   child through a host is no static fixture: the package's linked test runs
   one on a stepped stage, the child the stage's process fake
   (`CompileTest.compileHostChecks`).
+- **The conversation's fixture is `acp`'s**:
+  `packages/acp/tests/headless/conversation`, in which `:e` opens the
+  working directory's marker, `:agent-start` starts a session in its
+  workspace, `:agent-prompt Read notes.txt.` and an `advance 50` past the
+  session job's pause show the reply, the tool call folded, the usage, the
+  title and the mode the session reports, `/Edit` and `<Tab>` unfold the
+  call to its final diff, `:agent-cancel` says there is no turn in flight
+  and `:agent-stop` ends the session. Its service is `agents-api`'s fake
+  over the conversation script, from `agents-api`'s fixture support, and
+  its agent's child the process fake's, paused for ever, from `acp`'s. It
+  is stepped only and has no entry in the real-thread set: through the
+  CLI it would start the user's real `claude-agent-acp`.
 - **An editor without the compile package**: a host of the core alone is
   handed no package, so it has nothing of the compile mode and `compile`
   as an ex name is not bound there (`ModelTest.packageChecks` and

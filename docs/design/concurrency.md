@@ -2419,8 +2419,31 @@ the stepped host over the fake, a package's own fake
 (`AgentsApiTest/Linked/AgentsApi/Session.lean`), and in the crate's
 `LocalPool` tests. A long poll holds its job's unit of the host's
 activity for the session's life, as a service wait does, so a real host's
-headless `settle` would not settle while a session is open; that is left
-to phase 5. Pinned on the stepped host with the
+headless `settle` would not settle while a session is open; the stepped
+host judges a wait at the rest of its fakes and never reads the activity
+count, so a stepped `settle` settles with a session open, and no check of
+phase 5 runs a session on a real host (rdm task
+`acp-session-outside-mark-for-next` marks the long poll outside before one
+does).
+
+**A conversation's job posts once a batch, paced by the job clock**
+(acp-agents phase 5; `packages/acp/Acp/Conversation.lean`). The
+conversation's session job posts each batch `next` answers, everything the
+service held when it was taken, as one invocation (`agent-events`, its
+events written as arguments by `agents-api`'s `AgentsApi/Arguments.lean`),
+so one editor-queue event, one turn and one published scene; then it
+sleeps `batchPause`, 50 ms, on the job clock (`sleep`, a wait on the timer
+service: the fake clock on a stepped host, which only a check or a
+script's `advance` moves), as compile's run does. So it takes at most once
+a pause, and what the agent sends meanwhile waits in the service for the
+next take. On a stepped host every event queued between two turns is in
+one take, into a parked `next` or across the pause; on a real host each
+take is one turn and one scene. A post cannot wait until the loop has
+handled it, so a take cannot include what arrives after it; nothing here
+promises more than that, per take. Pinned on the stepped host
+(`packages/acp/AcpTest/Linked/Acp/Conversation.lean`, AC3: a thousand
+events in ten pieces, both ways, one memory-queue event and one scene).
+Pinned on the stepped host with the
 service's fake and the process fake's hand-off (`FakeProcesses.handOff`)
 by `EchoTest/Linked/Echo/Packages.lean`'s two forced orders: (a) the
 consumer held, the job's wait withdrawn at the service before the process
