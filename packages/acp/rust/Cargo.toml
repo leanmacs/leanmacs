@@ -1,0 +1,35 @@
+[package]
+name = "acp-service"
+version = "0.1.0"
+description = "The package acp's service: an Agent Client Protocol client, on the agent-client-protocol SDK, over a streaming child the core's process service opened and handed over, posting plain events and completing each request on the completion queue"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# The package-set build links it into the one archive it generates from
+# the set (lean/lakefile.lean, `editorRust`); `rlib` is what that crate
+# depends on, and what the tests link.
+crate-type = ["rlib"]
+
+# Of the editor's crates, a package's crate depends on `editor-service`
+# alone (docs/design/packages.md, "Rust in a package"), which the generated
+# crate's cargo-deny bans hold (`ffi-test`). The SDK is pinned exactly and
+# kept inside this crate: the root `deny.toml` names this crate its one
+# wrapper, and no SDK type is in this crate's C functions or plain events.
+# No feature of the SDK is on: no async runtime, no process spawning, no
+# stdio adapter. `futures`' executor runs the connection on a thread of the
+# crate's own and, in the tests, on the test's thread (`LocalPool`), and its
+# `select_biased!` (`async-await`) waits on the orders and the prompts'
+# responses together. `serde` and `serde_json` read the protocol's names of
+# the SDK's enums and write a tool call's raw input as compact text; the
+# replay test reads its fixtures with `serde_json`.
+[dependencies]
+editor-service = { path = "../../../crates/editor-service" }
+agent-client-protocol = { version = "=5.5.1", default-features = false }
+futures = { version = "=0.3.34", default-features = false, features = ["std", "executor", "async-await"] }
+serde = "=1.0.229"
+serde_json = "=1.0.154"
+
+[lints]
+workspace = true
