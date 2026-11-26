@@ -516,7 +516,7 @@ run = [
   # build`'s `linter.realHost` confines them to the wiring set's modules
   # (docs/dev-practices/real-thread-checks.md); every other host check runs
   # on a host stepped on its own thread.
-  ".lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default ../packages . ../tests/config-package/lsp",
+  ".lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default ../packages . ../tests/config-package/lsp ../tests/config-migrate/migrated",
   # The demonstration. With no arguments the editor is the window mode on
   # an empty buffer, which opens a window, so the gate never runs that.
   "../packages/.lake/build/bin/editor demo",

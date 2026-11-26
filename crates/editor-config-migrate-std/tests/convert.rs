@@ -2,7 +2,10 @@
 //! test owns: the wiring from a command line to the files of a config
 //! directory and the exit status. What each conversion and refusal does is
 //! `editor_config_migrate::migrate`'s, pinned by its own tests on the
-//! fake; here only the files left and the status are read.
+//! fake; here only the files left and the status are read. The chunks
+//! fixture's conversion is held byte for byte to `tests/config-migrate/
+//! migrated/`, the directory config-test's `migratedConfigChecks` load on
+//! the real elaborator, so the two sides of the seam read one fixture.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
@@ -50,7 +53,7 @@ fn config_migrate(args: &[&Path]) -> ExitStatus {
 #[test]
 #[expect(
     clippy::disallowed_methods,
-    reason = "the binary's test: it copies the checked-in fixture into the test's directory and reads what the real `config-migrate` left"
+    reason = "the binary's test: it copies the checked-in fixture into the test's directory and compares what the real `config-migrate` left with the checked-in `migrated/`"
 )]
 fn the_binary_converts_a_copy_of_the_chunks_fixture() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/config-migrate/chunks");
@@ -61,23 +64,17 @@ fn the_binary_converts_a_copy_of_the_chunks_fixture() {
         std::fs::copy(fixture.join(name), config.join(name)).expect("a fixture file");
     }
     assert!(config_migrate(&[&config]).success());
-    assert_eq!(
-        files_under(&config),
-        [
-            PathBuf::from("Config/Leader.lean"),
-            PathBuf::from("init.lean")
-        ]
-    );
-    let leader = std::fs::read_to_string(config.join("Config/Leader.lean")).expect("Leader");
-    assert!(
-        leader.starts_with("import Editor\nopen Editor\n\n-- A config"),
-        "{leader}"
-    );
-    let root = std::fs::read_to_string(config.join("init.lean")).expect("init.lean");
-    assert!(
-        root.starts_with("import Editor\nimport Config.Leader\nopen Editor\n\n"),
-        "{root}"
-    );
+    let migrated =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/config-migrate/migrated");
+    assert_eq!(files_under(&config), files_under(&migrated));
+    for file in files_under(&migrated) {
+        assert_eq!(
+            std::fs::read_to_string(config.join(&file)).expect("a converted file"),
+            std::fs::read_to_string(migrated.join(&file)).expect("a fixture file"),
+            "{}",
+            file.display()
+        );
+    }
 }
 
 #[test]

@@ -177,7 +177,7 @@ run_suite() {
   log=$1
   case "$2" in
   config-wiring)
-    (cd "$root/lean" && low .lake/build/bin/config-test "$prefix" .lake/build/lib/lean ../tests/syntax ../config/default ../packages . ../tests/config-package/lsp --wiring --timings "${log%.log}.timings") >"$log" 2>&1 ;;
+    (cd "$root/lean" && low .lake/build/bin/config-test "$prefix" .lake/build/lib/lean ../tests/syntax ../config/default ../packages . ../tests/config-package/lsp ../tests/config-migrate/migrated --wiring --timings "${log%.log}.timings") >"$log" 2>&1 ;;
   ffi-wiring)
     (cd "$root/lean" && low sh -c 'status=0
       .lake/build/bin/ffi-test wiring || status=$?

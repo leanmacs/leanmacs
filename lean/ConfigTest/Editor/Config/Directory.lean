@@ -9,8 +9,10 @@ import Editor.Test.Linked.Host
 /-!
 # Config tests: `Editor/Config/Directory.lean`
 
-The tests of `Editor/Config/Directory.lean`: `directoryChecks`. The root module
-`ConfigTest` runs them; its module doc says what each shows.
+The tests of `Editor/Config/Directory.lean`: `directoryChecks`, and
+`migratedConfigChecks`, a config directory converted from the old form read
+from the directory and loaded. The root module `ConfigTest` runs them; its
+module doc says what each shows.
 -/
 
 namespace ConfigTest
@@ -139,5 +141,27 @@ def directoryChecks (_ : Unit) : List Check :=
           return made == "the pin\n" &&
               (← IO.FS.readFile (directory / "lakefile.toml")) == "mine" &&
               (← IO.FS.readFile (directory / "lean-toolchain")) == "the pin\n" }]
+
+/-- The config directory the config-migrate binary makes of the old-form
+fixture (`tests/config-migrate/chunks`), checked in at
+`tests/config-migrate/migrated` (the directory `context.migratedConfig`
+names): read as a config directory and loaded through a host on the real
+elaborator, its root and its one config file install and the command they
+register runs. That the binary's conversion is these files byte for byte
+is the binary's own test (crates/editor-config-migrate-std/tests/convert.rs),
+so the two sides of the seam are held to one fixture. -/
+def migratedConfigChecks (context : Context) : List Check :=
+  [{  name :=
+        "the config the config-migrate binary makes of the old-form fixture loads, a root and one config file, and its command runs"
+      run := do
+        let files ← configFiles context.migratedConfig
+        withHost context files fun session => do
+            session.ask [.reload]
+            session.ask [.run "greet"]
+            let lines ← session.lines
+            saw
+                (files.map (·.1) == ["init.lean", "Config/Leader.lean"] &&
+                  lines == #["reload 1: installed, 2 files, 1 commands", "run greet: ok"])
+                s!"files={files.map (·.1)} lines={lines}" }]
 
 end ConfigTest

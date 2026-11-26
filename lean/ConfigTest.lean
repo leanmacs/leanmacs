@@ -40,13 +40,16 @@ import Editor.RealHost
 The `config-test` executable is linked exactly like `editor`, with the glue
 object, the Rust archive and Lean's elaborator. `mise run ffi-test` runs it
 as `config-test <sysroot> <olean dir> <syntax fixtures> <default config>
-<set dir> <core dir> <lsp fixture>`: the Lean toolchain's directory, the
+<set dir> <core dir> <lsp fixture> <migrated config>`: the Lean toolchain's directory, the
 directory holding the package's `.olean` files, the directory of the syntax
 fixtures (`tests/syntax`), whose Rust indent fixture the indent checks
 read, the directory of the default config `mise run install` ships
 (`config/default`), which `defaultConfigChecks` read, and the default set's
 directory (`packages`), the core's (`lean`) and the language server check's
-root and config file (`tests/config-package/lsp`), which `lspChecks` read. It reads nothing from the
+root and config file (`tests/config-package/lsp`), which `lspChecks` read, and
+the config directory the config-migrate binary makes of the old-form
+fixture (`tests/config-migrate/migrated`), which `migratedConfigChecks`
+load. It reads nothing from the
 environment or the working directory. It runs every check in `checks`, names
 the ones that failed, each with what it saw when it says (`saw`), and exits
 non-zero if any did.
@@ -103,6 +106,10 @@ show:
   misspelt, not as the old form) and as a Lake package (a
   file read by name, and a file created only when it is not there), each
   check in a temporary directory of its own;
+- `migratedConfigChecks`: the config directory the config-migrate binary
+  makes of the old-form fixture (`tests/config-migrate/migrated`, which the
+  binary's own test holds its conversion to) loads through the headless
+  host on the real elaborator, and its command runs;
 - `moduleHostChecks`: config as modules through the headless host, with the
   real elaborator over files in a temporary directory: after a change to
   one file a reload elaborates that file and the files that import it and
@@ -474,6 +481,7 @@ def checks : List (CheckGroup Context Check) :=
       checkChecks () ++ runChecks context ++ lakefileChecks () ++ lakefileEntryChecks () ++
         packageSetEditChecks () ++
         directoryChecks () ++
+        migratedConfigChecks context ++
         moduleFilesChecks () ++
         hostChecks context,
     .wired "ConfigTest.Editor.Headless.Real.Bracket"
@@ -524,7 +532,7 @@ def checks : List (CheckGroup Context Check) :=
 end ConfigTest
 
 /-- `config-test <sysroot> <olean dir> <syntax fixtures> <default config>
-<set dir> <core dir> <lsp fixture>` runs the checks: exits 0 when all hold, and 1 after naming the ones that do
+<set dir> <core dir> <lsp fixture> <migrated config>` runs the checks: exits 0 when all hold, and 1 after naming the ones that do
 not. With `--wiring` after them it runs the wiring set's checks alone, the
 mode read and selected by as every root does (`Editor.CheckGroup.Mode.read?`
 with `ConfigTest.timings?`, then `Editor.CheckGroup.select`). With
@@ -536,7 +544,9 @@ each round, to size the hang guards from. The third argument is the directory of
 of the default config (`config/default`), which `defaultConfigChecks` read;
 the fifth, sixth and seventh, the default set's directory, the core's and
 the directory of the language server check's root and config file
-(`tests/config-package/lsp`), are `lspChecks`'.
+(`tests/config-package/lsp`), are `lspChecks`', and the eighth, the config
+directory the config-migrate binary makes of the old-form fixture
+(`tests/config-migrate/migrated`), is `migratedConfigChecks`'.
 
 `lsp` is the language server check (`ConfigTest.Lsp`,
 `ConfigTest/Lsp.lean`) on a directory it is given: it starts Lean's
@@ -625,14 +635,15 @@ def main (args : List String) : IO UInt32 := do
   |
   sysroot ::
       oleanDir ::
-      syntaxFixtures :: defaultConfig :: setDirectory :: coreDirectory :: lspFixture :: rest =>
+      syntaxFixtures ::
+      defaultConfig :: setDirectory :: coreDirectory :: lspFixture :: migratedConfig :: rest =>
     match Editor.CheckGroup.Mode.read? ConfigTest.timings? rest with
     | some (mode, timings) =>
       let selected := Editor.CheckGroup.select mode ConfigTest.checks
       IO.Process.exit
           (←
             ConfigTest.run selected sysroot oleanDir syntaxFixtures defaultConfig setDirectory
-                coreDirectory lspFixture ConfigTest.shippedPackages timings)
+                coreDirectory lspFixture migratedConfig ConfigTest.shippedPackages timings)
     | none =>
       ConfigTest.usage
   | _ =>
