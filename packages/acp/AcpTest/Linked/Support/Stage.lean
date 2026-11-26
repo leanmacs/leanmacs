@@ -75,7 +75,8 @@ def probeName : String :=
   "test-probe"
 
 /-- The name of the check's command that says, in the echo area, the
-number of every conversation in acp's store. -/
+number of every conversation in acp's store, and the stores beside it
+(`probePackage`). -/
 def storeName : String :=
   "test-store"
 
@@ -161,8 +162,8 @@ conversation that no view shows and tells two conversations of one header
 apart; `test-show-conversation <n>`, which shows the buffer of the conversation
 `n` in the focused view; `test-read-only`, which says whether the focused
 buffer is read-only; `test-store`, which says the number of every conversation in the
-store, of every queue buffer in acp's queue store and of every agents list in its list
-store; `test-table`, which says each record of the focused buffer's project's agent
+store, of every queue buffer in acp's queue store, of every agents list in its list
+store and the id of every agent whose stall watchdog is armed; `test-table`, which says each record of the focused buffer's project's agent
 table (`recordLine`); `test-cursor-to-agent <id>`, which places the cursor on the
 agent's first row of the focused agents list (`Acp.Table.rowOf`); and
 `test-to-reachable`, which gives the focused buffer a workspace
@@ -208,7 +209,7 @@ def probePackage : Package :=
               s!"probe: pending {conversation.pending.toList}, turn {conversation.turn}, read-only {readOnly}"
       commandWith storeName fun _ => do
           message
-              s!"store: {((← Acp.Conversation.conversations).map (·.number)).toList}, queues {(← Acp.Permissions.queueBuffers).toList}, lists {(← Acp.Table.listBuffers).toList}"
+              s!"store: {((← Acp.Conversation.conversations).map (·.number)).toList}, queues {(← Acp.Permissions.queueBuffers).toList}, lists {(← Acp.Table.listBuffers).toList}, armed {(← Acp.Table.armedIds).toList}"
       commandWith tableName fun call => do
           let some (_, project) := (← editorState).workspaceOf? call.target.window.buffer
             | message "table: none"

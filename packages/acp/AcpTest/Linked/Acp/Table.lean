@@ -17,7 +17,8 @@ rest.
 - **AC2**: a working agent silent past `AgentRecord.stallTimeout` is of
   unknown activity, and not one millisecond before; a batch makes it known
   again; a batch before the deadline moves it to that batch's timeout; an
-  agent not working never stalls.
+  agent not working never stalls, nor does one whose prompt the agent
+  refused (`Fake.table`'s `refuse`), which is idle with no watchdog armed.
 - **AC3**: a project's agents list orders its sessions by attention, each
   saying what it has in flight, and a visit reorders it.
 - **AC4**: after a restart over the journal's recording fake
@@ -155,7 +156,29 @@ def stallChecks (context : HostContext) (packages : Array Package) : List Check 
           saw
               (line == "1|sess-0001|Example title|claude-code|/work/example|finished|nothing|-" &&
                 rows[3]? == some (listRow 1 "Example title" "finished, unread, nothing in flight"))
-              s!"{line}; {rows}" }]
+              s!"{line}; {rows}" },
+    { name :=
+        "an agent whose prompt the agent refused is idle, with no stall watchdog armed, and its activity is not unknown once the fake clock passes the stall timeout"
+      run :=
+        withConversation context packages Fake.table fun session fake _ => do
+          unless ← started session do
+            return false
+          unless ← promptedWith session "refuse" do
+            return false
+          let refused ← tableText session
+          let store ← storeProbe session
+          let lines ← conversationLines session
+          advanced session AgentRecord.stallTimeout
+          let later ← tableText session
+          let orders ← ordersOf fake
+          let idle := "1|sess-0001|claude-code 1|claude-code|/work/example|idle|nothing|-"
+          saw
+              (lines.contains s!"-- {Acp.Conversation.promptName}: refused: {Fake.promptRefusal}" &&
+                orders == #[.prompt "refuse"] &&
+                refused == idle &&
+                says store "armed []" &&
+                later == idle)
+              s!"lines {lines}; orders {repr orders}; refused {refused}; store {store}; later {later}" }]
 
 /-- Starts a session from the focused buffer and prompts it `text`, unless
 `text` is empty: whether both were handled. -/
