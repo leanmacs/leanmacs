@@ -24,8 +24,11 @@ are told apart.
   under the host's state directory, by the orders the file fake was handed,
   for an answer from the queue, a policy's answer, a withdrawal and a
   close; and nothing but appends, after the directory's make, names it.
-- **The writer** (`writerChecks`): a refused append loses no record, and
-  is said once.
+- **The writer** (`writerChecks`): a record made while a write is in
+  flight, the file fake holding its completions, waits for it and goes in
+  the next write; a refused append loses no record, and is said once; and
+  a user's answer sent while the policy's answer of the same ticket waits
+  in the fake scheduler is audited `refused`.
 - **Silence**: a session that never asks leaves the queue empty, sends no
   answer, writes no record and waits on nothing but its session's `next`.
 - **The queue's refusals**, **an answer asked for** by the queue's prompt,
@@ -248,9 +251,91 @@ def askedLineOf (ticket turn : Nat) : String :=
       { askedRequest with
         ticket, turn := some turn }).line
 
-/-- The checks of the audit log's writer: a refused write. -/
+/-- The texts `orders` append to the log, each as text, in order. -/
+def appends (orders : Array FileRequest) : Array String :=
+  orders.filterMap fun order =>
+    match order with
+    | .append _ bytes => some (String.fromUTF8! bytes)
+    | _ => none
+
+/-- The checks of the audit log's writer: a record made while a write is in
+flight, a refused write, and the record of an answer the service refused. -/
 def writerChecks (context : HostContext) (packages : Array Package) : List Check :=
   [{  name :=
+        "a record made while a write of the audit log is in flight starts no second write, and the next write, started once the first lands, appends it after the first's records"
+      run :=
+        withConversation context packages Fake.permissionRequest (state := some stateDirectory)
+          fun session _ fakes => do
+          unless ← started session do
+            return false
+          -- The file fake holds each completion: the first write's make of
+          -- the log's directory waits until the check lets it go.
+          fakes.services.files.holdCompletions
+          unless ← prompted session do
+            return false
+          let first ← logOrders fakes
+          unless ← exStepped session Acp.Conversation.queueName do
+            return false
+          unless ← exStepped session s!"{cursorToRequest} 1 1" do
+            return false
+          unless ← exStepped session s!"{Acp.Conversation.queueAnswerName} allow-once" do
+            return false
+          settledAfter session
+          let inFlight ← logOrders fakes
+          let answered ← conversationText session 1
+          fakes.services.files.letGo
+          settledAfter session
+          let orders ← logOrders fakes
+          let held ← logHeld fakes
+          let directory := (auditLog.parent).getD stateDirectory
+          let answeredLine := "answered\tconversation=1\tticket=1\toption=allow-once\tby=user"
+          saw
+              (first == #[.makeDirectory directory] && inFlight == first &&
+                answered.contains s!"{pendingRow} (answered Yes)" &&
+                appendOnly orders &&
+                (orders.filter (· matches .makeDirectory ..)).size == 2 &&
+                appends orders ==
+                  #[logText [askedLine, decidedLine "ask"], logText [answeredLine]] &&
+                held == logText [askedLine, decidedLine "ask", answeredLine])
+              s!"first {repr first}; in flight {repr inFlight}; answered {answered}; orders {repr orders}; held {repr held}" },
+    { name :=
+        "a user's answer to a ticket the policy answered first, sent while the policy's send is queued, is audited refused after the policy's answered"
+      run :=
+        withConversation context packages Fake.permissionRequest (state := some stateDirectory)
+          (extra := #[allowOncePolicy]) fun session fake fakes => do
+          unless ← started session do
+            return false
+          -- The prompt is handled and its job run, and the batch it makes
+          -- handled, but no job it starts is stepped: the policy's send of
+          -- its answer waits in the fake scheduler.
+          sendEx session s!"{Acp.Conversation.promptName} {promptText}"
+          unless ← session.handled do
+            return false
+          discard <| stepFakes fakes
+          unless ← session.handled do
+            return false
+          let queuedFirst := (← answersOf fake).isEmpty
+          -- The user answers the ticket, still pending, before the policy's
+          -- send has run.
+          sendEx session s!"{Acp.Conversation.answerName} 1 allow-once"
+          unless ← session.handled do
+            return false
+          settledAfter session
+          let answers ← answersOf fake
+          let held ← logHeld fakes
+          let text ← conversationText session 1
+          saw
+              (queuedFirst &&
+                answers == #[(1, .answer 1 "allow-once"), (1, .answer 1 "allow-once")] &&
+                held ==
+                  logText
+                    [askedLine, decidedLine "allow-once",
+                      "answered\tconversation=1\tticket=1\toption=allow-once\tby=policy",
+                      "refused\tconversation=1\tticket=1\toption=allow-once\tby=user\treason=refused: the ticket 1 is not parked"] &&
+                text.any
+                  (says · s!"{Acp.Conversation.answerName}: refused: the ticket 1 is not parked"))
+              s!"queued first {queuedFirst}; answers {repr answers}; held {repr held}; text {text}" },
+    { name :=
         "a refused append of the audit log loses no record: it is said once, with the records kept, a second refusal says nothing, and once the log can be written the next record's write appends them all in order"
       run :=
         withConversation context packages Fake.permissionRequest (state := some stateDirectory)

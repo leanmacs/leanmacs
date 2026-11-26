@@ -383,9 +383,11 @@ does everything that acts.
   `agents-api`'s fake (`AcpTest/Linked/Acp/Permissions.lean`): two
   sessions' requests in one queue, answered from it by session; a request
   across a reload; the log's orders to the file fake for an answer from
-  the queue, a policy's answer, a withdrawal and a close; a refused
-  append that loses no record; silence; the queue's refusals and prompt;
-  and closing the queue buffer. A
+  the queue, a policy's answer, a withdrawal and a close; a record made
+  while a write is in flight, which waits for the next write; a refused
+  append that loses no record; a user's answer racing the policy's,
+  audited `refused`; silence; the queue's refusals and prompt; and closing
+  the queue buffer. A
   conversation no view shows is read from `acp`'s store by the check's
   `test-probe-conversation`, so two conversations of one header are told
   apart.

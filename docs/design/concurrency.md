@@ -2461,7 +2461,10 @@ could land out of order, and a keyed job would cancel an older one and
 lose its records, so it is neither. The outbox and a
 write in flight live through a reload, the store being unscoped and the
 job a package's. Pinned on the stepped host by the orders the file fake
-was handed (`packages/acp/AcpTest/Linked/Acp/Permissions.lean`, AC4).
+was handed (`packages/acp/AcpTest/Linked/Acp/Permissions.lean`, AC4), and
+by a forced order there: the file fake holds the first write's completion
+while the user answers, and the answer's record starts no second job and
+goes in the write that follows the first.
 Pinned on the stepped host with the
 service's fake and the process fake's hand-off (`FakeProcesses.handOff`)
 by `EchoTest/Linked/Echo/Packages.lean`'s two forced orders: (a) the
