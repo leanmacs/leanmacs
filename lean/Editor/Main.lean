@@ -198,11 +198,12 @@ cannot be read, why on stderr and status 1. With `headless`, the headless mode, 
 the rest of the command line, which exits with its own status: 0 when the
 script ran to its end, 1 when it could not, and 2 for a command line it does
 not take. With `window-check`, the keyboard check, which opens a window and
-exits with its own status: 0 when the window ran and 1 when it could not be
-opened. Any other command line, an empty one too, is the window mode's,
-which opens a window, on a file when one is given, and exits 0 when the
-window ran, 1 when it could not be opened, and 2, with its usage, for a
-command line it does not take. The headless mode and the window mode are
+exits with its own status: 0 when the window ran and at least one key event
+reached its loop, and 1 when it could not be opened or no key reached it.
+Any other command line, an empty one too, is the window mode's, which opens a
+window, on a file when one is given, and exits 0 when the window ran, 1 when
+it could not be opened, and 2, with its usage, for a command line it does not
+take. The headless mode and the window mode are
 each handed `packages`, `base` and `origin`, the set's Lake name and the
 toolchain pin, from which they generate a config directory's lakefile and
 toolchain file ("The generated files", in the module docs). -/

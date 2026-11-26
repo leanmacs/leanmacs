@@ -56,7 +56,10 @@ be opened gives the same eight lines, with the reason in the second and
 `ended: the window never opened` in the last, and the exit status 1. So does
 a window that ran and never said that it opened, which a platform that keeps
 the window port's contract does not do: the report and the status go by one
-reading of the run (`Run.opened`), so they cannot disagree.
+reading of the run (`Run.opened`), so they cannot disagree on whether the
+window opened. A window that opened and ran with no key reaching its loop
+gives the normal report and the exit status 1 too: the status reads
+`Run.opened` and the key tally (`status`).
 
 The latency of a key is the time from the instant the window's loop was
 handed the key, read in Rust on the main thread, to the instant the Lean loop
@@ -254,7 +257,8 @@ structure Run where
 /-- The platform that opened the run's window and the instant it opened, or
 why the window never opened: the reason the platform gave, or that the window
 ran and never said that it opened. The report and the exit status both go by
-this, so a window is one that could not open in both or in neither. -/
+this, so a window is one that could not open in both or in neither; the
+status also reads the key tally (`status`). -/
 def Run.opened (run : Run) : Except String (String × Nat) :=
   match run.failure, run.tally.platform, run.tally.openedAt with
   | some reason, _, _ => .error reason

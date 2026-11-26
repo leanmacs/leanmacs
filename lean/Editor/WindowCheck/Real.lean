@@ -73,7 +73,8 @@ def real (platform : Ffi.Platform) (emit : String → IO Unit) : Window :=
 /-- `editor window-check`: the check on the real window, with the command
 line's `arguments` (`withArguments`). It says on stderr what to do with the
 window, and prints the report on stdout once the window has closed. The exit
-status is 0 when the window ran, 1 when it could not be opened and 2 when the
+status is 0 when the window ran and at least one key event reached its loop,
+1 when it could not be opened or no key reached it (`status`), and 2 when the
 arguments are not understood.
 
 It quits the queues and exits explicitly: the task that enforces the time
