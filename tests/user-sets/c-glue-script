@@ -1,8 +1,0 @@
-# The script `ffi-test` runs on the editor of a user's set that requires the
-# default set and the fixture package `c-glue`, linked with no Cargo: the
-# package's C function is linked in and answers.
-
-reload
-settle
-run c-glue
-scene

@@ -220,9 +220,6 @@ run = [
   # of its own (`editorFixtures`; docs/dev-practices/headless-mode.md, "How
   # the gate runs a fixture"), which ffi-test runs.
   "lake -d ../packages build --wfail :editor :editorFixtures",
-  # The harness links and reads its command line: with no arguments it
-  # must exit 2 with its usage. Its output is shown only when it does not.
-  "status=0; out=$(../packages/.lake/build/bin/fixture-test 2>&1) || status=$?; { test \"$status\" -eq 2 && printf '%s\\n' \"$out\" | grep -qF 'usage: fixture-test'; } || { printf '%s\\n' \"$out\"; echo \"lean: the fixture harness exited $status with no arguments\"; exit 1; }",
   # The fixture set (tests/packages/lakefile.toml): its editor and its
   # fixture harness, linked by the package-set build, each of its
   # packages' default targets, with the package's own linters on, and
@@ -253,10 +250,6 @@ description = "Check Lean formatting and lean-fmt's lints, over the core and eac
 depends = ["lean"]
 dir = "lean"
 run = [
-  # The formatter's workers, sized to the machine's memory
-  # (tools/lean-fmt-workers.sh): its fixtures first, then every run below
-  # takes the count it prints.
-  "test \"$(sh ../tools/lean-fmt-workers.sh --cores 8 --memory-kib 8126944)\" = 3 && test \"$(sh ../tools/lean-fmt-workers.sh --cores 18 --memory-kib 134217728)\" = 18 && test \"$(sh ../tools/lean-fmt-workers.sh --cores 4 --memory-kib 1048576)\" = 1 || { echo 'lean-fmt: tools/lean-fmt-workers.sh did not size the workers to the memory'; exit 1; }",
   "lake -d ../tools/lean-fmt exe lean-fmt format --check --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root .",
   "lake -d ../tools/lean-fmt exe lean-fmt check --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root .",
   # The same two over each package of the fixture set (tools/package-set.sh;
@@ -288,17 +281,11 @@ description = "Rewrite the C and C++ sources in the style .clang-format sets"
 run = "git ls-files -z -- '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' ':!:vendor/**' | xargs -0 clang-format -i"
 
 # Runs the built executables, so it needs just `lean` before it. Its uses
-# of Lake are the two import checks and the package steps' list of the
-# fixture set's packages, which ask Lake for module imports and for a
-# set's packages (`lake query`): they build nothing and write nothing
-# under lean/ or a set, since `lean` has written the sets' roots, so it may
-# run beside `lean-fmt`, the other task that waits for `lean`. The one
-# file they may write is the root of the user-side link's set, in that
-# set's own build directory (tests/user-link/.lake), which no other task
-# reads. The one build is of the fixture set's Rust archive, after its
-# file of system libraries is deleted (`:editorRust`), which `lean` built
-# and which runs Cargo alone, writing under target/ and nowhere `lean-fmt`
-# reads.
+# of Lake are the package steps' list of a set's packages and the two
+# queries that write each set's generated crate (`lake query`): they build
+# nothing and write nothing under lean/ or a set, only under
+# target/editor-rust/, which `lean-fmt` does not read, so it may run beside
+# `lean-fmt`, the other task that waits for `lean`.
 # The time limit turns a hang into a failure: a deadlock in the main-thread
 # hand-off, or a process that waits for a task still blocked in the library.
 # It bounds each command, not the task, and is set well above the slowest:
@@ -320,116 +307,6 @@ dir = "lean"
 # Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max).
 timeout = "300s"
 run = [
-  # The root of the user-side link's fixture set (tests/user-link/): the
-  # check that links an editor as a user's Mac would (`mise run
-  # user-link-check`, opt-in) stages the root the package-set build
-  # generates for that set, written by the facet `editorRoot`, which writes
-  # a set's root and links nothing. Here the facet must give a file, and
-  # the root's imports, as Lake resolves them, must be the config base, the
-  # executable's entry, the default packages' entry modules and then the
-  # fixture package's (the core's Lake package has none): the root the
-  # check compiles is generated, lists the fixture package after the
-  # default set's packages, and its modules are found.
-  "root=$(lake -d ../tests/user-link query :editorRoot) && test -f \"$root\" && test \"$(lake -d ../tests/user-link query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage UserLink.EditorPackage '",
-  # The core's lakefile is elaborated against the toolchain of the `lake`
-  # that runs it, never a `lean` found on the PATH (`leanSystemLibDir` in
-  # lean/lakefile.lean; docs/design/lean-runtime.md, "Build"): an app
-  # bundle's `lake` runs with no `lean` on the PATH, or a user's other one.
-  # In a fresh workspace, so its `.lake/config` holds no elaboration of
-  # the core's lakefile from before, whose `lakefile.toml` requires the
-  # default set, `lake query :editorRoot` must write the set's root with a
-  # `lean` that exits 1 first on the PATH. Everything it writes is in its
-  # temporary directory.
-  "t=$(mktemp -d) && trap 'rm -rf \"$t\"' EXIT && mkdir \"$t/no-lean\" && printf '#!/bin/sh\\nexit 1\\n' >\"$t/no-lean/lean\" && chmod +x \"$t/no-lean/lean\" && cp lean-toolchain \"$t/lean-toolchain\" && printf 'name = \"probe\"\\n\\n[[require]]\\nname = \"default-set\"\\npath = \"%s/packages\"\\n' \"$(cd .. && pwd -P)\" >\"$t/lakefile.toml\" && { root=$(PATH=\"$t/no-lean:$PATH\" lake -d \"$t\" query :editorRoot 2>\"$t/err\") && test -f \"$root\"; } || { cat \"$t/err\"; exit 1; }",
-  # The twenty-five default packages are Lake packages in the default set,
-  # and no packages of the core, whose Lake package lists none: the root
-  # generated for the default set (packages/) imports the config base, the
-  # executable's entry and then each default package's entry module, in the order
-  # the set's lakefile requires them, and nothing else; and the record
-  # beside the default set's editor names the core's `.olean` directory and
-  # then, one a line and no more, each package's, which is under packages/
-  # and holds the package's entry module, or for an interface package,
-  # which has none, its library's root (the loop over `<dir>:<module>`
-  # pairs, which a later move adds a pair to). That a host handed no
-  # package registers nothing is `ModelTest.packageChecks`' and
-  # `ConfigTest.hostChecks`', and that the core hands its hosts none is
-  # the pin of tests/empty-set's root imports in ffi-test.
-  "test \"$(lake -d ../packages query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
-  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../packages/shell-api:ShellApi ../packages/ex-api:ExApi ../packages/buffers-api:BuffersApi ../packages/ex:Ex/EditorPackage ../packages/frame-commands-api:FrameCommandsApi ../packages/frame-commands:FrameCommands/EditorPackage ../packages/evil-api:EvilApi ../packages/menu:Menu/EditorPackage ../packages/window-commands-api:WindowCommandsApi ../packages/window-commands:WindowCommands/EditorPackage ../packages/tab-commands-api:TabCommandsApi ../packages/tab-commands:TabCommands/EditorPackage ../packages/restore:Restore/EditorPackage ../packages/package-set:PackageSet/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/at-point-api:AtPointApi ../packages/evil:Evil/EditorPackage ../packages/themes-api:ThemesApi ../packages/themes:Themes/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/compile-api:CompileApi ../packages/project-api:ProjectApi ../packages/vc-api:VcApi ../packages/workspace:Workspace/EditorPackage ../packages/project-search-api:ProjectSearchApi ../packages/project-search:ProjectSearch/EditorPackage ../packages/working-set-api:WorkingSetApi ../packages/working-set:WorkingSet/EditorPackage ../packages/shell:Shell/EditorPackage ../packages/version-control:VersionControl/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the default set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../packages/.lake/build/bin/editor.oleans",
-  # The two records the package-set build writes beside a set's editor for
-  # a user's set build (docs/design/packages.md, "User package sets"):
-  # `editor.core`, the core's identity, one line of hex, which is the same
-  # for every set over one core, so the default set's and the fixture
-  # set's are equal though their packages differ; and `editor.build`, the
-  # environment the link ran with, which on macOS holds the compiler
-  # `mise run lean` sets.
-  "cmp ../packages/.lake/build/bin/editor.core ../tests/packages/.lake/build/bin/editor.core && grep -qxE '[0-9a-f]{16}' ../packages/.lake/build/bin/editor.core",
-  "test \"$(uname)\" != Darwin || grep -qxF LEAN_CC=/usr/bin/cc ../packages/.lake/build/bin/editor.build",
-  # A user's package set (docs/design/packages.md, "User package sets",
-  # "Who can build it"): a set outside the repository with no Rust crate
-  # runs no Cargo, and a package's C source, the preferred way to bring
-  # native code, builds with the toolchain's compiler (decided 2026-11-20).
-  # A set written in a fresh temporary directory, requiring the default set
-  # and the fixture package `c-glue` (tests/user-sets/c-glue), whose C
-  # source the toolchain's compiler builds, is resolved and its editor
-  # linked with a `cargo` that always fails first on the PATH
-  # (lean/no-cargo/cargo): its archive's source is `prebuilt`, reused as
-  # `lean` built it, while the default set's is `cargo`; its `editor.core`
-  # equals the default set's; the package's command, which calls its C
-  # function, answers as `c-glue-expected` says; and the default set's
-  # editor still reads as up to date, so nothing it shares was built again.
-  # The link reads what `lean` built and writes the temporary directory and
-  # the fixture package's own `.lake/`.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && repo=$(cd .. && pwd -P) && cp lean-toolchain \"$dir/\" && printf 'name = \"config\"\\n\\n[[require]]\\nname = \"default-set\"\\npath = \"%s/packages\"\\n\\n[[require]]\\nname = \"c-glue\"\\npath = \"%s/tests/user-sets/c-glue\"\\n' \"$repo\" \"$repo\" > \"$dir/lakefile.toml\" && test \"$(lake -d ../packages query :editorRustSource)\" = cargo && PATH=\"$PWD/no-cargo:$PATH\" lake -d \"$dir\" update -q --keep-toolchain && test \"$(PATH=\"$PWD/no-cargo:$PATH\" lake -d \"$dir\" query :editorRustSource)\" = prebuilt && PATH=\"$PWD/no-cargo:$PATH\" LEAN_CC=/usr/bin/cc lake -d \"$dir\" build -q --wfail :editor && cmp \"$dir/.lake/build/bin/editor.core\" ../packages/.lake/build/bin/editor.core && mkdir \"$dir/config\" && out=$(\"$dir/.lake/build/bin/editor\" headless \"$(lean --print-prefix)\" .lake/build/lib/lean \"$dir/config\" ../tests/user-sets/c-glue-script) && printf '%s\\n' \"$out\" | diff ../tests/user-sets/c-glue-expected - && LEAN_CC=/usr/bin/cc lake -d ../packages build --no-build -q :editor || { echo 'ffi-test: a user set with a C package did not link without Cargo'; exit 1; }",
-  # A Rust crate outside the repository is refused with its reason
-  # (`setRustCrates`; docs/design/packages.md, "Who can build it"): a copy
-  # of the fixture package `echo` in a temporary directory, in a set there,
-  # makes `lake query :editorRustCrates` fail saying so
-  # (tools/rust-outside-check.sh).
-  "sh ../tools/rust-outside-check.sh",
-  # The package-set build in the headless mode (tests/user-sets/): a config
-  # whose lakefile names a git dependency, with a data directory in a
-  # temporary directory and a PATH that holds no git, says git is required
-  # and how to get it, builds nothing and writes nothing in the data
-  # directory, and the next command still answers; the paths of the
-  # checkout are written @REPO@, and the build buffer's cursor, which
-  # depends on their length, @SELECTIONS@. And a generated lakefile, which
-  # requires the set the editor was built from, starts no build.
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && mkdir \"$dir/empty\" && repo=$(cd .. && pwd -P) && sysroot=$(lean --print-prefix) && f=../tests/user-sets/git-missing && out=$(PATH=\"$dir/empty\" ../packages/.lake/build/bin/editor headless --data \"$dir/data\" \"$sysroot\" .lake/build/lib/lean $f/config $f/script) && printf '%s\\n' \"$out\" | sed \"s|$repo|@REPO@|g\" | grep -v '^job ' | sed '/Package build of/s/selections [0-9]*\\.\\.[0-9]*/selections @SELECTIONS@/' | diff $f/expected - && test ! -e \"$dir/data\"",
-  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && f=../tests/user-sets/match && cp -R $f/config \"$dir/config\" && out=$(../packages/.lake/build/bin/editor headless --generate --data \"$dir/data\" \"$(lean --print-prefix)\" .lake/build/lib/lean \"$dir/config\" $f/script) && printf '%s\\n' \"$out\" | diff $f/expected - && test -e \"$dir/config/lakefile.toml\" && test ! -e \"$dir/data\"",
-  # The config base of a set is the set's (lean/Editor/Main.lean, "The
-  # base"; the facet `editorBase`): `Editor`, the core's base, then the
-  # entry module of each package of the set outside the core, so that
-  # config can name what a default package declares. The default set's is
-  # `Editor`, the shipped themes' entry module and the compile mode's, and
-  # that of the set with no package (tests/empty-set) `Editor` alone: an
-  # editor without the packages still loads config.
-  "test \"$(lake -d ../packages query :editorBase | tr '\\n' ' ')\" = 'Editor Ex.EditorPackage FrameCommands.EditorPackage Menu.EditorPackage WindowCommands.EditorPackage TabCommands.EditorPackage Restore.EditorPackage PackageSet.EditorPackage Evil.EditorPackage Themes.EditorPackage Files.EditorPackage Buffers.EditorPackage Workspace.EditorPackage ProjectSearch.EditorPackage WorkingSet.EditorPackage Shell.EditorPackage VersionControl.EditorPackage Completion.EditorPackage ModeLine.EditorPackage Minibuffer.EditorPackage ShippedThemes.EditorPackage ExecuteCommand.EditorPackage BindingSearch.EditorPackage Compile.EditorPackage AtPoint.EditorPackage Languages.EditorPackage '",
-  "test \"$(lake -d ../tests/empty-set query :editorBase | tr '\\n' ' ')\" = 'Editor '",
-  # And the root of that set imports the config base and the executable's
-  # entry alone: the core's Lake package has no entry module, so an editor
-  # of the core alone hands its hosts no package.
-  "test \"$(lake -d ../tests/empty-set query :editorRootImports | tr '\\n' ' ')\" = 'Editor Editor.Main '",
-  # The Rust crates of a set (the facet `editorRustCrates`;
-  # docs/design/packages.md, "Rust in a package"): the package-set build
-  # finds a package's crate through the target `editorRustCrate` its
-  # lakefile declares, with no list kept by hand. The fixture set holds one,
-  # the fixture package `echo`'s crate `echo-service`, so its editor links
-  # the archive generated from `editor-ffi` and that crate
-  # (target/release/libeditor_rust_echo.a); the default set holds none, so
-  # its editor links the core's (libeditor_rust.a), as `tests/empty-set`'s
-  # and the core's own executables do.
-  "test \"$(lake -d ../tests/packages query :editorRustCrates | cut -f1,2)\" = \"$(printf 'echo\\techo-service')\"",
-  "test -z \"$(lake -d ../packages query :editorRustCrates)\"",
-  # A set's archive comes back with its system libraries when the file that
-  # holds them is gone and the archive is fresh (`buildRust`): rustc writes
-  # the file only when it runs, so the build cleans the generated crate and
-  # builds it again. With the fixture set's file deleted (`lean` built it),
-  # building `:editorRust` must write it back holding the same line, which
-  # names `-lz`, the system library `echo-service`'s zlib needs. It writes
-  # only under target/, which `lean-fmt` does not read, and Cargo locks
-  # that directory.
-  "f=../target/editor-rust/echo/native-static-libs && before=$(cat \"$f\") && rm \"$f\" && lake -d ../tests/packages build --wfail :editorRust && test \"$(cat \"$f\")\" = \"$before\" && grep -qw -- -lz \"$f\" || { echo \"ffi-test: building :editorRust did not write back $f\"; exit 1; }",
   # A package's crate depends on `editor-service` and on nothing else of
   # the editor's, held by cargo-deny's bans over the crate generated from
   # the set (`lake -d <set> query :editorRustCrate`, which writes it under
@@ -442,30 +319,10 @@ run = [
   # the root's.
   "dir=$(lake -d ../tests/packages query :editorRustCrate) && cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" -D unused-wrapper bans",
   "dir=$(lake -d ../packages query :editorRustCrate) && cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" -D unused-wrapper bans",
-  # And the bans bite: over each bite set of tests/rust-bans, whose one
-  # bad edge the generated config must refuse, the same command must exit
-  # 2, cargo-deny's status when the bans check alone fails (a bit for each
-  # failed check, the bans' being 2; seen with cargo-deny 0.19.9). It runs
-  # without `-D unused-wrapper`, so a stale wrapper stays a warning and the
-  # one error left that the generated config can raise is a banned crate:
-  # with it, a config that named each package crate a wrapper of the
-  # others would still exit 2, for the wrappers it never meets. A config
-  # it cannot parse or a manifest it cannot load exits 1, and a missing
-  # config file, or bans that refuse nothing, exit 0, so none of them
-  # passes here. A command line cargo-deny refuses also exits 2, but this
-  # one's flags are those of the two steps above, which must exit 0. Its
-  # report is shown only when the status is not 2.
-  # - tests/rust-bans/ffi, whose package's crate depends on `editor-ffi`,
-  #   holds rustDenyConfig's `editor-ffi` entry (lean/lakefile.lean).
-  # - tests/rust-bans/peer, whose package `bans-peer`'s crate depends on
-  #   `bans-base`'s, holds its entries for the package crates.
-  "for s in ffi peer; do dir=$(lake -d ../tests/rust-bans/$s query :editorRustCrate) || exit 1; status=0; out=$(cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" bans 2>&1) || status=$?; test \"$status\" -eq 2 || { printf '%s\\n' \"$out\"; echo \"ffi-test: cargo-deny exited $status over tests/rust-bans/$s, not 2, its status when the bans refuse a crate\"; exit 1; }; done",
   # One of these checks measures the stack the entry point gives Lean's
   # threads, and LEAN_STACK_SIZE_KB overrides that size, so a variable in the
   # developer's shell must not reach it.
   "env -u LEAN_STACK_SIZE_KB .lake/build/bin/ffi-test",
-  # Arguments reach Lean's `main`, and its result is the exit status.
-  "status=0; .lake/build/bin/ffi-test exit 7 || status=$?; test \"$status\" -eq 7",
   # Quit is for good and process-wide, so shutdown has processes of its own.
   ".lake/build/bin/ffi-test shutdown",
   ".lake/build/bin/ffi-test exit-while-blocked",
@@ -501,25 +358,25 @@ run = [
   # language server check's root and config file (tests/config-package/lsp):
   # the check writes the config package an editor of that set generates in
   # a temporary directory of its own, puts the two files in it, and starts
-  # Lean's language server there (lean/ConfigTest/Lsp.lean). Which of its checks may
+  # Lean's language server there (lean/ConfigTest/Lsp.lean). Its eighth is
+  # the config directory the config-migrate binary makes of the old-form
+  # fixture (tests/config-migrate/migrated), which the migrated config's
+  # check loads; the binary's own test holds its conversion to the same
+  # files (crates/editor-config-migrate-std/tests/convert.rs). Which of its checks may
   # run a real editor loop thread or a real service is no list here: `lake
   # build`'s `linter.realHost` confines them to the wiring set's modules
   # (docs/dev-practices/real-thread-checks.md); every other host check runs
   # on a host stepped on its own thread.
   ".lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default ../packages . ../tests/config-package/lsp ../tests/config-migrate/migrated",
-  # The demonstration. With no arguments the editor is the window mode on
-  # an empty buffer, which opens a window, so the gate never runs that.
-  "../packages/.lake/build/bin/editor demo",
   # The headless fixtures of tests/headless (docs/dev-practices/headless-mode.md,
   # "How the gate runs a fixture"): the default set's fixture harness
   # (`fixture-test`, linked by `lean`) runs each stepped, on the fakes,
   # against its expected file and its setup's after-checks
   # (`Editor.Test.Fixture.Setup`), but those the real-thread set
   # (`Editor.Test.Fixture.RealThread`) leaves to the CLI, whose lines
-  # follow. It fails on a fixture that differs, naming the first line, and
-  # on a stale entry. Its output must hold a `stepped, as expected` line for
-  # each of the 30 it runs and its count line, 18 left to the CLI.
-  "out=$(../packages/.lake/build/bin/fixture-test \"$(lean --print-prefix)\" .lake/build/lib/lean --repo .. run ../tests/headless) || { printf '%s\\n' \"$out\"; exit 1; }; printf '%s\\n' \"$out\"; { test \"$(printf '%s\\n' \"$out\" | grep -c ': stepped, as expected$')\" -eq 30 && printf '%s\\n' \"$out\" | grep -qxF 'fixture-test: ran 30 fixtures stepped under tests/headless, 18 left to the CLI'; } || { echo 'ffi-test: the fixture harness did not run the 30 fixtures of tests/headless stepped'; exit 1; }",
+  # follow. It exits 1 on a fixture that differs, naming the first line, on
+  # a stale entry, and for a root that holds no fixture.
+  "../packages/.lake/build/bin/fixture-test \"$(lean --print-prefix)\" .lake/build/lib/lean --repo .. run ../tests/headless",
   # The CLI's runs over a real loop thread and the window scenarios, the
   # wiring set's (tools/wiring-runs.sh, which holds the lines that were
   # here, one case each, with their comments): what a case builds staged
@@ -527,15 +384,6 @@ run = [
   # That each entry at ffi-test and each scenario has its case is a
   # reviewer rule (.agents/rules/structure.md, "The wiring set's runs").
   "dir=$(mktemp -d) && trap 'chmod -R u+w \"$dir\" 2>/dev/null; rm -rf \"$dir\"' EXIT && sh ../tools/wiring-runs.sh prepare \"$dir\" && sh ../tools/wiring-runs.sh run \"$dir\"",
-  # The old form (tests/config-migrate): a config directory of files in byte
-  # order with no header is refused, with a diagnostic that names the files
-  # and `mise run config-migrate`; a copy that the config-migrate binary
-  # converted loads, and so do directories of one file, of three, with
-  # `setup` defined before the last file, with a private declaration a
-  # later file uses, and with a `setup` no line is seen to declare; and
-  # what that binary refuses, a file already headed among it, it leaves as
-  # it was (tools/config-migrate-check.sh).
-  "sh ../tools/config-migrate-check.sh ../packages/.lake/build/bin/editor \"$(lean --print-prefix)\" .lake/build/lib/lean",
   # The display fixture: the scene `editor-layout`'s own test lays out
   # (crates/editor-layout/tests/frame_fixture.rs), published from Lean
   # through the display's real binding, must give the frame checked in at
@@ -565,34 +413,6 @@ run = [
   # reads only checked-in files and writes nothing. `mise run
   # excerpt-reference` makes the image again.
   ".lake/build/bin/ffi-test excerpt-picture ../tests/render/excerpts ../tests/fonts/NotoSansMono-Regular.subset.ttf",
-  # And the record of the fixture set's editor names the `.olean` directory
-  # of each of the set's Lake packages that holds a library, one a line,
-  # the core's first and each package after the ones it requires:
-  # forty-nine directories and no more, each holding its package's modules,
-  # the second the interface package `greeting-api`'s, which has no entry
-  # module but whose modules `greeting` and `greeting-loud` import, the
-  # fifth `echo`'s, the next forty-three the default set's, which the set
-  # reaches through it (its eighteen interface packages each before the
-  # first
-  # package that requires it), and last the writing guide's example package
-  # `word-count`'s, which the set requires after the default set.
-  "{ IFS= read -r core && test -f \"$core/Editor.olean\" && for p in ../tests/packages/greeting-api:GreetingApi ../tests/packages/greeting:Greeting/EditorPackage ../tests/packages/greeting-loud:GreetingLoud/EditorPackage ../tests/packages/echo:Echo/EditorPackage ../packages/shell-api:ShellApi ../packages/ex-api:ExApi ../packages/buffers-api:BuffersApi ../packages/ex:Ex/EditorPackage ../packages/frame-commands-api:FrameCommandsApi ../packages/frame-commands:FrameCommands/EditorPackage ../packages/evil-api:EvilApi ../packages/menu:Menu/EditorPackage ../packages/window-commands-api:WindowCommandsApi ../packages/window-commands:WindowCommands/EditorPackage ../packages/tab-commands-api:TabCommandsApi ../packages/tab-commands:TabCommands/EditorPackage ../packages/restore:Restore/EditorPackage ../packages/package-set:PackageSet/EditorPackage ../packages/minibuffer-api:MinibufferApi ../packages/at-point-api:AtPointApi ../packages/evil:Evil/EditorPackage ../packages/themes-api:ThemesApi ../packages/themes:Themes/EditorPackage ../packages/files:Files/EditorPackage ../packages/buffers:Buffers/EditorPackage ../packages/compile-api:CompileApi ../packages/project-api:ProjectApi ../packages/vc-api:VcApi ../packages/workspace:Workspace/EditorPackage ../packages/project-search-api:ProjectSearchApi ../packages/project-search:ProjectSearch/EditorPackage ../packages/working-set-api:WorkingSetApi ../packages/working-set:WorkingSet/EditorPackage ../packages/shell:Shell/EditorPackage ../packages/version-control:VersionControl/EditorPackage ../packages/completion-api:CompletionApi ../packages/completion:Completion/EditorPackage ../packages/mode-line:ModeLine/EditorPackage ../packages/minibuffer:Minibuffer/EditorPackage ../packages/shipped-themes:ShippedThemes/EditorPackage ../packages/execute-command-api:ExecuteCommandApi ../packages/execute-command:ExecuteCommand/EditorPackage ../packages/binding-search-api:BindingSearchApi ../packages/binding-search:BindingSearch/EditorPackage ../packages/compile:Compile/EditorPackage ../packages/at-point:AtPoint/EditorPackage ../packages/languages:Languages/EditorPackage ../docs/packages/word-count:WordCount/EditorPackage; do IFS= read -r dir && test -f \"$dir/${p#*:}.olean\" && test \"$dir\" = \"$(cd ${p%%:*} && pwd)/.lake/build/lib/lean\" || { echo \"ffi-test: the fixture set's editor.oleans does not name ${p%%:*} next, or it holds no ${p#*:}.olean\"; exit 1; }; done && ! IFS= read -r more; } < ../tests/packages/.lake/build/bin/editor.oleans",
-  # The editor's failure statuses. A command line it does not understand is
-  # status 2, with the usage on stderr: an option it does not know, and two
-  # files, `demo x` among them. (A word that is no mode is a file to open,
-  # and `demo` is a mode only on its own.)
-  "status=0; ../packages/.lake/build/bin/editor --bogus || status=$?; test \"$status\" -eq 2",
-  "status=0; ../packages/.lake/build/bin/editor a b || status=$?; test \"$status\" -eq 2",
-  "status=0; ../packages/.lake/build/bin/editor demo x || status=$?; test \"$status\" -eq 2",
-  # The headless mode with only a config directory and a script, from the
-  # build tree, outside a bundle: there is no toolchain to use, so it is
-  # status 2 with a line on stderr saying so, before the usage
-  # (lean/Editor/Headless/CommandLine.lean).
-  "status=0; err=$(../packages/.lake/build/bin/editor headless ../tests/headless/config ../tests/headless/script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 2 && test \"${err#editor: no Lean toolchain}\" != \"$err\"",
-  # A script that cannot be read is status 1, with nothing on stdout and a
-  # line on stderr that starts `editor: ` and says why. No file of that name
-  # is checked in.
-  "status=0; err=$(../packages/.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/no-such-script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 1 && test \"${err#editor: }\" != \"$err\"",
   # The linked tests and headless fixtures of the fixture set, then the
   # headless fixtures of the default set (tools/package-set.sh). The
   # fixture set requires the default set, so Lake names every default
@@ -721,9 +541,9 @@ run = "cargo test --locked -p editor-release-std --test nightly_mount -- --ignor
 # config-migrate -- <dir>` converts another. The file that defines `setup`
 # becomes `init.lean`, with the files after it, and the files before it
 # become `Config/<Name>.lean`, so the converted config loads as the old one
-# did. The gate runs the binary on copies of a fixture and on directories
-# it writes (`ffi-test`, tools/config-migrate-check.sh), never on a real
-# config.
+# did. Its tests run the binary on copies of a fixture and on directories
+# they write (crates/editor-config-migrate-std/tests/convert.rs), never on
+# a real config.
 [tasks.config-migrate]
 description = "Opt-in, never part of ci: convert a config directory of .lean files in byte order with no header to init.lean and Config/<Name>.lean (the config-migrate binary, crates/editor-config-migrate-std); `mise run config-migrate -- [<config dir>]`, default ~/.config/leanmacs. The file that defines setup, and the files after it, become init.lean"
 run = "cargo run --quiet --locked -p editor-config-migrate-std --bin config-migrate --"

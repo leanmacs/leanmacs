@@ -1,8 +1,0 @@
-# A crate that keeps the rule (../../lakefile.toml): it depends on nothing.
-# Another package's crate, `bans-peer`, depends on it, which the bans refuse.
-# It is no member of the root workspace and is never compiled.
-[package]
-name = "bans-base"
-version = "0.1.0"
-edition = "2024"
-publish = false

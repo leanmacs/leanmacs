@@ -478,8 +478,7 @@
 # build generates from a set, with a `deny.toml` it writes beside that
 # crate, in which the generated crate is the one wrapper of `editor-ffi`
 # and of each package crate: `ffi-test` runs cargo-deny over it, for the
-# fixture set and for the default set, which must pass, and for the two
-# bite sets of tests/rust-bans, which must fail the bans
+# fixture set and for the default set, which must pass
 # (docs/dev-practices/the-gate.md, "The Rust bans check"). It cannot be held here, as probed on 2026-11-19 with
 # cargo-deny 0.19.9: nothing in this graph depends on `editor-ffi` or on a
 # package's crate, and `{ crate = "editor-ffi", wrappers = [] }` bans the

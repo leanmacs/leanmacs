@@ -14,7 +14,7 @@
 # failed with `exact frontend child failed` and no diagnostic
 # (host-tests-on-fakes phase 7, F4). Cores are `nproc` (or `sysctl -n
 # hw.ncpu`), memory MemTotal in /proc/meminfo (or `sysctl -n hw.memsize`);
-# `--cores` and `--memory-kib` stand in for both, for its fixtures.
+# `--cores` and `--memory-kib` stand in for both, to try a size by hand.
 set -eu
 
 per_worker_kib=$((2 * 1024 * 1024))
