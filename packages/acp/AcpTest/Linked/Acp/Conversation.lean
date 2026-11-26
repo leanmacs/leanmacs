@@ -2,6 +2,7 @@ import Acp.ClaudeCode
 import Acp.Conversation
 import AcpTest.Check
 import AgentsApiTest.Fake
+import BuffersApiTest.Fake
 import Editor.Api
 import Editor.File.Model
 import Editor.InputScheme.Test
@@ -26,8 +27,9 @@ the check's, and the clock moves only when the check advances it.
 
 The stage's host is handed the core's test kit's ex line, minibuffer and
 attach stand-in (a buffer that takes in a file gets the workspace at
-`/work/example`), `files-api`'s fake, then the packages the root hands
-in, `acp`'s, with its crate's service dropped (a stepped
+`/work/example`), `files-api`'s fake, `buffers-api`'s fake (whose
+`close-buffer` runs the hook `BuffersApi.Closing`), then the packages the
+root hands in, `acp`'s, with its crate's service dropped (a stepped
 stage's package services are its fakes), then the check's own package
 (`probePackage`). It imports no implementation package: the keys a check
 presses are read from the test scheme's role table, never named. Each AC
@@ -52,6 +54,9 @@ line.
   words, a ticket not pending, an option the request did not offer, and a
   ticket answered already. Each is said in the echo area, and the fake is
   handed no open, prompt or answer for it.
+- **Closing the buffer** (`closingCheck`): `buffers-api`'s fake's close
+  cancels the session's job, which kills the agent's child and leaves the
+  fake holding no request, and drops the conversation from the store.
 
 None is of the wiring set: the root runs them in a plain group.
 -/
@@ -137,7 +142,7 @@ def probePackage : Package :=
 
 /-- The packages a stage's host is handed (the module docs). -/
 def stagePackages (packages : Array Package) : Array Package :=
-  #[exLinePackage, Minibuffer.package, FilesApiTest.fake,
+  #[exLinePackage, Minibuffer.package, FilesApiTest.fake, BuffersApiTest.fake,
       attachPackage (Workspace.Found.ofMarker root)] ++
     packages.map (fun package => { package with services := #[] }) ++
     #[probePackage]
@@ -418,6 +423,32 @@ def refusalChecks (context : HostContext) (packages : Array Package) : List Chec
                 (orders.filter (· matches .answer ..)) == #[.answer 1 Contract.allow])
               s!"no option {noOption}; not pending {notPending}; alone {alone}; no ticket {noTicket}; first {first}; twice {twice}; orders {repr orders}" }]
 
+/-- The check of closing a conversation buffer (the module docs of
+`Acp/Conversation.lean`): through `buffers-api`'s fake's close, which runs
+the hook `BuffersApi.Closing`, the session's job is cancelled, the agent's
+child killed, the fake left holding no request, and the conversation
+dropped from the store. -/
+def closingCheck (context : HostContext) (packages : Array Package) : Check :=
+  { name :=
+      "closing a conversation buffer cancels its session's job, kills its child and drops the conversation"
+    run :=
+      withConversation context packages Fake.conversation fun session fake fakes => do
+        unless ← started session do
+          return false
+        let openBefore ← storeProbe session
+        let waitingBefore := !(← fake.quiescent)
+        let killedBefore := (← fakes.services.processes.model).killed
+        session.ask [.run BuffersApi.closeName]
+        session.step
+        let quiescent ← fake.quiescent
+        let killed := (← fakes.services.processes.model).killed
+        let store ← storeProbe session
+        saw
+            (says openBefore "store: [1]" && waitingBefore && killedBefore.isEmpty && quiescent &&
+              killed == #[agentChild.command] &&
+              says store "store: []")
+            s!"store before {openBefore}; waiting before {waitingBefore}; killed before {repr killedBefore}; quiescent {quiescent}; killed {repr killed}; store {store}" }
+
 /-- The checks of a conversation through the stepped host, over `packages`,
 the packages the root hands in (`Acp.packages`). -/
 def conversationChecks (context : HostContext) (packages : Array Package) : List Check :=
@@ -604,6 +635,6 @@ def conversationChecks (context : HostContext) (packages : Array Package) : List
                   later &&
                   laterLines.contains "> again")
                 s!"parked first {parkedFirst}; orders {repr sentOrder}; model {repr (model.map (·.protocol))}; probe {probed}; lines {lines}; later {later}" }) ++
-    refusalChecks context packages
+    refusalChecks context packages ++ [closingCheck context packages]
 
 end AcpTest.Linked

@@ -29,9 +29,9 @@ pump, one pump a process, which only the wired groups use, and runs:
 - the conversation through a host stepped on the check's thread over
   `agents-api`'s fake (`AcpTest.Linked.conversationChecks`,
   `AcpTest/Linked/Acp/Conversation.lean`): AC1 to AC4 of the
-  sessions-and-conversation phase and the commands' refusals, handed
-  `Acp.packages`, which only this root may import since they bring the
-  crate's binding;
+  sessions-and-conversation phase, the commands' refusals and the close of
+  a conversation buffer, handed `Acp.packages`, which only this root may
+  import since they bring the crate's binding;
 
 - `agents-api`'s contract against the crate's binding, each property on a
   scripted agent executable of its own (`AcpTest.Linked.contractChecks`,
