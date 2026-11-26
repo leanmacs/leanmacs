@@ -138,10 +138,10 @@ fn highlight_through_c(snapshot: &Snapshot, query: *const SyntaxQuery, faces: &[
 /// The capture names of `source`, compiled for `grammar`, and the face
 /// each is drawn in by the shipped default: `syntax.` and its name.
 fn names_and_faces(grammar: &str, source: &str) -> (Vec<String>, Vec<String>) {
-    let query = TreeSitter
+    let query = TreeSitter::default()
         .compile(&GrammarName::new(grammar), source)
         .unwrap();
-    let names = TreeSitter.capture_names(&query);
+    let names = TreeSitter::default().capture_names(&query);
     let faces = names.iter().map(|name| format!("syntax.{name}")).collect();
     (names, faces)
 }
@@ -170,13 +170,13 @@ fn fresh(
     faces: &[String],
 ) -> Vec<(Range<usize>, String)> {
     let grammar = GrammarName::new(grammar);
-    let query = TreeSitter.compile(&grammar, source).unwrap();
-    let count = TreeSitter.capture_names(&query).len();
+    let query = TreeSitter::default().compile(&grammar, source).unwrap();
+    let count = TreeSitter::default().capture_names(&query).len();
     let faces = faces.iter().cloned().map(Some).collect();
     let highlighter = Highlighter::new(std::sync::Arc::new(query), count, faces).unwrap();
-    let mut parser = TreeSitter.parser(&grammar).unwrap();
+    let mut parser = TreeSitter::default().parser(&grammar).unwrap();
     highlight::fresh(
-        &TreeSitter,
+        &TreeSitter::default(),
         &highlighter,
         None,
         &mut parser,
@@ -430,7 +430,7 @@ fn the_service_keeps_the_layout_spans_contract() {
 fn a_shipped_query_crosses_as_its_source_or_a_status() {
     assert_eq!(
         shipped("rust", 0),
-        Ok(TreeSitter
+        Ok(TreeSitter::default()
             .shipped_query(&GrammarName::new("rust"), QueryKind::Highlights)
             .unwrap())
     );
@@ -698,7 +698,7 @@ const INJECTIONS: u8 = 1;
 fn highlighter_of(grammar: &str) -> Highlighter<TreeSitterQuery> {
     let source = shipped(grammar, 0).unwrap();
     let (names, faces) = names_and_faces(grammar, &source);
-    let query = TreeSitter
+    let query = TreeSitter::default()
         .compile(&GrammarName::new(grammar), &source)
         .unwrap();
     let faces = faces.into_iter().map(Some).collect();
@@ -710,7 +710,7 @@ fn highlighter_of(grammar: &str) -> Highlighter<TreeSitterQuery> {
 fn markdown_injections() -> Injections<TreeSitterQuery> {
     let compiled = |grammar: &str, source: String| {
         std::sync::Arc::new(
-            TreeSitter
+            TreeSitter::default()
                 .compile(&GrammarName::new(grammar), &source)
                 .unwrap(),
         )
@@ -808,10 +808,12 @@ fn fresh_with(
 ) -> Vec<(Range<usize>, String)> {
     let highlighter = highlighter_of(grammar);
     let (faces, _) = highlight::face_table(&highlighter, injections);
-    let mut parser = TreeSitter.parser(&GrammarName::new(grammar)).unwrap();
+    let mut parser = TreeSitter::default()
+        .parser(&GrammarName::new(grammar))
+        .unwrap();
     let snapshot = Document::new(text).snapshot();
     highlight::fresh(
-        &TreeSitter,
+        &TreeSitter::default(),
         &highlighter,
         injections,
         &mut parser,

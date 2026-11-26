@@ -267,30 +267,33 @@ const LEAN: Corpus = Corpus {
 
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_rust() {
-    assert_eq!(contract::check(&TreeSitter, &RUST), [""; 0]);
+    assert_eq!(contract::check(&TreeSitter::default(), &RUST), [""; 0]);
 }
 
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_json() {
-    assert_eq!(contract::check(&TreeSitter, &JSON), [""; 0]);
+    assert_eq!(contract::check(&TreeSitter::default(), &JSON), [""; 0]);
 }
 
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_markdown() {
-    assert_eq!(contract::check(&TreeSitter, &MARKDOWN), [""; 0]);
+    assert_eq!(contract::check(&TreeSitter::default(), &MARKDOWN), [""; 0]);
 }
 
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_markdown_inline() {
-    assert_eq!(contract::check(&TreeSitter, &MARKDOWN_INLINE), [""; 0]);
+    assert_eq!(
+        contract::check(&TreeSitter::default(), &MARKDOWN_INLINE),
+        [""; 0]
+    );
 }
 
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_toml() {
-    assert_eq!(contract::check(&TreeSitter, &TOML), [""; 0]);
+    assert_eq!(contract::check(&TreeSitter::default(), &TOML), [""; 0]);
 }
 
 #[test]
 fn the_tree_sitter_adapter_keeps_the_syntax_ports_contract_for_lean() {
-    assert_eq!(contract::check(&TreeSitter, &LEAN), [""; 0]);
+    assert_eq!(contract::check(&TreeSitter::default(), &LEAN), [""; 0]);
 }

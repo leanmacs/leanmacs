@@ -86,8 +86,9 @@ fn main() -> ExitCode {
     };
     let grammar = GrammarName::new(grammar);
     let text = Arc::new(Mutex::new(Text::from(source.as_str())));
+    let syntax = TreeSitter::default();
     let Some(session) = Session::new(
-        &TreeSitter,
+        &syntax,
         grammar.clone(),
         Box::new(TextSource(Arc::downgrade(&text))),
     ) else {
@@ -95,17 +96,13 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
 
-    let errors = TreeSitter.parser(&grammar).map_or(0, |mut parser| {
+    let errors = syntax.parser(&grammar).map_or(0, |mut parser| {
         let snapshot = text
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .snapshot();
-        let tree = TreeSitter.parse(&mut parser, &snapshot, None);
-        TreeSitter
-            .nodes(&tree)
-            .iter()
-            .filter(|node| node.error)
-            .count()
+        let tree = syntax.parse(&mut parser, &snapshot, None);
+        syntax.nodes(&tree).iter().filter(|node| node.error).count()
     });
     println!(
         "{path}: {} bytes, {} lines, grammar {}, policy {:?}, {errors} error nodes",
@@ -117,7 +114,7 @@ fn main() -> ExitCode {
 
     let start = Stopwatch::start("the first parse");
     session.touch(Revision::new(0));
-    session.parse_once(&TreeSitter);
+    session.parse_once(&syntax);
     // real time under test: the first parse's time, printed and never
     // asserted.
     println!("first parse: {}", ms(start.elapsed()));
@@ -144,12 +141,12 @@ fn main() -> ExitCode {
         };
         session.touch(revision);
         let start = Stopwatch::start("a round's parse");
-        session.parse_once(&TreeSitter);
+        session.parse_once(&syntax);
         // real time under test: each round's and each refresh's time,
         // printed and never asserted.
         rounds.push(start.elapsed());
         let start = Stopwatch::start("a refresh");
-        session.refresh_once(&TreeSitter);
+        session.refresh_once(&syntax);
         // real time under test: as above, the refresh's.
         refreshes.push(start.elapsed());
     }

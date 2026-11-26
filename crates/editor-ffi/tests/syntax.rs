@@ -102,8 +102,10 @@ fn delivered_is_fresh(document: &Document) -> bool {
         return false;
     }
     let text = document.snapshot();
-    let mut parser = TreeSitter.parser(&GrammarName::new("rust")).unwrap();
-    let fresh = TreeSitter.nodes(&TreeSitter.parse(&mut parser, &text, None));
+    let mut parser = TreeSitter::default()
+        .parser(&GrammarName::new("rust"))
+        .unwrap();
+    let fresh = TreeSitter::default().nodes(&TreeSitter::default().parse(&mut parser, &text, None));
     syntaxes().delivered(document.key()) == Some((text.revision(), fresh))
 }
 
@@ -132,7 +134,7 @@ fn the_grammars_compiled_in_cross_as_a_list_of_strings() {
 
     // The adapter's own list, which its crate pins: every name crosses,
     // in order.
-    let compiled: Vec<String> = TreeSitter
+    let compiled: Vec<String> = TreeSitter::default()
         .grammars()
         .into_iter()
         .map(|grammar| grammar.0)

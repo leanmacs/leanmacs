@@ -136,8 +136,11 @@
 //! be built here honestly, and `contract::GRAMMARS` holds the case of one
 //! that opens.
 
+use std::fmt;
 use std::ops::Range;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use editor_syntax::registry::Registry;
 use editor_syntax::{
     Capture, GrammarName, GrammarSource, Match, MatchCapture, Node, QueryError, QueryErrorKind,
     QueryKind, RegistrationRefusal, ReparsePolicy, Setting, Syntax,
@@ -145,10 +148,51 @@ use editor_syntax::{
 use editor_text::{InputEdit, Point, Snapshot};
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
 
-/// The adapter: tree-sitter, with the grammars compiled in: `json`,
-/// `rust`, `markdown`, `markdown_inline`, `toml` and `lean`.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct TreeSitter;
+/// The adapter: tree-sitter, with the grammars compiled in (`json`,
+/// `rust`, `markdown`, `markdown_inline`, `toml` and `lean`), and the
+/// grammars registered on it at run time.
+#[derive(Default)]
+pub struct TreeSitter {
+    /// The grammars registered, each with its language. An entry wins over
+    /// a compiled-in grammar of the same name.
+    registry: Mutex<Registry<Language>>,
+}
+
+impl Clone for TreeSitter {
+    /// Another adapter with the grammars registered on this one, which
+    /// registrations on either do not reach.
+    fn clone(&self) -> Self {
+        Self {
+            registry: Mutex::new(self.registry().clone()),
+        }
+    }
+}
+
+impl fmt::Debug for TreeSitter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TreeSitter")
+            .field("registered", &self.registry().grammars([]))
+            .finish()
+    }
+}
+
+impl TreeSitter {
+    /// The registry, locked. It is never left half-changed, so a poisoned
+    /// lock is used as it is.
+    fn registry(&self) -> MutexGuard<'_, Registry<Language>> {
+        self.registry.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The language of the grammar `name`: the registered entry's, else
+    /// the compiled-in grammar's; `None` for a grammar it has not.
+    fn language(&self, name: &GrammarName) -> Option<Language> {
+        if let Some(entry) = self.registry().get(name) {
+            return Some(entry.grammar.clone());
+        }
+        grammar(name).map(|grammar| (grammar.language)())
+    }
+}
 
 /// How to make a grammar's language.
 type MakeLanguage = fn() -> Language;
@@ -237,11 +281,6 @@ fn grammar(name: &GrammarName) -> Option<&'static Grammar> {
     GRAMMARS.iter().find(|known| known.name == name.as_str())
 }
 
-/// The language of the grammar `name`, if it is compiled in.
-fn language(name: &GrammarName) -> Option<Language> {
-    grammar(name).map(|grammar| (grammar.language)())
-}
-
 /// A parser of one grammar.
 pub struct TreeSitterParser(Parser);
 
@@ -293,13 +332,17 @@ impl Syntax for TreeSitter {
     type Query = TreeSitterQuery;
 
     fn grammars(&self) -> Vec<GrammarName> {
-        GRAMMARS
-            .iter()
-            .map(|grammar| GrammarName::new(grammar.name))
-            .collect()
+        self.registry().grammars(
+            GRAMMARS
+                .iter()
+                .map(|grammar| GrammarName::new(grammar.name)),
+        )
     }
 
     fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy> {
+        if let Some(entry) = self.registry().get(grammar) {
+            return Some(entry.policy);
+        }
         self::grammar(grammar).map(|grammar| grammar.policy)
     }
 
@@ -311,7 +354,7 @@ impl Syntax for TreeSitter {
 
     fn parser(&self, grammar: &GrammarName) -> Option<TreeSitterParser> {
         let mut parser = Parser::new();
-        parser.set_language(&language(grammar)?).ok()?;
+        parser.set_language(&self.language(grammar)?).ok()?;
         Some(TreeSitterParser(parser))
     }
 
@@ -344,7 +387,7 @@ impl Syntax for TreeSitter {
     }
 
     fn compile(&self, grammar: &GrammarName, source: &str) -> Result<TreeSitterQuery, QueryError> {
-        let Some(language) = language(grammar) else {
+        let Some(language) = self.language(grammar) else {
             return Err(QueryError {
                 kind: QueryErrorKind::Language,
                 offset: 0,
@@ -359,6 +402,11 @@ impl Syntax for TreeSitter {
     }
 
     fn shipped_query(&self, name: &GrammarName, kind: QueryKind) -> Option<String> {
+        // A registered grammar ships no query, a compiled-in name it
+        // replaces included.
+        if self.registry().get(name).is_some() {
+            return None;
+        }
         grammar(name)?
             .queries
             .iter()
@@ -539,11 +587,12 @@ mod tests {
     fn captured(grammar: &str, source: &str, text: &str) -> Vec<(String, String)> {
         let grammar = GrammarName::new(grammar);
         let snapshot = Text::from(text).snapshot();
-        let mut parser = TreeSitter.parser(&grammar).unwrap();
-        let tree = TreeSitter.parse(&mut parser, &snapshot, None);
-        let query = TreeSitter.compile(&grammar, source).unwrap();
-        let names = TreeSitter.capture_names(&query);
-        captures_in(&TreeSitter, &query, &tree, &snapshot, 0..snapshot.len())
+        let syntax = TreeSitter::default();
+        let mut parser = syntax.parser(&grammar).unwrap();
+        let tree = syntax.parse(&mut parser, &snapshot, None);
+        let query = syntax.compile(&grammar, source).unwrap();
+        let names = syntax.capture_names(&query);
+        captures_in(&syntax, &query, &tree, &snapshot, 0..snapshot.len())
             .unwrap()
             .into_iter()
             .map(|capture| {
@@ -596,10 +645,11 @@ mod tests {
 
         let source = format!("((identifier) @found (#eq? @found \"{name}\"))");
         let grammar = GrammarName::new("rust");
-        let mut parser = TreeSitter.parser(&grammar).unwrap();
-        let tree = TreeSitter.parse(&mut parser, &snapshot, None);
-        let query = TreeSitter.compile(&grammar, &source).unwrap();
-        let found = captures_in(&TreeSitter, &query, &tree, &snapshot, 0..snapshot.len()).unwrap();
+        let syntax = TreeSitter::default();
+        let mut parser = syntax.parser(&grammar).unwrap();
+        let tree = syntax.parse(&mut parser, &snapshot, None);
+        let query = syntax.compile(&grammar, &source).unwrap();
+        let found = captures_in(&syntax, &query, &tree, &snapshot, 0..snapshot.len()).unwrap();
         assert_eq!(
             found.iter().map(Capture::range).collect::<Vec<_>>(),
             vec![start..start + name.len()]
@@ -608,7 +658,8 @@ mod tests {
 
     #[test]
     fn each_grammar_declares_the_reparse_policy_of_the_table_and_one_not_compiled_in_none() {
-        let policy = |name: &str| TreeSitter.reparse_policy(&GrammarName::new(name));
+        let syntax = TreeSitter::default();
+        let policy = |name: &str| syntax.reparse_policy(&GrammarName::new(name));
 
         assert_eq!(policy("rust"), Some(ReparsePolicy::Incremental));
         assert_eq!(policy("json"), Some(ReparsePolicy::Incremental));
@@ -622,7 +673,7 @@ mod tests {
     #[test]
     fn a_query_of_a_grammar_that_is_not_compiled_in_is_refused_as_the_language() {
         assert_eq!(
-            TreeSitter
+            TreeSitter::default()
                 .compile(&GrammarName::new("cobol"), "(x) @x")
                 .map(|_| ())
                 .unwrap_err()

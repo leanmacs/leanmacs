@@ -36,5 +36,5 @@ fn the_adapter_refuses_every_registration_as_unsupported() {
         .flat_map(|symbol| policies.map(|policy| source(symbol, policy)))
         .collect();
 
-    assert_eq!(check_unsupported(&TreeSitter, &sources), [""; 0]);
+    assert_eq!(check_unsupported(&TreeSitter::default(), &sources), [""; 0]);
 }

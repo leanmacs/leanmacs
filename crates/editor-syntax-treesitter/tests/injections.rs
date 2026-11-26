@@ -23,22 +23,22 @@ const FENCED: &str = include_str!("../../../tests/syntax/markdown/fenced.md");
 /// The query of `kind` `grammar` ships, compiled.
 fn shipped(grammar: &str, kind: QueryKind) -> Arc<TreeSitterQuery> {
     let grammar = GrammarName::new(grammar);
-    let source = TreeSitter.shipped_query(&grammar, kind).unwrap();
-    Arc::new(TreeSitter.compile(&grammar, &source).unwrap())
+    let source = TreeSitter::default().shipped_query(&grammar, kind).unwrap();
+    Arc::new(TreeSitter::default().compile(&grammar, &source).unwrap())
 }
 
 /// The language `grammar`, drawn with its shipped highlights, each capture
 /// in a face named after it, with its shipped injections, if it has any.
 fn language(grammar: &str) -> Language<TreeSitterQuery> {
     let highlights = shipped(grammar, QueryKind::Highlights);
-    let names = TreeSitter.capture_names(&highlights);
+    let names = TreeSitter::default().capture_names(&highlights);
     let faces = names.iter().cloned().map(Some).collect();
     let name = GrammarName::new(grammar);
     Language {
         highlighter: Arc::new(Highlighter::new(highlights, names.len(), faces).unwrap()),
-        injections: TreeSitter
+        injections: TreeSitter::default()
             .shipped_query(&name, QueryKind::Injections)
-            .map(|source| Arc::new(TreeSitter.compile(&name, &source).unwrap())),
+            .map(|source| Arc::new(TreeSitter::default().compile(&name, &source).unwrap())),
         grammar: name,
     }
 }
@@ -48,7 +48,7 @@ fn language(grammar: &str) -> Language<TreeSitterQuery> {
 fn injections(host: &str) -> Injections<TreeSitterQuery> {
     Injections {
         query: Some(shipped(host, QueryKind::Injections)),
-        languages: TreeSitter
+        languages: TreeSitter::default()
             .grammars()
             .into_iter()
             .map(|grammar| (grammar.0.clone(), language(&grammar.0)))
@@ -60,7 +60,7 @@ fn injections(host: &str) -> Injections<TreeSitterQuery> {
 fn layers_of(host: &str, text: &str) -> Vec<Layer<TreeSitterTree>> {
     let snapshot = Text::from(text).snapshot();
     let (_, layers) = inject::fresh(
-        &TreeSitter,
+        &TreeSitter::default(),
         &GrammarName::new(host),
         &injections(host),
         &snapshot,
@@ -79,9 +79,11 @@ fn nth(text: &str, needle: &str, nth: usize) -> Range<usize> {
 /// of a text where it starts at the start of row `row`.
 fn alone_at(grammar: &str, content: &str, offset: usize, row: usize) -> Vec<Node> {
     let snapshot = Text::from(content).snapshot();
-    let mut parser = TreeSitter.parser(&GrammarName::new(grammar)).unwrap();
-    let tree = TreeSitter.parse(&mut parser, &snapshot, None);
-    TreeSitter
+    let mut parser = TreeSitter::default()
+        .parser(&GrammarName::new(grammar))
+        .unwrap();
+    let tree = TreeSitter::default().parse(&mut parser, &snapshot, None);
+    TreeSitter::default()
         .nodes(&tree)
         .into_iter()
         .map(|node| {
@@ -111,7 +113,7 @@ fn a_fenced_rust_blocks_layer_is_its_content_parsed_as_rust() {
     assert_eq!(rust.ranges, std::slice::from_ref(&range));
     assert_eq!(rust.grammar, GrammarName::new("rust"));
     assert_eq!(
-        TreeSitter.nodes(&rust.tree),
+        TreeSitter::default().nodes(&rust.tree),
         alone_at("rust", content, range.start, row)
     );
 }
@@ -155,7 +157,7 @@ fn a_paragraphs_inline_node_is_a_markdown_inline_layer() {
     assert_eq!(inline.grammar, GrammarName::new("markdown_inline"));
     assert_eq!(inline.depth, 1);
     assert_eq!(
-        TreeSitter.nodes(&inline.tree),
+        TreeSitter::default().nodes(&inline.tree),
         alone_at("markdown_inline", content, range.start, row)
     );
 }

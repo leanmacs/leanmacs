@@ -40,11 +40,11 @@ impl Source for TextSource {
 /// Rust's shipped highlights, each capture in a face named after it.
 fn highlighter() -> Highlighter<TreeSitterQuery> {
     let grammar = GrammarName::new("rust");
-    let source = TreeSitter
+    let source = TreeSitter::default()
         .shipped_query(&grammar, QueryKind::Highlights)
         .unwrap();
-    let query = TreeSitter.compile(&grammar, &source).unwrap();
-    let names = TreeSitter.capture_names(&query);
+    let query = TreeSitter::default().compile(&grammar, &source).unwrap();
+    let names = TreeSitter::default().capture_names(&query);
     let faces = names.iter().cloned().map(Some).collect();
     Highlighter::new(Arc::new(query), names.len(), faces).unwrap()
 }
@@ -61,11 +61,16 @@ struct Rig {
 impl Rig {
     fn new() -> Self {
         let clock = ManualClock::new();
-        let worker = Worker::new(Arc::new(TreeSitter), Arc::new(clock.clone()), INTERVAL);
+        let worker = Worker::new(
+            Arc::new(TreeSitter::default()),
+            Arc::new(clock.clone()),
+            INTERVAL,
+        );
         let text = Arc::new(Mutex::new(Text::from(ITEMS)));
         let source = Box::new(TextSource(Arc::downgrade(&text)));
-        let session =
-            Arc::new(Session::new(&TreeSitter, GrammarName::new("rust"), source).unwrap());
+        let session = Arc::new(
+            Session::new(&TreeSitter::default(), GrammarName::new("rust"), source).unwrap(),
+        );
         session.set_highlighter(highlighter());
         let rig = Self {
             clock,
@@ -117,17 +122,27 @@ impl Rig {
         assert_eq!(self.worker.step(), None);
 
         let snapshot = self.snapshot();
-        let mut parser = TreeSitter.parser(&GrammarName::new("rust")).unwrap();
-        let fresh = TreeSitter.parse(&mut parser, &snapshot, None);
+        let mut parser = TreeSitter::default()
+            .parser(&GrammarName::new("rust"))
+            .unwrap();
+        let fresh = TreeSitter::default().parse(&mut parser, &snapshot, None);
         let parsed = self.session.parsed().unwrap();
         assert_eq!(parsed.revision, snapshot.revision());
-        assert_eq!(TreeSitter.nodes(&parsed.tree), TreeSitter.nodes(&fresh));
+        assert_eq!(
+            TreeSitter::default().nodes(&parsed.tree),
+            TreeSitter::default().nodes(&fresh)
+        );
 
         let highlights = self.session.highlights(&snapshot).unwrap();
         let mut drawn: Vec<HighlightSpan> = Vec::new();
-        highlights.spans(&TreeSitter, 0..snapshot.len(), &mut drawn);
-        let fresh_drawn =
-            highlight::fresh(&TreeSitter, &highlighter(), None, &mut parser, &snapshot);
+        highlights.spans(&TreeSitter::default(), 0..snapshot.len(), &mut drawn);
+        let fresh_drawn = highlight::fresh(
+            &TreeSitter::default(),
+            &highlighter(),
+            None,
+            &mut parser,
+            &snapshot,
+        );
         assert_eq!(drawn, fresh_drawn);
     }
 }
@@ -136,18 +151,26 @@ impl Rig {
 /// the text as it is now.
 fn delivered_is_fresh(rig: &Rig) -> bool {
     let snapshot = rig.snapshot();
-    let mut parser = TreeSitter.parser(&GrammarName::new("rust")).unwrap();
-    let fresh = TreeSitter.parse(&mut parser, &snapshot, None);
+    let mut parser = TreeSitter::default()
+        .parser(&GrammarName::new("rust"))
+        .unwrap();
+    let fresh = TreeSitter::default().parse(&mut parser, &snapshot, None);
     rig.session.parsed().is_some_and(|parsed| {
         parsed.revision == snapshot.revision()
-            && TreeSitter.nodes(&parsed.tree) == TreeSitter.nodes(&fresh)
+            && TreeSitter::default().nodes(&parsed.tree) == TreeSitter::default().nodes(&fresh)
     })
 }
 
 /// Whether a fresh parse of the text as it is now has an error.
 fn has_errors(rig: &Rig) -> bool {
-    let mut parser = TreeSitter.parser(&GrammarName::new("rust")).unwrap();
-    TreeSitter.has_errors(&TreeSitter.parse(&mut parser, &rig.snapshot(), None))
+    let mut parser = TreeSitter::default()
+        .parser(&GrammarName::new("rust"))
+        .unwrap();
+    TreeSitter::default().has_errors(&TreeSitter::default().parse(
+        &mut parser,
+        &rig.snapshot(),
+        None,
+    ))
 }
 
 #[test]

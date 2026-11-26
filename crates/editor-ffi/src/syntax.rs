@@ -496,7 +496,7 @@ impl Syntaxes {
     /// interval on `clock`: for the module's unit tests, on a manual clock.
     pub fn with_clock(notices: &'static Queue, clock: Arc<dyn Clock>) -> Self {
         Self {
-            syntax: Arc::new(TreeSitter),
+            syntax: Arc::new(TreeSitter::default()),
             worker: Mutex::new(None),
             clock,
             refresh_after_ms: AtomicU64::new(REFRESH_AFTER_MS),
@@ -524,7 +524,7 @@ impl Syntaxes {
         }
     }
 
-    /// The grammars compiled in.
+    /// The grammars listed: compiled in, then registered.
     pub fn grammars(&self) -> Vec<GrammarName> {
         self.syntax.grammars()
     }
