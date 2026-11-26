@@ -1,0 +1,16 @@
+# The script the default set's fixture harness runs stepped (`fixture-test`;
+# docs/dev-practices/headless-mode.md, "How the gate runs a fixture") against
+# the config in `config/`, which sets nothing of a child's environment. What
+# it prints must be exactly `expected`. It touches no file and starts no
+# child.
+#
+# The default set registers the mise package's directory source, and nothing
+# else of a child's environment: `layers` says the one source, named mise,
+# at the first of mise's usual places under the home directory `/u`
+# (`Mise.candidates`), skipped with none, in the window mode, and none in the
+# headless mode. A set that drops mise, from its lakefile's requires or its
+# entry modules, says `none` for both.
+reload
+settle
+run layers
+scene

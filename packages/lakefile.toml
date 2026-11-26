@@ -308,7 +308,8 @@ path = "languages"
 # which runs `mise env --json` in a child's directory in the window mode,
 # and its setting, `Mise.executable`, takes mise's path. Leaving it out
 # means no directory lookup. It registers last, so no earlier package's
-# order moves, and registers no command.
+# order moves, and registers no command. That this set registers it is
+# the standing fixture tests/headless/environment-sources's.
 [[require]]
 name = "mise"
 path = "mise"

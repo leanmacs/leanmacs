@@ -43,7 +43,9 @@ for each directory, kept by the stamps of mise's config files
 
 Pinned by `MiseTest.miseChecks` and `MiseTest.miseLookupChecks` on the
 models, and by `MiseTest.Linked.miseContractChecks` over the real process
-service.
+service. That the default set registers the package, and that config's
+`Mise.executable` replaces its value there, is the standing fixture
+`tests/headless/environment-sources`'s, on the default set's harness.
 -/
 
 namespace Mise

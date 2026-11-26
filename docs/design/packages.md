@@ -3046,6 +3046,16 @@ package may import it. Its module docs say where an addition goes.
 - **Rejected at start-up.** The host installs the layers at a reload that
   installs, as it installed config's setting before; a config rejected at
   start-up leaves nothing installed until one does.
+- **The default set's registration is pinned once, on its own harness.**
+  The package's checks run over `Mise.package` alone, so that the default
+  set registers it is the standing fixture
+  `tests/headless/environment-sources`'s, run on the default set's fixture
+  harness with the real elaborator: the installed registry, read through
+  `EnvironmentApi.ofRegistry`, gives one directory source, `mise` at the
+  first of `Mise.candidates` in the window mode and none in the headless
+  mode, and config's `Mise.executable "/opt/mise"` replaces it in both
+  ([headless-mode.md](../dev-practices/headless-mode.md), "How the gate
+  runs a fixture").
 
 ## Rust in a package
 

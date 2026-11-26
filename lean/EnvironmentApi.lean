@@ -75,6 +75,11 @@ child gets the editor's own environment, and no lookup runs.
   source's own linked test (mise's: `MiseTest.Linked.Mise.Contract`).
 - The host's wiring, once: `ConfigTest.environmentHostChecks`, over the
   headless host and the real elaborator.
+- The default set's wiring, once: the standing fixture
+  `tests/headless/environment-sources`, on the default set's fixture
+  harness, reads the installed registry through `ofRegistry` (mise's
+  source alone, in the window mode; none in the headless mode; config's
+  `Mise.executable` in its place).
 
 Its test library publishes the fakes (`EnvironmentApiTest.fakeDirectory`,
 `fakeBase`, `fakePackage`), the contract, and model rigs a package's model

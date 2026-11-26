@@ -2260,6 +2260,20 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   job reads it, so how many there are differs from run to run on a real
   host: its setup leaves the job lines out, and a scene line carries no
   count of the scenes published.
+- **`tests/headless/environment-sources`** is the default set's wiring of
+  a child's environment, the one check that the set registers the `mise`
+  package's directory source: its config's command `layers` reads the
+  installed registry through `environment-api`
+  (`EnvironmentApi.ofRegistry`, as the host reads it at a reload that
+  installs) and says the directory sources it gives in the window mode,
+  with the home directory `/u`, and in the headless mode. With no setting,
+  `mise first of /u/.local/bin/mise, /opt/homebrew/bin/mise,
+  /usr/local/bin/mise, else skip | headless: none` (`Mise.candidates`);
+  with `Mise.executable "/opt/mise"` in config (`executable-config/`),
+  `mise at /opt/mise` in both, config's value replacing the package's. A
+  set that drops `mise`, from its lakefile's requires or its entry
+  modules, says `none` for both and rejects the second config. It starts
+  no child.
 - **The fixtures of the four features that moved in the
   features-as-packages roadmap's phase 3 are their packages'**:
   `packages/mode-line/tests/headless/mode-line`, the core's until then;
