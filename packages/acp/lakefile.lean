@@ -87,7 +87,8 @@ of the package but its tests and the binding. -/
 @[default_target] lean_lib Acp where
   globs :=
   #[.one `Acp.Codec, .one `Acp.Service, .one `Acp.ClaudeCode, .andSubmodules `Acp.Conversation,
-    .one `Acp.Generated, .one `Acp.Packages, .one `Acp.EditorPackage]
+    .one `Acp.Generated, .submodules `Acp.Permissions, .one `Acp.Packages,
+    .one `Acp.EditorPackage]
   plugins := lintPlugin
 
 /-- The Rust-backed binding, with the package's glue. -/

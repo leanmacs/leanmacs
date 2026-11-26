@@ -3,6 +3,9 @@ import AcpTest.Acp.Codec
 import AcpTest.Acp.Conversation.Diff
 import AcpTest.Acp.Conversation.Render
 import AcpTest.Acp.Conversation.State
+import AcpTest.Acp.Permissions.Audit
+import AcpTest.Acp.Permissions.Policy
+import AcpTest.Acp.Permissions.Queue
 import AcpTest.Acp.Service
 
 /-!
@@ -25,8 +28,14 @@ test modules and runs their checks:
   in its environment, and what `Acp.setup` registers
   (`Acp/ClaudeCode.lean`, `Acp/Conversation.lean`);
 - `renderChecks`: a conversation's text, its fold and its map of rows, as
-  the default view shows it (`Acp/Conversation/Render.lean`,
-  `Acp/Conversation/View.lean`).
+  the default view shows it, and a queued request's lines
+  (`Acp/Conversation/Render.lean`, `Acp/Conversation/View.lean`);
+- `permissionPolicyChecks`: a policy's decisions on a batch
+  (`Acp/Permissions/Policy.lean`);
+- `queueChecks`: the queue of a project's pending permission requests, its
+  order, its text and its map of rows (`Acp/Permissions/Queue.lean`);
+- `auditChecks`: the audit log's records, each a golden line, escaped and
+  read back, in event order (`Acp/Permissions/Audit.lean`).
 
 The service over the real crate, with `agents-api`'s contract, is the
 linked test's (`AcpTest/Linked.lean`).
@@ -36,7 +45,10 @@ linked test's (`AcpTest/Linked.lean`).
 def AcpTest.checks : List AcpTest.Check :=
   AcpTest.codecChecks ++ AcpTest.serviceChecks ++ AcpTest.diffChecks ++ AcpTest.stateChecks ++
     AcpTest.renderChecks ++
-    AcpTest.claudeCodeChecks
+    AcpTest.claudeCodeChecks ++
+    AcpTest.permissionPolicyChecks ++
+    AcpTest.queueChecks ++
+    AcpTest.auditChecks
 
 /-- Runs the checks and prints each that failed; the exit status is 1 when
 one did. -/
