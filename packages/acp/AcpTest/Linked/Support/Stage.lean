@@ -1,5 +1,6 @@
 import Acp.ClaudeCode
 import Acp.Conversation
+import Acp.Permissions
 import AcpTest.Check
 import AgentsApiTest.Fake
 import BuffersApiTest.Fake
@@ -87,16 +88,76 @@ would reach through `kube`. -/
 def reachable : Location :=
   .reachable "kube" "pod" "/app"
 
+/-- The name of the check's command that puts the focused view's cursor on
+the first row of a request in the permission queue the view shows: the
+words name its conversation and its ticket. -/
+def cursorToRequest : String :=
+  "test-cursor-to-request"
+
+/-- The name of the check's command that says, in the echo area, the text
+of the conversation its words name, as acp's store holds it, whatever view
+shows it: each row, ` | ` between two. -/
+def conversationProbe : String :=
+  "test-probe-conversation"
+
+/-- The name of the check's command that says, in the echo area, whether
+the focused buffer is read-only. -/
+def readOnlyProbe : String :=
+  "test-read-only"
+
+/-- The name of the check's command that shows the buffer of the
+conversation its words name in the focused view. -/
+def showConversation : String :=
+  "test-show-conversation"
+
+/-- The words of a command's text argument, split at spaces. -/
+def wordsOf (call : Call) : List String :=
+  match call.arguments with
+  | .str text :: _ => (text.splitOn " ").filter fun (word : String) => !word.isEmpty
+  | _ => []
+
 /-- The check's own package: `test-cursor-to-call`, which reads the
 conversation from acp's store and the call's row from its render
 (`Acp.Conversation.rowOf`), and places the cursor there as compile places
-its followers; `test-probe`, which says the pending tickets, the turn
-in flight and whether the buffer is read-only; `test-store`, which says the
-number of every conversation in the store; and `test-to-reachable`, which
-gives the focused buffer a workspace where commands cannot run. -/
+its followers; `test-cursor-to-request <conversation> <ticket>`, which reads
+the focused queue's entries from acp's store and the request's row from its
+render (`Acp.Permissions.rowOf`), and places the cursor there likewise;
+`test-probe`, which says the pending tickets, the turn in flight and
+whether the buffer is read-only; `test-probe-conversation <n>`, which says
+the text of the conversation `n` as acp's store holds it, so a check reads a
+conversation that no view shows and tells two conversations of one header
+apart; `test-show-conversation <n>`, which shows the buffer of the conversation
+`n` in the focused view; `test-read-only`, which says whether the focused
+buffer is read-only; `test-store`, which says the number of every conversation in the
+store; and `test-to-reachable`, which gives the focused buffer a workspace
+where commands cannot run. -/
 def probePackage : Package :=
   { name := "acp-test"
     setup := do
+      commandWith cursorToRequest fun call => do
+          let some [conversation, ticket] := (wordsOf call).mapM String.toNat? | return
+          let some (project, entries) ← Acp.Permissions.queueOf? call.target.window.buffer | return
+          let view ← Acp.Conversation.chosenView
+          let some row := Acp.Permissions.rowOf view project entries conversation ticket | return
+          let offset ← call.target.buffer.text.offsetOf ⟨row, 0⟩
+          Jumps.placeCursor call.target.window.id offset
+      exCommand cursorToRequest cursorToRequest (takes := .text)
+      commandWith conversationProbe fun call => do
+          let some [number] := (wordsOf call).mapM String.toNat? | message "conversation: none"
+          let some conversation ←
+            Acp.Conversation.conversation? number | message "conversation: none"
+          let text := (Acp.Conversation.render (← Acp.Conversation.chosenView) conversation).1
+          message s!"conversation: {" | ".intercalate text.toList}"
+      exCommand conversationProbe conversationProbe (takes := .text)
+      commandWith showConversation fun call => do
+          let some [number] := (wordsOf call).mapM String.toNat? | return
+          let some conversation ← Acp.Conversation.conversation? number | return
+          let some index := conversation.buffer | return
+          discard <| call.target.window.id.show ⟨index⟩
+      exCommand showConversation showConversation (takes := .text)
+      commandWith readOnlyProbe fun call => do
+          let readOnly := ((← editorState).buffer? call.target.window.buffer).any (·.readOnly)
+          message s!"read-only {readOnly}"
       commandWith cursorToCall fun call => do
           let some conversation ← Acp.Conversation.ofBuffer? call.target.window.buffer | return
           let view ← Acp.Conversation.chosenView
@@ -115,11 +176,13 @@ def probePackage : Package :=
           discard <| Workspace.register reachable "git@example.invalid:o/r.git"
           Workspace.setBufferWorkspace call.target.window.buffer reachable }
 
-/-- The packages a stage's host is handed (the module docs). -/
-def stagePackages (packages : Array Package) : Array Package :=
+/-- The packages a stage's host is handed (the module docs): `extra` after
+`packages`. -/
+def stagePackages (packages : Array Package) (extra : Array Package := #[]) : Array Package :=
   #[exLinePackage, Minibuffer.package, FilesApiTest.fake, BuffersApiTest.fake,
       attachPackage (Workspace.Found.ofMarker root)] ++
     packages.map (fun package => { package with services := #[] }) ++
+    extra ++
     #[probePackage]
 
 /-- The file fake's model: `/work/example` holding an empty
@@ -130,15 +193,27 @@ def files : FileModel :=
 
 /-- Runs `check` against a host stepped on the check's thread over a stepped
 stage of `context`'s elaborator with no config, handed `stagePackages
-packages`, whose service `agents` is a fake over `script` and whose agent's
-child is `agentChild`. `check` is handed the session, the fake and the
+packages extra`, whose service `agents` is a fake over `script` and whose
+agent's child is `agentChild`. With `state`, the host has that state
+directory, its session journal the recording fake
+(`Stage.recordingJournal`), and the file fake's model holds the directory,
+so nothing real is written. `check` is handed the session, the fake and the
 stage's fakes. -/
 def withConversation (context : HostContext) (packages : Array Package) (script : Fake.Script)
-    (check : Session → Fake → Stage.Fakes → IO Bool) : IO Bool := do
+    (check : Session → Fake → Stage.Fakes → IO Bool) (state : Option System.FilePath := none)
+    (extra : Array Package := #[]) : IO Bool := do
   let fake ← Fake.new script
   let stage ←
-    Stage.new context context.elaborator (memorySource []) { packages := stagePackages packages }
-  let stage ← stage.stepped files { streams := #[agentChild] } (packageFakes := #[fake.packageFake])
+    Stage.new context context.elaborator (memorySource [])
+        { packages := stagePackages packages extra }
+  let model := (state.map files.withDirectory).getD files
+  let stage ← stage.stepped model { streams := #[agentChild] } (packageFakes := #[fake.packageFake])
+  let stage ←
+    match state with
+    | some directory =>
+      pure (← stage.recordingJournal directory).1
+    | none =>
+      pure stage
   let some fakes := stage.fakes | return false
   onStage stage fun drive stage => check (Session.ofStage drive "/" stage) fake fakes
 

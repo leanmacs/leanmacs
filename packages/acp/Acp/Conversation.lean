@@ -4,7 +4,7 @@ import Acp.Conversation.State
 import Acp.Conversation.Store
 import Acp.Conversation.View
 import Acp.Generated
-import AgentsApi
+import Acp.Permissions
 import BuffersApi
 import Editor.Api
 import Editor.Command.Call
@@ -37,8 +37,7 @@ its name, so this module imports nothing of the crate's binding
 - **`agent-answer <ticket> <option-id>`**: answers a pending permission
   request with one of the options it offered, and refuses anything else
   without sending; once the service took the answer the ticket is shown
-  answered. A minimal path: phase 6's queue, policy and audit log are built
-  over it.
+  answered. It shares one path with the queue's answer (`answerTicket`).
 - **`agent-cancel`**: cancels the turn in flight, or says there is none.
 - **`agent-stop`**: cancels the session's job by its key, which ends its
   child, and notes `session stopped`.
@@ -73,8 +72,32 @@ on the last line, or the empty row after it, follows the end; every other
 keeps its cursor's row. Closing it cancels the session's job and drops its
 conversation (`BuffersApi.Closing`).
 
-The conversations are kept in an unscoped store (`store`), so they survive
-a reload of config.
+The conversations are kept in an unscoped store (`store`,
+`Acp/Conversation/Store.lean`), so they survive a reload of config.
+
+## The queue, the policy and the audit log
+
+- **`agent-queue`** shows the queue of the focused buffer's project, its
+  pending permission requests across its sessions, in one buffer made if
+  none is open (`Acp/Permissions.lean`), where the display rules say for
+  the opener `agent-queue`; it refuses a buffer with no workspace.
+- **`agent-queue-answer [option-id]`**, in a queue buffer (the mode's
+  localleader `a`): answers the request on the cursor's row, or asks
+  `Answer <ticket> (<ids>): ` for the option, the prompt's continuation
+  carrying the conversation and the ticket, so a queue that changed while
+  it was open still answers the request it asked about. It refuses a row
+  with no request, and otherwise answers as `agent-answer` does
+  (`answerTicket`), by the conversation and the ticket together.
+- **The policy** chosen at `AgentsApi.PermissionPolicy` decides each
+  request a batch leaves pending, once, as the batch is applied
+  (`agent-events`; `Acp/Permissions/Policy.lean`): to ask, which sends
+  nothing, or one of the request's own options, sent by `agent-send` with
+  the origin `policy`. A batch with no request decides nothing.
+- **The audit log**: each request is recorded `asked` and `decided` as its
+  batch is applied, `withdrawn` by a cancel, `answered` or `refused` by
+  `agent-send`'s reply with who answered, and `closed` when its conversation
+  ends with it pending (`Acp/Permissions/Audit.lean`, written by
+  `Acp.Permissions.audit`).
 -/
 
 namespace Acp.Conversation
@@ -123,6 +146,15 @@ def sessionJob : String :=
 def sendJob : String :=
   "agent-send"
 
+/-- The name of the command that shows the queue of a project's permission
+requests. -/
+def queueName : String :=
+  "agent-queue"
+
+/-- The name of the command that answers the request on the queue's row. -/
+def queueAnswerName : String :=
+  "agent-queue-answer"
+
 /-- The name of the conversation buffer's major mode. -/
 def modeName : String :=
   "agent-conversation"
@@ -160,21 +192,31 @@ def update (number : Nat) (change : Conversation → Conversation) : EditorM Uni
   let changed := change conversation
   save changed
   redraw changed
+  Permissions.redrawQueues
+
+/-- Records in the audit log that `conversation`'s pending tickets are
+closed, for `reason`, unless it has ended already. -/
+def closeTickets (conversation : Conversation) (reason : String) : EditorM Unit := do
+  if conversation.ended.isNone then
+    Permissions.audit (Permissions.closedRecords conversation reason)
 
 /-! ## The jobs and the commands they hand the loop -/
 
 /-- The arguments `agent-send` is started with: the conversation, the
-session and the order. -/
-def sendArguments (number session : Nat) (order : Order) : List Argument :=
-  [.nat number, .nat session] ++ Request.orderArguments order
+session, who gives the order, and the order. -/
+def sendArguments (number session : Nat) (origin : Permissions.Origin) (order : Order) :
+    List Argument :=
+  [.nat number, .nat session, .str origin.word] ++ Request.orderArguments order
 
 /-- The command a finished session job hands the loop: how the session
-ended is kept and noted. -/
-def endedCommand (number : Nat) (how : String) : EditorM Unit :=
+ended is kept and noted, and its pending tickets audited closed. -/
+def endedCommand (number : Nat) (how : String) : EditorM Unit := do
+  if let some conversation← conversation? number then
+    Permissions.audit (Permissions.closedRecords conversation s!"session ended: {how}")
   update number fun conversation =>
-    { conversation with
-          ended := conversation.ended.orElse fun _ => some how, turn := none }.noted
-      s!"session ended: {how}"
+      { conversation with
+            ended := conversation.ended.orElse fun _ => some how, turn := none }.noted
+        s!"session ended: {how}"
 
 /-- The ending of the session's end, if `batch` holds it. -/
 def endingOf (batch : Batch) : Option Ending :=
@@ -207,28 +249,39 @@ def sessionWork (agents : Array Agent) (arguments : List Argument) : Work := fun
         sleep batchPause
     return endedCommand number s!"no end after {takeLimit} batches"
 
-/-- The command a finished `agent-send` hands the loop: the reply to `order`
-applied to the conversation `number`. -/
-def sentCommand (number : Nat) (order : Order) (reply : Except Refusal Sent) : EditorM Unit :=
+/-- The command a finished `agent-send` hands the loop: the reply to `order`,
+given by `origin`, applied to the conversation `number`, and an answer's
+reply audited. -/
+def sentCommand (number : Nat) (origin : Permissions.Origin) (order : Order)
+    (reply : Except Refusal Sent) : EditorM Unit := do
+  match order, reply with
+  | .answer ticket optionId, .ok _ =>
+    Permissions.audit #[.answered number ticket optionId origin]
+  | .answer ticket optionId, .error refusal =>
+    Permissions.audit #[.refused number ticket optionId origin refusal.describe]
+  | _, _ =>
+    pure ()
   update number fun conversation =>
-    match order, reply with
-    | .prompt _, .ok sent =>
-      match sent.turn with
-      | some turn => conversation.sent turn
-      | none => { conversation with awaiting := false }
-    | .prompt _, .error refusal =>
-      { conversation with awaiting := false }.noted s!"{promptName}: {refusal.describe}"
-    | .answer ticket optionId, .ok _ => conversation.answered ticket optionId
-    | .answer _ _, .error refusal => conversation.noted s!"{answerName}: {refusal.describe}"
-    | .cancel, .error refusal => conversation.noted s!"{cancelName}: {refusal.describe}"
-    | _, _ => conversation
+      match order, reply with
+      | .prompt _, .ok sent =>
+        match sent.turn with
+        | some turn => conversation.sent turn
+        | none => { conversation with awaiting := false }
+      | .prompt _, .error refusal =>
+        { conversation with awaiting := false }.noted s!"{promptName}: {refusal.describe}"
+      | .answer ticket optionId, .ok _ => conversation.answered ticket optionId
+      | .answer _ _, .error refusal => conversation.noted s!"{answerName}: {refusal.describe}"
+      | .cancel, .error refusal => conversation.noted s!"{cancelName}: {refusal.describe}"
+      | _, _ => conversation
 
 /-- `agent-send`: hands its session its order and finishes with the reply. -/
 def sendWork (arguments : List Argument) : Work := fun _ => do
-  let .nat number :: .nat session :: rest := arguments
-    | throw s!"{sendJob}: its arguments are not a conversation, a session and an order"
+  let .nat number :: .nat session :: .str word :: rest := arguments
+    | throw s!"{sendJob}: its arguments are not a conversation, a session, an origin and an order"
+  let some origin := Permissions.Origin.ofWord? word
+    | throw s!"{sendJob}: {word} is no origin"
   let some order := Request.order? rest | throw s!"{sendJob}: its arguments hold no order"
-  return sentCommand number order (← AgentsApi.Job.send session order)
+  return sentCommand number origin order (← AgentsApi.Job.send session order)
 
 /-- `agent-opened`: the conversation and its opened session. -/
 def openedCommand (call : Call) : EditorM Unit := do
@@ -236,11 +289,37 @@ def openedCommand (call : Call) : EditorM Unit := do
   let some opened := Opened.ofArguments? rest | return
   update number (·.opened opened)
 
-/-- `agent-events`: the conversation and a batch of its session's events. -/
+/-- Starts `agent-send` with `order` for `conversation`'s session, given by
+`origin`, or says under `name` that it is not open. Whether it started. -/
+def sendOrder (name : String) (conversation : Conversation) (order : Order)
+    (origin : Permissions.Origin := .user) : EditorM Bool := do
+  let some session := conversation.session |
+    do
+      message s!"{name}: the session is not open yet"
+      return false
+  match ← startJob sendJob (sendArguments conversation.number session origin order) with
+  | .error refusal =>
+    message s!"{name}: {refusal.describe}"
+    return false
+  | .ok () =>
+    return true
+
+/-- `agent-events`: the conversation and a batch of its session's events,
+applied; each request it leaves pending decided by the policy and audited,
+and a chosen answer sent (the module docs). -/
 def eventsCommand (call : Call) : EditorM Unit := do
   let .nat number :: rest := call.arguments | return
   let some batch := Batch.ofArguments? rest | return
   update number (·.applyBatch batch)
+  let some conversation ← conversation? number | return
+  let policy ← PermissionPolicy.named
+  let decided := Permissions.decisions policy conversation batch
+  Permissions.audit
+      (Permissions.recordsOf (← Permissions.projectName conversation.location) conversation batch
+        policy.name decided)
+  for (request, answer) in decided do
+    if let some option := answer then
+      discard <| sendOrder answerName conversation (.answer request.ticket option.id) .policy
 
 /-! ## The user's commands -/
 
@@ -316,20 +395,6 @@ def ofCall? (name : String) (call : Call) : EditorM (Option Conversation) := do
     message s!"{name}: {call.target.buffer.name} is not a conversation buffer"
     return none
 
-/-- Starts `agent-send` with `order` for `conversation`'s session, or says
-under `name` that it is not open. Whether it started. -/
-def sendOrder (name : String) (conversation : Conversation) (order : Order) : EditorM Bool := do
-  let some session := conversation.session |
-    do
-      message s!"{name}: the session is not open yet"
-      return false
-  match ← startJob sendJob (sendArguments conversation.number session order) with
-  | .error refusal =>
-    message s!"{name}: {refusal.describe}"
-    return false
-  | .ok () =>
-    return true
-
 /-- `agent-prompt` (the module docs): the text is its first argument; an
 answer of its prompt comes back with `true` after it. -/
 def promptCommand (call : Call) : EditorM Unit := do
@@ -361,6 +426,21 @@ where
         if ← sendOrder promptName conversation (.prompt text) then
           update conversation.number (·.prompted text)
 
+/-- Answers the permission request `ticket` of `conversation` with the
+option `optionId`, the user's answer, or says under `name` why not: the
+ticket is not pending, or the request did not offer the option. The one
+path of `agent-answer` and `agent-queue-answer`. -/
+def answerTicket (name : String) (conversation : Conversation) (ticket : Nat) (optionId : String) :
+    EditorM Unit := do
+  match conversation.permission? ticket with
+  | some (_, options, .pending) =>
+    if options.any (·.id == optionId) then
+      discard <| sendOrder name conversation (.answer ticket optionId)
+    else
+      message s!"{name}: the request {ticket} offers no option {optionId}"
+  | _ =>
+    message s!"{name}: no permission request {ticket} is pending"
+
 /-- `agent-answer <ticket> <option-id>` (the module docs). -/
 def answerCommand (call : Call) : EditorM Unit := do
   let some conversation ← ofCall? answerName call | return
@@ -371,14 +451,56 @@ def answerCommand (call : Call) : EditorM Unit := do
   let [ticketText, optionId] := words
     | message s!"{answerName}: give a ticket and an option's id"
   let some ticket := ticketText.toNat? | message s!"{answerName}: {ticketText} is no ticket"
-  match conversation.permission? ticket with
-  | some (_, options, .pending) =>
-    if options.any (·.id == optionId) then
-      discard <| sendOrder answerName conversation (.answer ticket optionId)
+  answerTicket answerName conversation ticket optionId
+
+/-- `agent-queue` (the module docs). -/
+def queueCommand (call : Call) : EditorM Unit := do
+  let some (workspace, project) := (← editorState).workspaceOf? call.target.window.buffer
+    | message s!"{queueName}: {call.target.buffer.name} has no workspace"
+  Permissions.showQueue call.target.window.id workspace.location project queueName
+
+/-- `agent-queue-answer [option-id]` (the module docs): the option's id is
+its first argument; a prompt's answer comes back with the conversation and
+the ticket after it. -/
+def queueAnswerCommand (call : Call) : EditorM Unit := do
+  match call.arguments with
+  | .str text :: .nat number :: .nat ticket :: _ =>
+    answer number ticket text.trimAscii.toString
+  | arguments =>
+    let text :=
+      match arguments with
+      | .str text :: _ => text.trimAscii.toString
+      | _ => ""
+    let some (project, found) ←
+      Permissions.queueOf?
+          call.target.window.buffer | message s!"{queueAnswerName}: no request on this line"
+    let some row ←
+      Generated.cursorRow call.target.window.id
+          call.target.buffer.text | message s!"{queueAnswerName}: no request on this line"
+    let some (number, ticket) := ((Permissions.render (← chosenView) project found).2[row]?).join
+      | message s!"{queueAnswerName}: no request on this line"
+    if !text.isEmpty then
+      answer number ticket text
     else
-      message s!"{answerName}: the request {ticket} offers no option {optionId}"
-  | _ =>
-    message s!"{answerName}: no permission request {ticket} is pending"
+      let ids :=
+        ((found.find? fun entry =>
+                  entry.conversation == number && entry.request.ticket == ticket).map
+              fun entry => ", ".intercalate (entry.request.options.toList.map (·.id))).getD
+          ""
+      discard <|
+          prompt s!"Answer {ticket} ({ids}): "
+            { command := queueAnswerName, arguments := [.nat number, .nat ticket] }
+where
+  /-- Answers the request `ticket` of the conversation `number` with
+  `optionId`. -/
+  answer (number ticket : Nat) (optionId : String) : EditorM Unit := do
+    let some conversation ←
+      conversation?
+          number | message s!"{queueAnswerName}: no permission request {ticket} is pending"
+    if optionId.isEmpty then
+      message s!"{queueAnswerName}: no option"
+    else
+      answerTicket queueAnswerName conversation ticket optionId
 
 /-- `agent-cancel` (the module docs). -/
 def cancelCommand (call : Call) : EditorM Unit := do
@@ -392,6 +514,7 @@ def cancelCommand (call : Call) : EditorM Unit := do
 def stopCommand (call : Call) : EditorM Unit := do
   let some conversation ← ofCall? stopName call | return
   cancelJob (sessionKey conversation.number)
+  closeTickets conversation "session stopped"
   update conversation.number fun conversation =>
       { conversation with
             ended := conversation.ended.orElse fun _ => some "stopped", turn := none
@@ -408,12 +531,16 @@ def toggleCommand (call : Call) : EditorM Unit := do
   | _ =>
     message s!"{toggleName}: no tool call on this line"
 
-/-- What closing a conversation buffer does: its session's job is
-cancelled, which ends its child, and its conversation dropped. -/
+/-- What closing a buffer does: a queue buffer is dropped from the queue
+store; a conversation buffer's session's job is cancelled, which ends its
+child, its pending tickets audited closed, and its conversation dropped. -/
 def closing (id : BufferId) : EditorM Unit := do
+  Permissions.closingQueue id
   let some conversation ← ofBuffer? id | return
   cancelJob (sessionKey conversation.number)
+  closeTickets conversation "buffer closed"
   Workspace.setUnscoped store ((← conversations).filter (·.number != conversation.number))
+  Permissions.redrawQueues
 
 /-- The conversation buffer's major mode: `toggle` folds a tool call, and the
 localleader's `p`, `c` and `k` prompt, cancel and stop. -/
@@ -422,6 +549,12 @@ def conversationMode : Editor.Mode :=
     locals := [("p", promptName), ("c", cancelName), ("k", stopName)]
     roleDescs := [(Role.toggle, "fold or unfold the tool call")]
     localDescs := [("p", "prompt the agent"), ("c", "cancel the turn"), ("k", "stop the session")] }
+
+/-- The queue buffer's major mode: the localleader's `a` answers the request
+on the cursor's row. -/
+def permissionsMode : Editor.Mode :=
+  { name := Permissions.modeName, locals := [("a", queueAnswerName)]
+    localDescs := [("a", "answer the request on this line")] }
 
 end Acp.Conversation
 
@@ -432,10 +565,12 @@ open Acp.Conversation
 
 /-- What the package `acp` registers (the module docs): Claude Code's adapter
 at `AgentsApi.Agent`, the default view at `AgentsApi.ConversationView`, the
-commands, the jobs, the mode, the closing hook and the ex names. -/
+default policy, which asks, at `AgentsApi.PermissionPolicy`, the commands,
+the jobs, the modes, the closing hook and the ex names. -/
 def setup : SetupM Unit := do
   Extension.add claudeCode
   Extension.add defaultView
+  Extension.add AgentsApi.PermissionPolicy.ask
   commandWith startName startCommand
   commandWith promptName promptCommand
   commandWith answerName answerCommand
@@ -444,14 +579,20 @@ def setup : SetupM Unit := do
   commandWith toggleName toggleCommand
   commandWith openedName openedCommand
   commandWith eventsName eventsCommand
+  commandWith queueName queueCommand
+  commandWith queueAnswerName queueAnswerCommand
   Extension.workJob AgentsApi.Agent sessionJob sessionWork
   workJob sendJob sendWork
+  workJob Permissions.auditJob Permissions.auditWork
   defineMode conversationMode
+  defineMode permissionsMode
   Extension.add ({ name := "acp", closing } : BuffersApi.Closing)
   exCommand startName startName (takes := .text)
   exCommand promptName promptName (takes := .text)
   exCommand answerName answerName (takes := .text)
   exCommand cancelName cancelName
   exCommand stopName stopName
+  exCommand queueName queueName
+  exCommand queueAnswerName queueAnswerName (takes := .text)
 
 end Acp

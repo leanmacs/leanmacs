@@ -10,8 +10,9 @@ crate, `Acp.Real.service`), which the program's edge hands the job runner
 (`Package.services`, `Headless.shipped`), and registers the conversation
 (`Acp.setup`, `Acp/Conversation.lean`): Claude Code's adapter at
 `AgentsApi.Agent`, the default view at `AgentsApi.ConversationView`, the
-session commands, their jobs, the conversation buffer's mode, its closing
-hook and the ex names. A consumer reaches the service through
+default policy, which asks, at `AgentsApi.PermissionPolicy`, the session
+and queue commands, their jobs, the conversation buffer's and the queue
+buffer's modes, the closing hook and the ex names. A consumer reaches the service through
 `agents-api`'s job wrappers (`AgentsApi.Job`), by the service's name, and
 never imports this package (owner decision).
 

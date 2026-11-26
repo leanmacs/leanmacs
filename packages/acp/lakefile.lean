@@ -28,8 +28,9 @@ that declares the crate.
   (`Acp.Codec`), the service over a binding (`Acp.Service`), Claude Code's
   adapter (`Acp.ClaudeCode`), the sessions and the conversation buffer
   (`Acp.Conversation` and the modules under it), the rewrite of a buffer
-  whose text it generates (`Acp.Generated`), its list of packages and its
-  entry module. It requires `buffers-api` for the hook
+  whose text it generates (`Acp.Generated`), the queue of permission
+  requests, the policy's application and the audit log (`Acp.Permissions`
+  and the modules under it), its list of packages and its entry module. It requires `buffers-api` for the hook
   `BuffersApi.Closing`, at which a closed conversation buffer stops its
   session. `AcpReal` is the Rust-backed binding alone,
   whose `moreLinkObjs` is the glue, so the glue is linked into exactly the
@@ -37,13 +38,13 @@ that declares the crate.
   module, and the linked test.
 - `acp-test` is its test driver (`lake test`): the codec's golden lines,
   the service over a binding written in the test, and the conversation's
-  pure parts and registration, which need no Rust, rooted at
-  `AcpTest/Model.lean`.
+  and the permissions' pure parts and registration, which need no Rust,
+  rooted at `AcpTest/Model.lean`.
 - `AcpTest` holds the test modules, `AcpTest/Linked.lean` among them: the
   root of the executable the core's `editorLinked` facet links as the
-  editor is linked, which runs the conversation on the stepped host over
-  `agents-api`'s fake, and `agents-api`'s contract and the wiring check on
-  the real crate; and `AcpTest/FixtureSupport.lean`, the setup of the
+  editor is linked, which runs the conversation and the permissions on the
+  stepped host over `agents-api`'s fake, and `agents-api`'s contract and
+  the wiring check on the real crate; and `AcpTest/FixtureSupport.lean`, the setup of the
   headless fixture `tests/headless/conversation/`, which only the fixture
   harness's generated root imports.
 
@@ -87,7 +88,8 @@ of the package but its tests and the binding. -/
 @[default_target] lean_lib Acp where
   globs :=
   #[.one `Acp.Codec, .one `Acp.Service, .one `Acp.ClaudeCode, .andSubmodules `Acp.Conversation,
-    .one `Acp.Generated, .submodules `Acp.Permissions, .one `Acp.Packages, .one `Acp.EditorPackage]
+    .one `Acp.Generated, .andSubmodules `Acp.Permissions, .one `Acp.Packages,
+    .one `Acp.EditorPackage]
   plugins := lintPlugin
 
 /-- The Rust-backed binding, with the package's glue. -/

@@ -11,8 +11,9 @@ arguments, the editor's environment untouched and no MCP server, so its
 child's environment has no `CLAUDE_CONFIG_DIR` of the editor's; and a
 package whose setup is `Acp.setup`, registered alone as a host registers
 it (`Config.State.ofPackages`), registers it at `AgentsApi.Agent`, the
-default view at `AgentsApi.ConversationView`, the session commands, their
-jobs and the conversation's mode, with nothing refused. The test driver's
+default view at `AgentsApi.ConversationView`, the default policy, which
+asks, at `AgentsApi.PermissionPolicy`, the session and queue commands, their
+jobs and the conversation's and the queue's modes, with nothing refused. The test driver's
 root, `AcpTest/Model.lean`, runs them; it imports nothing of the crate's
 binding, so it builds `Acp.setup`'s package here rather than taking
 `Acp.package`.
@@ -52,17 +53,26 @@ def claudeCodeChecks : List Check :=
                 { program := "claude-agent-acp", directory := "/work/example" : Process.Command })
             s!"{repr agent}" },
     { name :=
-        "acp's setup registers Claude Code's adapter, which a choice finds as claude-code, and the default view, which a choice finds by the default name"
+        "acp's setup registers Claude Code's adapter, which a choice finds as claude-code, the default view, which a choice finds by the default name, and the default policy, which asks"
       run := do
         let agents := registeredAt Agent conversationPackage
         let views := registeredAt ConversationView conversationPackage
+        let policies := registeredAt PermissionPolicy conversationPackage
         let chosen := Agent.choose agents Acp.defaultAgent
+        let request : PermissionRequest :=
+          { agent := Acp.defaultAgent, root := "/work/example", sessionId := "sess-0001"
+            ticket := 1, turn := none, call := { id := "call-1" }
+            options := #[{ id := "allow-once", name := "Yes", kind := "allow_once" }] }
+        let policy := PermissionPolicy.choose policies
         saw
             (agents == #[Acp.claudeCode] && chosen == some Acp.claudeCode && views.size == 1 &&
-              (ConversationView.choose views).map (·.name) == some ConversationView.defaultName)
-            s!"agents {repr agents}, views {views.size}" },
+              (ConversationView.choose views).map (·.name) == some ConversationView.defaultName &&
+              policies.size == 1 &&
+              (policy.map (·.name)) == some PermissionPolicy.defaultName &&
+              (policy.map (·.answer request)) == some none)
+            s!"agents {repr agents}, views {views.size}, policies {policies.size}" },
     { name :=
-        "acp's package registers alone with nothing refused: its session commands, its jobs agent-session and agent-send, and the mode agent-conversation, whose toggle is agent-toggle"
+        "acp's package registers alone with nothing refused: its session and queue commands, its jobs agent-session, agent-send and agent-audit, the mode agent-conversation, whose toggle is agent-toggle, and the mode agent-permissions, whose localleader a answers"
       run := do
         let (state, refused) : Config.State Unit Unit × Array String :=
           Config.State.ofPackages #[conversationPackage]
@@ -70,14 +80,18 @@ def claudeCodeChecks : List Check :=
         let commands :=
           [Acp.Conversation.startName, Acp.Conversation.promptName, Acp.Conversation.answerName,
             Acp.Conversation.cancelName, Acp.Conversation.stopName, Acp.Conversation.toggleName,
-            Acp.Conversation.openedName, Acp.Conversation.eventsName]
+            Acp.Conversation.openedName, Acp.Conversation.eventsName, Acp.Conversation.queueName,
+            Acp.Conversation.queueAnswerName]
         saw
             (refused.isEmpty && commands.all (fun name => (registry.find? name).isSome) &&
-              [Acp.Conversation.sessionJob, Acp.Conversation.sendJob].all
+              [Acp.Conversation.sessionJob, Acp.Conversation.sendJob, Acp.Permissions.auditJob].all
                 (fun name => registry.jobs.any (·.registration.name == name)) &&
-              registry.modes.any fun entry =>
+              (registry.modes.any fun entry =>
                 entry.mode.name == Acp.Conversation.modeName &&
-                  entry.mode.roles == [(Role.toggle, Acp.Conversation.toggleName)])
+                  entry.mode.roles == [(Role.toggle, Acp.Conversation.toggleName)]) &&
+              registry.modes.any fun entry =>
+                entry.mode.name == Acp.Permissions.modeName &&
+                  entry.mode.locals == [("a", Acp.Conversation.queueAnswerName)])
             s!"refused {refused}" }]
 
 end AcpTest
