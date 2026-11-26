@@ -78,9 +78,19 @@ fn shipped(launcher: Option<&str>) -> Command {
 fn stage_on(
     command: &Command,
     host: Host,
-    mut files: FakeFiles,
+    files: FakeFiles,
 ) -> (Result<(), Refusal>, FakeFiles, Vec<Invocation>) {
-    let mut process = RecordingProcess::new(tool_output);
+    stage_answering(command, host, files, tool_output)
+}
+
+/// [`stage_on`] with the tools answering what `respond` returns.
+fn stage_answering(
+    command: &Command,
+    host: Host,
+    mut files: FakeFiles,
+    respond: impl FnMut(&Invocation) -> Result<Vec<u8>, RunError>,
+) -> (Result<(), Refusal>, FakeFiles, Vec<Invocation>) {
+    let mut process = RecordingProcess::new(respond);
     let outcome = stage(command, host, &mut files, &mut process);
     (outcome, files, process.runs)
 }
@@ -420,6 +430,66 @@ fn a_list_with_no_olean_directory_is_refused() {
     );
 }
 
+#[test]
+fn a_missing_executable_is_refused() {
+    let mut command = shipped(None);
+    command.executable = PathBuf::from("/build/bin/nowhere");
+    assert_eq!(
+        refused(&command, files()),
+        Refusal::NotAFile(PathBuf::from("/build/bin/nowhere"))
+    );
+}
+
+#[test]
+fn a_missing_launcher_is_refused() {
+    assert_eq!(
+        refused(&shipped(Some("/target/release/leanmacs")), files()),
+        Refusal::NotAFile(PathBuf::from("/target/release/leanmacs"))
+    );
+}
+
+#[test]
+fn a_file_line_whose_source_is_missing_is_refused_naming_it() {
+    let files = files().with_file(
+        LIST,
+        "oleans\tcore\nfile\t/src/lakefile.lean\tlakefile.lean\nfile\t/src/Gone.olean\tcore/Gone.olean\n",
+    );
+    assert_eq!(
+        refused(&shipped(None), files),
+        Refusal::NoSource(PathBuf::from("/src/Gone.olean"))
+    );
+}
+
+#[test]
+fn a_list_that_is_not_utf8_is_refused() {
+    let files = files().with_file(LIST, b"oleans\tcore\xff\n");
+    assert_eq!(
+        refused(&shipped(None), files),
+        Refusal::NotText(PathBuf::from(LIST))
+    );
+}
+
+#[test]
+fn on_macos_refused_stubs_refuse_the_bundle_before_anything_is_written() {
+    let objective_c = |invocation: &Invocation| match invocation.program.to_str() {
+        Some("nm") => Ok(
+            b"                 (undefined) external _OBJC_CLASS_$_NSView (from AppKit)\n".to_vec(),
+        ),
+        _ => tool_output(invocation),
+    };
+    let files = files();
+    let (outcome, after, _) =
+        stage_answering(&shipped(None), Host::Macos, files.clone(), objective_c);
+    assert_eq!(after, files, "a refusal writes nothing");
+    assert_eq!(
+        outcome,
+        Err(Refusal::Stubs(stubs::Refusal::ObjectiveC {
+            symbol: "_OBJC_CLASS_$_NSView".to_owned(),
+            library: "AppKit".to_owned(),
+        }))
+    );
+}
+
 // Module files alone.
 
 /// A toolchain's and two packages' module files, of several kinds.
@@ -531,6 +601,18 @@ fn a_closure_module_in_no_directory_is_refused_naming_it() {
             toolchain: PathBuf::from("/toolchain/lib/lean"),
             packages: vec![PathBuf::from("/p1"), PathBuf::from("/p2")],
         }
+    );
+}
+
+#[test]
+fn a_closure_that_is_not_utf8_is_refused() {
+    let files = module_files().with_file("/work/closure", b"Init\n\xff\n");
+    assert_eq!(
+        refused(
+            &modules(&["--closure", "/work/closure"], "/p1", &["olean"]),
+            files
+        ),
+        Refusal::NotText(PathBuf::from("/work/closure"))
     );
 }
 
