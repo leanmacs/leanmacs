@@ -19,6 +19,7 @@ status 4 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
 key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 job 5 agent-send: started
+job 6 agent-stall: started
 job 5 agent-send: ok
 job 4 agent-session: ok
 scene 0x0, focused 4, echo "", echo padding 8, preedit -, theme "default"
