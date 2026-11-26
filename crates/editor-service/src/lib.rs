@@ -14,6 +14,12 @@
 //! - [`frame`]: a streaming child's output, framed (lines, bytes) and
 //!   bounded, as plain data: the frames the process service makes and a
 //!   package's crate is handed, one type on both sides.
+//! - [`stream`]: a streaming child the core's process service opened,
+//!   taken over by a package's crate: the port ([`stream::StreamSource`]),
+//!   the process's one source ([`stream::provide`],
+//!   [`stream::take_over`]), its published fake
+//!   ([`stream::fake::FakeSource`]) and its contract
+//!   ([`stream::contract::check`]).
 //! - [`worker`]: a thread and the owner that ends it ([`Worker`]), whose
 //!   drop asks the thread to stop and joins it on every path, so a thread a
 //!   test starts never outlives the test.
@@ -35,12 +41,14 @@
 //! | A rule of how a service is named or numbered | [`service`] | Its unit tests |
 //! | A rule every completer keeps | A property of [`completer_contract`] | Its tests, on the fake and on completers written to break it, and `tests/queue.rs` on the real one |
 //! | A thread a service starts and must end | [`worker::Worker`] | The unit tests of [`worker`] |
+//! | A rule of a taken-over child, or another way one ends | [`stream`] | Its module docs' table |
 //! | Another way to frame a child's stream, or a rule of the bound | A variant of [`frame::Framing`] and of [`frame::Frames`], and the [`frame::Framer`]'s state | The unit tests of [`frame`]; and, since `editor-process` and `editor-ffi` match [`frame::Frames`] exhaustively, an arm there |
 
 pub mod buffer;
 pub mod frame;
 pub mod queue;
 pub mod service;
+pub mod stream;
 pub mod worker;
 
 pub use service::{
