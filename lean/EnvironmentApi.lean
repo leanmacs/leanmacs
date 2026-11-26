@@ -117,7 +117,8 @@ def DirectorySource.ordered (values : Array DirectorySource) : Array DirectorySo
 /-- The names of the bases there are, for a person: `inherited` first, then
 each registered name in order, each once. -/
 def baseNames (values : Array BaseSource) : Array String :=
-  values.foldl (fun names value => if names.contains value.name then names else names.push value.name)
+  values.foldl
+    (fun names value => if names.contains value.name then names else names.push value.name)
     #[Process.inheritedName]
 
 /-- `names`, written as a list for a person: `a`, `a and b`, `a, b and c`. -/

@@ -35,9 +35,10 @@ the model tests run it with outcomes built by hand
   sets the registry's leader and localleader to the ones the config set,
   `none` for the scheme's when it set none (`Registry.leader`,
   `Registry.localLeader`), so its bindings written with `<leader>` and
-  every mode's suffixes move from the next key, sets the registry's process
-  environment to the one the config set, `none` when it set none
-  (`Registry.environment`), and meets the config's stores with the cells
+  every mode's suffixes move from the next key, sets the registry's base
+  of a child's environment to the name the config chose, `none` when it
+  chose none, so the packages' default holds (`Registry.environmentBase`,
+  `Registry.baseName`), and meets the config's stores with the cells
   there are (`Cells.install`). A rejected outcome changes none of them: the config that
   was loaded stays.
 - **The theme follows the registry and the theme in force.** The theme in
@@ -145,6 +146,12 @@ the model tests run it with outcomes built by hand
   window after the start-up reload (`Window.titleBarAtOpen`), so a reload
   that changes it takes effect at the next start. A rejected outcome
   changes none of it.
+- **A base nobody registered is said.** An install whose registry names a
+  base of a child's environment (`Registry.baseName`) that no base source
+  answers to (`EnvironmentApi.ofRegistry`) still installs; its report names
+  it and lists the bases there are (`Report.unknownBase`), which the echo
+  area says after the at-point sentences, and the host keeps the base it
+  had (`Editor/Headless.lean`, "A child's environment").
 - **Every install is a new config generation.** An install sets config's
   workspace roots in the registry (`Registry.workspaceRoots`) and bumps
   its generation (`Registry.generation`), which a directory's cached

@@ -712,8 +712,10 @@ def reloadChecks : List Check :=
         "an installed reload puts config's base name in the registry, a rejected one keeps it, and one that names none leaves the packages' default; config's choice overrides a package's default"
       run :=
         let start : ModelState :=
-          { (reduce []).1 with registry := { (reduce []).1.registry with baseDefaults := #["pkg"] } }
-        let (loaded, _) := reduceFrom start [.requested, .finished (accepted ["a"] (environmentBase "b"))]
+          { (reduce []).1 with
+            registry := { (reduce []).1.registry with baseDefaults := #["pkg"] } }
+        let (loaded, _) :=
+          reduceFrom start [.requested, .finished (accepted ["a"] (environmentBase "b"))]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
         let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
         pure

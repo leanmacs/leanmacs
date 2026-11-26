@@ -46,7 +46,8 @@ def fakeSource (name : String) (path : System.FilePath) (stampNames : Array Stri
 
 /-- A directory source over `fakeSource name path stampNames`, in every
 mode. -/
-def fakeDirectory (name : String := "fake-directory") (path : System.FilePath := "/fake/bin/directory")
+def fakeDirectory (name : String := "fake-directory")
+    (path : System.FilePath := "/fake/bin/directory")
     (stampNames : Array String := #["fake.toml"]) : EnvironmentApi.DirectorySource :=
   { name, source := fun _ => some (fakeSource name path stampNames) }
 

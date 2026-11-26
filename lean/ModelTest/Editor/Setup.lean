@@ -889,7 +889,8 @@ def setupChecks : List Check :=
         let path := "/opt/homebrew/bin/mise"
         pure
           (gone .inherited && gone .auto && gone (.mise none) && gone (.mise (some path)) &&
-            (((refusal (processEnvironment (.mise (some path)))).getD "").splitOn path).length > 1) },
+            (((refusal (processEnvironment (.mise (some path)))).getD "").splitOn path).length >
+              1) },
     { name :=
         "a setup's workspace roots are collected in the order it declared them, each with the project it names, if any; a setup that declares none collects none"
       run :=

@@ -1257,6 +1257,19 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   the language the registry's table chooses for a file it opens; and a set's own `Files` value of
   the name `files`,
   registered after the feature's, is the one `files?` answers;
+- `environmentRegistryChecks`: the interface library `environment-api`'s
+  reading rules (`EnvironmentApi.lean`): the directory-source hook keeps
+  registration order and replaces a value of a name in its place; the base
+  choice gives `inherited` with nothing registered and the latest value of
+  a name, and refuses a name nobody answers to with the bases listed;
+  `registered` keeps the base installed before for an unknown name; and,
+  on the job model, with nothing registered a child starts exactly as its
+  command says with no lookup, and the base setting picks the registered
+  base of that name, `inherited` when unset, config's choice over a
+  package's default;
+- `environmentApiChecks`: `environment-api`'s fakes keep its directory and
+  base contracts on the model rigs, and the contracts fail a package that
+  registers nothing and a source that ignores its output;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's

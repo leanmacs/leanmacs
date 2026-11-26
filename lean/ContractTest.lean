@@ -376,8 +376,7 @@ def main (arguments : List String) : IO UInt32 := do
   let (syntaxFixtures, completionFixtures, launchFixtures) ←
     match arguments with
     | [syntaxDirectory, completion, launch] =>
-      pure
-          (← IO.FS.realPath syntaxDirectory, ← IO.FS.realPath completion, ← IO.FS.realPath launch)
+      pure (← IO.FS.realPath syntaxDirectory, ← IO.FS.realPath completion, ← IO.FS.realPath launch)
     | _ =>
       IO.eprintln
           "usage: contract-test <the directory of the syntax fixtures> <the directory of the completion fixtures> <the directory of the launch fixtures>"

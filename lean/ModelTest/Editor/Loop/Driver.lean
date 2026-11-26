@@ -178,7 +178,8 @@ def driverChecks : List Check :=
               { driver with
                 jobs :=
                   { environments :=
-                      { sources :=
+                      {
+                        sources :=
                           { directories := #[EnvironmentApiTest.fakeSource "mise" "/opt/mise"] } }
                     processes :=
                       {

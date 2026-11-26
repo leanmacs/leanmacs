@@ -31,7 +31,8 @@ open EnvironmentApiTest
 program and stamp names of its source in each mode. -/
 def directoryShape (value : EnvironmentApi.DirectorySource) :
     String × Option (Process.Program × Array String) × Option (Process.Program × Array String) :=
-  let shape (host : Process.Host) := (value.source host).map fun source => (source.program, source.stampNames)
+  let shape (host : Process.Host) :=
+    (value.source host).map fun source => (source.program, source.stampNames)
   (value.name, shape .headless, shape (.window (some "/u")))
 
 /-- The name of the base `base` gives in `host`: `inherited`, or its lookup's
@@ -92,7 +93,8 @@ def environmentRegistryChecks : List Check :=
           EnvironmentApi.registered #[fakeDirectory "a" "/bin/a"] #[fakeBase "x"] "x"
         let installed := ({} : Process.Environments).install known
         pure
-          (unknown.base.isNone && said == some (EnvironmentApi.unknownBase "nope" #["inherited", "x"]) &&
+          (unknown.base.isNone &&
+            said == some (EnvironmentApi.unknownBase "nope" #["inherited", "x"]) &&
             known.base.isSome &&
             quiet.isNone &&
             (match installed.sources.base with
@@ -123,12 +125,15 @@ def environmentRegistryChecks : List Check :=
         let defaultA : Package := { name := "default-a", setup := environmentBase "a" }
         let (state, _) : ModelState × Array String := Config.State.ofPackages #[bases]
         let (defaulted, _) : ModelState × Array String := Config.State.ofPackages #[bases, defaultA]
-        let lookupOf (name : String) : Process.Command := { program := s!"/bin/{name}", directory := "/" }
+        let lookupOf (name : String) : Process.Command :=
+          { program := s!"/bin/{name}", directory := "/" }
         let carrying (name : String) : Process.Command :=
-          { registryChild with environment := { set := #[("PATH", s!"/{name}/bin"), ("A", "own")] } }
+          { registryChild with
+            environment := { set := #[("PATH", s!"/{name}/bin"), ("A", "own")] } }
         let modelOf (registry : Config.Registry) : JobModel :=
           { processes :=
-              { scripts :=
+              {
+                scripts :=
                   #[{ command := lookupOf "a", reply := printed (linesOf #[("PATH", "/a/bin")]) },
                     { command := lookupOf "b", reply := printed (linesOf #[("PATH", "/b/bin")]) },
                     { command := registryChild, reply := printed "built" },
@@ -139,8 +144,7 @@ def environmentRegistryChecks : List Check :=
                 (EnvironmentApi.ofRegistry registry.extensionsAt registry.baseName).1 }
         let unset := after (runsOn registryChild) (modelOf state.registry)
         let chosen :=
-          after (runsOn registryChild)
-            (modelOf { state.registry with environmentBase := some "b" })
+          after (runsOn registryChild) (modelOf { state.registry with environmentBase := some "b" })
         let overriding :=
           after (runsOn registryChild)
             (modelOf { defaulted.registry with environmentBase := some "b" })
@@ -166,7 +170,8 @@ def contractFailsOn (contract : List (String × IO Bool)) (labels : List String)
 /-- `value` with a source that ignores its output: it sets nothing. -/
 def ignoringDirectory (value : EnvironmentApi.DirectorySource) : EnvironmentApi.DirectorySource :=
   { value with
-    source := fun host => (value.source host).map fun source => { source with parse := fun _ => .ok #[] } }
+    source := fun host =>
+      (value.source host).map fun source => { source with parse := fun _ => .ok #[] } }
 
 /-- `value` with a lookup that ignores its output: it sets nothing. -/
 def ignoringBase (value : EnvironmentApi.BaseSource) : EnvironmentApi.BaseSource :=
@@ -192,33 +197,35 @@ def environmentApiChecks : List Check :=
     { name := "the fake base keeps the base contract on the model rig"
       run :=
         contractHolds
-          (baseContract EnvironmentApiTest.fakePackage "fake-base" (modelBaseRig fakeBase .headless linesOf)) },
+          (baseContract EnvironmentApiTest.fakePackage "fake-base"
+            (modelBaseRig fakeBase .headless linesOf)) },
     { name :=
         "the directory-source contract bites: a package that registers nothing fails D1, and a source that ignores its output fails D2 and D3, the rest holding"
       run := do
         let empty ←
           contractFailsOn
-            (directoryContract emptyEnvironmentPackage "fake-directory"
-              (modelDirectoryRig fakeDirectory .headless linesOf))
-            ["D1"]
+              (directoryContract emptyEnvironmentPackage "fake-directory"
+                (modelDirectoryRig fakeDirectory .headless linesOf))
+              ["D1"]
         let ignoring ←
           contractFailsOn
-            (directoryContract EnvironmentApiTest.fakePackage "fake-directory"
-              (modelDirectoryRig (ignoringDirectory fakeDirectory) .headless linesOf))
-            ["D2", "D3"]
+              (directoryContract EnvironmentApiTest.fakePackage "fake-directory"
+                (modelDirectoryRig (ignoringDirectory fakeDirectory) .headless linesOf))
+              ["D2", "D3"]
         return empty && ignoring },
     { name :=
         "the base contract bites: a package that registers nothing fails B1, and a base that ignores its output fails B2 and B3, the rest holding"
       run := do
         let empty ←
           contractFailsOn
-            (baseContract emptyEnvironmentPackage "fake-base" (modelBaseRig fakeBase .headless linesOf))
-            ["B1"]
+              (baseContract emptyEnvironmentPackage "fake-base"
+                (modelBaseRig fakeBase .headless linesOf))
+              ["B1"]
         let ignoring ←
           contractFailsOn
-            (baseContract EnvironmentApiTest.fakePackage "fake-base"
-              (modelBaseRig (ignoringBase fakeBase) .headless linesOf))
-            ["B2", "B3"]
+              (baseContract EnvironmentApiTest.fakePackage "fake-base"
+                (modelBaseRig (ignoringBase fakeBase) .headless linesOf))
+              ["B2", "B3"]
         return empty && ignoring }]
 
 end ModelTest

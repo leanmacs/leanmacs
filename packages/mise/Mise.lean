@@ -74,7 +74,8 @@ def stampNames : Array String :=
 object of strings, and its result is kept by the stamps of `stampNames`. -/
 def source (program : Process.Program) : Process.Source :=
   { name := "mise", program
-    command := fun executable directory environment => lookupCommand executable directory environment
+    command := fun executable directory environment =>
+      lookupCommand executable directory environment
     parse := Process.parseVariables, output := "a JSON object of strings", stampNames }
 
 /-- The package's directory source: in the window mode, mise at the first of

@@ -48,7 +48,9 @@ def atLayers (path : System.FilePath) : Process.Registered :=
 /-- What `mise env --json` prints, in its layout: one name a line, indented
 two spaces. -/
 def jsonOf (variables : Array (String × String)) : String :=
-  "{\n" ++ ",\n".intercalate (variables.toList.map fun (name, value) => s!"  {name.quote}: {value.quote}") ++
+  "{\n" ++
+    ",\n".intercalate
+      (variables.toList.map fun (name, value) => s!"  {name.quote}: {value.quote}") ++
     "\n}\n"
 
 /-- The program and stamp names of `value`'s source in `host`. -/
@@ -84,7 +86,8 @@ def miseChecks : List Check :=
     { name :=
         "Mise.executable registers mise at an absolute path in every mode, refuses a relative path, and replaces the package's value in its place"
       run :=
-        let ordered := EnvironmentApi.DirectorySource.ordered (registeredSources.push (Mise.at "/opt/mise"))
+        let ordered :=
+          EnvironmentApi.DirectorySource.ordered (registeredSources.push (Mise.at "/opt/mise"))
         pure
           ((match Config.Registrations.ofSetup (Mise.executable "bin/mise") with
             | .error said => said == Mise.relativePath "bin/mise"
@@ -120,11 +123,11 @@ def miseChecks : List Check :=
         pure
           (Process.stampPaths names "/p/d" == four "/p/d/" ++ four "/p/" ++ four "/" &&
             Process.stampPaths names "/p/d/" == Process.stampPaths names "/p/d") },
-    { name :=
-        "mise at a path keeps environment-api's directory-source contract on the model rig"
+    { name := "mise at a path keeps environment-api's directory-source contract on the model rig"
       run :=
         contractHolds
-          (directoryContract Mise.package "mise" (modelDirectoryRig (Mise.at "/opt/mise") .headless jsonOf)) }]
+          (directoryContract Mise.package "mise"
+            (modelDirectoryRig (Mise.at "/opt/mise") .headless jsonOf)) }]
 
 /-- The command the lookup checks start in `/p/d`: a bare `lake`, with a
 variable of its own set and one unset. -/
@@ -174,7 +177,8 @@ def lookupModel (layers : Process.Registered) (host : Process.Host) (files : Fil
       #[{ command := Mise.lookupCommand executable directory, reply, takes },
         { command := mergedOf (movedTo lakeBuild directory), reply := printed "built" },
         { command := movedTo lakeBuild directory, reply := printed "built inherited" }]
-  { files, processes := { scripts }, environments := ({ host } : Process.Environments).install layers }
+  { files, processes := { scripts },
+    environments := ({ host } : Process.Environments).install layers }
 
 /-- The checks of a child's environment looked up by mise on the models
 (`docs/design/concurrency.md`, "A child's environment, as built"), with the
@@ -188,10 +192,11 @@ def miseLookupChecks : List Check :=
         "the package's mise in the window mode runs the first candidate that exists: Homebrew's, with nothing under the home directory, and the home directory's once it is there"
       run :=
         let homebrew :=
-          lookupModel packageLayers (.window (some "/u")) (filesAt candidates) "/opt/homebrew/bin/mise"
+          lookupModel packageLayers (.window (some "/u")) (filesAt candidates)
+            "/opt/homebrew/bin/mise"
         let home :=
-          lookupModel packageLayers (.window (some "/u")) (filesAt ("/u/.local/bin/mise" :: candidates))
-            "/u/.local/bin/mise"
+          lookupModel packageLayers (.window (some "/u"))
+            (filesAt ("/u/.local/bin/mise" :: candidates)) "/u/.local/bin/mise"
         pure
           ((after (runsOn lakeBuild) homebrew).processes.started ==
               #[Mise.lookupCommand "/opt/homebrew/bin/mise" "/p/d", mergedOf lakeBuild] &&
@@ -202,8 +207,8 @@ def miseLookupChecks : List Check :=
       run :=
         let all : List System.FilePath := "/u/.local/bin/mise" :: candidates
         let model :=
-          lookupModel packageLayers (.window (some "/u")) (filesAt candidates) "/opt/homebrew/bin/mise"
-            (directories := ["/p/d", "/p/e"])
+          lookupModel packageLayers (.window (some "/u")) (filesAt candidates)
+            "/opt/homebrew/bin/mise" (directories := ["/p/d", "/p/e"])
         let model :=
           { model with
             processes :=
@@ -234,7 +239,8 @@ def miseLookupChecks : List Check :=
           ((after (runsOn lakeBuild)
                 (lookupModel packageLayers (.window (some "/u")) {})).processes.started ==
             #[lakeBuild]) },
-    { name := "the package's mise in the headless mode starts the child as it would have and reads no stamp"
+    { name :=
+        "the package's mise in the headless mode starts the child as it would have and reads no stamp"
       run :=
         let model :=
           lookupModel packageLayers .headless (filesAt ("/u/.local/bin/mise" :: candidates))
@@ -250,7 +256,8 @@ def miseLookupChecks : List Check :=
         pure
           ((after (runsOn lakeBuild) model).processes.started ==
             #[Mise.lookupCommand "/opt/mise" "/p/d", mergedOf lakeBuild]) },
-    { name := "with config's Mise.executable at a path, a streaming start gets the lookup's variables the same way"
+    { name :=
+        "with config's Mise.executable at a path, a streaming start gets the lookup's variables the same way"
       run :=
         let model := lookupModel (atLayers "/opt/mise") .headless {}
         let model :=
@@ -372,6 +379,5 @@ def miseLookupChecks : List Check :=
           ((after (runsOn cleared) model).processes.started == #[cleared] &&
             refused relative .relativeDirectory &&
             refused program .relativeProgram) }]
-
 
 end MiseTest

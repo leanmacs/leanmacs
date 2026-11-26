@@ -85,7 +85,8 @@ thread nor a load. A command applies the script (`TextId.applyScript`).
 A job reaches the environments its host shares through one request,
 `environment`, which carries an `EnvironmentRequest`
 (`Editor/Process/Environment.lean`) and is answered at once, as `now` is:
-the layers config's setting installed (a base, then directory sources),
+the layers the host installed from the registry (a base, then directory
+sources; `EnvironmentApi.lean`),
 what each source's executable resolved to, and the cached lookups, the
 base's and each directory and source's. The process operations ask it
 before they start a child, so a child gets its layers' variables under its

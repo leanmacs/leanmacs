@@ -100,14 +100,18 @@ of a scene runs in `sceneDirectory`, over the inherited base. A source that
 gives none in the mode has no scene, and every check run on it fails. -/
 def modelDirectoryRig (source : EnvironmentApi.DirectorySource) (host : Process.Host)
     (encode : Array (String × String) → String) : DirectoryRig :=
-  let scene (reply : Except ProcessError Process.Ran) : Option (IO (IO.Ref JobModel × Process.Command)) :=
+  let scene (reply : Except ProcessError Process.Ran) :
+    Option (IO (IO.Ref JobModel × Process.Command)) :=
     (source.source host).map fun resolved => do
       let (executable, files) := executableOf resolved.program
       let lookup := resolved.command executable sceneDirectory {}
       let environments :=
         ({ host } : Process.Environments).install
           (EnvironmentApi.registered #[source] #[] Process.inheritedName).1
-      let state ← IO.mkRef ({ files, processes := { scripts := #[{ command := lookup, reply }] }, environments } : JobModel)
+      let state ←
+        IO.mkRef
+            ({ files, processes := { scripts := #[{ command := lookup, reply }] }, environments } :
+              JobModel)
       return (state, lookup)
   let stampOf : Option System.FilePath :=
     ((source.source host).bind fun resolved => resolved.stampNames[0]?).map
@@ -119,7 +123,8 @@ def modelDirectoryRig (source : EnvironmentApi.DirectorySource) (host : Process.
         state.modify (reanswered · lookup (printed (encode #[("PATH", path)])))
       restamp :=
         if let some stamp := stampOf then
-          state.modify fun model => { model with files := model.files.withFile stamp "restamped".toUTF8 }
+          state.modify fun model =>
+            { model with files := model.files.withFile stamp "restamped".toUTF8 }
         else pure () }
   { answering := fun path check => do
       let some made := scene (printed (encode #[("PATH", path)])) | return false
@@ -137,7 +142,8 @@ run on it fails. -/
 def modelBaseRig (base : EnvironmentApi.BaseSource) (host : Process.Host)
     (encode : Array (String × String) → String) : BaseRig :=
   let registered := (EnvironmentApi.registered #[] #[base] base.name).1
-  let scene (reply : Except ProcessError Process.Ran) : Option (IO (IO.Ref JobModel × Process.Command)) :=
+  let scene (reply : Except ProcessError Process.Ran) :
+    Option (IO (IO.Ref JobModel × Process.Command)) :=
     match base.base host with
     | .inherited => none
     | .lookup resolved directory =>
@@ -145,7 +151,11 @@ def modelBaseRig (base : EnvironmentApi.BaseSource) (host : Process.Host)
         let (executable, files) := executableOf resolved.program
         let lookup := resolved.command executable directory {}
         let environments := ({ host } : Process.Environments).install registered
-        let state ← IO.mkRef ({ files, processes := { scripts := #[{ command := lookup, reply }] }, environments } : JobModel)
+        let state ←
+          IO.mkRef
+              ({ files, processes := { scripts := #[{ command := lookup, reply }] },
+                 environments } :
+                JobModel)
         return (state, lookup)
   let sceneOf (state : IO.Ref JobModel) (lookup : Process.Command) : BaseScene :=
     { directory := sceneDirectory, other := otherDirectory, run := runOn state

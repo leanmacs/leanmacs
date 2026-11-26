@@ -424,20 +424,26 @@ place of the themed one, whose paper is the theme's. It is read when the
 window opens, so a reload changes it at the next start. Choosing it twice
 is refused.
 
-Config chooses where a child's environment comes from
-(`Editor/Process/Environment.lean`) with `processEnvironment`, the first
-option of the port: `inherited`, no lookup; `mise`, with the absolute path of
-the executable or with none, which looks in the usual places; or the
-default, `auto`, which a `setup` that does not set it keeps:
+A child's environment is built from sources the packages register at the
+extension points of `environment-api` (`EnvironmentApi.lean`): the default
+package `mise` registers mise as a directory source, and its setting,
+`Mise.executable`, takes mise's path. Config chooses the base under every
+directory source by name with `environmentBase`, a base source a package
+registered or the core's `inherited`, launchd's environment, which is the
+base when nothing chooses one:
 
 ```lean
 def setup : SetupM Unit := do
-  processEnvironment (.mise (some "/opt/homebrew/bin/mise"))
+  environmentBase "inherited"
 ```
 
-A relative path is refused, and so is a second `processEnvironment` in one
-`setup`. A reload that installs takes the setting, and drops every cached
-environment, the base's and each directory's.
+In a package, `environmentBase` is a default, which config's overrides.
+Choosing it twice in one `setup` is refused. A name no base answers to is
+said at reload, and children keep the base they had. A reload that
+installs takes the layers, and drops every cached environment, the base's
+and each directory's. `processEnvironment`, which chose mise or no lookup,
+is retired: a `setup` that calls it is refused with a message that names
+what replaces it (`processEnvironmentGone`).
 
 Config sets how long a `:!` or a filter may run before it is killed with
 `shellTimeLimit`, in milliseconds (`shellTimeLimit 5000`); with none it is
@@ -536,13 +542,14 @@ for the same reasons. Two things differ, both said in
 
 - **A package may not set what only config chooses**: `useTheme`,
   `modeLine`, `framePadding`, `keyHintDelay`, `layout`, `tabBar`,
-  `titleBar`, `processEnvironment`, `autoReload`, `workspace`,
+  `titleBar`, `autoReload`, `workspace`,
   `workspaceLister`, `projectLister`, `displayRule`, `shellTimeLimit`,
   `syntaxRefreshDelay`, `leaderKey`, `localLeaderKey`, `useStyle`,
   `useDisplay` and `useDisplayFor`. A package that calls one is
   refused whole, with a message that names it and the setting.
 - **A package's `useStyleFor` is a default**, not a choice: the style of
-  the category unless config's `useStyleFor` chooses another.
+  the category unless config's `useStyleFor` chooses another. So is a
+  package's `environmentBase`: the base unless config's chooses another.
 
 What a package registers belongs to the owner named after it, so the
 sentences here that say "for this config" read "for this package", and a

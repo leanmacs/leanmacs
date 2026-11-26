@@ -620,7 +620,7 @@ def runnerChecks : List Check :=
             (← rig.services.completions.waiting) == 0 &&
             (← rig.clock.started).isEmpty },
     { name :=
-        "a runner given no environments answers the policy as inherited: auto in the headless mode, the inherited base and no directory source"
+        "a runner given no environments answers the policy as the default state does: the inherited base and no directory source"
       run := do
         let rig ← Rig.new
         let job ←

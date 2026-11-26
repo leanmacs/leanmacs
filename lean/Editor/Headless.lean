@@ -266,9 +266,16 @@ as before, so reload and job completion work as they did.
   lookup once for a directory and source (once per run for the base), is
   posted under the Lean source id `Collaborators.environment`, and said in
   the echo area for the next scene (`Running.said`). A reload that installs
-  asks it to `install` config's setting, `auto` when config sets none, which
-  installs that setting's layers and drops every cached environment, the
-  base's and each directory's. Pinned by `ConfigTest.environmentHostChecks`.
+  reads the registry it installed through `environment-api`
+  (`EnvironmentApi.ofRegistry`: every directory source registered, and the
+  base `Config.Registry.baseName` names) and hands the layers to
+  `Job.Environments.install`, which drops every cached environment, the
+  base's and each directory's. A base name nothing answers to installs no
+  base, so the environments keep the one they had, and the reload's report
+  names it (`Config.Report.unknownBase`), which is printed as `base: …` and
+  said in the echo area. A config rejected at start-up installs nothing, so
+  children start with the editor's own environment until a reload
+  installs. Pinned by `ConfigTest.environmentHostChecks`.
 - **The host is handed its display** (`Collaborators.display`), a maker
   over the table of snapshots the text binding publishes, and holds what it
   makes as a `Host.Display`: what answers the loop's requests, wrapped so

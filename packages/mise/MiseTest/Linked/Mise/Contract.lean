@@ -70,8 +70,7 @@ def withMiseAt (services : Job.Services) (executable : System.FilePath) (limit :
         ((EnvironmentApiTest.registeredAt EnvironmentApi.DirectorySource Mise.package).push
           (Mise.at executable))
         #[] Process.inheritedName).1
-  let state ←
-    IO.mkRef (({ host := .headless, limit } : Process.Environments).install registered)
+  let state ← IO.mkRef (({ host := .headless, limit } : Process.Environments).install registered)
   return { services with
       environments := Job.sharedEnvironments state fun text => said.modify (·.push text) }
 
@@ -85,16 +84,16 @@ mise copied in from `fixtures`, `fixture-path` holding `path`, and
 def scene (services : Job.Services) (fixtures : System.FilePath) (path : String) (fails : Bool)
     (check : EnvironmentApiTest.DirectoryScene → IO Bool) : IO Bool :=
   Editor.Test.Linked.withFiles services (targets := [.processes]) fun directory => do
-      let executable ← copyFixture fixtures directory "mise"
-      IO.FS.writeFile (directory / "fixture-path") s!"{path}\n"
-      if fails then
-        IO.FS.writeFile (directory / "fixture-fail") ""
-      let said ← IO.mkRef #[]
-      let services ← withMiseAt services executable 1000 said
-      check
-          { directory, run := ranTrue services, said := said.get
-            reanswer := fun path => IO.FS.writeFile (directory / "fixture-path") s!"{path}\n"
-            restamp := IO.FS.writeFile (directory / Mise.stampNames[0]!) "" }
+    let executable ← copyFixture fixtures directory "mise"
+    IO.FS.writeFile (directory / "fixture-path") s!"{path}\n"
+    if fails then
+      IO.FS.writeFile (directory / "fixture-fail") ""
+    let said ← IO.mkRef #[]
+    let services ← withMiseAt services executable 1000 said
+    check {
+          directory, run := ranTrue services, said := said.get
+          reanswer := fun path => IO.FS.writeFile (directory / "fixture-path") s!"{path}\n"
+          restamp := IO.FS.writeFile (directory / Mise.stampNames[0]!) "" }
 
 /-- The contract's rig over the real process service, with mise standing in
 as the fixture under `fixtures` (`tests/process-environment`): its failing
@@ -110,7 +109,8 @@ def realDirectoryRig (services : Job.Services) (fixtures : System.FilePath) :
 over the library's process service (`realDirectoryRig`), a check for each
 sentence. -/
 def miseContractChecks (services : Job.Services) (fixtures : System.FilePath) : List Check :=
-  (EnvironmentApiTest.directoryContract Mise.package "mise" (realDirectoryRig services fixtures)).map
+  (EnvironmentApiTest.directoryContract Mise.package "mise"
+        (realDirectoryRig services fixtures)).map
     fun (sentence, holds) =>
     { name := s!"mise over the real process service: {sentence}", run := holds }
 
@@ -193,7 +193,8 @@ def miseFixtureChecks (services : Job.Services) (fixtures : System.FilePath) : L
                 -- job's hang guard (`runOnTimers`).
                 return ended - start >= 1000 && path == inherited
           return outcome == .finished true &&
-              (← said.get) == #[Process.failureMessage (.directory directory "mise") (.timedOut 1000)] }]
+              (← said.get) ==
+                #[Process.failureMessage (.directory directory "mise") (.timedOut 1000)] }]
 
 /-- The contract's checks and those beside it, then one more: the
 environment a child of the test process gets is the same after a mise
@@ -210,8 +211,9 @@ def miseChecks (services : Job.Services) (fixtures : System.FilePath) : List Che
             let executable ← copyFixture fixtures directory "mise"
             let said ← IO.mkRef #[]
             let looked ← withMiseAt services executable 1000 said
-            let printed ← runOnTimers looked do
-                return (← outputOf (printenv directory)) == path ++ "\n"
+            let printed ←
+              runOnTimers looked do
+                  return (← outputOf (printenv directory)) == path ++ "\n"
             let after ← printedThrough services (env directory)
             return printed == .finished true && before.isSome && before == after }]
 

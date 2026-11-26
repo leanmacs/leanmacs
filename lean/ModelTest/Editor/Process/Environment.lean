@@ -244,7 +244,8 @@ def processEnvironmentChecks : List Check :=
     { name := "the default registered layers install the inherited base and no directory source"
       run :=
         let state : Process.Environments :=
-          { sources :=
+          {
+            sources :=
               { base := .lookup (fakeSource "login" "/bin/login") "/"
                 directories := #[fakeSource "first" "/bin/first"] } }
         pure (shapeOf (state.install {}).sources == (true, #[])) },
@@ -252,7 +253,10 @@ def processEnvironmentChecks : List Check :=
       run :=
         let state : Process.Environments :=
           { sources :=
-              { directories := #[{ fakeSource "first" "/bin/first" with program := .firstOf #["/bin/a"] .report }] }
+              {
+                directories :=
+                  #[{ fakeSource "first" "/bin/first" with
+                      program := .firstOf #["/bin/a"] .report }] }
             programs := #[("first", none)] }
         let (policy, after, said) := state.handle .policy
         let policy : Process.Policy := policy

@@ -138,7 +138,8 @@ def directoryContract (package : Package) (name : String) (rig : DirectoryRig) :
       pure ((registeredAt EnvironmentApi.DirectorySource package).any (·.name == name))),
     (s!"D2: in a directory whose lookup sets PATH, {name} prepares a command there with that PATH over the editor's environment, and says nothing",
       rig.answering firstPath fun scene => do
-        let prepared ← preparesAs scene.run scene.directory (childWithPath scene.directory firstPath)
+        let prepared ←
+          preparesAs scene.run scene.directory (childWithPath scene.directory firstPath)
         return prepared && (← scene.said).isEmpty),
     (s!"D3: {name}'s result is kept: after its answer changes with no stamp file touched a second prepare gives the old PATH, and once its first stamp file changes the new one",
       rig.answering firstPath fun scene => do
@@ -180,7 +181,6 @@ def baseContract (package : Package) (name : String) (rig : BaseRig) : List (Str
       rig.failing fun scene failure => do
         let here ← preparesAs scene.run scene.directory (child scene.directory)
         let there ← preparesAs scene.run scene.other (child scene.other)
-        return here && there &&
-            (← scene.said) == #[Process.failureMessage (.base name) failure])]
+        return here && there && (← scene.said) == #[Process.failureMessage (.base name) failure])]
 
 end EnvironmentApiTest
