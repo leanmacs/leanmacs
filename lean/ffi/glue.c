@@ -927,6 +927,13 @@ bool editor_ffi_syntax_settle(const editor_ffi_snapshot *snapshot,
 uint64_t editor_ffi_syntax_shipped_query(const uint8_t *grammar, size_t len,
                                          uint8_t kind,
                                          editor_ffi_raw_text *out);
+bool editor_ffi_grammars_start(uint64_t id, const uint8_t *library,
+                               size_t library_len, const uint8_t *symbol,
+                               size_t symbol_len, uint8_t policy);
+uint64_t editor_ffi_grammars_take(uint64_t id, editor_ffi_raw_text *out);
+bool editor_ffi_grammars_cancel(uint64_t id);
+bool editor_ffi_grammars_flush(uint64_t id);
+uint64_t editor_ffi_grammars_pending(void);
 uint64_t editor_ffi_syntax_highlight(const editor_ffi_snapshot *snapshot,
                                      const editor_ffi_syntax_query *query,
                                      const uint8_t *words, size_t words_len,
@@ -1067,6 +1074,55 @@ lean_obj_res editor_glue_syntax_shipped_query(b_lean_obj_arg grammar,
   lean_ctor_set(shipped, 0, source);
   lean_ctor_set_uint64(shipped, uint64_field(1, 0), status);
   return lean_io_result_mk_ok(shipped);
+}
+
+// ---- Grammar registrations, behind the completion queue ----
+//
+// A start takes a library's path, a symbol and a policy tag, and returns at
+// once; the registration is answered on the syntax worker's thread and
+// completed on the completion queue. A take comes back as the registered
+// name, empty for a refusal, and the status.
+
+// `Editor.Ffi.grammarsStart : UInt64 → @& String → @& String → UInt8 → IO
+// Bool`
+lean_obj_res editor_glue_grammars_start(uint64_t id, b_lean_obj_arg library,
+                                        b_lean_obj_arg symbol, uint8_t policy) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_grammars_start(
+      id, string_bytes(library), string_len(library), string_bytes(symbol),
+      string_len(symbol), policy)));
+}
+
+// `Editor.Ffi.grammarsTakeRaw : UInt64 → IO RawRegistered`
+lean_obj_res editor_glue_grammars_take(uint64_t id) {
+  editor_ffi_raw_text raw;
+  uint64_t status = editor_ffi_grammars_take(id, &raw);
+  lean_object *name;
+  if (status == 0) {
+    name = lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
+    editor_ffi_text_free(raw.text, raw.text_len);
+  } else {
+    name = lean_mk_string("");
+  }
+  // `RawRegistered`: the object field `name`, then `status`.
+  lean_object *registered = lean_alloc_ctor(0, 1, sizeof(uint64_t));
+  lean_ctor_set(registered, 0, name);
+  lean_ctor_set_uint64(registered, uint64_field(1, 0), status);
+  return lean_io_result_mk_ok(registered);
+}
+
+// `Editor.Ffi.grammarsCancel : UInt64 → IO Bool`
+lean_obj_res editor_glue_grammars_cancel(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_grammars_cancel(id)));
+}
+
+// `Editor.Ffi.grammarsFlush : UInt64 → IO Bool`
+lean_obj_res editor_glue_grammars_flush(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_grammars_flush(id)));
+}
+
+// `Editor.Ffi.grammarsPending : IO UInt64`
+lean_obj_res editor_glue_grammars_pending(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_grammars_pending()));
 }
 
 // `Editor.Ffi.syntaxHighlightRaw : @& Snapshot → @& SyntaxQuery →

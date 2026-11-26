@@ -12,6 +12,8 @@ import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
+import Editor.SyntaxTree.Registration
+import Editor.SyntaxTree.Registration.Model
 import Editor.Test.Jobs
 import Editor.Text.Model
 import ModelTest.Check
@@ -258,6 +260,25 @@ def jobModelChecks : List Check :=
           let raw ← PackageService.ask (countAfter 4)
           return (counted matches .error (.refused _), raw matches .ok _)
         pure (modelled job { packages := sharedNameModel } == (.finished (true, true), 0)) },
+    { name :=
+        "a registration in the job model moves no clock, and the registry it answers from records it"
+      run :=
+        let python : GrammarSource :=
+          { library := "/lib/grammars.so", symbol := "tree_sitter_python" }
+        let table : GrammarRegistry :=
+          {
+            libraries :=
+              some #[("/lib/grammars.so", .exports #[("tree_sitter_python", .grammar)])] }
+        let job : JobM (Bool × Nat) := do
+          let answer ← Grammar.register python
+          return (answer matches .ok "python", ← now)
+        let (outcome, after) := job.runModel { now := 6, grammars := table }
+        let refused : JobM Bool := do
+          return (← Grammar.register python) matches .error (.refused .unsupported)
+        pure
+          (outcome == .finished (true, 6) && after.now == 6 &&
+            after.grammars.sourceOf? "python" == some python &&
+            modelled refused == (.finished true, 0)) },
     { name :=
         "a contract property whose job returns false, throws or is cancelled has not held, and each is named with how it ended"
       run := do

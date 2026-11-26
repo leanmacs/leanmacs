@@ -131,6 +131,7 @@ import ModelTest.Editor.SyntaxTree.Contract
 import ModelTest.Editor.SyntaxTree.DeliveryContract
 import ModelTest.Editor.SyntaxTree.Fake
 import ModelTest.Editor.SyntaxTree.Model
+import ModelTest.Editor.SyntaxTree.Registration.Model
 import ModelTest.Editor.TabBar
 import ModelTest.Editor.Test.Fixture.CommandLine
 import ModelTest.Editor.Test.Fixture.Discover
@@ -305,7 +306,13 @@ of blanks, the `ERROR` answer outside the subset, what the query subset
 refuses as unsupported, the contract biting on a model written here
 that answers a range with the whole text's captures, and a model whose
 trees a test says are not delivered refusing questions of captures with
-`notParsed`.
+`notParsed`, and a model given a registry listing, attaching and compiling
+for its registered grammars and shipping no query for them.
+`grammarRegistryChecks` pin the grammar registry's model
+(`Editor/SyntaxTree/Registration/Model.lean`): given a table, a
+registration, the override of the compiled-in `json`, the default policy,
+and each refusal leaving the registry unchanged; given none, the
+unsupported refusal; and the name rule.
 
 A window's jump list as plain data (`Editor/JumpList.lean`) is checked
 pure, over line numbers (`jumpListChecks`): a record appends and drops the
@@ -712,8 +719,10 @@ The job system is tested here with no Rust library:
 - `jobModelChecks`: the job port's pure model (`Editor/Job/Model.lean`), its
   clock and its cancellation, what only the model's exact clock can
   show: that a timer does not drift, and a package request answered by the
-  model's packages, a service it does not know `noSuchService`, and a reply
-  of another type than the one `PackageService.askAs` asks for refused;
+  model's packages, a service it does not know `noSuchService`, a reply
+  of another type than the one `PackageService.askAs` asks for refused, and
+  a grammar registration answered from the model's registry and recorded
+  there, with no clock moved;
 - `protocolChecks`: the job runner's protocol as a pure transition system
   (`Editor/Job/Protocol.lean`): each transition enabled and refused as its
   row of the table says, a replay renaming each job's number to its place
@@ -1515,6 +1524,7 @@ def checks : List Check :=
     completionDisplayChecks ++
     displayStateChecks ++
     syntaxTreeChecks ++
+    grammarRegistryChecks ++
     guardChecks ++
     scrollChecks ++
     blockedScrollChecks ++
@@ -1641,6 +1651,7 @@ def main : IO UInt32 := do
       (← ModelTest.jobRunnerFailures) ++
       (← ModelTest.postFailures) ++
       (← ModelTest.fuzzyJobFailures) ++
+      (← ModelTest.grammarJobFailures) ++
       (← ModelTest.fileFailures) ++
       (← ModelTest.processFailures) ++
       (← ModelTest.fileWatchFailures) ++
@@ -1658,6 +1669,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.grammarProperties.length} grammar properties of the job model and of the job runner over the fake grammar service, each with no table, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
   (← IO.getStdout).flush
   IO.Process.exit 0

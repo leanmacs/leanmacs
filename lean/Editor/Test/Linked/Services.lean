@@ -15,8 +15,8 @@ import Editor.Test.Linked.Jobs
 # The linked test kit: Services
 
 The library's real job services, as a test linked with the Rust library
-runs its checks over them: the timer, file, process, watch and diff
-services and the matcher, over one table of waits (`Services.over`); that
+runs its checks over them: the timer, file, process, watch, diff, grep and
+grammar services and the matcher, over one table of waits (`Services.over`); that
 table with the completion pump running over it (`Services.start`); the
 shutdown that ends the pump (`Services.stop`), and the one a process that
 held a host ends with (`shutdown`); and how many children the process
@@ -173,8 +173,9 @@ def Services.over.realHost : RealHost :=
 /-- The real services over `completions`, a table of waits whose pump is
 already running or is started by the caller: the library's timer service,
 its file service over a table of snapshots of its own, its process service,
-its watch service, its diff service, its grep service over the same table
-and its matcher. It starts no pump. -/
+its watch service, its diff service, its grep service over the same table,
+its grammar registrations over the syntax worker and its matcher. It starts
+no pump. -/
 def Services.over (completions : Job.Completions) : IO Services := do
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
@@ -187,6 +188,7 @@ def Services.over (completions : Job.Completions) : IO Services := do
       fileWatches := Job.realFileWatches completions (← Job.RealWatches.new)
       diffs := Job.realDiffs completions published.reader held (← Job.RefusedDiffs.new)
       greps := Job.realGreps completions published.reader held (← Job.RealGreps.new)
+      grammars := Job.realGrammars completions (← Job.RefusedGrammars.new)
       fuzzy := Fuzzy.real }
   return { completions, published, held, jobs, pump := none }
 
@@ -283,6 +285,7 @@ private def serviceName : Job.Service → String
   | .fileWatches => "watch"
   | .diffs => "diff"
   | .greps => "grep"
+  | .grammars => "grammar"
   | .package name => name
 
 /-- Waits for a flush of each of `targets` among `jobs`, asked in turn, with no

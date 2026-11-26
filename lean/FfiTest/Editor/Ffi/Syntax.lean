@@ -1,9 +1,11 @@
 import Editor.Ffi.Document
+import Editor.Ffi.Events
 import Editor.Ffi.Files
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Syntax
 import FfiTest.Check
 import FfiTest.Support.Files
+import FfiTest.Support.Queues
 
 /-!
 # FFI tests: `Editor/Ffi/Syntax.lean`
@@ -28,6 +30,18 @@ def parsedSnapshot (text grammar : String) :
   unless ← Editor.Ffi.syntaxSettle snapshot patience do
     return none
   return some (document, snapshot)
+
+/-- The id of the syntax service as an event's source (`SERVICE` in
+`crates/editor-ffi/src/syntax.rs`), which grammar registrations are
+completed from. -/
+def syntaxService : UInt64 :=
+  6
+
+/-- Whether the next completion is the syntax service's for `id`. -/
+def registrationCompleted (id : UInt64) : IO Bool := do
+  let some event ← pull .completion | return false
+  return event.source == { kind := .library, id := syntaxService } && event.kind == .completion &&
+      event.code == id
 
 /-- A query of `grammar` compiled in the library, or `none`. -/
 def syntaxQuery (grammar source : String) : IO (Option Editor.Ffi.SyntaxQuery) := do
@@ -240,6 +254,18 @@ def syntaxChecks (_ : Unit) : List Check :=
         return kept == "[1]" && unknown matches .error .unknownGrammar && attached matches .ok () &&
             first &&
             !second },
+    { name :=
+        "a registration crosses: its start is taken, its completion arrives on the completion queue, and its take answers unsupported; an id in use is not taken"
+      run := do
+        let library := "/nonexistent/libtree-sitter-python.so"
+        let started ← Editor.Ffi.grammarsStart 1340 library "tree_sitter_python" 0
+        let again ← Editor.Ffi.grammarsStart 1340 library "tree_sitter_python" 1
+        let completed ← registrationCompleted 1340
+        let taken ← Editor.Ffi.grammarsTake 1340
+        let second ← Editor.Ffi.grammarsTake 1340
+        return started && !again && completed && taken matches .error .unsupported &&
+            second matches .error .noAnswer &&
+            (← Editor.Ffi.grammarsPending) == 0 },
     { name := "the text of a file the file service loaded is of no document, and is refused as that"
       run :=
         inOwnDirectory fun directory => do

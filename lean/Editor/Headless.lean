@@ -4310,6 +4310,7 @@ def shipped (scheme : InputScheme) (packages : Array Package) (base : Array Lean
   let timed ← Job.TimedRuns.new
   let watches ← Job.RealWatches.new
   let refusedDiffs ← Job.RefusedDiffs.new
+  let refusedGrammars ← Job.RefusedGrammars.new
   let greps ← Job.RealGreps.new
   -- The headless mode's clock is fake: a script moves it (`advance`).
   let clock ←
@@ -4330,6 +4331,7 @@ def shipped (scheme : InputScheme) (packages : Array Package) (base : Array Lean
         fileWatches := Job.realFileWatches completions watches
         diffs := Job.realDiffs completions published.reader held refusedDiffs
         greps := Job.realGreps completions published.reader held greps
+        grammars := Job.realGrammars completions refusedGrammars
         environments := reportedEnvironments environments 4 Queue.library, fuzzy := Fuzzy.real
         snapshots := Job.realSnapshots published.reader
         packages := packageServices packages } published held files stateDirectory

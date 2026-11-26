@@ -22,7 +22,7 @@ import ModelTest.Check
 # Model tests: `Editor/Job/Contract.lean`
 
 The model tests of `Editor/Job/Contract.lean`: `jobRunnerFailures`,
-`postFailures`, `snapshotJobFailures`, `fuzzyJobFailures`, `fileFailures`,
+`postFailures`, `snapshotJobFailures`, `fuzzyJobFailures`, `grammarJobFailures`, `fileFailures`,
 `processFailures`, `fileWatchFailures`, `jobModelFailures` and
 `snapshotReadChecks`. The job port's contract is run here against the job model
 and against the runner over its fakes. The root module `ModelTest` runs them;
@@ -120,6 +120,26 @@ def fuzzyJobFailures : IO (List String) := do
           runOnFake job
               (some { rig with services := { rig.services with fuzzy := FuzzyModel.handler } }))
         JobContract.fuzzyProperties
+  return onModel.map (s!"the job model: {·}") ++
+      onFake.map (s!"the job runner over the fake clock: {·}")
+
+-- inferred-waits W26: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
+/-- The names of the job port's grammar properties that do not hold of the
+job model with no table, and of those that do not hold of the runner over the
+fake clock given the fake grammar service with no table
+(`Job.FakeGrammars`). -/
+def grammarJobFailures : IO (List String) := do
+  let onModel ←
+    JobContract.failures (fun job => pure (job.runModel {}).1) JobContract.grammarProperties
+  let onFake ←
+    JobContract.failures
+        (fun job => do
+          let rig ← Rig.new
+          let grammars ← Job.FakeGrammars.new rig.services.completions
+          runOnFake job
+              (some { rig with services := { rig.services with grammars := grammars.grammars } }))
+        JobContract.grammarProperties
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake clock: {·}")
 

@@ -263,6 +263,98 @@ def syntaxShippedQuery (grammar : String) (kind : UInt8) :
   | status =>
     throw (IO.userError s!"the library answered a shipped query with the status {status}")
 
+/-- Asks the library's syntax service to register the grammar `symbol`
+hands out in the native library at `library`, with the policy the tag
+`policy` names (0 none declared, 1 incremental, 2 whole), as the request
+`id`, and returns whether it was accepted. It returns at once; the
+registration is answered on the syntax worker's thread, and the completion
+is a `completion` event on the completion queue, from the library source 6,
+whose code is `id`. The answer is then taken with `grammarsTake`. `false`,
+with nothing started, for an id in use, an unknown tag, or a worker that
+could not start. -/
+@[extern "editor_glue_grammars_start"]
+opaque grammarsStart (id : UInt64) (library symbol : @& String) (policy : UInt8) : IO Bool
+
+/-- Why the library registered no grammar under a take: its five refusals,
+one for one, and two of the service's. -/
+inductive GrammarTakeRefusal where
+  /-- No file is at the library's path. -/
+  | notFound
+  /-- The file is not a library this platform can open. -/
+  | notLoadable
+  /-- The grammar is of an ABI the parsing library does not speak. -/
+  | unsupportedAbi
+  /-- The library exports no such symbol. -/
+  | missingSymbol
+  /-- The syntax service loads no grammar at run time. -/
+  | unsupported
+  /-- The service keeps no answer for the id. -/
+  | noAnswer
+  /-- The syntax worker ended before it answered. -/
+  | dropped
+  deriving DecidableEq, Repr
+
+/-- A registration's answer as the glue builds it in one call: the name,
+empty for a refusal, then the status. -/
+private structure RawRegistered where
+  /-- The registered name, copied from the library's buffer. -/
+  name : String
+  /-- 0 registered; 1 to 5 the refusals, in `GrammarTakeRefusal`'s order;
+  6 no answer; 7 dropped. -/
+  status : UInt64
+
+/-- `grammarsTake` as it crosses. -/
+@[extern "editor_glue_grammars_take"]
+private opaque grammarsTakeRaw (id : UInt64) : IO RawRegistered
+
+/-- Hands over the answer of the registration `id`, once: the registered
+name, or why not. A status the library has no word for is an `IO` error. -/
+def grammarsTake (id : UInt64) : IO (Except GrammarTakeRefusal String) := do
+  let raw ← grammarsTakeRaw id
+  match raw.status with
+  | 0 =>
+    return .ok raw.name
+  | 1 =>
+    return .error .notFound
+  | 2 =>
+    return .error .notLoadable
+  | 3 =>
+    return .error .unsupportedAbi
+  | 4 =>
+    return .error .missingSymbol
+  | 5 =>
+    return .error .unsupported
+  | 6 =>
+    return .error .noAnswer
+  | 7 =>
+    return .error .dropped
+  | status =>
+    throw (IO.userError s!"the library answered a registration with the status {status}")
+
+/-- Withdraws the registration wait `id`, and returns whether there was
+anything to withdraw: its answer is dropped and never completed, though a
+registration already queued is still worked. Safe for an id that is
+unknown. -/
+@[extern "editor_glue_grammars_cancel"]
+opaque grammarsCancel (id : UInt64) : IO Bool
+
+/-- Asks for the request `id` to be completed once every registration started
+before this call has been answered, and returns whether it was accepted. It
+returns at once and keeps no answer. -/
+@[extern "editor_glue_grammars_flush"]
+opaque grammarsFlush (id : UInt64) : IO Bool
+
+/-- `grammarsPending` is an inferred wait (`Editor/InferredWait.lean`): a
+real service's count, allowed in the real grammar service's adapter and in
+the job contracts that hold it. -/
+def grammarsPending.inferredWait : InferredWait :=
+  .count [`Editor.Job.Real, `Editor.Job.Contract, `Editor.Job.FlushContract]
+
+/-- How many registration waits are not completed, and how many answers are
+not taken, together. A readout for tests. -/
+@[extern "editor_glue_grammars_pending"]
+opaque grammarsPending : IO UInt64
+
 /-- Why the library did not highlight a document. -/
 inductive SyntaxHighlightRefusal where
   /-- The snapshot's document is not attached. -/

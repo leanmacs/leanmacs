@@ -5,6 +5,7 @@ import Editor.Grep.Model
 import Editor.Job
 import Editor.PackageService
 import Editor.Process.Model
+import Editor.SyntaxTree.Registration.Model
 
 /-!
 # The pure model of the job port
@@ -76,6 +77,13 @@ here.
   model of package services (`JobModel.packages`, a `PackageModel`): its
   reply, or `noSuchService` for a service it does not know, which by
   default is every one. A test sets it, as it sets the files.
+- A grammar registration is answered at once, without moving the clock, by
+  the model of the grammar registry (`JobModel.grammars`,
+  `Editor/SyntaxTree/Registration/Model.lean`), which records what it
+  registers: the registered name, or the refusal as `GrammarError.refused`.
+  By default it has no table of libraries, so every registration is refused
+  `unsupported`, as the library's real adapter refuses one until it loads
+  native libraries. A test sets a table, as it sets the files.
 
 The model's clock is exact, where a real clock only promises "not before".
 So the contract of the port (`Editor/Job/Contract.lean`) holds inequalities
@@ -116,6 +124,10 @@ structure JobModel where
   `noSuchService`. It is a function, so the model has no decidable
   equality; a check compares what it reads of it. -/
   packages : PackageModel := PackageModel.none
+  /-- The grammars registered, and the table they are registered from
+  (`Editor/SyntaxTree/Registration/Model.lean`). By default it has no table,
+  so every registration is refused `unsupported`. -/
+  grammars : GrammarRegistry := {}
 
 namespace JobModel
 
@@ -158,6 +170,9 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
     | none => (.ok (FuzzyModel.handle request ()).1, model)
   | .snapshot id, model => ((model.files.snapshots[id.index]?).join.map (·.contents), model)
   | .package request, model => (model.packages.answer request, model)
+  | .grammar (.register source), model =>
+    let (answer, grammars) := model.grammars.register source
+    (answer.mapError .refused, { model with grammars })
 
 /-- The model once the job has ended: every streaming child it started is
 ended (`ProcessModel.endAll`), as the runner cancels them, every watch

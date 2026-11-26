@@ -276,6 +276,14 @@ with nothing started. It has a fake over the pure model of files
 the library's diff service (`Editor/Job/Real.lean`). A runner that is given
 none has `Diffs.absent`.
 
+`Grammars` is the grammar port, beside them: start a registration
+(`Editor/SyntaxTree/Registration.lean`) as a wait, take its answer once the
+wait has completed, and withdraw a wait, whose answer is then dropped though
+the registration is still worked. It has a fake over the pure model of the
+registry (`FakeGrammars`, `Editor/Job/Fake.lean`) and a real implementation
+over the library's syntax worker (`Editor/Job/Real.lean`). A runner that is
+given none has `Grammars.absent`.
+
 `Greps` is the grep port, beside them: start a search request
 (`Editor/Grep.lean`) as a wait, take its reply once the wait has completed,
 and withdraw a wait or cancel a search. A start whose overlay names a
@@ -287,7 +295,7 @@ project search (`FakeFiles.greps`, `Editor/Job/Fake.lean`) and a real
 implementation over the library's grep service (`Editor/Job/Real.lean`). A
 runner that is given none has `Greps.absent`.
 
-Each of `Timers`, `Files`, `Processes`, `FileWatches` and `Diffs` has a
+Each of `Timers`, `Files`, `Processes`, `FileWatches`, `Diffs` and `Grammars` has a
 `flush`, a field with no default, so a port that forgot it does not
 silently never complete: it asks for a wait to be completed once the
 service has finished the work handed to it before that it can finish on its
@@ -332,7 +340,8 @@ catches what it throws and answers the job `.error`, `fuzzy: ` and the
 message, since an answer cannot throw.
 
 `Services` is what a runner is given: the table, the clock, the files, the
-processes, the file watches, the diffs, the environments and the matcher. A runner that is given no file service has `Files.absent`,
+processes, the file watches, the diffs, the searches, the grammar
+registrations, the environments and the matcher. A runner that is given no file service has `Files.absent`,
 and one that is given no process service has `Processes.absent`, each of
 which refuses every request as failed, at once: an error as a value, and
 the job goes on; one that is given no watch service has
@@ -732,6 +741,30 @@ def Diffs.absent (completions : Completions) : Diffs where
   cancel _ := pure ()
   flush id := completions.finish id .completed
 
+/-- The grammar port: what the runner's registration waits are made of. -/
+structure Grammars where
+  /-- Asks for `request` to be answered as the wait `id`, and for the wait to
+  be completed when it has been. It returns at once and never blocks. -/
+  start : (id : UInt64) → (request : GrammarRequest) → BaseIO Unit
+  /-- The answer to `request`, which was started as the wait `id` and has
+  completed. It is asked once, on the job's thread. -/
+  take : (id : UInt64) → (request : GrammarRequest) → BaseIO request.Reply
+  /-- Withdraws the wait `id`: the service will not complete it, and keeps
+  nothing of it, though a registration already queued is still worked. Safe
+  for any id, a timer's included. -/
+  cancel : (id : UInt64) → BaseIO Unit
+  /-- Asks for the wait `id` to be completed once every registration started
+  before this call has been answered. It returns at once and never blocks. -/
+  flush : (id : UInt64) → BaseIO Unit
+
+/-- No grammar service: every request completes at once, refused as failed,
+through the table `completions`. -/
+def Grammars.absent (completions : Completions) : Grammars where
+  start id _ := completions.finish id .completed
+  take _ request := pure (request.refused (.failed "this runner has no grammar service"))
+  cancel _ := pure ()
+  flush id := completions.finish id .completed
+
 /-- The grep port: what the runner's search waits are made of. -/
 structure Greps where
   /-- Asks for `request` to be worked as the wait `id`, and for the wait to
@@ -849,6 +882,9 @@ structure Services where
   diffs : Diffs := Diffs.absent completions
   /-- The searches. A runner that is given none has `Greps.absent`. -/
   greps : Greps := Greps.absent completions
+  /-- The grammar registrations. A runner that is given none has
+  `Grammars.absent`. -/
+  grammars : Grammars := Grammars.absent completions
   /-- The package services, by name. A runner that is given none has
   `PackageServices.absent`, so every package request is
   `noSuchService`. -/
@@ -921,6 +957,8 @@ inductive Service where
   | diffs
   /-- The searches. -/
   | greps
+  /-- The grammar registrations. -/
+  | grammars
   /-- The package service called `name`. -/
   | package (name : String)
   deriving DecidableEq, Repr, Inhabited
@@ -933,6 +971,7 @@ def Services.flushOf (services : Services) : Service → (UInt64 → BaseIO Unit
   | .fileWatches => services.fileWatches.flush
   | .diffs => services.diffs.flush
   | .greps => services.greps.flush
+  | .grammars => services.grammars.flush
   | .package name =>
     match services.packages.find? name with
     | some service => service.flush
@@ -1066,9 +1105,9 @@ def settle (handle : Handle) : BaseIO Unit := do
     handle.services.files.release snapshot
 
 /-- Tells the clock, the file service, the process service, the watch
-service, the diff service, the grep service and every package service to
-drop the wait `id`, each of which is safe for an id it does not know; the
-table is not told. -/
+service, the diff service, the grep service, the grammar service and every
+package service to drop the wait `id`, each of which is safe for an id it
+does not know; the table is not told. -/
 def drop (handle : Handle) (id : UInt64) : BaseIO Unit := do
   handle.services.timers.cancel id
   handle.services.files.cancel id
@@ -1076,6 +1115,7 @@ def drop (handle : Handle) (id : UInt64) : BaseIO Unit := do
   handle.services.fileWatches.cancel id
   handle.services.diffs.cancel id
   handle.services.greps.cancel id
+  handle.services.grammars.cancel id
   for service in handle.services.packages.services do
     service.cancel id
 
@@ -1406,6 +1446,10 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.ask
     handle.services.diffs.start id request
     return .later id wait (handle.services.diffs.take id request)
+  | .grammar request => do
+    let (id, wait) ← handle.ask
+    handle.services.grammars.start id request
+    return .later id wait (handle.services.grammars.take id request)
   | .grep (.next search) => do
     -- A search is named for the job that started it, and for no other.
     unless (← handle.searches.get).contains search do

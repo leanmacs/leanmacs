@@ -112,6 +112,18 @@ take, are refused here at once and the refusal kept until it is taken
 (`RealGreps`). The walk's refusal of the root, which the library delivers as
 the end of the first read, is that read's refusal.
 
+## The grammar registrations
+
+`realGrammars` is a thin adapter over the bindings of the library's grammar
+registrations, which the syntax worker answers before its next round
+(`crates/editor-ffi/src/grammars.rs`). A registration goes to the library as
+its source's library, symbol and policy tag (`policyTag`) with its wait's
+id, and its answer is taken by the id once, each of the library's refusals
+as `GrammarError.refused` of its own (`grammarAnswerOf`). One the library
+does not take is completed here, at once, `failed`, as a diff the library
+does not take is. Until the library loads native libraries, its answer is
+the unsupported refusal.
+
 ## The file watches
 
 `realFileWatches` is a thin adapter over the bindings of the library's watch
@@ -566,6 +578,80 @@ where
       return .error (.failed "the diff service kept no hunks for the request")
     | .error detail =>
       return .error (.failed detail)
+
+/-- The refusals of the grammar registrations that never reached the
+library, which the grammar service's adapter completed itself, by the id of
+their wait, until their answer is taken or their wait withdrawn. Every
+change is one atomic step. -/
+structure RefusedGrammars where private mk ::
+  /-- The refusals, by the id of their wait. -/
+  private refused : IO.Ref (Std.HashMap UInt64 GrammarError)
+
+/-- A table that holds no refusal. -/
+def RefusedGrammars.new : BaseIO RefusedGrammars :=
+  return ⟨← IO.mkRef {}⟩
+
+/-- The tag a policy crosses as: 0 none declared, 1 incremental, 2 whole. -/
+def policyTag : Option ReparsePolicy → UInt8
+  | none => 0
+  | some .incremental => 1
+  | some .whole => 2
+
+/-- The port's form of the library's answer to a registration. -/
+def grammarAnswerOf : Except Ffi.GrammarTakeRefusal String → Except GrammarError String
+  | .ok name => .ok name
+  | .error .notFound => .error (.refused .notFound)
+  | .error .notLoadable => .error (.refused .notLoadable)
+  | .error .unsupportedAbi => .error (.refused .unsupportedAbi)
+  | .error .missingSymbol => .error (.refused .missingSymbol)
+  | .error .unsupported => .error (.refused .unsupported)
+  | .error .noAnswer => .error (.failed "the syntax service kept no answer for the registration")
+  | .error .dropped =>
+    .error (.failed "the syntax service ended before it answered the registration")
+
+/-- The mark of `realGrammars`: it runs a real background service (`Editor/RealHost.lean`). -/
+def realGrammars.realHost : RealHost :=
+  .service
+
+/-- The grammar port answered by the library's syntax worker
+(`crates/editor-ffi/src/grammars.rs`): a registration goes to the library as
+its library's path, its symbol and its policy's tag, with its wait's id, and
+its answer is taken by the id once the library has completed it. A
+registration the library does not take never reaches it: it is completed
+here, at once, `failed`, with its refusal kept in `refused` until it is
+taken. A cancel withdraws the wait at the library, which still works a
+registration it has queued. -/
+def realGrammars (completions : Completions) (refused : RefusedGrammars) : Grammars :=
+  { start := fun id request =>
+      match request with
+      | .register source => do
+        let started ←
+          (Ffi.grammarsStart id source.library source.symbol
+                  (policyTag source.policy)).catchExceptions
+              fun _ => pure false
+        unless started do
+          refused.refused.modify
+              (·.insert id (.failed "the syntax service did not take the registration"))
+          completions.finish id .completed
+    take := fun id request =>
+      match request with
+      | .register _ => takeAnswer id
+    cancel := fun id => do
+      refused.refused.modify (·.erase id)
+      (discard <| Ffi.grammarsCancel id : IO Unit).catchExceptions fun _ => pure ()
+    flush := flushThrough completions Ffi.grammarsFlush }
+where
+  /-- The answer of the wait `id`: the refusal kept for it, else the
+  library's. -/
+  takeAnswer (id : UInt64) : BaseIO (Except GrammarError String) := do
+    let kept ← refused.refused.modifyGet fun table => (table[id]?, table.erase id)
+    if let some refusal := kept then
+      return .error refusal
+    match ← (Ffi.grammarsTake id).toBaseIO with
+    | .ok answer =>
+      return grammarAnswerOf answer
+    | .error error =>
+      return .error (.failed (toString error))
 
 /-- The refusals of the process runs that never reached the library, which
 the process service's adapter completed itself, by the id of their wait,

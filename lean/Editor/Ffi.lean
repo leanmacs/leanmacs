@@ -369,6 +369,22 @@ Its one caller is the syntax tree interface's real binding
 (`FfiTest.syntaxChecks`), `contract-test`'s syntax tree properties, and the
 unit tests of `syntax.rs` and `tests/syntax.rs` in `editor-ffi`.
 
+A grammar registration is a service behind the completion queue, over the
+syntax worker (`crates/editor-ffi/src/grammars.rs`). `grammarsStart` asks
+the library to register the grammar a symbol of a native library hands out,
+with a policy tag (0 none declared, 1 incremental, 2 whole), under an id,
+and returns at once; the completion is a `completion` event from the library
+source 6, the syntax service's. `grammarsTake` hands the answer over once,
+the registered name or a refusal (`GrammarTakeRefusal`: the library's five
+refusals, `noAnswer` for an id with no answer kept, and `dropped` when the
+worker ended first); an unknown status is an `IO` error. `grammarsCancel`
+withdraws a wait, `grammarsFlush` is completed behind every registration
+started before it, and `grammarsPending` counts what is left, for tests. Its
+one caller is the job runner's real grammar service (`Job.realGrammars`,
+`Editor/Job/Real.lean`). Tests: the registration check of `ffi-test`
+(`FfiTest.syntaxChecks`), `contract-test`'s grammar properties, and the unit
+tests of `grammars.rs` and `tests/grammars.rs` in `editor-ffi`.
+
 ### The window
 
 A window is run by the library's main-thread service, and what it reports

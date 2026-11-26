@@ -180,8 +180,8 @@ def ProjectRig.over (services : Job.Services) : IO ProjectRig := do
         { services with
           files := Job.realFiles services.completions published.reader held
           diffs := Job.realDiffs services.completions published.reader held (← Job.RefusedDiffs.new)
-          greps :=
-            Job.realGreps services.completions published.reader held (← Job.RealGreps.new) } }
+          greps := Job.realGreps services.completions published.reader held (← Job.RealGreps.new)
+          grammars := Job.realGrammars services.completions (← Job.RefusedGrammars.new) } }
 
 /-- A rig over fakes alone (`SteppedServices`): a table of waits, a fake clock
 and a fake watch service of its own, the file fake over `files`, as the

@@ -6,6 +6,7 @@ import Editor.Grep
 import Editor.PackageService
 import Editor.Process
 import Editor.Process.Environment
+import Editor.SyntaxTree.Registration
 
 /-!
 # Jobs
@@ -81,6 +82,15 @@ an `Except DiffError`; `Diff.hunks` replies with the hunks of whole lines
 instead. It waits, as a load does: the library's diff service
 works it on a thread of its own, so a long diff holds neither the editor
 thread nor a load. A command applies the script (`TextId.applyScript`).
+
+A job registers a grammar through one request, `grammar`, which carries a
+`GrammarRequest` (`Editor/SyntaxTree/Registration.lean`): `Grammar.register`
+registers the grammar a native library's symbol hands out and replies with
+the name it is registered under, or why not, an `Except GrammarError`. It
+waits, as a diff does: the library's syntax worker answers it on its own
+thread, before its next round and so behind any parse in progress, and from
+the next phase on loading a grammar is file I/O. A command cannot make it,
+so no command can block on a registration.
 
 A job reaches the environments its host shares through one request,
 `environment`, which carries an `EnvironmentRequest`
@@ -223,6 +233,14 @@ registers in its record (`Package.services`) and the program's edge hands
 the runner (`Job.Services.packages`). Withdrawing a wait tells every
 package service too. Its contract is `JobContract.packageProperties`.
 
+The grammar registrations are the seventh: `JobRequest.grammar`, whose
+requests are `GrammarRequest`s (`Editor/SyntaxTree/Registration.lean`). Its
+model is the grammar registry (`Editor/SyntaxTree/Registration/Model.lean`),
+which the job model answers it with (`JobModel.grammars`); its fake is
+`FakeGrammars`, over the same model, and its real implementation
+`realGrammars`, over the library's syntax worker. Withdrawing a wait tells
+the grammar service too. Its contract is `JobContract.grammarProperties`.
+
 The matcher is the last, and answers at once: `JobRequest.fuzzy`, whose
 requests are `FuzzyRequest`s, so a new question of the matcher is a
 constructor of the fuzzy port and not of this one. Its model answers with
@@ -248,6 +266,8 @@ asked from inside a job, and that it registers no wait.
   `Editor/Diff/Model.lean`;
 - the search requests as data, `Editor/Grep.lean`, and the pure model of a
   project search, `Editor/Grep/Model.lean`;
+- the grammar registration's data, `Editor/SyntaxTree/Registration.lean`,
+  and the pure model of the registry, `Editor/SyntaxTree/Registration/Model.lean`;
 - its pure model, `Editor/Job/Model.lean`, which tests run against;
 - its contract, `Editor/Job/Contract.lean`: three lists of properties, of
   the clock, of the file requests and of the process requests, run against
@@ -304,6 +324,9 @@ inductive JobRequest where
   /-- Ask a package's service (`Editor/PackageService.lean`), and wait for
   its reply. -/
   | package (request : PackageRequest)
+  /-- Register a grammar with the syntax service
+  (`Editor/SyntaxTree/Registration.lean`), and wait for its answer. -/
+  | grammar (request : GrammarRequest)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: the clock's reading for `now`,
@@ -322,6 +345,7 @@ def JobRequest.Reply : JobRequest → Type
   | .fuzzy request => Except String request.Reply
   | .snapshot _ => Option String
   | .package _ => PackageReply
+  | .grammar request => request.Reply
 
 /-- The job port: `JobRequest` and the reply to each request. -/
 abbrev jobPort : Port :=
@@ -621,6 +645,14 @@ taken, at most one a path, once the window from its first change has
 passed. -/
 def FileWatch.next (watch : FileWatch.Id) : JobM (Except FileWatchError (Array FileWatch.Change)) :=
   ExceptT.lift (Program.request (port := jobPort) (.fileWatch (.next watch)))
+
+/-- Registers the grammar `source` names with the syntax service, and answers
+the name it is registered under (`GrammarSource.name`), or why not: refused
+by the service, or failed on the way. It waits: the library answers it on
+the syntax worker's thread, before that worker's next round.
+`Editor/SyntaxTree/Registration.lean` has the rules. -/
+def Grammar.register (source : GrammarSource) : JobM (Except GrammarError String) :=
+  ExceptT.lift (Program.request (port := jobPort) (.grammar (.register source)))
 
 /-- The line diff of what `old` and `new` hold, with the engine asked about at
 most `limit` lines a side, and waits for it: the edit script that turns the
@@ -995,6 +1027,39 @@ example : True := by
     exact
       (fun (_ : TextM PackageReply) => True.intro)
         (PackageService.ask { service := "x", operation := "y" })
+  trivial
+
+/-! A grammar registration is a job's, and it is not a command: alone, and
+after a text request in a `do` block. So a command cannot block on a
+registration, which the library answers behind any parse in progress. Seen
+to bite once by hand: offered at `JobM (Except GrammarError String)` inside
+the first `fail_if_success` check, the module stops building. -/
+
+example : True :=
+  (fun (_ : JobM (Except GrammarError String)) => True.intro)
+    (Grammar.register { library := "/a.so", symbol := "tree_sitter_a" })
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : EditorM (Except GrammarError String)) => True.intro)
+        (Grammar.register { library := "/a.so", symbol := "tree_sitter_a" })
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : TextM (Except GrammarError String)) => True.intro)
+        (Grammar.register { library := "/a.so", symbol := "tree_sitter_a" })
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : EditorM Unit) => True.intro)
+        (do
+          (⟨0⟩ : TextId).insert 0 "x"
+          discard <| Grammar.register { library := "/a.so", symbol := "tree_sitter_a" })
   trivial
 
 /-! A wait is not a command: alone, and after a text request in a `do` block.

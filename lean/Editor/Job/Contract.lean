@@ -40,6 +40,11 @@ published table. A package's service has one of its own, `packageProperties`, la
 a rig (`PackageRig`): against the model of package services and against
 the runner over the fake package service by `model-test`, and against the
 runner over echo's crate by echo's linked test.
+The grammar registration has one too, `grammarProperties`, after the fuzzy
+request's: against the model with no table, against the runner over the fake
+grammar service with no table, and against the runner over the library's
+syntax worker, which loads no grammar yet, so all three answer
+`unsupported`.
 The fuzzy request has one too, `fuzzyProperties`, after them: against the
 model, against the runner over the fake clock given the fuzzy model's
 handler, and against the runner given the library's binding. What needs
@@ -1744,6 +1749,34 @@ def fuzzyProperties : List Property :=
     FuzzyContract.properties.map fun property =>
       { name := s!"a fuzzy request in a job: {property.name}"
         holds := Job.embedFuzzy property.holds }
+
+/-! ## Grammar registrations
+
+A property of the grammar registration (`JobRequest.grammar`) is a job that
+registers and returns whether it was answered as it should be. It is run
+against the job model with no table of libraries, against the runner over
+the fake grammar service with none (`FakeGrammars`), and against the runner
+over the library's syntax worker, whose real adapter loads no grammar at run
+time yet: so the one answer all three hold to is the unsupported refusal,
+for every policy a source may declare and for a compiled-in name. -/
+
+/-- The source of `symbol` in a library that does not exist, declaring
+`policy`. -/
+def grammarSource (symbol : String) (policy : Option ReparsePolicy := none) : GrammarSource :=
+  { library := "/nonexistent/libtree-sitter-python.so", symbol, policy }
+
+/-- The properties every implementation of the job port's grammar
+registration has, while the service loads no grammar at run time. -/
+def grammarProperties : List Property :=
+  [{  name :=
+        "a registration by a service that loads no grammar is refused as unsupported, for each declared policy and for a compiled-in name"
+      holds := do
+        let sources :=
+          [grammarSource "tree_sitter_python",
+            grammarSource "tree_sitter_python" (some .incremental),
+            grammarSource "tree_sitter_python" (some .whole), grammarSource "tree_sitter_json"]
+        sources.allM fun source => do
+            return (← Grammar.register source) matches .error (.refused .unsupported) }]
 
 /-! ## Snapshots
 

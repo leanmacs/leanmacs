@@ -5,6 +5,8 @@ import Editor.SyntaxTree.Contract
 import Editor.SyntaxTree.Model
 import Editor.SyntaxTree.Model.Json
 import Editor.SyntaxTree.Model.Query
+import Editor.SyntaxTree.Registration
+import Editor.SyntaxTree.Registration.Model
 import Editor.Test.Models
 import Editor.Text
 import ModelTest.Check
@@ -131,6 +133,40 @@ def syntaxTreeChecks : List Check :=
                 (← SyntaxTree.capturesOf snapshot .indents 0 3).captures.size
           (SyntaxTreeM.runModel program { model with delivered := false }).1 matches .ok true &&
             (SyntaxTreeM.runModel delivered model).1 matches .ok 2 },
+    { name :=
+        "a syntax tree model given a registry lists its registered grammars after json, attaches and compiles for them, and ships no query for a registered name, json included once overridden"
+      run :=
+        pure <|
+          let (model, ids) := syntaxTreeModelOf #["[1]"]
+          let snapshot := ids[0]?.getD ⟨0⟩
+          let source (symbol : String) : GrammarSource := { library := "/lib/grammars.so", symbol }
+          let python : GrammarRegistry :=
+            { registered := #[("python", source "tree_sitter_python", .whole)] }
+          let overridden : GrammarRegistry :=
+            { registered := #[("json", source "tree_sitter_json", .whole)] }
+          let registered : SyntaxTreeM Bool := do
+            let names ← SyntaxTree.grammars
+            SyntaxTree.attach snapshot "python"
+            let query ← SyntaxTree.compile "python" "(number) @n"
+            let found ← SyntaxTree.captures snapshot query 0 3
+            let jsonShips ← SyntaxTree.shippedQuery "json" .highlights
+            return names == #["json", "python"] && found.size == 1 &&
+                jsonShips == SyntaxTreeModel.highlights &&
+                (←
+                  SyntaxTreeContract.refusedWith .noShippedQuery
+                      (SyntaxTree.shippedQuery "python" .highlights))
+          let overriding : SyntaxTreeM Bool := do
+            let names ← SyntaxTree.grammars
+            SyntaxTree.attach snapshot "json"
+            return names == #["json"] &&
+                (←
+                  SyntaxTreeContract.refusedWith .noShippedQuery
+                      (SyntaxTree.shippedQuery "json" .highlights))
+          (SyntaxTreeM.runModel registered { model with registry := python }).1 matches .ok true &&
+            (SyntaxTreeM.runModel overriding { model with registry := overridden }).1 matches
+              .ok true &&
+            (SyntaxTreeM.runModel (SyntaxTree.attach snapshot "python") model).1 matches
+              .error .unknownGrammar },
     { name := "every property of the syntax tree contract holds of the model"
       run := return (← syntaxTreeBroken SyntaxTreeModel.handle).isEmpty }]
 

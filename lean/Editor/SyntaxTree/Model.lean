@@ -1,10 +1,12 @@
 import Editor.SyntaxTree.Model.Query
+import Editor.SyntaxTree.Registration.Model
 
 /-!
 # The syntax tree interface's model
 
 A pure model of the syntax tree interface (`Editor/SyntaxTree.lean`). It
-knows one grammar, `json` (`Editor/SyntaxTree/Model/Json.lean`), and the
+knows one grammar of its own, `json` (`Editor/SyntaxTree/Model/Json.lean`),
+beside any registered at run time (`registry`), and the
 subset of the query language that `Editor/SyntaxTree/Model/Query.lean`
 states, and it parses at once: a question of captures is answered of the
 snapshot's own text, so the model answers `notParsed` only when a test
@@ -36,6 +38,15 @@ Its state has three parts:
 - `refreshAfter`: the refresh delay it was handed last. It parses at once,
   so every tree is exact and the delay changes no answer; it is what the
   editor's checks read.
+- `registry`: the grammars registered at run time
+  (`Editor/SyntaxTree/Registration/Model.lean`), empty by default. The model
+  lists each registered name after `json`, attaches and compiles for it,
+  and parses its texts as JSON, the one grammar it has; it ships no query
+  for a registered name, `json` included once a registration overrides it,
+  as the library ships none for a registered grammar. A test sets it; in a
+  driven run, the registry the job model's registrations end with is
+  handed to it (the job's model answers a registration,
+  `JobModel.grammars`).
 - `delivered`: whether the tree of each text's last edit is delivered. It
   starts `true`. A test sets it `false` to see what a command does when
   keys come faster than a reparse: `captures` and `capturesOf` are then
@@ -88,6 +99,9 @@ structure SyntaxTreeModel where
   /-- The refresh delay `refreshAfter` handed it last, if any. The model
   parses at once, so it changes nothing it answers. -/
   refreshAfter : Option Nat := none
+  /-- The grammars registered at run time: listed after `json`, attached and
+  compiled for, parsed as JSON, and shipping no query. -/
+  registry : GrammarRegistry := {}
   /-- Whether the tree of each text's last edit is delivered: when `false`,
   a question of captures is refused with `notParsed` after its other
   checks. -/
@@ -103,6 +117,14 @@ def grammar : String :=
 subset. -/
 def highlights : String :=
   "(pair key: (_) @string.special.key)\n(string) @string\n(number) @number\n(null) @constant.builtin\n(true) @constant.builtin\n(false) @constant.builtin\n"
+
+/-- The grammars the model lists: `json`, then each registered name. -/
+def grammars (model : SyntaxTreeModel) : Array String :=
+  model.registry.grammars #[grammar]
+
+/-- Whether the model lists `named`. -/
+def knows (model : SyntaxTreeModel) (named : String) : Bool :=
+  model.grammars.contains named
 
 /-- The text of `snapshot`, if the model knows it. -/
 def text? (model : SyntaxTreeModel) (snapshot : SnapshotId) : Option String :=
@@ -135,7 +157,7 @@ def attach (model : SyntaxTreeModel) (snapshot : SnapshotId) (named : String) :
     Except SyntaxTreeError Unit × SyntaxTreeModel :=
   if (model.text? snapshot).isNone then (.error .noSuchSnapshot, model)
   else
-    if named != grammar then (.error .unknownGrammar, model)
+    if !model.knows named then (.error .unknownGrammar, model)
     else
       let others := model.attached.filter (!model.sameText ·.1 snapshot)
       (.ok (), { model with attached := others.push (snapshot, named) })
@@ -153,10 +175,14 @@ def detach (model : SyntaxTreeModel) (snapshot : SnapshotId) :
         languages := model.languages.filter (!model.sameText ·.1 snapshot)
         kept := model.kept.filter (!model.sameText ·.1 snapshot) })
 
-/-- `shippedQuery`: highlights alone. -/
-def shippedQuery (named : String) (kind : QueryKind) : Except SyntaxTreeError String :=
-  if named != grammar then .error .unknownGrammar
-  else if kind == .highlights then .ok highlights else .error .noShippedQuery
+/-- `shippedQuery`: highlights alone, of `json` while no registration
+overrides it; a registered grammar ships none. -/
+def shippedQuery (model : SyntaxTreeModel) (named : String) (kind : QueryKind) :
+    Except SyntaxTreeError String :=
+  if !model.knows named then .error .unknownGrammar
+  else
+    if model.registry.isRegistered named then .error .noShippedQuery
+    else if kind == .highlights then .ok highlights else .error .noShippedQuery
 
 /-- The query `query` names, of the grammar `snapshot`'s text is parsed
 with: checked in the order the real binding checks it, the snapshot and
@@ -263,7 +289,7 @@ def highlight (model : SyntaxTreeModel) (snapshot : SnapshotId) (query : QueryId
 /-- `compile`. -/
 def compile (model : SyntaxTreeModel) (named source : String) :
     Except SyntaxTreeError QueryId × SyntaxTreeModel :=
-  if named != grammar then (.error .unknownGrammar, model)
+  if !model.knows named then (.error .unknownGrammar, model)
   else
     match Query.compile source with
     | .error (kind, offset) => (.error (.query kind offset), model)
@@ -286,7 +312,7 @@ def captures (model : SyntaxTreeModel) (snapshot : SnapshotId) (query : QueryId)
 
 /-- Answers `request` from the model as it is. -/
 def handle : (request : SyntaxTreeRequest) → SyntaxTreeModel → request.Reply × SyntaxTreeModel
-  | .grammars, model => (#[grammar], model)
+  | .grammars, model => (model.grammars, model)
   | .attach snapshot named, model => model.attach snapshot named
   | .detach snapshot, model => model.detach snapshot
   | .compile named source, model => model.compile named source
@@ -298,7 +324,7 @@ def handle : (request : SyntaxTreeRequest) → SyntaxTreeModel → request.Reply
   | .captures snapshot query first last, model => (model.captures snapshot query first last, model)
   | .release query, model =>
     ((), { model with queries := model.queries.modify query.index fun _ => none })
-  | .shippedQuery named kind, model => (shippedQuery named kind, model)
+  | .shippedQuery named kind, model => (model.shippedQuery named kind, model)
   | .highlight snapshot query faces, model => model.highlight snapshot query faces
   | .inject snapshot query, model => model.inject snapshot query
   | .injectLanguage snapshot name highlights faces injections, model =>

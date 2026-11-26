@@ -1086,8 +1086,8 @@ def Stage.overFiles.realHost : RealHost :=
 
 /-- A stage for a host whose jobs reach real files: one over the real
 elaborator and `source`, with what `compiled` hands it, whose services have
-the library's file service, its diff service and its watch service, as the
-executable wires them, over the table of waits the file checks share
+the library's file service, its diff service, its watch service and its
+grammar registrations, as the executable wires them, over the table of waits the file checks share
 (`HostContext.fileWaits`), which the one completion pump runs over. Its clock is
 still a fake one: the watch service coalesces on the library's own. -/
 def Stage.overFiles (context : HostContext) (source : Config.Source) (compiled : Compiled := {}) :
@@ -1096,6 +1096,7 @@ def Stage.overFiles (context : HostContext) (source : Config.Source) (compiled :
   let stage ← Stage.new context context.elaborator source compiled (some completions)
   let collaborators := stage.collaborators
   let refusedDiffs ← Job.RefusedDiffs.new
+  let refusedGrammars ← Job.RefusedGrammars.new
   let greps ← Job.RealGreps.new
   let watches ← Job.RealWatches.new
   return { stage with
@@ -1110,8 +1111,8 @@ def Stage.overFiles (context : HostContext) (source : Config.Source) (compiled :
                 Job.realDiffs completions collaborators.published.reader collaborators.held
                   refusedDiffs
               greps :=
-                Job.realGreps completions collaborators.published.reader collaborators.held
-                  greps } } }
+                Job.realGreps completions collaborators.published.reader collaborators.held greps
+              grammars := Job.realGrammars completions refusedGrammars } } }
 
 namespace Session
 

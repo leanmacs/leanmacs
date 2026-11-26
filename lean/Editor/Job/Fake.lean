@@ -5,6 +5,7 @@ import Editor.Job.Pump
 import Editor.Job.Runner
 import Editor.PackageService
 import Editor.Process.Model
+import Editor.SyntaxTree.Registration.Model
 
 /-!
 # The fakes of the job runner's services
@@ -14,8 +15,9 @@ linked tests: the fake clock, below, the fake file service (`FakeFiles`,
 after it), the fake process service (`FakeProcesses`), with its hand-off
 of a child to a package's crate (`FakeProcesses.handOff`), the fake of a
 package's service (`FakePackageService`), the frame of a package's own
-fake of its service (`PackageFake`), and the fake watch service
-(`FakeFileWatches`), each of whose doc comment has its rules; the fake scheduler
+fake of its service (`PackageFake`), the fake watch service
+(`FakeFileWatches`), and the fake grammar service (`FakeGrammars`), each of
+whose doc comment has its rules; the fake scheduler
 (`FakeScheduler`), which runs a job's code only when a check steps it; the
 fake completion pump (`FakePump`), the one step point they answer through
 in their step mode; and the fake of the recording port (`FakeRecorder`, at the end of this
@@ -2025,6 +2027,62 @@ def quiescent (watches : FakeFileWatches) : BaseIO Bool :=
   return (← watches.state.get).pending.isEmpty
 
 end FakeFileWatches
+
+/-- The fake of the grammar port (`Job.Grammars`): the pure model of the
+registry (`Editor/SyntaxTree/Registration/Model.lean`) behind a reference.
+
+- A start answers the registration from the registry at once, records what
+  it registers, keeps the answer under the wait's id, and completes the
+  wait through the table of waits at once, on the thread that started it,
+  as `Grammars.absent` does.
+- A take hands the kept answer over once; an id with none kept is answered
+  `failed`.
+- A cancel drops the kept answer: the registration stays done, as the
+  library's still works one it has queued.
+- A flush completes at once: every registration is answered at its start.
+
+Made with no table, the default, it refuses every registration
+`unsupported`, as the library's real adapter does until it loads native
+libraries. -/
+structure FakeGrammars where private mk ::
+  /-- The table of waits it completes through. -/
+  completions : Completions
+  /-- The registry, and the answers kept, by the wait's id. -/
+  state : IO.Ref (GrammarRegistry × Std.HashMap UInt64 (Except GrammarError String))
+
+namespace FakeGrammars
+
+/-- A fake over `registry`, completing through `completions`. -/
+def new (completions : Completions) (registry : GrammarRegistry := {}) : BaseIO FakeGrammars :=
+  return ⟨completions, ← IO.mkRef (registry, {})⟩
+
+/-- Answers `request` from the registry, keeps the answer as the wait
+`id`'s, and completes the wait. -/
+def start (fake : FakeGrammars) (id : UInt64) : GrammarRequest → BaseIO Unit
+  | .register source => do
+    fake.state.modify fun (registry, kept) =>
+        let (answer, registry) := registry.register source
+        (registry, kept.insert id (answer.mapError .refused))
+    fake.completions.finish id .completed
+
+/-- The answer kept for the wait `id`, taken out; `failed` when none is. -/
+def take (fake : FakeGrammars) (id : UInt64) : (request : GrammarRequest) → BaseIO request.Reply
+  | .register _ =>
+    fake.state.modifyGet fun (registry, kept) =>
+      (kept[id]?.getD (.error (.failed "the fake grammar service kept no answer")),
+        (registry, kept.erase id))
+
+/-- The grammar port over this fake. -/
+def grammars (fake : FakeGrammars) : Grammars :=
+  { start := fake.start, take := fake.take
+    cancel := fun id => fake.state.modify fun (registry, kept) => (registry, kept.erase id)
+    flush := fun id => fake.completions.finish id .completed }
+
+/-- The registry as it is now. -/
+def registry (fake : FakeGrammars) : BaseIO GrammarRegistry :=
+  return (← fake.state.get).1
+
+end FakeGrammars
 
 /-- A hold of a fake recorder: the transitions it holds at, the promise
 resolved with the first one to arrive, and the promise that lets it go. -/
