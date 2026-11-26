@@ -25,7 +25,9 @@
 //!   forgotten.
 //! - **A write** ([`Handed::write`]) waits for the write slot, which a
 //!   job's write in flight may hold, puts the bytes in it for the writer,
-//!   and waits on `changed` for the writer's reply to it. A child with no
+//!   and waits on `changed` for the writer's reply to it. Every path that
+//!   frees the slot tells `changed`: the writer's take, an abandon, and a
+//!   job's cancel of its write still in the slot. A child with no
 //!   input, a closed one, or an abandoned stream refuses it as
 //!   [`RefusalKind::InputClosed`].
 //! - **The waiter** tells `changed` once it has recorded the exit, so a
@@ -39,7 +41,9 @@
 //! but the abandon tells it; a child that has
 //! exited and whose readers have let go before its hand-off delivers
 //! everything (`exit_recorded`), and the waiter's notify is what ends a
-//! wait for the end, its reap held. Seen to bite once by hand, on
+//! wait for the end, its reap held; and a job's cancel of its queued write
+//! wakes a consumer's write held waiting for the slot by a hook under the
+//! stream's lock (`before_write_wait`). Seen to bite once by hand, on
 //! 2026-11-25: with the notify taken out of `StreamState::abandon`, the
 //! cancel's and the shutdown's checks fail as hangs; with the waiter's
 //! taken out, the check of the wait for the end does.
@@ -193,6 +197,10 @@ impl<P: Processes + 'static> Handed<P> {
                 break;
             }
             // A job's write holds the slot until the writer takes it.
+            #[cfg(test)]
+            if let Some(waiting) = self.inner.before_write_wait.get() {
+                waiting();
+            }
             streamed = self
                 .stream
                 .changed
@@ -208,6 +216,10 @@ impl<P: Processes + 'static> Handed<P> {
                 Some(_) => return Ok(()),
                 None if streamed.abandoned => return Err(closed(&streamed.program)),
                 None => {}
+            }
+            #[cfg(test)]
+            if let Some(waiting) = self.inner.before_write_wait.get() {
+                waiting();
             }
             streamed = self
                 .stream
@@ -712,6 +724,108 @@ mod tests {
         assert_eq!(service.pending(), 0);
         fake.end(child + 1);
         assert!(readers_done(&fake, child));
+    }
+
+    /// Has `service` tell the receiver each time a consumer's write is about
+    /// to wait: for the write slot, then for the writer's reply.
+    fn before_write_wait(service: &Service<FakeProcesses>) -> Receiver<()> {
+        told(|hook| {
+            assert!(
+                service.inner.before_write_wait.set(hook).is_ok(),
+                "set once"
+            );
+        })
+    }
+
+    /// A consumer's write of `bytes` to `handed` on a thread of its own,
+    /// its answer on the receiver.
+    fn writing(
+        handed: &Handed<FakeProcesses>,
+        bytes: &[u8],
+    ) -> (Receiver<Result<(), Refusal>>, Consumer) {
+        let (answer, answered) = mpsc::channel();
+        let (handed, bytes) = (handed.clone(), bytes.to_vec());
+        let consumer = thread::spawn(move || {
+            let _ = answer.send(handed.write(bytes));
+        });
+        (answered, Consumer(Some(consumer)))
+    }
+
+    /// The consumer's write's answer, waited for on the receiver, its
+    /// thread joined once it has answered.
+    fn written(
+        answered: &Receiver<Result<(), Refusal>>,
+        consumer: Consumer,
+    ) -> Option<Result<(), Refusal>> {
+        let answer = editor_wait::recv(answered, DEADLINE).ok();
+        if answer.is_some() {
+            consumer.answered();
+        }
+        answer
+    }
+
+    // Seen to bite on 2026-11-25: with `cancel_wait` freeing the slot and
+    // telling nothing, the consumer sleeps on a free slot, and the check
+    // that it goes on to wait for its reply fails as a hang.
+    #[test]
+    fn a_job_cancelling_its_queued_write_wakes_a_consumers_write_waiting_for_the_slot() {
+        // Its pipes and its bound hold two bytes each. It first writes six
+        // bytes to standard output, held until something is pulled, and
+        // only then reads its input, and writes nothing more: so once it is
+        // held, nothing it does tells `changed`.
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .hold(Hold::UntilKilled)
+                .steps([
+                    Step::Write(Stream::Out, b"oooooo".to_vec()),
+                    Step::AwaitInputClosed,
+                ])
+                .pipe_capacity(2)),
+        )]);
+        let (service, completed) = service(&fake);
+        let waiting = before_write_wait(&service);
+        let bytes = Streaming {
+            input: Input::Pipe,
+            out: Framing::Bytes,
+            err: Framing::Bytes,
+            bound: 2,
+        };
+        opened(&service, &completed, 1, command("x"), bytes);
+        assert!(comes_to_be_held(&service, 1));
+        // The job's write of four bytes is held in the writer, two in the
+        // pipe, and its second waits in the slot.
+        assert!(service.write(1, 2, b"aaaa".to_vec()));
+        assert!(fake.until(DEADLINE, |record| record.writes_blocked == 1));
+        assert!(service.write(1, 3, b"bb".to_vec()));
+        let handed = service.hand_off(1).expect("handed");
+
+        let (answered, consumer) = writing(&handed, b"cc");
+        assert_eq!(
+            editor_wait::recv(&waiting, DEADLINE),
+            Ok(()),
+            "waiting for the slot"
+        );
+        assert!(service.cancel(3), "the job's queued write is withdrawn");
+        let put = editor_wait::recv(&waiting, DEADLINE);
+        // Pulled, the child's output lets it read its input.
+        let mut out = Vec::new();
+        while out.len() < 6 {
+            match handed.pull().map(|delivery| delivery.out) {
+                Some(Frames::Bytes(bytes)) => out.extend(bytes),
+                other => panic!("bytes, not {other:?}"),
+            }
+        }
+        let consumers = written(&answered, consumer);
+
+        assert_eq!(put, Ok(()), "woken, it puts its write in the slot");
+        assert_eq!(consumers, Some(Ok(())));
+        assert_eq!(editor_wait::recv(&completed, DEADLINE), Ok(2));
+        assert_eq!(service.take_stream(2), Some(StreamReply::Written));
+        let child = fake.record().spawned[0].0;
+        assert_eq!(fake.record().children[&child].received, b"aaaacc");
+        assert!(service.cancel(1));
+        assert!(flushed(&service, &completed));
     }
 
     #[test]

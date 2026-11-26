@@ -14,11 +14,11 @@ use crate::frame::{Frames, Framing};
 use crate::{Command, Input};
 
 /// hang guard: each event a test waits for with it, a completion, a
-/// reader's park, a reading, a pull's return or the fake reaching a state,
-/// which must come; only a hang reaches the bound, and the check then
-/// fails as a hang.
+/// reader's park, a reading, a pull's or a write's return, a consumer's
+/// wait or the fake reaching a state, which must come; only a hang reaches
+/// the bound, and the check then fails as a hang.
 pub(super) const DEADLINE: HangGuard = HangGuard::on(
-    "a completion, a reader's park, a reading, a pull's return or the fake reaching a state",
+    "a completion, a reader's park, a reading, a pull's or a write's return, a consumer's wait or the fake reaching a state",
     Duration::from_secs(5),
 );
 

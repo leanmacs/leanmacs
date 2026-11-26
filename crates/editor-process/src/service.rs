@@ -603,6 +603,13 @@ struct Inner<P: Processes> {
     /// its wait. It may only send. Set once, by a test.
     #[cfg(test)]
     before_pull_wait: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// Called in a consumer's write ([`Handed::write`]) just before each
+    /// wait on its child's `changed`, for the write slot and then for the
+    /// writer's reply, with the stream's lock held: so whatever next takes
+    /// that lock comes only once the consumer is in its wait. It may only
+    /// send. Set once, by a test.
+    #[cfg(test)]
+    before_write_wait: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// Called by a streaming child's waiter once it has recorded the exit
     /// and told `changed`. Set once, by a test.
     #[cfg(test)]
@@ -749,6 +756,8 @@ impl<P: Processes + 'static> Service<P> {
                 held_read: std::sync::OnceLock::new(),
                 #[cfg(test)]
                 before_pull_wait: std::sync::OnceLock::new(),
+                #[cfg(test)]
+                before_write_wait: std::sync::OnceLock::new(),
                 #[cfg(test)]
                 exit_recorded: std::sync::OnceLock::new(),
             }),
@@ -1285,7 +1294,9 @@ impl<P: Processes + 'static> Service<P> {
     /// Cancels the wait `id` on a streaming child, if it is one: drops it,
     /// or its kept reply, without completing it. The child keeps running
     /// and keeps what it wrote. A write already handed to the writer still
-    /// reaches the pipe; only its reply is dropped.
+    /// reaches the pipe; only its reply is dropped. A write still in the
+    /// slot leaves it, and `changed` is told, as every other path that
+    /// frees the slot tells it: a consumer's write may be waiting for it.
     fn cancel_wait(state: &mut State<P::Child>, id: u64) -> bool {
         let Some(wait) = state.waits.remove(&id) else {
             return false;
@@ -1305,6 +1316,8 @@ impl<P: Processes + 'static> Service<P> {
                 .is_some_and(|(asker, _)| *asker == Asker::Job(id))
             {
                 streamed.write = None;
+                drop(streamed);
+                stream.changed.notify_all();
             }
         }
         true
