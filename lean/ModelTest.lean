@@ -711,7 +711,8 @@ The job system is tested here with no Rust library:
 - `jobModelChecks`: the job port's pure model (`Editor/Job/Model.lean`), its
   clock and its cancellation, what only the model's exact clock can
   show: that a timer does not drift, and a package request answered by the
-  model's packages, a service it does not know `noSuchService`;
+  model's packages, a service it does not know `noSuchService`, and a reply
+  of another type than the one `PackageService.askAs` asks for refused;
 - `protocolChecks`: the job runner's protocol as a pure transition system
   (`Editor/Job/Protocol.lean`): each transition enabled and refused as its
   row of the table says, a replay renaming each job's number to its place

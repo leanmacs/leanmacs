@@ -29,6 +29,18 @@ namespace ModelTest
 open Editor
 open Editor.Test
 
+/-- A reply of another type than the count's: what a service that shares the
+count's name would answer. -/
+structure OtherReply where
+  /-- What it says. -/
+  text : String
+  deriving TypeName
+
+/-- A model whose service named as the count's answers every request with an
+`OtherReply`, as a second package sharing the count's name would. -/
+def sharedNameModel : PackageModel := fun request =>
+  if request.service == countService then some (.ok (.mk (OtherReply.mk "not a count"))) else none
+
 /-- The checks of the job port's pure model (`Editor/Job/Model.lean`). -/
 def jobModelChecks : List Check :=
   [{
@@ -238,6 +250,14 @@ def jobModelChecks : List Check :=
           (modelled job { now := 3, packages := countModel } ==
               (.finished (some 5, true, true, 3), 3) &&
             modelled unknownByDefault == (.finished true, 0)) },
+    { name :=
+        "in the job model, a package reply of another type than the one asked for, as a service sharing another's name gives, is refused as a value, never a crash, and the job goes on"
+      run :=
+        let job : JobM (Bool × Bool) := do
+          let counted ← PackageService.askAs CountReply (countAfter 4)
+          let raw ← PackageService.ask (countAfter 4)
+          return (counted matches .error (.refused _), raw matches .ok _)
+        pure (modelled job { packages := sharedNameModel } == (.finished (true, true), 0)) },
     { name :=
         "a contract property whose job returns false, throws or is cancelled has not held, and each is named with how it ended"
       run := do
