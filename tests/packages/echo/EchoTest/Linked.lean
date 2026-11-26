@@ -6,6 +6,7 @@ import EchoTest.Linked.Echo.Real
 import EchoTest.Linked.Echo.Real.Attach
 import EchoTest.Linked.Echo.Real.Job
 import Editor
+import Editor.Headless
 import Editor.RealHost
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Services
@@ -36,7 +37,10 @@ test kit's services and pump, and runs:
 - the checks of a child the core's process service opened and the
   package's crate took over (`EchoTest.Linked.attachChecks`);
 - the crate's service reached by running jobs through the runner's package
-  port (`EchoTest.Linked.echoJobChecks`, `EchoTest/Linked/Echo/Real/Job.lean`);
+  port, given the package services the program's edge builds from echo's
+  packages (`Editor.Headless.packageServices Echo.packages`, named here as
+  only this root may import the headless host;
+  `EchoTest.Linked.echoJobChecks`, `EchoTest/Linked/Echo/Real/Job.lean`);
 
 and says so, counting the contract's properties.
 
@@ -64,7 +68,8 @@ package's checks through the stepped host in a plain group, the contract's
 one check in the group of `EchoTest/Linked/Echo/Real.lean`, the take-over's
 checks in the group of `EchoTest/Linked/Echo/Real/Attach.lean`, and the
 running jobs' checks in the group of `EchoTest/Linked/Echo/Real/Job.lean`,
-the last three of the wiring set. -/
+over the package services the edge builds from echo's packages, the last
+three of the wiring set. -/
 def EchoTest.Linked.checks : List (Editor.CheckGroup EchoTest.Linked.Context EchoTest.Check) :=
   [.plain fun (context, _) => EchoTest.Linked.echoPackageChecks context,
     .wired "EchoTest.Linked.Echo.Real" wiringSet.EchoTest.Linked.Echo.Real fun (_, services) =>
@@ -72,7 +77,8 @@ def EchoTest.Linked.checks : List (Editor.CheckGroup EchoTest.Linked.Context Ech
     .wired "EchoTest.Linked.Echo.Real.Attach" wiringSet.EchoTest.Linked.Echo.Real.Attach
       fun (_, services) => EchoTest.Linked.attachChecks services,
     .wired "EchoTest.Linked.Echo.Real.Job" wiringSet.EchoTest.Linked.Echo.Real.Job
-      fun (_, services) => EchoTest.Linked.echoJobChecks services]
+      fun (_, services) =>
+      EchoTest.Linked.echoJobChecks services (Editor.Headless.packageServices Echo.packages)]
 
 /-- Runs the checks `mode` selects from the check set
 (`Editor.CheckGroup.select`) with the hosts' context, made with

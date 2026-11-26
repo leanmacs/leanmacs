@@ -3111,8 +3111,9 @@ the services it brings in its record, `Package.services`
 (`lean/Editor/Package.lean`), each a `PackageService`
 (`lean/Editor/PackageService.lean`): a name, and a start, a take, a cancel
 and a flush over the runner's waits. The program's edge hands every
-package's to the job runner by name (`Headless.shipped`,
-`Job.Services.packages`), as it wires every real adapter; a check hands
+package's to the job runner by name (`Headless.shipped`, through
+`Headless.packageServices`, `Job.Services.packages`), as it wires every
+real adapter; a check hands
 the runner the fake (`Job.FakePackageService`, through `Stage.stepped`'s
 `packages` on a stepped host) and nothing reads `Package.services` there.
 
@@ -3154,7 +3155,14 @@ headless host stepped on the check's thread with the service's fake
 (`EchoTest/Linked/Echo/Packages.lean`), the package properties and a
 running job's `say` over the real crate (the wiring module
 `EchoTest/Linked/Echo/Real/Job.lean`), and the two forced orders of a
-cancel of a job that handed its child to the crate.
+cancel of a job that handed its child to the crate. The wiring module's
+runner is given the package services the edge builds from `Echo.packages`
+(`Headless.packageServices`, which `Headless.shipped` calls and the linked
+test's root hands in, as only the root may import the headless host), so
+dropping `services` from `Echo.package`, or the packages' services from
+the edge's function, fails it. A check cannot run `Headless.shipped`
+itself there: it starts a pump, and the linked test has one already (one
+table and one pump a process, `Editor/Test/Linked/Services.lean`).
 
 The port is phrased in the editor's terms, not the crate's. For ACP the
 crate holds the JSON-RPC connection on its own threads and hands Lean

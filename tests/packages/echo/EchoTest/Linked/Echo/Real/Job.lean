@@ -16,14 +16,20 @@ import Editor.Test.Linked.Services
 The crate's service as the job runner's package service
 (`Echo.Real.service`), over the linked test kit's real services and the
 completion pump running over their table (`Editor.Test.Linked.Services`):
-a runner given it by name (`Job.Services.packages`) and the fake recorder
+a runner given the package services the program's edge builds from echo's
+packages (`Editor.Headless.packageServices Echo.packages`, which
+`Headless.shipped` gives its runner and the linked test's root hands in
+here, as only the root may import the headless host) and the fake recorder
 runs jobs that ask it through the job port, each request completed by the
 crate on the library's completion queue, which only the crate posts on for
-it.
+it. So a package that stops bringing its service (`Package.services`), or
+an edge that stops handing the packages' services on, fails every check
+here.
 
-- **A job's `say`** (AC1, over the real crate): `Echo.Job.say "hello"`
-  finishes with the text and the checksum the crate took from the system's
-  zlib, which is the pure one (`Echo.checksum`).
+- **A job's `say`** (AC1, over the real crate, through the edge's package
+  services): `Echo.Job.say "hello"` finishes with the text and the checksum
+  the crate took from the system's zlib, which is the pure one
+  (`Echo.checksum`).
 - **The package properties** (`JobContract.packageProperties`) hold of the
   crate: a request's reply, an unknown service, two requests in flight, a
   job cancelled in its wait on an attach whose child only a cancel ends,
@@ -49,11 +55,12 @@ open Editor
 open Editor.Test
 
 /-- The runner over `services`, the linked kit's real services, given the
-crate's service and recording to `recorder`. -/
-def jobRunner (services : Editor.Test.Linked.Services) (recorder : Job.FakeRecorder) :
-    Job.Services :=
+package services `packages`, the edge's for echo's packages, and recording
+to `recorder`. -/
+def jobRunner (services : Editor.Test.Linked.Services) (packages : Job.PackageServices)
+    (recorder : Job.FakeRecorder) : Job.Services :=
   { services.jobs with
-    packages := Job.PackageServices.of #[Echo.Real.service], recorder := recorder.recorder }
+    packages, recorder := recorder.recorder }
 
 /-- How the job behind `handle` ended, waited for on its outcome, the kit's
 patience a hang guard; its value read back. -/
@@ -92,21 +99,21 @@ private def opened (services : Editor.Test.Linked.Services) (directory : System.
   | .error _ =>
     return none
 
-/-- The crate as a package property's rig, over `services`: each run on a
-runner of its own recording to `recorder`; two jobs spawned before either is
+/-- The crate as a package property's rig, over `services` and the package
+services `packages`: each run on a runner of its own recording to `recorder`; two jobs spawned before either is
 awaited; a job held in its package wait on an attach of a child that only a
 cancel ends, cancelled once it serves that wait, its child ended after; and
 a flush asked behind a `say` started at the service. -/
-def echoRig (services : Editor.Test.Linked.Services) (recorder : Job.FakeRecorder) :
-    JobContract.PackageRig
+def echoRig (services : Editor.Test.Linked.Services) (packages : Job.PackageServices)
+    (recorder : Job.FakeRecorder) : JobContract.PackageRig
     where
   name := "the runner over the echo crate"
   subject := echoSubject
   run job := do
-    endedOf (← Job.spawn (jobRunner services recorder) (reporting fun _ => job) (pure ()))
+    endedOf (← Job.spawn (jobRunner services packages recorder) (reporting fun _ => job) (pure ()))
   both :=
     some fun first second => do
-      let runner := jobRunner services recorder
+      let runner := jobRunner services packages recorder
       let one ← Job.spawn runner (reporting fun _ => first) (pure ())
       let two ← Job.spawn runner (reporting fun _ => second) (pure ())
       let one ← endedOf one
@@ -120,7 +127,7 @@ def echoRig (services : Editor.Test.Linked.Services) (recorder : Job.FakeRecorde
           -- attach's.
           let held ← Job.FakeRecorder.new
           let handle ←
-            Job.spawn (jobRunner services held)
+            Job.spawn (jobRunner services packages held)
                 (reporting fun _ => do
                   discard <| Echo.Job.attach ⟨child.toNat⟩
                   return true)
@@ -139,21 +146,24 @@ def echoRig (services : Editor.Test.Linked.Services) (recorder : Job.FakeRecorde
       let (id, wait) ← services.completions.register
       unless ← Echo.Real.service.start id echoSubject.request do
         throw (IO.userError "the crate did not take the say")
-      let flushed ← (jobRunner services recorder).flushed (.package Echo.serviceName)
+      let flushed ← (jobRunner services packages recorder).flushed (.package Echo.serviceName)
       let completed ← Job.awaitWithin Editor.Test.Linked.patience flushed
       let before ← wait.isResolved
       discard <| Echo.Real.service.take id echoSubject.request
       return (completed == some .completed, before)
 
 /-- The checks of the crate's service reached by running jobs, over
-`services`, whose pump is running. -/
-def echoJobChecks (services : Editor.Test.Linked.Services) : List Check :=
+`services`, whose pump is running, and the package services `packages`: the
+edge's for echo's packages (`Editor.Headless.packageServices`), which the
+linked test's root hands in. -/
+def echoJobChecks (services : Editor.Test.Linked.Services) (packages : Job.PackageServices) :
+    List Check :=
   [{  name :=
-        "AC1, over the real crate: a running job's say of hello finishes with hello and the checksum the crate took from zlib, which is the pure one"
+        "AC1, over the real crate, through the package services the edge builds from echo's packages: a running job's say of hello finishes with hello and the checksum the crate took from zlib, which is the pure one"
       run := do
         let recorder ← Job.FakeRecorder.new
         let handle ←
-          Job.spawn (jobRunner services recorder)
+          Job.spawn (jobRunner services packages recorder)
               (reporting fun _ => do
                 let reply ← Echo.Job.say "hello"
                 return reply.toOption.any (· == Echo.Reply.to "hello"))
@@ -164,7 +174,7 @@ def echoJobChecks (services : Editor.Test.Linked.Services) : List Check :=
         "the package properties hold of the runner over the echo crate, and every trace they recorded replays on the protocol's model with its package waits as service waits"
       run := do
         let recorder ← Job.FakeRecorder.new
-        let failed ← JobContract.packageFailures [echoRig services recorder]
+        let failed ← JobContract.packageFailures [echoRig services packages recorder]
         unless failed.isEmpty do
           return ← saw false s!"{failed}"
         let trace ← recorder.trace

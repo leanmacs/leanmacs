@@ -911,7 +911,7 @@ and changes on disk:
   the service's reply, a `Dynamic` the package's typed wrapper reads back
   (`askAs`), or a refusal as a value. The program's edge hands the runner
   every package's services by name (`Headless.shipped`,
-  `Job.Services.packages`); a service it was not given is `noSuchService`
+  `Headless.packageServices`, `Job.Services.packages`); a service it was not given is `noSuchService`
   at once, with no wait. The wait is a service wait: it keeps the job's
   unit, the service completes it through the completion queue as the
   core's do, and a cancel withdraws it at every package service
