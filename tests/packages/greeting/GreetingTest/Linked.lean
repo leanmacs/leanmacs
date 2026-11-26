@@ -19,7 +19,8 @@ as its arguments.
 
 It is one executable for both of what the core has two for
 (`docs/design/packages.md`, "A package's tests and the gate's steps over
-them"), and holds a check of each kind:
+them"), and holds a check of each kind, and one of the package's own `initialize`
+(`initializeCheck`): it ran in this executable, linked as the editor is:
 
 - **Against the Rust library**, as `ffi-test` and `contract-test` are the
   core's: a command over the text port's real binding (`libraryCheck`).
@@ -110,20 +111,32 @@ def configCheck (sysroot oleans : String) : IO Bool :=
           s!"FAILED: the config session did not run greeting-hello for config's key; it printed {lines}"
       return false
 
-/-- Runs both checks and exits 0 when both hold, 1 when one does not, and 2
+/-- Whether the package's `initialize` ran in this executable, which is
+linked as the editor is: the ref it sets (`Greeting.initialized`) holds
+`true`. It says what it found. -/
+def initializeCheck : IO Bool := do
+  if ← Greeting.initialized.get then
+    IO.println "greeting linked test: the package's initialize ran in the linked executable"
+    return true
+  else
+    IO.eprintln "FAILED: the package's initialize did not run in the linked executable"
+    return false
+
+/-- Runs the three checks and exits 0 when all hold, 1 when one does not, and 2
 for a command line that is not the two directories. The exit is explicit,
 after the library's services are shut down and its queues quit, as the
 headless mode's is: a task may still be blocked in the library. -/
 def main (arguments : List String) : IO UInt32 := do
   match arguments with
   | [sysroot, oleans] =>
+    let initialized ← initializeCheck
     let library ← libraryCheck
     let config ← configCheck sysroot oleans
     (← IO.getStdout).flush
     Editor.Ffi.processesShutdown
     Editor.Ffi.watchesShutdown
     Editor.Ffi.quit
-    IO.Process.exit (if library && config then 0 else 1)
+    IO.Process.exit (if initialized && library && config then 0 else 1)
   -- No module of the wiring set: it lists none, so `tools/package-set.sh
   -- --wiring run`, the stress loop's `linked-wiring`, skips it.
   | ["wiring-modules"] =>

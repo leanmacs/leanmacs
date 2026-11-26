@@ -18,11 +18,25 @@ two commands, each of which puts a text in the echo area:
   `greeting-loud` registers the same name with another text, so which
   text an editor shows says which of the two registered later.
 
+Its `initialize` sets `initialized`, so its linked test sees that a
+package's module initializers run in an executable linked as the editor
+is.
+
 It imports the editor API, the package type and the interface package
 `greeting-api`, and nothing else.
 -/
 
 namespace Greeting
+
+/-- Whether this module's `initialize` has run: made `false`, and set
+`true` by the `initialize` below, so an executable that links the package
+and runs its module initializers, as the editor does, reads `true`
+(`GreetingTest.Linked`'s `initializeCheck`). -/
+initialize initialized : IO.Ref Bool ←
+  IO.mkRef false
+
+initialize
+  initialized.set true
 
 /-- What `greeting-hello` says. -/
 def helloText : String :=
