@@ -206,6 +206,28 @@ def grammarRegisterChecks : List Check :=
                 s!"grammar `ini`: /g/queries/indents.scm: {FileError.notAFile.describe}" &&
               answered.loop.state.grammars.answerOf? 1 "ini" ==
                 some (.registered { highlights := some declaredHighlights, indents := none }) &&
-              answered.loop.state.grammars.registered == #["ini"] }]
+              answered.loop.state.grammars.registered == #["ini"] },
+    { name :=
+        "the command of a job of an older config generation than the recorded answers' records nothing, highlights nothing again and says nothing: a .ini buffer opened before it stays plain and the newer answers stay"
+      run :=
+        pure <|
+          let libraries :=
+            #[("/g/libtree-sitter-ini.so", .exports #[("tree_sitter_ini", .grammar)])]
+          match
+            installedWith declaresIni libraries
+              #[("/g/queries/highlights.scm", declaredHighlights)] with
+          | none => false
+          | some driver =>
+            let newer : Language.Grammar.Answers :=
+              { generation := 2, answers := #[("ini", .refused (.refused .notFound) true)] }
+            let recorded :=
+              (driver.stepped
+                  (driver.loop.deliver driver.handed "newer answers" (setGrammarAnswers newer))).1
+            let before := openedIn recorded "/w/a.ini"
+            let (answered, delivered) := before.finish 1
+            delivered.isSome && answered.loop.state.grammars == newer &&
+              attachedGrammars answered == #[] &&
+              highlighters answered == #[] &&
+              answered.loop.state.echo == "" }]
 
 end ModelTest

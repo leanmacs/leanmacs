@@ -2069,6 +2069,23 @@ are checked. -/
 def isGreetError (echo : String) : Bool :=
   echo.startsWith "\"reload: Config/Greet.lean:3:" && (echo.splitOn ": error: ").length == 2
 
+/-- A config whose `setup` declares the grammar `name` from a library under
+`/g`, which the stepped stage cannot register. -/
+def declaringGrammar (name : String) : String :=
+  s!"def setup : SetupM Unit := do\n  defineGrammar \"{name}\" \"/g/libtree-sitter-{name}.so\"\n"
+
+/-- Each line of `lines` about the core's `register-grammars` job, in order,
+as the job's id and what the line says of it: `started`, `cancelled`, or how
+its command ended. -/
+def grammarJobLines (lines : Array String) : List (String × String) :=
+  lines.toList.filterMap fun line =>
+    match line.splitOn s!" {Language.Grammar.jobName}: " with
+    | [head, said] =>
+      match head.splitOn "job " with
+      | ["", id] => some (id, said)
+      | _ => none
+    | _ => none
+
 /-- The checks of a reload's errors in the echo area (`Config.Report.echo`,
 `Editor/Headless.lean`), through the host with the real elaborator over a
 config directory. -/
@@ -2116,10 +2133,7 @@ def reloadEchoChecks (context : Context) : List Check :=
     { name :=
         "a reload that installs a config declaring a grammar starts the job register-grammars, and its command says in the echo area that the grammar ini's registration failed, so its languages have no syntax tree"
       run :=
-        withHost context
-          [("init.lean",
-              "def setup : SetupM Unit := do\n  defineGrammar \"ini\" \"/g/libtree-sitter-ini.so\"\n")]
-          fun session => do
+        withHost context [("init.lean", declaringGrammar "ini")] fun session => do
           session.ask [.reload]
           session.step
           let lines ← session.lines
@@ -2129,6 +2143,26 @@ def reloadEchoChecks (context : Context) : List Check :=
               line.startsWith "job " && line.endsWith s!" {Language.Grammar.jobName}: started"
           saw
               (started && echo.startsWith "\"grammar `ini`: the grammar's registration failed: " &&
+                echo.endsWith ", so its languages have no syntax tree\"")
+              s!"lines={lines} echo={echo}" },
+    { name :=
+        "a second install before the first install's register-grammars job is stepped cancels that job, so only the second job's command runs: the echo area says the second config's grammar conf, never the first's ini"
+      run :=
+        withHost context [("init.lean", declaringGrammar "ini")] fun session => do
+          session.ask [.reload]
+          session.write "init.lean" (declaringGrammar "conf")
+          session.ask [.reload]
+          session.step
+          let lines ← session.lines
+          let echo ← session.echo
+          let held :=
+            match grammarJobLines lines with
+            | [(first, "started"), (cancelled, "cancelled"), (second, "started"), (ended, "ok")] =>
+              first == cancelled && second == ended && first != second
+            | _ => false
+          saw
+              (held && lines.any (·.startsWith "reload 2: installed") &&
+                echo.startsWith "\"grammar `conf`: " &&
                 echo.endsWith ", so its languages have no syntax tree\"")
               s!"lines={lines} echo={echo}" }]
 

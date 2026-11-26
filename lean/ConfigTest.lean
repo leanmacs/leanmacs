@@ -400,7 +400,8 @@ show:
   one rejected before the frame is made is said once it is; and one that
   installs a config declaring a grammar starts the job `register-grammars`,
   whose command says the registration failed on the stepped stage, which
-  has no grammar service;
+  has no grammar service, and a second install before that job is
+  stepped cancels it, so only the second job's command runs;
 - `faceChecks`: a face set in a config file reaches the next frame,
   through a host handed the display's real binding over the library's
   layout: the host's reload re-themes its display (`Config.retheme`), and

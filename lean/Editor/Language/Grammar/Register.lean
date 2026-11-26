@@ -53,15 +53,17 @@ query directory (`Language.Grammar.queryFiles`) under
 
 The job is owned by `config`, so the next install's `cancelJobs config`
 removes it before that install starts its own, and its command never runs.
-Answers of an older generation are never read
+Should an older generation's command run all the same, it does nothing
+once answers of a later generation are recorded, so it cannot replace
+them. Answers of an older generation are never read
 (`Language.Grammar.Answers.answerOf?`), and a buffer whose mode is set
 before the command is drawn plain (`Language.Grammar.treeOf`), so no
 buffer's tree depends on when the job ends.
 
 Pinned by `ModelTest.grammarRegisterChecks` (from the reducer's effect,
 through `Loop.Driver`, on the job model and the editor's models), by
-`ConfigTest.reloadEchoChecks` (the host's start of the job, on the stepped
-host), and by `ContractTest.grammarDeclarationChecks` (the job on the real
+`ConfigTest.reloadEchoChecks` (the host's start of the job, and the next
+install's cancel of it, on the stepped host), and by `ContractTest.grammarDeclarationChecks` (the job on the real
 grammar and file services, and the command on the real syntax tree).
 -/
 
@@ -138,9 +140,13 @@ def answersOf (previous : Answers) (generation : Nat) (replies : Array Reply) :
 
 /-- The job's command: the answers recorded for `generation`, every buffer
 of a declared grammar's language highlighted again, and the sentences said
-last (the module docs). -/
+last (the module docs); nothing at all when the answers recorded are of a
+later generation. -/
 def installed (generation : Nat) (replies : Array Reply) : EditorM Unit := do
-  let (answers, sentences) ← answersOf (← editorState).grammars generation replies
+  let previous := (← editorState).grammars
+  if previous.generation > generation then
+    return
+  let (answers, sentences) ← answersOf previous generation replies
   setGrammarAnswers answers
   rehighlightGrammars (replies.map (·.grammar.name))
   unless sentences.isEmpty do

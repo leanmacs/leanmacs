@@ -3740,7 +3740,9 @@ otherwise be a cycle).
     refusals last. A buffer whose mode is set while the job runs is drawn
     plain, with nothing attached and nothing said, until the command
     highlights it; answers of an older generation are never read
-    (`Language.Grammar.treeOf`). The editor thread waits for none of it.
+    (`Language.Grammar.treeOf`), and an older generation's command, should
+    one run, does nothing over a later generation's answers. The editor
+    thread waits for none of it.
   - *Overrides and refusals.* A declaration named as a compiled-in grammar
     replaces it for buffers highlighted after the registration. A refusal
     is said in the echo area, ``grammar `<name>`: <why>, so <what stays>``:
@@ -3782,7 +3784,7 @@ the problems and `treeOf`, pure), `ModelTest.setupChecks` and
 `ModelTest.modeEnterChecks` (the resolution and highlighting again),
 `ModelTest.grammarRegisterChecks` (the job and its command, through the
 loop's driver), `ConfigTest.reloadEchoChecks` (the host's start of the
-job) and `ContractTest.grammarDeclarationChecks` (the fixture grammar
+job, and the next install's cancel of it) and `ContractTest.grammarDeclarationChecks` (the fixture grammar
 library declared, registered, read and drawn over the real library).
 
 ### Why this shape

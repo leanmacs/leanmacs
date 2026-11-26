@@ -1222,8 +1222,10 @@ names a scheme's key:
   until the job's command and highlighted from it on, opened before or
   after; a refused new grammar said, its buffers left plain; a refused
   declaration of the compiled-in `lean` said to keep it, and its buffers
-  keeping it; a registered `lean` taking the compiled-in one's place; and
-  a query file that cannot be read said, the grammar still registered;
+  keeping it; a registered `lean` taking the compiled-in one's place; a
+  query file that cannot be read said, the grammar still registered; and
+  the command of an older generation's job doing nothing over the answers
+  of a later one;
 - `modeRegistryChecks`: modes in the registry
   (`Editor/Config/Registry.lean`): a mode's lineage, and the active keymaps
   of a view, in precedence order;
