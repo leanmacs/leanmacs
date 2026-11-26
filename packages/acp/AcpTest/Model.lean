@@ -1,0 +1,35 @@
+import AcpTest.Acp.Codec
+import AcpTest.Acp.Service
+
+/-!
+# The test driver of the package `acp`
+
+`lake test` builds and runs this (`mise run lean-test`, through
+`tools/package-set.sh test`). It imports no module that binds the crate
+(`Acp.Real`), so it links no glue and no Rust archive. It only imports the
+test modules and runs their checks:
+
+- `codecChecks`: the crate's text read into `agents-api`'s values
+  (`Acp/Codec.lean`), on the golden lines `rust/src/event.rs`'s tests hold;
+- `serviceChecks`: the service `agents` over a binding written in the test
+  (`Acp/Service.lean`).
+
+The service over the real crate, with `agents-api`'s contract, is the
+linked test's (`AcpTest/Linked.lean`).
+-/
+
+/-- Every check of the test driver, in the order they run. -/
+def AcpTest.checks : List AcpTest.Check :=
+  AcpTest.codecChecks ++ AcpTest.serviceChecks
+
+/-- Runs the checks and prints each that failed; the exit status is 1 when
+one did. -/
+def main : IO UInt32 := do
+  let failed ← AcpTest.failures AcpTest.checks
+  for name in failed do
+    IO.eprintln s!"FAILED: {name}"
+  if failed.isEmpty then
+    IO.println s!"acp-test: {AcpTest.checks.length} checks passed"
+    return 0
+  else
+    return 1
