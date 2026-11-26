@@ -1782,21 +1782,23 @@ fn lines_of(deliveries: &[Delivery], stream: Stream) -> Vec<Vec<u8>> {
         .iter()
         .flat_map(|delivery| match frames_of(delivery, stream) {
             Frames::Lines(lines) => lines.clone(),
-            Frames::Bytes(_) => Vec::new(),
+            Frames::Bytes(_) | Frames::Messages(_) => Vec::new(),
         })
         .collect()
 }
 
-/// How many bytes `frames` stand for, a line feed counted for each line.
+/// How many bytes `frames` stand for, a line feed counted for each line
+/// and a message's body alone for each message.
 fn frame_bytes(frames: &Frames) -> usize {
     match frames {
         Frames::Lines(lines) => lines.iter().map(|line| line.len() + 1).sum(),
         Frames::Bytes(bytes) => bytes.len(),
+        Frames::Messages(bodies) => bodies.iter().map(Vec::len).sum(),
     }
 }
 
 /// The bytes of `stream` in `deliveries`, end to end, a line feed after
-/// each line.
+/// each line and each message's body alone.
 fn bytes_of(deliveries: &[Delivery], stream: Stream) -> Vec<u8> {
     let mut all = Vec::new();
     for delivery in deliveries {
@@ -1808,6 +1810,7 @@ fn bytes_of(deliveries: &[Delivery], stream: Stream) -> Vec<u8> {
                     all.push(b'\n');
                 }
             }
+            Frames::Messages(bodies) => all.extend(bodies.iter().flatten()),
         }
     }
     all

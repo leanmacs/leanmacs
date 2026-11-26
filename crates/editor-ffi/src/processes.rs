@@ -99,11 +99,14 @@
 //! | A refusal | 1, 2, 3, 4, 6, 7, as a run's | |
 //! | Input closed | 8 | |
 //! | Opened | 10 | |
-//! | Delivered | 11 | for each stream, out then err: its framing (0 lines, 1 bytes), and for lines their count and each one's length; then the end: 0 not yet, 1 exited and the exit's kind and number, 2 a line too long and its stream (0 out, 1 err) and the bound, 3 a read that failed, whose words the detail is |
+//! | Delivered | 11 | for each stream, out then err: its framing (0 lines, 1 bytes, 2 messages), and for lines and messages their count and each one's length; then the end: 0 not yet, 1 exited and the exit's kind and number, 2 a line too long and its stream (0 out, 1 err) and the bound, 3 a read that failed, whose words the detail is |
 //! | Written | 12 | |
 //!
 //! A delivery's two buffers are its streams' bytes, the lines end to end
-//! without their line feeds.
+//! without their line feeds, and the messages' bodies end to end without
+//! their headers. Messages (framing 2) are `editor-service`'s
+//! `Content-Length` framing, which an open's words do not spell yet: no
+//! child Lean opens delivers them.
 //!
 //! # The C functions
 //!
@@ -330,20 +333,28 @@ pub fn encoded(result: RunResult) -> Encoded {
     }
 }
 
-/// The words of `frames`: its framing (0 lines, 1 bytes), and for lines
-/// their count and each one's length; and its bytes end to end.
+/// The words of `frames`: its framing (0 lines, 1 bytes, 2 messages), and
+/// for lines and messages their count and each one's length; and its bytes
+/// end to end.
+///
+/// The match on `editor-service`'s [`Frames`] is exhaustive on purpose, as
+/// [`encoded_stream`]'s is: each framing crosses the C boundary as a word
+/// this function chooses. Messages (word 2) are a framing no child Lean
+/// opens yet: an open's framing words are 0 and 1 alone ([`open_of`]).
 fn frames_words(frames: Frames, words: &mut Vec<u64>) -> Vec<u8> {
+    let counted = |framing, frames: Vec<Vec<u8>>, words: &mut Vec<u64>| {
+        words.push(framing);
+        words.push(frames.len() as u64);
+        words.extend(frames.iter().map(|frame| frame.len() as u64));
+        frames.concat()
+    };
     match frames {
         Frames::Bytes(bytes) => {
             words.push(1);
             bytes
         }
-        Frames::Lines(lines) => {
-            words.push(0);
-            words.push(lines.len() as u64);
-            words.extend(lines.iter().map(|line| line.len() as u64));
-            lines.concat()
-        }
+        Frames::Lines(lines) => counted(0, lines, words),
+        Frames::Messages(bodies) => counted(2, bodies, words),
     }
 }
 
@@ -1155,6 +1166,24 @@ pub(crate) mod tests {
         );
         assert_eq!(encoded.stdout, "oneé".as_bytes());
         assert_eq!(encoded.stderr, b"\xffb");
+    }
+
+    #[test]
+    fn a_deliverys_messages_cross_as_framing_two_their_count_and_each_bodys_length() {
+        let reply = delivered(
+            Frames::Messages(vec![b"{}".to_vec(), Vec::new(), b"\xffx".to_vec()]),
+            lines(&[]),
+            None,
+        );
+
+        let encoded = encoded_stream(reply);
+
+        assert_eq!(
+            encoded.words,
+            [2, 3, 2, 0, 2, 0, 0, 0],
+            "messages, three of them and their bodies' lengths; no lines; not ended"
+        );
+        assert_eq!(encoded.stdout, b"{}\xffx");
     }
 
     #[test]

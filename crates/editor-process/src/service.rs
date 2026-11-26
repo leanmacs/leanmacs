@@ -186,7 +186,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 
-use crate::frame::{Frames, Framing, Outbox};
+use crate::frame::{Fault, Frames, Framing, Outbox};
 use crate::{
     Child, ChildInput, Command, Exit, Input, Output, Processes, Refusal, RefusalKind, Stream,
     refusal_before_spawn,
@@ -1789,7 +1789,9 @@ fn stream_reader<P: Processes>(
             }
             Ok(count) => {
                 streamed.outbox.push(stream, &buffer[..count.min(want)]);
-                if streamed.outbox.too_long(stream) && streamed.failed.is_none() {
+                if streamed.outbox.fault(stream) == Some(Fault::LineFillsBound)
+                    && streamed.failed.is_none()
+                {
                     // A partial line fills the bound. It is a last line if
                     // the stream ends here, and longer than the bound if one
                     // more byte comes: look one byte further, kept outside
@@ -3002,6 +3004,7 @@ mod streaming {
                         all.push(b'\n');
                     }
                 }
+                Frames::Messages(bodies) => all.extend(bodies.iter().flatten()),
             }
         }
         all
