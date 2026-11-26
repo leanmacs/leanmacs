@@ -38,7 +38,12 @@ use std::process::{Command, Output};
 
 use tempfile::TempDir;
 
-/// The workspace: two directories above this crate's manifest.
+/// The workspace: two directories above this crate's manifest, with its
+/// links resolved, as the paths the build records are.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the on-demand install check resolves the real checkout's directory, which it hands the real build"
+)]
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -87,10 +92,6 @@ fn copy_tree(from: &Path, to: &Path) {
 }
 
 /// Runs `command` to success and returns what it wrote.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the on-demand install check runs the real editor and Lake in its own temporary directory"
-)]
 fn succeeded(what: &str, command: &mut Command) -> Output {
     let out = command
         .output()
