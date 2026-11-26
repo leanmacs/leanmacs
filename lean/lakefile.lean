@@ -834,7 +834,7 @@ def setRootName : Name :=
 
 /-- The keyword a Lake package declares in its lakefile when it supplies
 the editor's input scheme (`keywords = ["editor-input-scheme"]`, Lake's own
-package key, as `editor-interface` is, `layerOf`): its entry module then
+package key): its entry module then
 declares `scheme : Editor.SchemePackage` beside `packages`, in the
 namespace of its own name (`docs/design/packages.md`, "Input schemes").
 Lake is asked for the keyword, so the build reads no source: a package
@@ -1510,43 +1510,6 @@ package_facet editorPackages pkg : Array String := do
       | some mod => s!"{mod.name}\t{linkedFile mod}"
       | none => "-\t-"
     lines := lines.push s!"{dep.baseName.toString (escape := false)}\t{dep.dir}\t{linked}"
-  return Job.pure lines
-
-/-- The layer of the Lake package `dep` in the three-layer import rule
-(`docs/design/extension-points.md`, "Three layers"): `core` for this
-package, `interface` for a package whose lakefile declares the keyword
-`editor-interface` (`keywords = ["editor-interface"]`, Lake's own package
-key), and `implementation` for every other package, so a misspelt keyword
-makes a package more refused, never less. -/
-def layerOf (dep : Package) : String :=
-  if dep.keyName == __name__ then "core"
-  else if dep.keywords.contains "editor-interface" then "interface" else "implementation"
-
-/-- The packages of a set as a graph, for the pre-commit hook
-(`tools/hook-targets.sh`; `lake -d <set dir> query :editorPackageGraph`;
-`docs/dev-practices/the-gate.md`, "The pre-commit hook"). For each package
-a gate step runs over (`editorPackages`), in the same order, each after the
-packages it requires, one line, its fields separated by tabs: its name, its
-layer (`layerOf`), its directory, and the names of the packages it requires
-directly that are themselves such packages, separated by spaces, or `-`
-when there is none (the core is never one). It builds nothing. -/
-package_facet editorPackageGraph pkg : Array String := do
-  let ws ← getWorkspace
-  let isGatePackage (dep : Package) : Bool :=
-    dep.keyName != __name__ && dep.remoteUrl.isEmpty && !dep.leanLibs.isEmpty
-  let mut lines : Array String := #[]
-  for dep in setPackages ws pkg do
-    unless isGatePackage dep do
-      continue
-    let required :=
-      dep.depConfigs.filterMap fun cfg =>
-        match ws.findPackageByName? cfg.name with
-        | some req =>
-          if isGatePackage req then some (req.baseName.toString (escape := false)) else none
-        | none => none
-    let requires := if required.isEmpty then "-" else " ".intercalate required.toList
-    lines :=
-      lines.push s!"{dep.baseName.toString (escape := false)}\t{layerOf dep}\t{dep.dir}\t{requires}"
   return Job.pure lines
 
 /-- The checks of the boundary with the Rust library (`FfiTest.lean`), linked

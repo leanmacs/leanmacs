@@ -20,9 +20,8 @@ user-sets-test`); the C format check; and the workflow lint
 (`mise run workflow-lint`: actionlint, zizmor and the structural check of
 the CI workflow). `hk check` runs the same task, and CI runs it, unchanged,
 on `macos-26` and on `ubuntu-24.04` for every push and pull request
-([`ci.md`](ci.md)). The pre-commit hook runs less: only the steps whose
-files are staged, and of the Lean and Rust steps only what the staged
-change reaches ("The pre-commit hook", below).
+([`ci.md`](ci.md)). The pre-commit hook runs it too, when a staged path
+is one the gate reads ("The pre-commit hook", below).
 
 The gate opens no window, makes no surface on one, reads and writes no
 clipboard, and needs neither a display nor Docker. Every window it runs is
@@ -1782,18 +1781,13 @@ package's tests are by convention are in
   packages hold no linked test and no fixture at all.
 - **`--only <package>`**, given once for each package and before the
   step, runs the step over the named packages of the set alone, in the
-  set's order; `build` still builds the set's editor first. It is what the
-  pre-commit hook runs for a change that reaches only some packages ("The
-  pre-commit hook", below). A name that is no package of the set is exit 2,
-  naming it. `run` over the named packages still refuses to run nothing,
-  unless `--allow-empty-run` is given too, as the hook does for a change
-  to an interface package such as `greeting-api`, which has no linked test
-  and no fixture; the gate's own steps run over every package and never
-  pass it, and the script refuses it without `--only`. `lean-test` shows
-  `--only greeting test` testing `greeting` alone and `--only nosuch`
-  refused; `ffi-test` shows `--only greeting-api run` refused and, with
-  `--allow-empty-run`, printing `package-set: ran 0 linked tests and 0
-  headless fixtures over 1 package`.
+  set's order; `build` still builds the set's editor first. A name that is
+  no package of the set is exit 2, naming it. `run` over the named
+  packages still refuses to run nothing: over an interface package such
+  as `greeting-api`, which has no linked test and no fixture, it is exit
+  2. `lean-test` shows `--only greeting test` testing `greeting` alone and
+  `--only nosuch` refused; `ffi-test` shows `--only greeting-api run`
+  refused.
 - **The fixture's own checks.** `greeting`: three checks in its driver
   (`GreetingTest/Greeting.lean`), and the contract check of
   `greeting-api`, which it implements; a linked test
@@ -2088,168 +2082,28 @@ included; A's three processes about 13 s.
 hk run pre-commit
 ```
 
-The pre-commit hook (`hk.pkl`, `pre-commit`) runs only the steps whose
-files are staged: `fmt`, `rust` and `c` for Rust and C, `workflows` for
-the CI workflow, and `lean` for what Lake builds. Within the `lean` step,
-what runs is decided from the staged paths and Lake's package graph by
-`tools/hook-targets.sh` (`lake -d ../tests/packages query
-:editorPackageGraph`: each package of the fixture set with its layer, its
-directory and the packages of the set it requires), and run by
-`tools/lean-hook.sh`. The decision itself, which nodes of a graph the
-staged paths reach, is one tool both hooks share,
-`tools/graph-targets.sh`: `hook-targets.sh` and the Rust hook's
-`rust-targets.sh` only choose the paths their step reads and turn their
-tool's graph into its lines (a name, a directory, whether a change to the
-node reaches the nodes that require it, and what it requires). The Lean
-hook's dispatcher prints the decision first: `lean-hook: core`,
-`lean-hook: packages <names>` or `lean-hook: nothing`. The full gate is
-not targeted: `hk check`, `mise run ci` and CI run every check, whatever
-changed. **Targeting may skip a check at commit time; the gate never
-does.**
+The pre-commit hook (`hk.pkl`, `pre-commit`) and `hk check` have one
+step, `mise_ci`, which runs `mise run ci` when any staged path matches
+its glob, and nothing else. The glob is every file the gate reads: the
+Rust, C and Cargo files wherever they are, the crates and the vendored
+grammar they build from (`crates/**`, `vendor/**`, since `include_str!`
+pulls in query files and the renderer its shader), the Lean core
+(`lean/**`), the package sets and the fixtures (`packages/**`,
+`tests/**`), the default config (`config/**`), the writing guide's
+example package (`docs/packages/*/**`, which the fixture set requires),
+every script the gate runs (`tools/**`), what the bundle steps stage
+(`packaging/**`), the CI workflows and the files the workflow lint
+compares them with, `mise.toml`, the tools' configs (`deny.toml`,
+`clippy.toml`, `.clang-format`) and `hk.pkl` itself. A commit that stages
+only other files (the rest of `docs/`, `README.md`, `.agents/`, `infra/`
+beside the workflow lint's `actions.tf`) runs no step.
 
-| A commit that stages | Runs in the `lean` step |
-|---|---|
-| Files inside one implementation package's directory (`packages/compile/`, `tests/packages/greeting/`, `docs/packages/word-count/`) | That package's checks alone (`lean-packages`, below) |
-| Files inside an interface package's directory (`tests/packages/greeting-api/`) | That package's checks and those of every package that requires it, directly or through any other package, an implementation package included: Lake puts every package a package requires, directly or not, in its workspace, so the package can import the interface, which the three-layer rule allows (`.agents/rules/structure.md`). No other package's |
-| Rust or C inside a package's directory (`tests/packages/echo/rust/`) | That package's Lean checks, as above; the `rust` or `c` step runs as for any Rust or C |
-| Any other file a Lean step reads: the core (`lean/`), a set's own lakefile or manifest, the core's fixtures under `tests/`, `config/`, `mise.toml`, Rust or C outside a package, the hook's own tools (`tools/hook-targets.sh`, `tools/graph-targets.sh`, `tools/lean-hook.sh`, `tools/package-set.sh`) | The core's whole chain, `mise run lean-fmt` and `mise run ffi-test`, which run every package's checks too, as before the hook was targeted |
-| Only files no Lean step reads: `docs/` but a package's directory under `docs/packages/` (the guide's example package, which the fixture set requires), plans and notes, other tools | No Lean step: no file matches the step's glob |
-
-A path inside two packages' directories belongs to the inner one. A
-commit that stages several kinds runs the union, and any path that
-reaches the core runs the core's chain. A package added under
-`packages/` or `tests/packages/` and required by its set is targeted with
-no edit to `hk.pkl`: the graph is the only list of packages, and
-`ffi-test` requires a file in the directory of every package of the
-fixture set to reach that package, so a package Lake lists that the hook
-would not target fails the gate.
-
-**What a package's checks are** (`mise run lean-packages`, with the names
-in `LEAN_HOOK_PACKAGES`, which runs `tools/lean-packages.sh`; never part
-of `ci`), in order: the toolchain
-check; over the named packages of the fixture set (`tools/package-set.sh
---only`, "The package steps", above), the `test` step, with the `cargo`
-that fails first on the `PATH`; the `build` step, which first builds the
-set's editor, compiling whatever of the core and of the other packages is
-stale and linking, then the package's default targets under its linters
-and its linked test; the `fmt` step; the `run` step, with `--allow-empty-run` so an interface package,
-which has no linked test and no fixture, passes; and, for a named package
-that is also a default package, the default set's editor and the same
-`run` over it.
-
-**What a package's checks leave out**: the core's model tests (`lake
-test` in `lean/`), the build of the core's own targets (`ffi-test`,
-`config-test`, `contract-test`), lean-fmt over the core, every check in
-`ffi-test` that is the core's (the Rust bans check, the FFI, contract and config
-tests, the core's headless fixtures and the restart entries), the editors
-of `tests/empty-set` and `tests/user-link`, the launcher, and every other
-package's test, build, format check and run.
-
-**Edges the targeting accepts**, each caught by the full gate:
-
-- `greeting-loud` requires the implementation package `greeting` only to
-  register after it, and its fixture `reply` relies on `greeting`
-  registering the command it calls. A change to `greeting` alone runs
-  `greeting`'s checks, not `reply`.
-- The core's headless fixtures run on the default set's editor, which
-  links the default packages. A change to one of those packages does not
-  rerun them at commit time.
-
-**Pinned by the gate.** `lean-test` runs the shared decision over a graph
-written by hand (`tests/graph-targets/graph`): a node that propagates
-reaching every node that requires it, directly or through one that does
-not propagate; a node that does not, itself alone; a nested node, a
-prefix of another's name, the fallback, a union, and the same reach
-when a node that does not propagate is named before one whose walk
-passes through it (`order`, here and in tests/hook-targets/), each case's
-`expected` exactly; and refuses each graph under
-`tests/graph-targets/bad/` with exit 2. It runs the Lean adapter over a graph
-written by hand (`tests/hook-targets/graph`, its packages under `/repo`):
-each case under `tests/hook-targets/cases/` gives the staged paths and the
-exact decision, for one implementation package, an interface package
-(reaching the packages that require it through an interface package and
-through an implementation package), a package nested in another's directory, a
-package whose name is a prefix of another's, the core, the core with a
-package, docs alone, a set's lakefile and manifest, a core fixture, the
-hook's tools, Rust outside and inside a package, a package new under
-`packages/`, two packages, and a package under `docs/packages/` beside a
-guide, which reaches that package alone; and each graph under
-`tests/hook-targets/bad/` must be refused with exit 2. `ffi-test` requires
-the real graph of the fixture set to be `tests/hook-targets/fixture-set-graph`
-in its names, layers and requires, a change to `greeting-api`'s module to
-reach exactly `greeting-api`, `greeting` and `greeting-loud` when Lake is
-asked, and every package of the set to be targeted.
-
-The dispatchers are pinned too, with `--dry-run`, which prints each
-command instead of running it. `lean-test` runs `tools/lean-hook.sh` over
-the hand-written graph for one implementation package, an interface
-package, the core and docs alone, and requires exactly the decision and
-the commands in each case's `hook-expected`; and `tools/lean-packages.sh`
-for `compile` and `greeting` together and for `greeting` alone, requiring
-exactly `tests/hook-targets/lean-packages/compile-expected`, whose last
-two commands build the default set's editor and run `compile` over it,
-and `greeting-expected`, which never names the default set.
-
-**Time, before and after** (2026-11-20, an Apple M5 Max, 18 cores, 128 GB; `hk run pre-commit`
-with one file staged, a comment line appended to it, a distinct one each
-run so Lake rebuilds that module; three runs on a warm tree, min and
-median in seconds):
-
-| Staged | Before | After |
-|---|---|---|
-| One implementation package (`packages/compile/Compile.lean`) | 172.1 / 172.6 | 14.1 / 14.3 |
-| An interface package (`tests/packages/greeting-api/GreetingApi.lean`) | 173.6 / 174.5 | 14.6 / 16.4 |
-| The core (`lean/Editor/Core.lean`) | 169.7 / 170.0 | the same chain, plus the decision, 0.6 s |
-| `docs/` alone | 0.0 / 0.0 | 0.1 / 0.1 |
-
-The "before" runs of the one-package change were first taken while other
-processes held the machine at a load average of 50 to 90, and took 198 to
-325 s; the table gives the three quiet runs taken after. The core's
-"after" runs fell under that load too (283 to 303 s, and one failed on a
-fixture's 30 s join), so the table gives what is known instead: the hook
-runs the same two tasks as before, after a decision that takes 0.6 s.
-
-**The Rust step is targeted the same way.** `tools/rust-targets.sh`
-decides over Cargo's graph (`cargo metadata --no-deps`, read with yq;
-`--print-graph` prints it): a change inside a crate's directory reaches
-that crate and every crate that depends on it, directly or through
-another; any other path the step reads (`Cargo.lock`, the workspace's
-`Cargo.toml`, `mise.toml`, Rust outside a crate, the hook's own tools and
-fixtures) reaches the workspace. `tools/rust-hook.sh` runs `cargo clippy
--p <crates> --all-targets --locked -- -D warnings` and `cargo test -p
-<crates> --locked` for crates, and `mise run lint && mise run test` for
-the workspace. `mise run test` pins it: the cases under
-`tests/rust-targets/` over a crate graph written by hand, the refused
-graphs under `tests/rust-targets/bad/`, every crate of the workspace
-targeted as itself, and a change to `editor-service` reaching exactly
-`editor-service`, `editor-ffi` and `echo-service`; and, with
-`tools/rust-hook.sh --dry-run`, the commands for a crate no crate depends
-on, a crate others depend on, the workspace and docs alone, each case's
-`hook-expected`. It was measured before
-it was built, with one comment line appended to a crate's `src/lib.rs`,
-three runs each, both columns under the same background load (a load
-average of 70 to 100), so the times are long but the comparison holds:
-
-| A change to | Workspace (`mise run lint && mise run test`) | The crate and its dependents |
-|---|---|---|
-| `editor-release-std`, a leaf | 61.4 / 64.2 | 2.5 / 2.6 |
-| `editor-text`, in the middle (eight dependents, `editor-ffi` among them) | 76.4 / 80.1 | 45.5 / 47.0 |
-| `editor-service` (`editor-ffi`, `echo-service`) | 78.3 / 79.3 | 12.3 / 13.8 |
-
-Each saves at least 30 s or 30%, and the reach is Cargo's graph, so it
-was taken. A Rust change outside a package still runs the Lean step's core
-chain, which links the Rust library.
-
-**The core's own chain was not narrowed.** On the quiet run above,
-`lean-test` took 13.5 s, `lean` 7.2 s, `lean-fmt` over the core and every
-package about 27 s, and `ffi-test` 100.7 s, of which `contract-test` and
-`config-test` take about 19 s each, the package steps' `run` over the two
-sets about 11 s and the core's headless fixtures and restart entries most
-of the rest. Every core module is in the core's root and every test
-executable reaches it, so no core change could skip one by Lake's graph;
-and the hook's two `mise run` calls run `lean-test` and `lean` twice,
-about 20 s, under both thresholds. The numbers are in the rdm task
-`narrow-core-pre-commit`.
+The step passes or fails by `mise run ci`'s exit status. Which paths
+select it is `hk`'s glob alone; no script decides what to run. So the
+hook takes as long as the whole gate, by the owner's choice: a slower
+hook that runs everything over a faster one that a script narrows.
+Faster selection from the build graphs, by a tool rather than a shell
+script, is rdm task `build-graph-test-selection-tool`.
 
 ## The Rust bans check
 
@@ -2413,8 +2267,7 @@ lint`, never a script over source text:
   in `unreached`): clippy does not refuse an `allow-invalid` path that
   resolves to nothing, so such a ban bites only while an `#[expect]`
   covers a call of it, and every other `allow-invalid` ban has one at its
-  site in the workspace. The pre-commit hook's Rust step does not run
-  it.
+  site in the workspace.
 
 ## Formatting
 

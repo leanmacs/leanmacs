@@ -172,7 +172,6 @@ could move later.
 | `editorBase` | a package, the set | For `lake query`: the set's config base, one module a line: `Editor`, then the entry module of each package of the set outside the core |
 | `editorShipped` | a package, the set | For `lake query`: what an app bundle ships of the set, built: one line `file<TAB><source><TAB><place>` a file (the core's `Editor` library, its interface library `FilesApi` and each other package's libraries but its tests, with their sources and every file Lake wrote; the lakefiles; the core's glue; the Rust archive), and one `oleans<TAB><place>` a `.olean` directory, for `tools/stage-bundle.sh` ([lean-runtime.md](lean-runtime.md), "The app ships the toolchain") |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
-| `editorPackageGraph` | a package, the set | For `lake query`: the same packages as `editorPackages`, one a line, with each one's layer, directory and the packages of the set it requires; what the pre-commit hook decides over (`tools/hook-targets.sh`) |
 | `editorRustCrates` | a package, the set | For `lake query`: the set's package crates, one a line ("Rust in a package", below) |
 | `editorRustCrate` | a package, the set | For `lake query`: writes the crate generated from the set's package crates and prints its directory; builds nothing |
 | `editorRust` | a package, the set | The set's one Rust archive: the generated crate, built, or the core's (`rustlib`) for a set with no package crate |
@@ -219,8 +218,7 @@ end Greeting.EditorPackage
   `scheme : Editor.SchemePackage`** there, and its lakefile declares the
   keyword `editor-input-scheme` (`keywords = ["editor-input-scheme"]`),
   which is how the build knows to hand the declaration to the hosts. Lake
-  is asked for the keyword, as for `editor-interface`, so the build reads
-  no source; a keyword with no `scheme` fails the generated root's build,
+  is asked for the keyword, so the build reads no source; a keyword with no `scheme` fails the generated root's build,
   naming `<P>.EditorPackage.scheme`. The default package `evil` is the one
   that does ("Input schemes", below):
 
@@ -1092,10 +1090,8 @@ fixture `greeting-api` is.
   registers nothing, and its library imports nothing. Its test library
   imports `Editor.Api`, `Editor.Package` and the test double
   `Editor.Config.Packages`. It is in the default set through its
-  implementation's `require`, so the package steps, the import checks and
-  the pre-commit hook reach it (`tests/hook-targets/fixture-set-graph`
-  pins each with the layer `interface`, and its implementation requiring
-  it).
+  implementation's `require`, so the package steps and the import checks
+  reach it.
 - **The contract check is `contractChecks (package : Package) : List
   (String × Bool)`**, one sentence for each declared name, over
   `Package.registered`: the shape `greeting-api` gives its own, so an
@@ -1232,8 +1228,7 @@ by, shaped as `execute-command-api` is.
   `Editor.Completion.Later` and `Editor.State`. Their test libraries
   import `Editor.Config.Packages`, and `completion-api`'s also
   `Editor.Completion.Style` and `Editor.Package`, the other two the kit's
-  module that is their fake. `tests/hook-targets/fixture-set-graph` pins
-  each with the layer `interface`, and its implementation requiring it.
+  module that is their fake.
 - **Their own drivers** hold the fake to the contract, pin `names` whole,
   and show the contract refusing a package that registers nothing, one
   that lacks a name and one that misspells it; `minibuffer-api`'s also one
@@ -3276,7 +3271,7 @@ test roots.
 ### The packages
 
 One row a package of the default set, in the order the build visits them
-(`lake -d ../packages query :editorPackageGraph`): its layer as its
+(`lake -d ../packages query :editorPackages`): its layer as its
 lakefile declares it, what it requires beside the core, the extension
 points it registers at and reads, and the names it declares or reaches.
 
@@ -3414,8 +3409,8 @@ that opens and takes no input.
 - **How a package supplies one.** A Lake package whose lakefile declares
   the keyword `editor-input-scheme` declares `scheme : Editor.SchemePackage`
   in its entry module, beside `packages` (`lean/Editor/InputScheme.lean`,
-  "The scheme a package supplies"). Lake is asked for the keyword, as for
-  `editor-interface`, so the build reads no source. The generated root
+  "The scheme a package supplies"). Lake is asked for the keyword, so the
+  build reads no source. The generated root
   hands `Editor.Main.run` the `scheme` of each such entry module, in the
   order the packages register, and the editor runs the last
   (`SchemePackage.chosen?`). A keyword with no `scheme` fails the generated

@@ -17,7 +17,7 @@
 #   tools/package-set.sh format <set dir>
 #   tools/package-set.sh run <set dir> <sysroot> <core olean dir>
 #   tools/package-set.sh wiring-modules <set dir>
-#   tools/package-set.sh [--only <package>]... [--allow-empty-run] <step> ...
+#   tools/package-set.sh [--only <package>]... <step> ...
 #   tools/package-set.sh [--wiring] [--ledger <file>] run ...
 #
 # Run it in `lean/`. The set's directory holds the set's lakefile. The
@@ -27,10 +27,8 @@
 # another, by path, that hold a Lean library, other than the core. Each is
 # visited after the packages it requires. Nothing here reads a lakefile.
 # With `--only`, given once for each, the step runs over the named packages
-# of the set alone, still in the set's order: what the pre-commit hook runs
-# for a change that reaches only those (tools/lean-hook.sh;
-# docs/dev-practices/the-gate.md, "The pre-commit hook"). `build` still
-# builds the set's editor first.
+# of the set alone, still in the set's order. `build` still builds the
+# set's editor first.
 #
 # - `test`: each package's Lake test driver, `lake -d <package> test
 #   --wfail`: the tests that need no Rust library. A package with no test
@@ -96,24 +94,23 @@
 # `tests/headless/` that is not a whole fixture (no `config/`, no `script`
 # or no `expected`), which it would otherwise skip in silence, and when the
 # set's packages hold no linked test and no headless fixture at all, and,
-# with `--only`, for a name that is no package of the set. With `--only`,
-# `--allow-empty-run` lets `run` pass over packages that hold no linked
-# test and no fixture, as an interface package such as `greeting-api` does:
-# the hook passes it, the gate, which runs over every package, never does.
+# with `--only`, for a name that is no package of the set. `run` with
+# `--only` still refuses to run nothing: over packages that hold no linked
+# test and no fixture, as an interface package such as `greeting-api`
+# does, it exits 2.
 set -eu
 
 usage() {
   echo "usage: tools/package-set.sh test|build|fmt|format|wiring-modules <set dir>" >&2
   echo "       tools/package-set.sh run <set dir> <sysroot> <core olean dir>" >&2
-  echo "       each after any of: --only <package> (repeatable), --allow-empty-run (with --only)," >&2
+  echo "       each after any of: --only <package> (repeatable)," >&2
   echo "       and run after any of: --wiring, --ledger <file>" >&2
   exit 2
 }
 
-# The names `--only` gives, one a line, whether `run` may run nothing,
-# whether it runs the wiring set alone, and its ledger.
+# The names `--only` gives, one a line, whether `run` runs the wiring set
+# alone, and its ledger.
 only=
-allow_empty_run=
 wiring=
 ledger=
 while [ "$#" -gt 0 ]; do
@@ -123,10 +120,6 @@ while [ "$#" -gt 0 ]; do
       only="$only$2
 "
       shift 2
-      ;;
-    --allow-empty-run)
-      allow_empty_run=1
-      shift
       ;;
     --wiring)
       wiring=1
@@ -140,9 +133,6 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
-if [ -n "$allow_empty_run" ] && [ -z "$only" ]; then
-  usage
-fi
 
 [ "$#" -ge 2 ] || usage
 step=$1
@@ -324,8 +314,7 @@ $packages
 LIST
 
 if [ "$step" = run ]; then
-  if [ "$linked_count" -eq 0 ] && [ "$already_count" -eq 0 ] && [ "$fixture_count" -eq 0 ] &&
-    [ -z "$allow_empty_run" ]; then
+  if [ "$linked_count" -eq 0 ] && [ "$already_count" -eq 0 ] && [ "$fixture_count" -eq 0 ]; then
     echo "package-set: the packages of the set in $set_dir hold no linked test and no headless fixture, so there is nothing to run" >&2
     exit 2
   fi

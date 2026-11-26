@@ -1,3 +1,0 @@
-rust-hook: workspace
-run: mise run lint
-run: mise run test
