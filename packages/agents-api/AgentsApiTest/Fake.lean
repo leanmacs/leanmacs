@@ -16,9 +16,13 @@ the runner with no crate and no child.
   (`AgentsApiTest/Contract.lean`).
 - **The script** says what the agent does in answer to each order
   (`Fake.Script`): `canonical`, the contract's scenario, which `acp`'s
-  scripted agent executable plays too, and `answerEnds`, in which the answer
+  scripted agent executable plays too; `answerEnds`, in which the answer
   to the first permission request gives the completed call and the turn's
-  end.
+  end; `cancellable`, the canonical one whose cancel leaves the session
+  open; `conversation`, a turn with a reply, a tool call whose diff is
+  replaced by the whole file's, usage, a title and a mode; and `burst`, a
+  prompt's many chunks. Between orders the agent may also send by itself
+  (`Fake.agentSends`), through the same model.
 - **A request completes** as the stage says (`FakeAnswer`): `open` and
   `send` at once; `next` at once when the session holds events, and
   otherwise once an order makes some, or never if it is withdrawn first.
@@ -31,7 +35,9 @@ the runner with no crate and no child.
 
 It is made once and given to the runner over a table of waits: as a
 `PackageService` directly (`Fake.service`), or on a stepped stage as a
-package's fake (`Fake.packageFake`, `Stage.stepped`). `Fake.Flaws` makes a
+package's fake (`Fake.packageFake`, `Stage.stepped`); or made afresh by each
+stage that makes it (`Fake.fresh`), as a fixture's support hands it to the
+stepped fixture harness (`AgentsApiTest/FixtureSupport.lean`). `Fake.Flaws` makes a
 fake that breaks one rule, for the contract's own tests.
 -/
 
@@ -127,6 +133,10 @@ structure Fake where
   flaws : Fake.Flaws := .none
   /-- What it holds. Every change to it is one atomic step. -/
   state : IO.Ref Fake.State
+  /-- How the service last given to the runner completes a wait: recorded by
+  each start of that service (`serviceOver`), so the agent's own sends
+  (`agentSends`) wake a pending `next` as an order's moves do. -/
+  waker : IO.Ref (UInt64 → BaseIO Unit)
 
 namespace Fake
 
@@ -153,9 +163,56 @@ def answerEnds : Script :=
     onAnswer := fun ticket _ =>
       if ticket == 1 then [.event (.toolCall Contract.completed), .endTurn "end_turn"] else [] }
 
+/-- The path the conversation's tool call edits. -/
+def notesPath : String :=
+  "/work/example/notes.txt"
+
+/-- The conversation's tool call before it runs: its diff holds only the
+edit's own strings, as the adapter sends it (`docs/design/agent-hosting.md`,
+"The ACP spike"). -/
+def editPending : ToolCall :=
+  { id := "call-edit-1", title := "Edit notes.txt", kind := "edit", status := "pending"
+    locations := #[(notesPath, none)], content := #[.diff notesPath (some "beta") "gamma"] }
+
+/-- The conversation's tool call once it has run: its diff is the whole
+file, before and after. -/
+def editCompleted : ToolCall :=
+  { editPending with
+    status := "completed", content := #[.diff notesPath (some "alpha\nbeta\n") "alpha\ngamma\n"] }
+
+/-- A conversation, for a consumer's view of one: the session opens in
+`mode-auto`; a prompt gives the mode `mode-ask`, the reply `Done.` in two
+chunks of the message `msg-1`, the tool call `call-edit-1` pending with the
+edit's own strings as its diff and then completed with the whole file's,
+the usage, the title `Example title`, and the turn's end, `end_turn`. -/
+def conversation : Script where
+  sessionId := Contract.sessionId
+  mode := some "mode-auto"
+  modes := Contract.modes
+  onPrompt _ _ :=
+    [.event (.mode "mode-ask"), .event (.chunk (some "msg-1") "Do"),
+      .event (.chunk (some "msg-1") "ne."), .event (.toolCall editPending),
+      .event (.toolCall editCompleted), .event (.usage 1200 200000 (some ("0.01", "USD"))),
+      .event (.title "Example title"), .endTurn "end_turn"]
+  onAnswer _ _ := []
+  onCancel := [.endTurn "cancelled"]
+
+/-- The canonical agent, but a cancel ends the turn `cancelled` and the
+session goes on: the agent does not exit. -/
+def cancellable : Script :=
+  { canonical with onCancel := [.endTurn "cancelled"] }
+
+/-- An agent whose prompt gives `count` chunks of the message `msg-1`, each
+`x`, and nothing else: its turn stays open. -/
+def burst (count : Nat) : Script :=
+  { canonical with
+    onPrompt := fun _ _ => (List.range count).map fun _ => .event (.chunk (some "msg-1") "x")
+    onAnswer := fun _ _ => []
+    onCancel := [.endTurn "cancelled"] }
+
 /-- A fake over `script`, breaking the rules `flaws` names. -/
 def new (script : Script := canonical) (flaws : Flaws := .none) : BaseIO Fake :=
-  return { script, flaws, state := ← IO.mkRef {} }
+  return { script, flaws, state := ← IO.mkRef {}, waker := ← IO.mkRef fun _ => pure () }
 
 /-- `session` after the agent's `move`. -/
 def Session.move (session : Session) : Move → Session
@@ -343,6 +400,7 @@ def serviceOver (fake : Fake) (completions : Editor.Job.Completions)
     where
   name := serviceName
   start id request := do
+    fake.waker.set (answer.complete completions)
     let some request := Request.ofPackage? request | return false
     let thread ← IO.getTID
     let (taken, woken) ←
@@ -373,6 +431,31 @@ def packageFake (fake : Fake) : Editor.Job.PackageFake where
   name := serviceName
   make completions answer :=
     return { service := fake.serviceOver completions answer, quiescent := fake.quiescent }
+
+/-- A package's own fake of the service over a new fake of `script`, made
+afresh each time the stage makes it (`PackageFake.make`): so each stepped
+run, a fixture's among them, starts with no session, and what one run left
+cannot reach the next. -/
+def fresh (script : Script) : Editor.Job.PackageFake where
+  name := serviceName
+  make completions answer := do
+    let fake ← Fake.new script
+    return { service := fake.serviceOver completions answer, quiescent := fake.quiescent }
+
+/-- The agent of the session `number` does `moves` by itself, between two
+orders: each through the session's model (`Session.moves`), as an order's
+moves go, and its pending `next`, if it has one, is woken through the
+completion the service last given to the runner recorded. Nothing happens
+to a session the fake did not open. -/
+def agentSends (fake : Fake) (number : Nat) (moves : List Move) : BaseIO Unit := do
+  let woken ←
+    fake.state.modifyGet fun state =>
+        match state.session? number with
+        | none => ([], state)
+        | some session => (fake.wake state (session.moves moves)).swap
+  let waker ← fake.waker.get
+  for id in woken do
+    waker id
 
 /-- Every request the fake was handed, with its session's model state as it
 arrived and the thread that handed it, oldest first. -/

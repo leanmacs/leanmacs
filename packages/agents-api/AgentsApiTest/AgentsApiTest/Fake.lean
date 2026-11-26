@@ -7,8 +7,10 @@ import AgentsApiTest.Fake
 `fakeChecks`: the fake of the service `agents`, at the port the runner
 reaches it through, over a table of waits whose completions it finishes at
 once: what `open`, `next` and `send` answer, when a `next` completes, a
-cancel's withdrawals, a withdrawn `next`, and when it holds nothing. The
-test driver's root, `AgentsApiTest/Model.lean`, runs them.
+cancel's withdrawals, a withdrawn `next`, and when it holds nothing; a
+fresh fake's independent state, the agent's own sends into a parked
+`next`, and a cancel that leaves the `cancellable` session open. The test
+driver's root, `AgentsApiTest/Model.lean`, runs them.
 -/
 
 namespace AgentsApiTest
@@ -62,7 +64,64 @@ def openedFake : IO (Fake × Editor.PackageService × Editor.Job.Completions) :=
 
 /-- The checks of the fake of the service `agents`. -/
 def fakeChecks : List Check :=
-  [{  name := "open answers a session of the script's session id, mode and modes"
+  [{  name :=
+        "a fresh fake is made anew by each make: a pending next of one leaves the other quiescent, and each opens its own session 1"
+      run := do
+        let fresh := Fake.fresh Fake.canonical
+        let completions ← Editor.Job.Completions.new
+        let first ← fresh.make completions .atOnce
+        let second ← fresh.make completions .atOnce
+        let opened (service : Editor.PackageService) : IO (Option Nat) := do
+          match ← answered service completions (.open 0 Contract.cwd #[]) with
+          | some (.ok reply) =>
+            return (reply.get? Opened).map (·.session)
+          | _ =>
+            return none
+        let one ← opened first.service
+        let (_, _, taken) ← started first.service completions (.next 1)
+        let busy ← first.quiescent
+        let idle ← second.quiescent
+        let two ← opened second.service
+        saw (one == some 1 && taken && !busy && idle && two == some 1)
+            s!"first {one}, busy {!busy}, idle {idle}, second {two}" },
+    { name :=
+        "the agent's own sends complete a parked next with exactly their events, through the model"
+      run := do
+        let (fake, service, completions) ← openedFake
+        let (id, wait, _) ← started service completions (.next 1)
+        let pendingFirst := !(← wait.isResolved)
+        fake.agentSends 1 [.event (.chunk (some "msg-1") "a"), .event (.chunk (some "msg-1") "b")]
+        let woken ← wait.isResolved
+        let events ←
+          match ← service.take id (Request.next 1).toPackage with
+          | .ok reply =>
+            pure ((reply.get? Batch).map (·.events))
+          | .error _ =>
+            pure none
+        saw
+            (pendingFirst && woken &&
+              events == some #[.chunk (some "msg-1") "a", .chunk (some "msg-1") "b"])
+            s!"pending first {pendingFirst}, woken {woken}, events {repr events}" },
+    { name :=
+        "the cancellable agent's cancel withdraws the parked ticket and ends the turn cancelled, and the session stays open with nothing parked"
+      run := do
+        let fake ← Fake.new Fake.cancellable
+        let completions ← Editor.Job.Completions.new
+        let service := fake.service completions
+        discard <| answered service completions (.open 0 Contract.cwd #[])
+        discard <| answered service completions (.send 1 (.prompt Contract.promptText))
+        discard <| eventsNow service completions
+        discard <| answered service completions (.send 1 .cancel)
+        let events ← eventsNow service completions
+        let session ← fake.session?
+        let again ← answered service completions (.send 1 (.prompt Contract.promptText))
+        saw
+            (events == some #[.withdrawn 1, .turnEnded 1 "cancelled"] &&
+              (session.map (·.ended)) == some false &&
+              (session.map (·.protocol.parked)) == some [] &&
+              sentFor again (some 2))
+            s!"events {repr events}" },
+    { name := "open answers a session of the script's session id, mode and modes"
       run := do
         let fake ← Fake.new
         let completions ← Editor.Job.Completions.new
