@@ -82,9 +82,11 @@ case_compare() {
   # <script> <file>`), which runs it stepped and exits 1, saying the lines
   # each side alone has, when the two outputs differ or are not the
   # fixture's expected file. The case passes or fails by those statuses
-  # alone; nothing reads what they print. The CLI runs here, in shell,
-  # because Lean spawns no child process (docs/design/overview.md, "Rules of
-  # the boundary").
+  # alone; nothing reads what they print to decide. When one fails, what it
+  # printed is shown, with a line naming the command, its status and the
+  # script, for people reading the log. The CLI runs here, in shell, because
+  # Lean spawns no child process (docs/design/overview.md, "Rules of the
+  # boundary").
   (
     set -e
     editor=../packages/.lake/build/bin/editor
@@ -92,18 +94,32 @@ case_compare() {
     sysroot=$(lean --print-prefix)
     oleans=.lake/build/lib/lean
     repo=$(cd .. && pwd -P)
-    list=$("$harness" "$sysroot" "$oleans" --repo "$repo" compared)
+    status=0
+    list=$("$harness" "$sysroot" "$oleans" --repo "$repo" compared) || status=$?
+    if [ "$status" -ne 0 ]; then
+      printf '%s\n' "$list"
+      echo "wiring-runs: compare: fixture-test … compared exited $status" >&2
+      exit 1
+    fi
     out=$(mktemp)
     trap 'rm -f "$out"' EXIT
     # The list is read on a descriptor of its own, so that neither run can
     # take it for its input.
     while IFS=$tab read -r script config _ <&3; do
       [ -n "$script" ] || continue
-      "$editor" headless "$sysroot" "$oleans" "$repo/$config" "$repo/$script" >"$out" || {
+      status=0
+      "$editor" headless "$sysroot" "$oleans" "$repo/$config" "$repo/$script" >"$out" || status=$?
+      if [ "$status" -ne 0 ]; then
         cat "$out"
+        echo "wiring-runs: compare: the CLI exited $status on $script" >&2
         exit 1
-      }
-      "$harness" "$sysroot" "$oleans" --repo "$repo" compare "$script" "$out"
+      fi
+      status=0
+      "$harness" "$sysroot" "$oleans" --repo "$repo" compare "$script" "$out" || status=$?
+      if [ "$status" -ne 0 ]; then
+        echo "wiring-runs: compare: fixture-test … compare exited $status on $script" >&2
+        exit 1
+      fi
     done 3<<LIST
 $list
 LIST
