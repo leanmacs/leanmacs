@@ -482,7 +482,20 @@ def setup : SetupM Unit := do
 The symbol defaults to `tree_sitter_<name>` and the query directory to
 `queries/` beside the library; `(symbol := "python")`,
 `(queries := "/opt/python-queries")` and `(policy := ReparsePolicy.incremental)` give
-others. A declaration whose symbol registers another name, a library or a
+others. A library built for each platform is declared with
+`defineGrammarPerPlatform`, one path per platform and the query directory,
+which then has no default:
+
+```lean
+def setup : SetupM Unit := do
+  defineGrammarPerPlatform "python"
+    [("darwin-aarch64", "/opt/grammars/darwin-aarch64/libtree-sitter-python.dylib"),
+      ("linux-x86_64", "/opt/grammars/linux-x86_64/libtree-sitter-python.so")]
+    "/opt/grammars/python-queries"
+```
+
+On a platform it does not list, the registration is refused with a message
+naming the platform. A declaration whose symbol registers another name, a library or a
 query directory that is not absolute, and a name declared twice are
 refused. Each install registers the declared grammars in a job, and the
 buffers of their languages are highlighted once it answers.
@@ -1288,6 +1301,24 @@ def defineGrammar (name : String) (library : System.FilePath) (symbol : Option S
     (queries : Option System.FilePath := none) (policy : Option ReparsePolicy := none) :
     SetupM Unit := do
   let grammar := Language.Grammar.declare name library symbol queries policy
+  if let some problem := grammar.problem? then
+    throw problem
+  ExceptT.lift (Program.request (port := setupPort) (.grammar grammar))
+
+/-- Declares the grammar `name`, loaded on each platform of `libraries`
+from the native library given for it, by the platform's name
+(`darwin-aarch64`, `darwin-x86_64`, `linux-aarch64`, `linux-x86_64`;
+`Language.Grammar.platformOf`), its queries read from `queries`, which has
+no default; the symbol and the policy as `defineGrammar`'s. On a platform it
+does not list, its registration is refused with a message naming the
+platform, and its languages have no syntax tree. Refuses the `setup` for no
+platform, a platform listed twice, a path that is not absolute, a symbol
+that registers another name (`Language.Grammar.problem?`), and a name
+declared twice. -/
+def defineGrammarPerPlatform (name : String) (libraries : List (String × System.FilePath))
+    (queries : System.FilePath) (symbol : Option String := none)
+    (policy : Option ReparsePolicy := none) : SetupM Unit := do
+  let grammar := Language.Grammar.declarePerPlatform name libraries queries symbol policy
   if let some problem := grammar.problem? then
     throw problem
   ExceptT.lift (Program.request (port := setupPort) (.grammar grammar))

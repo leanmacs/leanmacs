@@ -40,6 +40,11 @@ query directory. -/
 def declaredHighlights : String :=
   "(number) @number"
 
+/-- The platform the checks' jobs register on, given explicitly so that no
+check depends on the platform the tests run on. -/
+def checkedPlatform : String :=
+  "darwin-aarch64"
+
 /-- The reload reducer's state with a registry holding the shipped languages
 and modes, and nothing installed. -/
 def shippedState : ModelState :=
@@ -71,7 +76,8 @@ load from and the files `files`, each a path and its text, and the
 directories `directories`. `none` when the install asked for no
 registration. -/
 def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
-    (files : Array (String × String)) (directories : Array String := #[]) : Option TestDriver := do
+    (files : Array (String × String)) (directories : Array String := #[])
+    (platform : String := checkedPlatform) : Option TestDriver := do
   let (state, generation, grammars) ← installOver shippedState setup
   let keys : Loop.Keys TestScheme.scheme := { registered := state.registry.registered }
   let model := { editorModel with syntaxTree := { compiled := #["json", "lean"] } }
@@ -82,7 +88,8 @@ def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarReg
     (Loop.Driver.over keys (fun _ => none) (EditorState.initial ⟨640, 480⟩) model).toOption
   let driver :=
     { driver with jobs := { grammars := { libraries := some libraries }, files := fileModel } }
-  return driver.startWork Language.Grammar.jobName (Language.Grammar.work generation grammars)
+  return driver.startWork Language.Grammar.jobName
+      (Language.Grammar.work platform generation grammars)
 
 /-- The driver once a delivered command has opened a buffer called `path`
 over a JSON text, recorded the language the registry's table chooses for
@@ -267,7 +274,7 @@ def grammarRegisterChecks : List Check :=
                   keys := { opened.keys with registered := second.registry.registered } }
               let started :=
                 reinstalled.startWork Language.Grammar.jobName
-                  (Language.Grammar.work generation grammars)
+                  (Language.Grammar.work checkedPlatform generation grammars)
               let (refused, delivered) := started.finish 2
               generation == 2 && delivered.isSome && attachedGrammars opened == #["ini"] &&
                 highlighters opened == #[#["syntax.number"]] &&
@@ -275,6 +282,34 @@ def grammarRegisterChecks : List Check :=
                   "grammar `ini`: the grammar was refused: no file is at the grammar's path, so the grammar registered before stays" &&
                 attachedGrammars refused == #["ini"] &&
                 highlighters refused == #[#["syntax.number"]]
-          | _, _ => false }]
+          | _, _ => false },
+    { name :=
+        "registering a per-platform grammar on a platform it does not list answers a refusal naming that platform, asks the grammar service nothing, and says it in the echo with no syntax tree for its languages"
+      run :=
+        pure <|
+          let library := "/g/darwin-aarch64/libtree-sitter-ini.so"
+          let setup : SetupM Unit := do
+            defineGrammarPerPlatform "ini" [("darwin-aarch64", library)] "/g/queries"
+            defineLanguage
+                { name := "ini", patterns := [.extension "ini"],
+                  syntaxTree := { grammar := "ini" } }
+          match
+            installedWith setup #[(library, .exports #[("tree_sitter_ini", .grammar)])]
+              #[("/g/queries/highlights.scm", declaredHighlights)] (platform :=
+              "linux-riscv64") with
+          | none => false
+          | some driver =>
+            let (answered, delivered) := driver.finish 1
+            let opened := openedIn answered "/w/a.ini"
+            delivered.isSome &&
+              answered.loop.state.echo ==
+                "grammar `ini`: the grammar's registration failed: it declares no library for the platform `linux-riscv64`, so its languages have no syntax tree" &&
+              answered.loop.state.grammars.answerOf? 1 "ini" ==
+                some
+                  (.refused (.failed "it declares no library for the platform `linux-riscv64`")
+                    false) &&
+              answered.jobs.grammars.registered == #[] &&
+              attachedGrammars opened == #[] &&
+              highlighters opened == #[] }]
 
 end ModelTest

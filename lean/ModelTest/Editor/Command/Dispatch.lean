@@ -235,7 +235,12 @@ def declaredRegistry (modes : Array Mode) : Config.Registry :=
 the library lists it once the registration's job has answered. -/
 def iniModel : EditorModel :=
   { editorModel with
-    syntaxTree := { registry := { registered := #[("ini", declaredIni.source, .whole)] } } }
+    syntaxTree :=
+      {
+        registry :=
+          {
+            registered :=
+              #[("ini", (declaredIni.sourceOn "darwin-aarch64").getD default, .whole)] } } }
 
 /-- The answers of generation 1 that record `ini` registered with
 `queries`. -/

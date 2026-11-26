@@ -25,11 +25,8 @@ def grammarDeclarationChecks : List Check :=
         let ini := Language.Grammar.declare "ini" "/opt/grammars/libtree-sitter-ini.so"
         pure
           (ini ==
-            { name := "ini"
-              source :=
-                { library := "/opt/grammars/libtree-sitter-ini.so", symbol := "tree_sitter_ini"
-                  policy := none }
-              queries := "/opt/grammars/queries" }) },
+            { name := "ini", library := .single "/opt/grammars/libtree-sitter-ini.so"
+              symbol := "tree_sitter_ini", policy := none, queries := "/opt/grammars/queries" }) },
     { name := "a declaration given a symbol, a query directory and a policy keeps them"
       run :=
         let conf :=
@@ -37,11 +34,8 @@ def grammarDeclarationChecks : List Check :=
             "/other/conf-queries") (policy := ReparsePolicy.incremental)
         pure
           (conf ==
-            { name := "conf"
-              source :=
-                { library := "/opt/grammars/libconf.so", symbol := "conf"
-                  policy := some .incremental }
-              queries := "/other/conf-queries" }) },
+            { name := "conf", library := .single "/opt/grammars/libconf.so", symbol := "conf"
+              policy := some .incremental, queries := "/other/conf-queries" }) },
     { name :=
         "a declaration whose symbol registers another name, or whose library or query directory is relative, has a problem that names it; one whose bare symbol is its name has none"
       run :=
@@ -108,6 +102,77 @@ def grammarDeclarationChecks : List Check :=
             Language.Grammar.said "ini" error (kept := false) (registeredBefore := false) ==
               s!"grammar `ini`: {error.describe}, so its languages have no syntax tree" &&
             Language.Grammar.unread ini "indents.scm" .denied ==
-              s!"grammar `ini`: /g/queries/indents.scm: {FileError.denied.describe}") }]
+              s!"grammar `ini`: /g/queries/indents.scm: {FileError.denied.describe}") },
+    { name :=
+        "platformOf maps arm64-apple-darwin24.6.0, x86_64-apple-darwin, aarch64-unknown-linux-gnu and x86_64-unknown-linux-gnu to darwin-aarch64, darwin-x86_64, linux-aarch64 and linux-x86_64, and keeps any other triple"
+      run :=
+        pure
+          (Language.Grammar.platformOf "arm64-apple-darwin24.6.0" == "darwin-aarch64" &&
+            Language.Grammar.platformOf "x86_64-apple-darwin" == "darwin-x86_64" &&
+            Language.Grammar.platformOf "aarch64-unknown-linux-gnu" == "linux-aarch64" &&
+            Language.Grammar.platformOf "x86_64-unknown-linux-gnu" == "linux-x86_64" &&
+            Language.Grammar.platformOf "riscv64-unknown-linux-gnu" ==
+              "riscv64-unknown-linux-gnu" &&
+            Language.Grammar.platformOf "x86_64-pc-windows-msvc" == "x86_64-pc-windows-msvc") },
+    { name :=
+        "a per-platform declaration gives the source of the listed platform's library with its symbol and policy, and none for an unlisted platform; a single declaration gives its library on every platform"
+      run :=
+        let perPlatform :=
+          Language.Grammar.declarePerPlatform "ini"
+            [("darwin-aarch64", "/g/darwin-aarch64/libini.dylib"),
+              ("linux-x86_64", "/g/linux-x86_64/libini.so")]
+            "/g/queries" (policy := ReparsePolicy.incremental)
+        let single := Language.Grammar.declare "ini" "/g/libini.so"
+        pure
+          (perPlatform.sourceOn "darwin-aarch64" ==
+              some
+                { library := "/g/darwin-aarch64/libini.dylib", symbol := "tree_sitter_ini"
+                  policy := some .incremental } &&
+            perPlatform.sourceOn "linux-x86_64" ==
+              some
+                { library := "/g/linux-x86_64/libini.so", symbol := "tree_sitter_ini"
+                  policy := some .incremental } &&
+            perPlatform.sourceOn "linux-riscv64" == none &&
+            perPlatform.queries == "/g/queries" &&
+            perPlatform.problem? == none &&
+            single.sourceOn "darwin-aarch64" ==
+              some { library := "/g/libini.so", symbol := "tree_sitter_ini", policy := none } &&
+            single.sourceOn "linux-riscv64" ==
+              some { library := "/g/libini.so", symbol := "tree_sitter_ini", policy := none }) },
+    { name :=
+        "a per-platform declaration with no path, a platform listed twice, or a relative path has a problem that names it"
+      run :=
+        let empty := Language.Grammar.declarePerPlatform "ini" [] "/g/queries"
+        let twice :=
+          Language.Grammar.declarePerPlatform "ini"
+            [("darwin-aarch64", "/g/a/libini.dylib"), ("darwin-aarch64", "/g/b/libini.dylib")]
+            "/g/queries"
+        let relative :=
+          Language.Grammar.declarePerPlatform "ini"
+            [("darwin-aarch64", "/g/a/libini.dylib"), ("linux-x86_64", "linux/libini.so")]
+            "/g/queries"
+        let relativeQueries :=
+          Language.Grammar.declarePerPlatform "ini" [("darwin-aarch64", "/g/a/libini.dylib")]
+            "queries"
+        pure
+          (empty.problem? == some "the grammar `ini` declares a library for no platform" &&
+            twice.problem? ==
+              some "the grammar `ini` declares a library for the platform `darwin-aarch64` twice" &&
+            relative.problem? ==
+              some
+                "the grammar `ini`'s library `linux/libini.so` for the platform `linux-x86_64` is not an absolute path" &&
+            relativeQueries.problem? ==
+              some "the grammar `ini`'s query directory `queries` is not an absolute path") },
+    { name :=
+        "within? keeps a relative path that stays inside, normalised, and refuses an absolute one and one whose .. climbs out"
+      run :=
+        pure
+          (Language.Grammar.within? "darwin-aarch64/libini.dylib" ==
+              some "darwin-aarch64/libini.dylib" &&
+            Language.Grammar.within? "./a/../queries/" == some "queries" &&
+            Language.Grammar.within? "." == some "." &&
+            Language.Grammar.within? "../outside.dylib" == none &&
+            Language.Grammar.within? "a/../../outside.dylib" == none &&
+            Language.Grammar.within? "/abs/libini.so" == none) }]
 
 end ModelTest

@@ -3,10 +3,12 @@ import Editor.Language
 import Editor.Language.Grammar.Answer
 
 /-!
-# Grammars config declares
+# Grammars config and packages declare
 
 A grammar declaration is config data beside `defineLanguage`
-(`defineGrammar`, `Editor/Setup.lean`): a name, a native library, the
+(`defineGrammar`, `defineGrammarPerPlatform`, `Editor/Setup.lean`), or a
+package's (`Package.grammars`, `Editor/Package.lean`): a name, a native
+library, on every platform or per platform, the
 symbol that hands out its language, an optional reparse policy, and the
 directory its queries are read from (`Language.Grammar`). A language entry
 still names its grammar by name (`Mode.SyntaxTree.grammar`,
@@ -42,6 +44,40 @@ The library and the query directory must be absolute paths, as a
 workspace's root must be: a relative library would be refused `notFound`
 by the library without touching the disk, but saying so when config loads
 is clearer.
+
+## The per-platform form (`declarePerPlatform`, `Library`)
+
+A native library is built for one platform, so a declaration may give one
+library per platform it supports (`Library.perPlatform`), each under the
+platform's name, all sharing one query directory, which then has no default
+(the libraries' directories differ). A per-platform declaration that lists
+no platform, lists one twice, or gives a relative path has a problem
+(`noPlatform`, `platformTwice`, `relativePlatformLibrary`). The library is
+picked when the core's job registers the grammar (`sourceOn`), not when
+config or a package declares it: a `setup` is pure and knows no platform.
+On a platform the declaration does not list, the registration is refused
+in the job's reply before the service is asked (`noLibraryFor`,
+`Editor/Language/Grammar/Register.lean`), said as any refusal is, and its
+languages have no syntax tree; no build breaks.
+
+## The platform (`platformOf`, `currentPlatform`)
+
+`<os>-<arch>`, from Lean's target triple (`System.Platform.target`):
+`darwin-aarch64`, `darwin-x86_64`, `linux-aarch64` and `linux-x86_64`; any
+other triple is its own name, so a declaration can still list it. The
+headless host's reducer registers on `currentPlatform`; the model tests
+pass a platform of their own.
+
+## A package's declarations (`within?`, `under`)
+
+A package declares its grammars on `Editor.Package` (`Editor/Package.lean`)
+with paths relative to its Lake package's `grammars/` directory, and
+`Package.collected` (`Editor/Config/Packages.lean`) resolves them against
+the directory where that directory is staged beside the running editor
+(`under`). A path that is absolute, or whose `..` climbs out of the
+directory once taken back lexically (`within?`), is refused with the path,
+and the package with it. The resolved declarations are absolute, so
+`problem?` holds of them as of config's.
 
 ## Which tree a buffer's language resolves to (`treeOf`)
 
@@ -95,7 +131,10 @@ query file that could not be read.
 
 | Addition | Where |
 |---|---|
-| Something more a declaration says | A field of `Language.Grammar`, a parameter of `declare` and `defineGrammar` (`Editor/Setup.lean`), and its check in `problem?` |
+| Something more a declaration says | A field of `Language.Grammar`, a parameter of `declare`, `declarePerPlatform`, `defineGrammar` and `defineGrammarPerPlatform` (`Editor/Setup.lean`), and its check in `problem?` |
+| A new platform name | A case of `platformOf`, pinned by `ModelTest.grammarDeclarationChecks` |
+| A new form of where the library is | A constructor of `Library`, its case in `libraryOn`, `libraryProblem?` and `under` |
+| A new rule for a package's relative path | `within?`, pinned by `ModelTest.grammarDeclarationChecks` |
 | A new kind of query file | An entry of `queryFiles`, its field of `Queries` (`Editor/Language/Grammar/Answer.lean`) and its case in `Queries.over` |
 | A new case of which tree a buffer gets | `treeOf`, pinned by `ModelTest.grammarDeclarationChecks` |
 | A new consequence of a refusal | `said` |
@@ -105,18 +144,61 @@ Pinned by `ModelTest.grammarDeclarationChecks` (the rules, pure).
 
 namespace Editor
 
-/-- A grammar config declares: its name, where it is loaded from, and the
+/-- Where a declared grammar's native library is: one path on every
+platform, or one path for each platform it supports, by the platform's name
+(`Language.Grammar.platformOf`). -/
+inductive Language.Grammar.Library where
+  /-- One library, on every platform. -/
+  | single (path : System.FilePath)
+  /-- One library for each platform listed, by its name
+  (`darwin-aarch64`); none on a platform not listed. -/
+  | perPlatform (paths : List (String × System.FilePath))
+  deriving DecidableEq, Repr
+
+/-- A grammar config or a package declares: its name, where its library is
+loaded from, the symbol and the policy it is registered with, and the
 directory its queries are read from. -/
 structure Language.Grammar where
   /-- The name it is declared under, which languages name. -/
   name : String
-  /-- The library, the symbol and the policy it is registered from. -/
-  source : GrammarSource
+  /-- Its native library, on every platform or per platform. -/
+  library : Language.Grammar.Library
+  /-- The symbol the library exports its language under. -/
+  symbol : String
+  /-- The reparse policy it is registered with; `none` is `whole`. -/
+  policy : Option ReparsePolicy := none
   /-- The directory its query files are read from. -/
   queries : System.FilePath
   deriving DecidableEq, Repr
 
 namespace Language.Grammar
+
+/-- The platform a Lean target triple names, `<os>-<arch>`:
+`darwin-aarch64`, `darwin-x86_64`, `linux-aarch64` or `linux-x86_64`, the
+names a per-platform declaration lists its libraries under; any other
+triple is its own name. -/
+def platformOf (target : String) : String :=
+  let parts := target.splitOn "-"
+  let arch : Option String :=
+    match parts.head? with
+    | some "arm64" | some "aarch64" => some "aarch64"
+    | some "x86_64" => some "x86_64"
+    | _ => none
+  let os : Option String :=
+    if parts.any (·.startsWith "darwin") then some "darwin"
+    else if parts.contains "linux" then some "linux" else none
+  match os, arch with
+  | some os, some arch => s!"{os}-{arch}"
+  | _, _ => target
+
+/-- The platform this editor was built for (`platformOf` of Lean's
+target triple): the one a registration picks a per-platform library for. -/
+def currentPlatform : String :=
+  platformOf System.Platform.target
+
+/-- The symbol `tree_sitter_<name>`, the default of a declaration. -/
+def defaultSymbol (name : String) : String :=
+  s!"{GrammarSource.prefix}{name}"
 
 /-- The declaration of the grammar `name` from `library`, with the
 defaults of the module docs: the symbol `tree_sitter_<name>` and the query
@@ -124,33 +206,134 @@ directory `queries/` in the library's directory. -/
 def declare (name : String) (library : System.FilePath) (symbol : Option String := none)
     (queries : Option System.FilePath := none) (policy : Option ReparsePolicy := none) :
     Language.Grammar :=
-  { name
-    source :=
-      { library := library.toString, symbol := symbol.getD s!"{GrammarSource.prefix}{name}"
-        policy }
+  { name, library := .single library, symbol := symbol.getD (defaultSymbol name), policy
     queries := queries.getD ((library.parent.getD ".") / "queries") }
+
+/-- The declaration of the grammar `name` from one library for each
+platform of `libraries`, each a platform's name and its library's path,
+its queries read from `queries`, which has no default; the symbol defaults
+to `tree_sitter_<name>`. -/
+def declarePerPlatform (name : String) (libraries : List (String × System.FilePath))
+    (queries : System.FilePath) (symbol : Option String := none)
+    (policy : Option ReparsePolicy := none) : Language.Grammar :=
+  { name, library := .perPlatform libraries, symbol := symbol.getD (defaultSymbol name), policy
+    queries }
+
+/-- The library `grammar` loads from on `platform`: its one library, or the
+one it lists for `platform`; none when it lists none for it. -/
+def libraryOn (grammar : Language.Grammar) (platform : String) : Option System.FilePath :=
+  match grammar.library with
+  | .single path => some path
+  | .perPlatform paths => (paths.find? (·.1 == platform)).map (·.2)
+
+/-- What `grammar` is registered from on `platform`: the library it loads
+from there, its symbol and its policy; none when it declares no library for
+`platform`. -/
+def sourceOn (grammar : Language.Grammar) (platform : String) : Option GrammarSource :=
+  (grammar.libraryOn platform).map fun library =>
+    { library := library.toString, symbol := grammar.symbol, policy := grammar.policy }
+
+/-- The name `grammar`'s symbol registers (`GrammarSource.name`). -/
+def registers (grammar : Language.Grammar) : String :=
+  ({ library := "", symbol := grammar.symbol } : GrammarSource).name
+
+/-- Why a registration of `grammar` on `platform` is refused before the
+service is asked: it declares no library for `platform`. -/
+def noLibraryFor (platform : String) : String :=
+  s!"it declares no library for the platform `{platform}`"
 
 /-- The sentence of a declaration whose symbol registers another name. -/
 def otherName (grammar : Language.Grammar) : String :=
-  s!"the grammar `{grammar.name}`'s symbol `{grammar.source.symbol}` registers the grammar `{grammar.source.name}`: a grammar is declared under the name its symbol registers"
+  s!"the grammar `{grammar.name}`'s symbol `{grammar.symbol}` registers the grammar `{grammar.registers}`: a grammar is declared under the name its symbol registers"
 
-/-- The sentence of a declaration whose library is not an absolute path. -/
-def relativeLibrary (grammar : Language.Grammar) : String :=
-  s!"the grammar `{grammar.name}`'s library `{grammar.source.library}` is not an absolute path"
+/-- The sentence of a declaration whose library, `library`, is not an
+absolute path. -/
+def relativeLibrary (grammar : Language.Grammar) (library : System.FilePath) : String :=
+  s!"the grammar `{grammar.name}`'s library `{library}` is not an absolute path"
 
 /-- The sentence of a declaration whose query directory is not an absolute
 path. -/
 def relativeQueries (grammar : Language.Grammar) : String :=
   s!"the grammar `{grammar.name}`'s query directory `{grammar.queries}` is not an absolute path"
 
+/-- The sentence of a per-platform declaration that lists no platform. -/
+def noPlatform (grammar : Language.Grammar) : String :=
+  s!"the grammar `{grammar.name}` declares a library for no platform"
+
+/-- The sentence of a per-platform declaration that lists `platform` more
+than once. -/
+def platformTwice (grammar : Language.Grammar) (platform : String) : String :=
+  s!"the grammar `{grammar.name}` declares a library for the platform `{platform}` twice"
+
+/-- The sentence of a per-platform declaration whose library `library` for
+`platform` is not an absolute path. -/
+def relativePlatformLibrary (grammar : Language.Grammar) (platform : String)
+    (library : System.FilePath) : String :=
+  s!"the grammar `{grammar.name}`'s library `{library}` for the platform `{platform}` is not an absolute path"
+
+/-- What is wrong with `grammar`'s library, as a sentence: a relative path;
+for a per-platform one, no platform, a platform listed twice, or a relative
+path; `none` when nothing is. -/
+def libraryProblem? (grammar : Language.Grammar) : Option String :=
+  match grammar.library with
+  | .single path => if path.isAbsolute then none else some (grammar.relativeLibrary path)
+  | .perPlatform [] => some grammar.noPlatform
+  | .perPlatform paths =>
+    let platforms := paths.map (·.1)
+    match platforms.find? (fun platform => platforms.count platform > 1) with
+    | some platform => some (grammar.platformTwice platform)
+    | none =>
+      (paths.find? (!·.2.isAbsolute)).map fun (platform, library) =>
+        grammar.relativePlatformLibrary platform library
+
 /-- What is wrong with `grammar`, as a sentence: a symbol that registers
-another name, a relative library, or a relative query directory; `none`
-when nothing is. -/
+another name, a problem of its library (`libraryProblem?`), or a relative
+query directory; `none` when nothing is. -/
 def problem? (grammar : Language.Grammar) : Option String :=
-  if grammar.source.name != grammar.name then some grammar.otherName
+  if grammar.registers != grammar.name then some grammar.otherName
   else
-    if !(System.FilePath.mk grammar.source.library).isAbsolute then some grammar.relativeLibrary
-    else if !grammar.queries.isAbsolute then some grammar.relativeQueries else none
+    match grammar.libraryProblem? with
+    | some problem => some problem
+    | none => if !grammar.queries.isAbsolute then some grammar.relativeQueries else none
+
+/-- `path` with its `.` and empty components dropped and each `..` taken
+back, when it is relative and no `..` climbs out of the directory it is
+relative to; `.` for a path that names that directory itself; none for an
+absolute path or one that climbs out. -/
+def within? (path : System.FilePath) : Option System.FilePath := do
+  if path.isAbsolute then
+    none
+  let kept ←
+    path.components.foldlM (init := ([] : List String)) fun kept component =>
+        match component with
+        | "" | "." => some kept
+        | ".." => if kept.isEmpty then none else some kept.dropLast
+        | other => some (kept ++ [other])
+  return if kept.isEmpty then "." else System.FilePath.mk ("/".intercalate kept)
+
+/-- `path` resolved against `directory`: `directory` itself for `.`. -/
+def joinedUnder (directory path : System.FilePath) : System.FilePath :=
+  if path.toString == "." then directory else directory / path
+
+/-- `grammar`, whose library paths and query directory are relative to
+`directory`, with each resolved against it; the offending path when one is
+absolute or climbs out of `directory` (`within?`). -/
+def under (directory : System.FilePath) (grammar : Language.Grammar) :
+    Except System.FilePath Language.Grammar := do
+  let resolve (path : System.FilePath) : Except System.FilePath System.FilePath :=
+    match within? path with
+    | some inside => .ok (joinedUnder directory inside)
+    | none => .error path
+  let library : Library ←
+    match grammar.library with
+    | .single path =>
+      Library.single <$> resolve path
+    | .perPlatform paths =>
+      Library.perPlatform <$>
+          paths.mapM fun (platform, path) => do
+            pure (platform, ← resolve path)
+  return { grammar with
+      library, queries := ← resolve grammar.queries }
 
 /-- The table of `later`'s declarations over `earlier`'s, by name
 (`Language.overBy`): `later`'s, in order, then `earlier`'s that no

@@ -26,10 +26,15 @@ two it goes on with keys and other events.
 ## The job (`register`)
 
 For each declaration, in the table's order: `Grammar.register` of its
-source, and, when that registered, `File.load` of each query file in its
-query directory (`Language.Grammar.queryFiles`) under
-`Language.Grammar.queryLimit`. A refusal of either is a value in the reply
-(`Reply`), never a failure of the job.
+source on the platform the job is given (`Language.Grammar.sourceOn`), and,
+when that registered, `File.load` of each query file in its query directory
+(`Language.Grammar.queryFiles`) under `Language.Grammar.queryLimit`. A
+refusal of either is a value in the reply (`Reply`), never a failure of the
+job. A declaration with no library for the platform (a per-platform one
+that does not list it) is refused in the reply, `failed` with
+`Language.Grammar.noLibraryFor`, before the service is asked: the error
+already means a registration that failed on the way to the service, so the
+port's error gains no constructor.
 
 ## Its command (`installed`), on the editor thread, in order
 
@@ -82,11 +87,15 @@ structure Language.Grammar.Reply where
 
 namespace Language.Grammar
 
-/-- The job: each of `grammars` registered, in order, and the query files
-of each one that registered loaded from its query directory. -/
-def register (grammars : Array Language.Grammar) : JobM (Array Reply) :=
+/-- The job: each of `grammars` registered, in order, from its library on
+`platform`, and the query files of each one that registered loaded from its
+query directory. A declaration with no library for `platform` is refused in
+the reply (`noLibraryFor`), and the service is not asked. -/
+def register (platform : String) (grammars : Array Language.Grammar) : JobM (Array Reply) :=
   grammars.mapM fun grammar => do
-    match ← Editor.Grammar.register grammar.source with
+    let some source := grammar.sourceOn platform
+      | return { grammar, outcome := .error (.failed (noLibraryFor platform)) }
+    match ← Editor.Grammar.register source with
     | .error error =>
       return { grammar, outcome := .error error }
     | .ok _ =>
@@ -154,9 +163,10 @@ def installed (generation : Nat) (replies : Array Reply) : EditorM Unit := do
     message ("; ".intercalate sentences.toList)
 
 /-- The work of the core's `register-grammars` job for `grammars`, the
-registry's table, installed with the config generation `generation`. -/
-def work (generation : Nat) (grammars : Array Language.Grammar) : Work :=
-  Work.of (fun _ => register grammars) (installed generation)
+registry's table, installed with the config generation `generation`, each
+registered from its library on `platform`. -/
+def work (platform : String) (generation : Nat) (grammars : Array Language.Grammar) : Work :=
+  Work.of (fun _ => register platform grammars) (installed generation)
 
 end Language.Grammar
 

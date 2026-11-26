@@ -73,6 +73,13 @@ def grammarConfigText : String :=
   defineLanguage { name := \"ini\", patterns := [.extension \"ini\"], syntaxTree := { grammar := \"ini\" } }
 "
 
+/-- A config that declares the grammar `ini` per platform, for macOS on
+Apple silicon and for Linux on x86-64, with its query directory. -/
+def perPlatformGrammarConfigText : String :=
+  "def setup : SetupM Unit := do
+  defineGrammarPerPlatform \"ini\" [(\"darwin-aarch64\", \"/g/darwin-aarch64/libtree-sitter-ini.dylib\"), (\"linux-x86_64\", \"/g/linux-x86_64/libtree-sitter-ini.so\")] \"/g/queries\"
+"
+
 /-- The checks of config's grammar declarations (`defineGrammar`,
 `Editor/Setup.lean`) through the real elaborator (`buildConfig`): what a
 config file writes is what is collected. The defaults and the refusals are
@@ -88,14 +95,25 @@ def grammarSetupChecks (context : Context) : List Check :=
             (grammars ==
                 some
                   #[Language.Grammar.declare "ini" "/opt/grammars/libtree-sitter-ini.so",
-                    { name := "conf"
-                      source :=
-                        { library := "/opt/grammars/libconf.so", symbol := "conf"
-                          policy := some .incremental }
+                    { name := "conf", library := .single "/opt/grammars/libconf.so"
+                      symbol := "conf", policy := some .incremental
                       queries := "/other/conf-queries" }] &&
-              (grammars.bind (·[0]?)).map (fun ini => (ini.source.symbol, ini.queries.toString)) ==
+              (grammars.bind (·[0]?)).map (fun ini => (ini.symbol, ini.queries.toString)) ==
                 some ("tree_sitter_ini", "/opt/grammars/queries") &&
               languages == some #["ini"])
-            s!"grammars={repr grammars} languages={languages} diagnostics={outcome.diagnostics.map (·.message)}" }]
+            s!"grammars={repr grammars} languages={languages} diagnostics={outcome.diagnostics.map (·.message)}" },
+    { name :=
+        "a config file declaring a grammar per platform builds through the real elaborator with those paths"
+      run := do
+        let outcome ← buildConfig context [("init", perPlatformGrammarConfigText)]
+        let grammars := outcome.built.map (·.registrations.grammars)
+        saw
+            (grammars ==
+              some
+                #[Language.Grammar.declarePerPlatform "ini"
+                    [("darwin-aarch64", "/g/darwin-aarch64/libtree-sitter-ini.dylib"),
+                      ("linux-x86_64", "/g/linux-x86_64/libtree-sitter-ini.so")]
+                    "/g/queries"])
+            s!"grammars={repr grammars} diagnostics={outcome.diagnostics.map (·.message)}" }]
 
 end ConfigTest

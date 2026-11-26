@@ -82,7 +82,9 @@ def declaredGrammarDrawnCheck (completions : Job.Completions) (fixture : JobCont
       let (.ok text, texts) ← made.runReal (.over rig.published) shown.handle | return false
       let handle ←
         Job.spawn services
-            (Work.of (fun _ => Language.Grammar.register #[ini]) (enteredWith ini text)) (pure ())
+            (Work.of (fun _ => Language.Grammar.register Language.Grammar.currentPlatform #[ini])
+              (enteredWith ini text))
+            (pure ())
       discard <| hangGuarded "the registration job's end" handle.outcome.result?
       let some (.finished command) ← handle.outcome? | return false
       let real ← RealSyntaxTree.new rig.published.reader

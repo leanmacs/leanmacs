@@ -950,8 +950,8 @@ The config session's decisions are tested here too, with no elaborator:
   bindings (in a prompt category too, and of keys given as values), the leader and the localleader, modes, ex bindings and faces,
   a job given as its work, an ex name's fixed arguments and menus, a
   store's codec across a restart and a job reported as stopped by one,
-  grammar declarations (`defineGrammar`) with their defaults and the values
-  given, and when it is refused;
+  grammar declarations (`defineGrammar`, `defineGrammarPerPlatform`) with
+  their defaults and the values given, and when it is refused;
 - `setupHintChecks`: a binding's description (`bindKey`'s `desc`) and a
   prefix's name (`prefixName`), as a `setup` collects them, and the names
   it refuses;
@@ -1217,7 +1217,10 @@ names a scheme's key:
   given, the problems of a symbol that registers another name and of a
   relative path, a later owner's declaration over an earlier's, the tree
   a buffer's language resolves to in each case, and the sentences a
-  refusal and an unread query file are said in;
+  refusal and an unread query file are said in; the platform a target
+  triple names, the library a per-platform declaration gives on a listed
+  and an unlisted platform, its problems, and the rule a package's
+  relative path is kept inside its grammars directory by (`within?`);
 - `grammarRegisterChecks`: the core's `register-grammars` job and its
   command (`Editor/Language/Grammar/Register.lean`), driven from the
   reload reducer's effect through the loop's driver on the job model and
@@ -1231,7 +1234,11 @@ names a scheme's key:
   command of an older generation's job doing nothing over the answers of
   a later one; and a grammar registered by one install and refused by the
   next said to stay, its buffer highlighted again with the queries read
-  at the first registration;
+  at the first registration; a grammar with no library for the platform
+  refused before the service is asked and said with that platform, and a
+  package's such grammar leaving its language's buffers with no syntax
+  tree; and config's declaration of a package grammar's name registered in
+  its place;
 - `modeRegistryChecks`: modes in the registry
   (`Editor/Config/Registry.lean`): a mode's lineage, and the active keymaps
   of a view, in precedence order;

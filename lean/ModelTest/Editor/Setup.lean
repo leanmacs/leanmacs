@@ -827,10 +827,8 @@ def setupChecks : List Check :=
         | .ok collected, .ok plain =>
           pure
             (collected.grammars ==
-                #[{ name := "ini"
-                    source :=
-                      { library := "/opt/grammars/libtree-sitter-ini.so"
-                        symbol := "tree_sitter_ini", policy := none }
+                #[{ name := "ini", library := .single "/opt/grammars/libtree-sitter-ini.so"
+                    symbol := "tree_sitter_ini", policy := none
                     queries := "/opt/grammars/queries" }] &&
               plain.grammars.isEmpty)
         | _, _ => pure false },
@@ -844,11 +842,8 @@ def setupChecks : List Check :=
         | .ok collected =>
           pure
             (collected.grammars ==
-              #[{ name := "conf"
-                  source :=
-                    { library := "/opt/grammars/libconf.so", symbol := "conf"
-                      policy := some .incremental }
-                  queries := "/other/conf-queries" }])
+              #[{ name := "conf", library := .single "/opt/grammars/libconf.so", symbol := "conf"
+                  policy := some .incremental, queries := "/other/conf-queries" }])
         | .error _ => pure false },
     { name :=
         "a setup that declares a grammar name twice, a symbol that registers another name, or a relative library or query directory is refused with a message that names it"
@@ -866,6 +861,27 @@ def setupChecks : List Check :=
             refusal (defineGrammar "ini" "/g/libini.so" (queries := "queries")) ==
               some "the grammar `ini`'s query directory `queries` is not an absolute path" &&
             refusal (defineGrammar "ini" "/g/libini.so") == none) },
+    { name :=
+        "a setup's per-platform grammar declaration is collected with each platform's library and the query directory it gives; one with a relative path or no path is refused with a message that names it"
+      run :=
+        let libraries : List (String × System.FilePath) :=
+          [("darwin-aarch64", "/g/darwin-aarch64/libtree-sitter-ini.dylib"),
+            ("linux-x86_64", "/g/linux-x86_64/libtree-sitter-ini.so")]
+        match
+          Config.Registrations.ofSetup (defineGrammarPerPlatform "ini" libraries "/g/queries") with
+        | .ok collected =>
+          pure
+            (collected.grammars ==
+                #[{ name := "ini", library := .perPlatform libraries, symbol := "tree_sitter_ini"
+                    policy := none, queries := "/g/queries" }] &&
+              refusal
+                  (defineGrammarPerPlatform "ini" [("linux-x86_64", "linux/libini.so")]
+                    "/g/queries") ==
+                some
+                  "the grammar `ini`'s library `linux/libini.so` for the platform `linux-x86_64` is not an absolute path" &&
+              refusal (defineGrammarPerPlatform "ini" [] "/g/queries") ==
+                some "the grammar `ini` declares a library for no platform")
+        | .error _ => pure false },
     { name :=
         "a setup's syntax refresh delay is collected, a setup that sets none has none, and one that sets it twice is refused with a message that says so"
       run :=
