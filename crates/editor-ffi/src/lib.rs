@@ -673,6 +673,7 @@ pub mod syntax;
 pub mod text;
 pub mod timers;
 pub mod transaction;
+pub mod url_opener;
 pub mod watches;
 pub mod window;
 mod words;

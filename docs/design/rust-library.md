@@ -1519,6 +1519,44 @@ interface in Lean:
 - **Not built**: binding the adapter to the clipboard interface, and any
   C function or Lean for it (the display pipeline's phase 6).
 
+The URL opener is a port of its own beside the clipboard, which hands a URL
+to the desktop's handler for it (the rich-text display's phase 3, for a
+link's URL target; `docs/design/text-and-display.md`, "Followable spans, as
+built"):
+
+- **The port** is `editor_platform::url_opener::UrlOpener`: `open` hands a
+  URL to the system and says whether the system took it, which says
+  nothing of whether a program then opened it. Which URLs are opened, and
+  the check a URL passes first (a scheme, no control character), is Lean's
+  (`lean/Editor/Link.lean`, `lean/Editor/Links.lean`).
+- **It is reached from a job, never a command.** An open may block: on
+  macOS `/usr/bin/open` returns once LaunchServices has the request, and on
+  Linux each launcher is watched for up to 250 ms for an early failure. A
+  command may not wait and a job may (`lean/Editor/Process.lean`), so
+  `link-follow` starts the job `url-open`, which asks the job service
+  `JobRequest.urlOpener` (`lean/Editor/UrlOpener.lean`).
+- **The fakes** are `RecordingOpener`, which keeps each URL it takes in
+  order, and `FailingOpener`, which refuses every one with its reason.
+  `RecordingOpener` refuses a URL holding a NUL byte, as the system does,
+  so the fake takes nothing the system refuses.
+- **The contract** (`url_opener::contract`) holds only what an opener can
+  be held to without launching anything: a URL holding a NUL byte is
+  refused, with a reason that is not empty.
+- **The adapter** is `editor-platform-open`, over the `open` crate, pinned
+  exactly, with its default features off: `SystemOpener` hands the URL to
+  `open::that_detached`, which starts the platform's launcher detached and
+  reaps it. Only `editor-ffi` links it (`deny.toml`), and only Lean's window
+  mode makes it (`editor_ffi_url_opener_system`); the headless mode's jobs
+  have no opener.
+- **Where it is checked.** The adapter runs the contract in its own tests:
+  the NUL byte is refused at the launcher's spawn, before any program
+  starts. That a well-formed URL reaches the desktop's handler is the
+  adapter's one call into `open`, held by review: any other run would open
+  a browser on the machine running the gate. The C functions are tested over
+  the two fakes (`crates/editor-ffi/tests/url_opener.rs`), and Lean's
+  binding over them through the glue (`ContractTest.urlOpenerChecks`,
+  `ContractTest.urlOpenerJobFailures`).
+
 ## Text utilities
 
 | Service | Notes |
