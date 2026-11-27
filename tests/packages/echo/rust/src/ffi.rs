@@ -1,8 +1,13 @@
 //! The library's C interface, declared with the package wrapper's macro
-//! (`editor_package::package!`): its one exported symbol, its init
-//! ([`editor_package_init`]), and the table of C functions it answers
+//! (`editor_package::package!`): its two exported symbols, its init
+//! ([`editor_package_init`]) and its declaration
+//! ([`editor_package_declaration`]: interface 1, the shape of
+//! [`EchoFunctions`], which the glue's `ECHO_INTERFACE` names, and the
+//! runtime the wrapper needs), and the table of C functions it answers
 //! ([`EchoFunctions`], behind the table's size), through which the
-//! package's glue (`ffi/glue.c`) forwards echo's `@[extern]` calls.
+//! package's glue (`ffi/glue.c`) forwards echo's `@[extern]` calls. A
+//! change to the table's shape is a new interface version, here and in the
+//! glue together.
 //!
 //! The init is the wrapper's ([`editor_package::Package::export`]): it
 //! refuses no runtime and one smaller than the wrapper requires, the table
@@ -88,6 +93,8 @@ pub struct EchoFunctions {
 }
 
 package! {
+    interface 1;
+
     /// echo's library: its init ([`Loaded::new`]) and its table.
     pub static PACKAGE: Package<Loaded, EchoFunctions> = Package::new(
         Loaded::new,

@@ -89,6 +89,8 @@ extern "C" fn service() -> u64 {
 }
 
 package! {
+    interface 1;
+
     /// The checked package.
     static PACKAGE: Package<Checked, Functions> = Package::new(Checked::new, Functions { service });
 }

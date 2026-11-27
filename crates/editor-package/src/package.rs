@@ -1,5 +1,6 @@
-//! A package's library, declared: its init and its function table
-//! ([`Package`], [`Table`]), exported by one macro ([`crate::package!`]).
+//! A package's library, declared: its init, its function table and its
+//! declaration ([`Package`], [`Table`], [`declaration`]), exported by one
+//! macro ([`crate::package!`]).
 //!
 //! A package writes a `#[repr(C)]` struct of `extern "C"` function
 //! pointers, its own and opaque to the core, and an init, `fn(Runtime) ->
@@ -18,6 +19,14 @@
 //! The table carries its own size first ([`Table`]), so its layout is a
 //! flat `{ size_t size; fns… }` the glue mirrors. A table's function
 //! reaches the state with [`Package::state`], none before a load.
+//!
+//! Beside the init the macro exports the library's declaration,
+//! `editor_package_declaration` ([`declaration`]): the package's interface
+//! version, the macro's leading `interface N;`, which numbers the shape of
+//! the table its glue mirrors, and the runtime the wrapper needs,
+//! [`crate::REQUIRED`]. The core reads it before it calls the init and
+//! refuses a library of another interface or a newer runtime, so the
+//! init's own size check stays as a guard behind the core's.
 //!
 //! A member of the runtime appended later is called only after
 //! `runtime_has!` asks for it, in the wrapper's method that calls it, which
@@ -38,9 +47,24 @@ use std::mem::size_of;
 use std::ptr;
 use std::sync::OnceLock;
 
-use editor_package_runtime::{INIT_LOADED, INIT_RUNTIME_TOO_SMALL, PackageRuntime};
+use editor_package_runtime::{
+    INIT_LOADED, INIT_RUNTIME_TOO_SMALL, PackageDeclaration, PackageRuntime,
+};
 
-use crate::runtime::Runtime;
+use crate::runtime::{REQUIRED, Runtime};
+
+/// The declaration of a library built on this wrapper whose package's
+/// interface version is `interface`: its own size, the runtime the
+/// wrapper needs, [`REQUIRED`] (it calls a later member only after
+/// `runtime_has!` asks for it), and the interface. [`crate::package!`]
+/// exports it as `editor_package_declaration`.
+pub const fn declaration(interface: u32) -> PackageDeclaration {
+    PackageDeclaration {
+        size: size_of::<PackageDeclaration>(),
+        runtime: REQUIRED,
+        interface,
+    }
+}
 
 /// A package's function table as it crosses: its size, then the package's
 /// own functions `F`, a `#[repr(C)]` struct of `extern "C"` function
@@ -154,22 +178,35 @@ impl<S, F> Package<S, F> {
     }
 }
 
-/// Declares a package's library: `package! { pub static NAME: Package<S,
-/// F> = Package::new(init, functions); }` declares the `static` and
+/// Declares a package's library: `package! { interface N; pub static NAME:
+/// Package<S, F> = Package::new(init, functions); }` declares the `static`,
 /// exports the library's init, `editor_package_init`, over
-/// [`Package::export`], so one invocation declares both the init and the
-/// function table. The export's signature is checked against the
-/// definitions' `PackageInit` at compile time. A second invocation in one
-/// library fails to link: the symbol is one per library.
+/// [`Package::export`], and exports its declaration,
+/// `editor_package_declaration` ([`declaration`]`(N)`), so one invocation
+/// declares the init, the function table and the interface version `N`
+/// the package's glue expects. The export's signature is checked against
+/// the definitions' `PackageInit` at compile time. A second invocation in
+/// one library fails to link: the symbols are one per library.
 ///
 /// The `unsafe` of the export is the wrapper's, written here once; rustc's
 /// `unsafe_code` lint does not fire on an external macro's expansion, so a
 /// package keeps `#![deny(unsafe_code)]`.
 #[macro_export]
 macro_rules! package {
-    ($(#[$meta:meta])* $vis:vis static $name:ident : $ty:ty = $value:expr ;) => {
+    (interface $interface:expr; $(#[$meta:meta])* $vis:vis static $name:ident : $ty:ty = $value:expr ;) => {
         $(#[$meta])*
         $vis static $name: $ty = $value;
+
+        /// The library's declaration, which the core reads before it calls
+        /// the init: the package's interface version and the runtime the
+        /// wrapper needs (`editor_package::declaration`).
+        #[unsafe(no_mangle)]
+        #[expect(
+            non_upper_case_globals,
+            reason = "the symbol the core asks a package's library for, by this name"
+        )]
+        pub static editor_package_declaration: $crate::raw::PackageDeclaration =
+            $crate::declaration($interface);
 
         /// The library's init, the one symbol the core asks a package's
         /// library for: it loads the package declared beside it on the

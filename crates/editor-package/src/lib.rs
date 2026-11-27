@@ -36,7 +36,11 @@
 //! over this crate's FFI-safe types ([`buffer`]), declared with
 //! [`functions!`], whose body sees what the caller lends borrowed for the
 //! call alone, with no `unsafe` of its own; [`package!`] declares the
-//! package and exports its init, `editor_package_init`:
+//! package and exports its init, `editor_package_init`, and its
+//! declaration, `editor_package_declaration` ([`declaration`]): the
+//! interface version its leading `interface N;` names, which the package's
+//! glue passes to the core's load, and the runtime this crate needs,
+//! [`REQUIRED`]:
 //!
 //! ```
 //! # #![deny(unsafe_code)]
@@ -84,6 +88,8 @@
 //! }
 //!
 //! package! {
+//!     interface 1;
+//!
 //!     /// The library.
 //!     pub static PACKAGE: Package<Loaded, Functions> = Package::new(
 //!         Loaded::new,
@@ -101,7 +107,7 @@
 //!
 //! # The modules
 //!
-//! - [`package`](mod@package): [`Package`], [`Table`] and the macro [`package!`]; the
+//! - [`package`](mod@package): [`Package`], [`Table`], [`declaration`] and the macro [`package!`]; the
 //!   init's refusal of a runtime smaller than [`REQUIRED`].
 //! - [`runtime`]: [`Runtime`], the runtime a package's init is handed.
 //! - [`service`]: [`Service`], and the port a service reports through
@@ -161,6 +167,7 @@
 //! | A new type mirrored from `editor-service` | The module of the same name ([`frame`], [`stream`], [`service`]), the same name, variants and fields | Its unit tests here; `editor-package-check`'s conversion, which matches every variant |
 //! | Another way a child ends, or frames | A variant of [`stream::Ended`] or [`frame::Frames`], its words in [`wire::encode`] and [`wire::decode`] (both match every variant) | [`wire`]'s round trip, which lists every variant; `editor-package-check/tests/wire.rs`, both directions with the core |
 //! | A rule of the init or the table | [`package`](mod@package) ([`Package::export`], [`Package::load`], [`Table`]) | [`package`](mod@package)'s unit tests and `tests/declare.rs` |
+//! | A new member of the declaration (a trailing member of `editor-package-runtime`'s `PackageDeclaration`, read by `editor-package-library`'s load) | [`declaration`], which fills it for every library built on this crate, and, when a package chooses it, an argument of [`package!`] | `tests/declare.rs`, which reads the exported static whole |
 //! | A rule every stream source keeps (the scripted fake and the runtime's [`stream::Child`] alike) | A property of [`stream::contract::check`], a [`stream::contract::Scenario`] for its child, and each ground's mapping of it ([`stream::fake::ScriptedSource`]'s, and `editor-package-check`'s over `editor-service`'s `FakeSource`) | The contract on [`stream::fake::ScriptedSource`] (`the_scripted_source_keeps_the_stream_contract`), on [`Runtime`] over [`fake::FakeRuntime`] (`a_runtime_over_the_fake_keeps_the_stream_contract`), and on [`Runtime`] over the real `RUNTIME` (`editor-package-check/tests/load.rs`); and that it bites: a flaw of the scripted source that breaks the rule (its crate-private `Flaws`), and a test in [`stream::contract`]'s own that the contract reports exactly that property |
 //! | Another way for a test to script the fake | A method of [`fake::FakeRuntime`] or [`stream::fake`] | The fake's unit tests, and the stream contract on [`stream::fake::ScriptedSource`] when the method changes what a child delivers |
 
@@ -175,7 +182,7 @@ pub mod service;
 pub mod stream;
 pub mod wire;
 
-pub use package::{Package, Table};
+pub use package::{Package, Table, declaration};
 pub use runtime::{REQUIRED, Runtime};
 pub use service::{Completer, RecordingCompleter, Service, completer_contract};
 

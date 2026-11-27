@@ -3,11 +3,15 @@
 //! `editor_package_init`, which refuses no runtime and one smaller than
 //! the wrapper requires, with no table written and no state made, and
 //! loads a whole runtime and a later one, the state made once and the same
-//! table answered, whose functions reach the state.
+//! table answered, whose functions reach the state; and beside it the
+//! declaration, `editor_package_declaration`, which says the package's
+//! interface, as the macro's `interface 7;` gives it, and the runtime the
+//! wrapper needs, [`REQUIRED`].
 //!
-//! An integration test of its own, and one test, because the export is one
-//! symbol per binary and the package's state is process-wide: once loaded,
-//! it stays loaded.
+//! An integration test of its own, and one test of the init, because the
+//! export is one symbol per binary and the package's state is process-wide:
+//! once loaded, it stays loaded. The declaration is a static that no load
+//! changes, so its test stands apart.
 
 #![deny(unsafe_code)]
 
@@ -15,7 +19,7 @@ use std::ffi::c_void;
 use std::ptr;
 
 use editor_package::fake::FakeRuntime;
-use editor_package::raw::{INIT_LOADED, INIT_RUNTIME_TOO_SMALL};
+use editor_package::raw::{INIT_LOADED, INIT_RUNTIME_TOO_SMALL, PackageDeclaration};
 use editor_package::{Package, REQUIRED, Runtime, Service, package};
 
 /// The declared package's state: the service its init registers.
@@ -51,6 +55,8 @@ extern "C" fn complete(request: u64) -> bool {
 }
 
 package! {
+    interface 7;
+
     /// The declared package.
     static PACKAGE: Package<Declared, Functions> = Package::new(Declared::new, Functions { complete });
 }
@@ -95,4 +101,17 @@ fn a_package_declared_with_the_macro_exports_its_init_and_table() {
     assert!((PACKAGE.table().functions().complete)(41));
     assert_eq!(whole.next_completion(), Some((1024, 41)));
     assert_eq!(later.next_completion(), None);
+}
+
+#[test]
+fn a_package_declared_with_the_macro_exports_its_declaration_its_interface_and_the_runtime_it_needs()
+ {
+    assert_eq!(
+        editor_package_declaration,
+        PackageDeclaration {
+            size: size_of::<PackageDeclaration>(),
+            runtime: REQUIRED,
+            interface: 7,
+        }
+    );
 }
