@@ -117,8 +117,8 @@ then `m`. -/
 def vimModeKeys : Vim.ModeKeys :=
   { roles :=
       Role.registered.zip
-        ([["n"], ["N"], ["RET"], ["Q"], ["z", "r"], ["TAB"], ["M"]].map fun strokes =>
-          keys (" ".intercalate strokes))
+        ([["n"], ["N"], ["RET"], ["Q"], ["z", "r"], ["TAB"], ["M"], ["]", "l"], ["[", "l"]].map
+          fun strokes => keys (" ".intercalate strokes))
     leader := keys "SPC"
     localLeader := [.leader, .key (charKey "m")] }
 

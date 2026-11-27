@@ -94,7 +94,8 @@ private def parsed (text : String) : List Key :=
 that none is ever a self-insert. -/
 def roles : List (Role × List Key) :=
   [(Role.nextItem, "C-n"), (Role.previousItem, "C-p"), (Role.activate, "RET"), (Role.quit, "C-q"),
-        (Role.refresh, "<F5>"), (Role.toggle, "TAB"), (Role.mark, "C-SPC")].map
+        (Role.refresh, "<F5>"), (Role.toggle, "TAB"), (Role.mark, "C-SPC"), (Role.nextLink, "M-n"),
+        (Role.previousLink, "M-p")].map
     fun (role, text) => (role, parsed text)
 
 /-- The test scheme's leader: `C-c`, Emacs's prefix for a mode's keys. -/

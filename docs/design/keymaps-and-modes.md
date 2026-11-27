@@ -3424,11 +3424,14 @@ of, and it does not need to.
 Built (`Role.registered`; the tables are `TestScheme.roles` and
 `Vim.Default.roles`, with the leaders beside them).
 
-**The starting set** is seven roles, the ones the table above names:
-`next-item`, `previous-item`, `activate`, `quit`, `refresh`, `toggle` and
-`mark`. They are the actions list-like special buffers share (what
-evil-collection rebinds most), and no other action has two unrelated users
-yet.
+**The set** is nine roles, the ones the table below names. The first
+seven, `next-item`, `previous-item`, `activate`, `quit`, `refresh`,
+`toggle` and `mark`, are the actions list-like special buffers share (what
+evil-collection rebinds most). The last two, `next-link` and
+`previous-link`, move between a buffer's links (`Editor/Link.lean`): they
+recur in every generated buffer with links, whatever its mode, filled by
+the links mode, whose keymaps go first where a buffer has links ("Active
+keymaps", "The links mode"). No other action has two unrelated users yet.
 
 **The rule for adding a role.** A role is a standard action that recurs,
 with one meaning, in modes that have nothing else in common. An action of
@@ -3463,6 +3466,8 @@ changes every mode that fills it.
 | `refresh` | `<F5>` | `g r` |
 | `toggle` | `TAB` | `TAB` |
 | `mark` | `C-SPC` | `m` |
+| `next-link` | `M-n` | `] l` |
+| `previous-link` | `M-p` | `[ l` |
 | **leader** | `C-c` | `SPC` |
 | **localleader** | `C-c` (`<leader>`) | `SPC m` (`<leader> m`) |
 
@@ -3472,6 +3477,9 @@ changes every mode that fills it.
 - **The Vim scheme's are evil-collection's usual keys for list buffers.**
   `j` and `k` replace the motions only in buffers whose modes fill those
   roles, which is the design's intent; `g r` merges with the `g g` prefix.
+  The link roles are on `] l` and `[ l`, vim-unimpaired's keys for the
+  location list; no default state binds `]` or `[`, and `TAB` stays
+  `toggle`'s, which folds take.
 - **The Vim scheme's leader is `SPC` and its localleader `SPC m`**, Doom
   Emacs's. `SPC` begins no binding of any default state, so a sequence
   under it reaches nothing of the scheme's; neither leader holds where

@@ -3,7 +3,8 @@
 
 A role is a standard action that a mode fills with a command of its own and
 that each input scheme puts on a key once: next and previous item, activate,
-quit, refresh, toggle and mark (`docs/design/keymaps-and-modes.md`,
+quit, refresh, toggle, mark, and next and previous link
+(`docs/design/keymaps-and-modes.md`,
 "Roles"). A mode names the roles it fills (`Editor/Mode.lean`) and never a
 key, so it works under any scheme; a scheme's role table
 (`InputScheme.roles`, `Editor/InputScheme.lean`) says which keys each role
@@ -21,6 +22,12 @@ A role is a standard action that recurs, with one meaning, in modes that
 have nothing else in common. An action of one mode, or of one family of
 related modes, is a leader suffix (or lives on a parent mode). Config
 cannot add a role.
+
+`next-link` and `previous-link` recur in every generated buffer with links,
+whatever its mode: they are filled by the links mode (`Editor/Links.lean`),
+whose keymaps go first in any buffer that has links, so a listing, a
+compilation, a help page or a package's own buffer all move between their
+links on the same keys.
 
 ## Where an addition goes
 
@@ -71,9 +78,17 @@ def toggle : Role :=
 def mark : Role :=
   { name := "mark" }
 
+/-- Go to the next link of the buffer (`Editor/Link.lean`). -/
+def nextLink : Role :=
+  { name := "next-link" }
+
+/-- Go to the previous link of the buffer. -/
+def previousLink : Role :=
+  { name := "previous-link" }
+
 /-- The roles the core registers, in order. -/
 def registered : List Role :=
-  [nextItem, previousItem, activate, quit, refresh, toggle, mark]
+  [nextItem, previousItem, activate, quit, refresh, toggle, mark, nextLink, previousLink]
 
 end Role
 
