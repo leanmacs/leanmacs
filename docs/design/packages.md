@@ -2157,7 +2157,7 @@ read-only, with `PATH=/usr/bin:/bin`.
 
 ### The records beside a set's editor
 
-The package-set build (the facet `editor`) writes five records beside the
+The package-set build (the facet `editor`) writes six records beside the
 executable it links, besides `editor.oleans` and `editor.set`:
 
 - **`editor.core`**: the core's identity, one line, 16 hex digits
@@ -2199,6 +2199,15 @@ executable it links, besides `editor.oleans` and `editor.set`:
   `<lake><TAB><directory>` each, absolute (`stageGrammars`); empty for a
   set that ships none. The editor resolves those packages' grammar
   declarations against it ("A package's grammars", above).
+- **`editor.libraries`**: where the build staged the library of each Lake
+  package of the set that declares one (an `editorLibrary` target), one
+  line `<lake><TAB><library>` each, absolute, naming
+  `<set>/.lake/build/libraries/<lake>/<file>`; empty for a set with none.
+  Every executable linked as the editor writes its own
+  (`<executable>.libraries`, through `linkAsEditor`): the set's editor, its
+  fixture harness and a package's linked test. A package's initialiser
+  loads its library from the line of its Lake package ("A package's
+  library, staged and loaded, as built", below).
 
 ### The install: a set's editor in one directory
 
@@ -2215,9 +2224,12 @@ exist yet:
   editor.oleans    one relative line: lib/lean
   editor.grammars  one relative line per package that ships grammars:
                    <lake><TAB>grammars/<lake>
+  editor.libraries one relative line per package that declares a library:
+                   <lake><TAB>libraries/<lake>/<file>
   lib/lean/...     .olean, .olean.server and .olean.private of every module
                    of the workspace the set's root imports
   grammars/<lake>/ a copy of each grammars directory the set's build staged
+  libraries/<lake>/<file>  a copy of each library the set's build staged
 ```
 
 - **The modules are copied, not referenced.** A later build that fails
@@ -2409,10 +2421,17 @@ is pinned on the models (`ModelTest.packageSetBuildChecks`):
    holds the refusal (`lean/ModelTest/Editor/PackageSet/Build.lean`).
 3. **Rust**: `lake query :editorRustCrates`; a set that holds a package
    declaring a Rust crate stops here, refused ("Who can build it"). No
-   Cargo is ever run.
+   Cargo is ever run. A package whose native code is a library of its own
+   (an `editorLibrary` target) adds no crate, so a set whose packages
+   declare only libraries passes with no Cargo.
 4. **Build and install**: `lake build :editorInstall` with
    `EDITOR_INSTALL_DIR=<data>/editors/staging-<k>` and the environment of
    `editor.build`, its output streamed into the buffer `*package-build*`.
+   The install stages and copies each package's library; a library target
+   that must build and finds its tool missing stops it with `<tool> is
+   required to build <package>'s library, and none works here (<how>):
+   …`, which the job reads off Lake's `error:` line (`missingTooling?`) into
+   its failure line ("A package's library, staged and loaded, as built").
 5. **Record**: the new editor's `editor.core` is read, and
    `editor.packages` written beside it: the requires as the reload read
    them, the pins read again after the resolve, and the set's name.
@@ -3429,18 +3448,24 @@ What the later phases must change in the design basis:
   reader, reaches a consumer blocked in a pull on a cancel or a shutdown,
   and reaps the child; acp's connection runs over a pull and write stream
   too.
-- **The size check is the library's** (its init answers 1). Phase 4 moves
-  the refusal to the editor, from a declared size and interface version;
-  phase 2 kept it the library's.
+- **The size check is the library's** (its init answers 1). Phase 4 moved
+  the refusal to the editor, from the library's declaration (the runtime
+  it needs and its interface version), read before the init; the init's
+  own check stays as a guard behind the core's. Phase 2 had kept it the
+  library's. Done by phase 4 ("A package's library, staged and loaded, as
+  built").
 - **The path is absolute into the checkout's `target/`.** Phase 4 stages
-  each package's library into the install and hands its path.
+  each package's library beside every editor linked and into the install,
+  and the package's initialiser reads its path from the record there;
+  nothing is compiled into the glue. Done by phase 4.
 - **The load must be a `builtin_initialize`.** A plain `initialize` runs
   when a module that imports it is compiled or imported (the config
   elaborator imports `Echo.EditorPackage` at run time), where the glue's
   symbols do not exist.
 - **Any library at the path that exports `editor_package_init` is taken
-  as echo's**: there is no interface version until phase 4 (phase 2 left
-  it so).
+  as echo's**: there was no interface version until phase 4 (phase 2 left
+  it so). Phase 4 refuses a library that declares nothing or another
+  interface than its glue's. Done by phase 4.
 - **The core refuses completions for core ids**, so the runtime's
   `complete` is safe to hand a third party's library. Phase 2 extends the
   refusal to `post_event`.
@@ -3545,14 +3570,19 @@ it as `.message`; what the editor loop does with a package's message is
 not decided, since no package needs it yet. An event with words would be a
 later trailing member.
 
-**No interface version yet.** The init stays
+**The declaration** (phase 4). The init stays
 `editor_package_init(runtime, table) -> u32`, 0 loaded and 1 runtime too
-small, and the library checks the size itself. Phase 4 adds a library's
-declared size and interface version, and the editor's refusal, naming the
-package and both versions, of a library built for a newer runtime or
-another interface; through the init's protocol or a second exported
-symbol, either of them additive. Until then any library exporting
-`editor_package_init` is taken as the package's.
+small. Beside it a library exports a second symbol, the static
+`editor_package_declaration` (`PackageDeclaration`, `#[repr(C)]`): its own
+`size`, the `runtime` size it needs, and the package's `interface`
+version, append-only like the runtime (`DECLARATION_REQUIRED` is the end of
+`interface`). The core reads it before it calls anything of the library
+and refuses, naming the package and both versions, a library built for a
+newer runtime or another interface ("A package's library, staged and
+loaded, as built"). It was chosen over the init's protocol because a
+static is read before any of the library's code runs: a refused library
+registers no service and starts no thread. Until phase 4 any library
+exporting `editor_package_init` was taken as the package's.
 
 **The model and the contract.** `editor_package_library::runtime::model::ModelRuntime`
 is the runtime's pure model: its own id counter, completion and editor
@@ -3789,12 +3819,178 @@ expansion), `stream` (`Child`'s `Send` and `Sync`), `package`
 (`Package::export` and the macro's expansion) and `fake` (its C members, its ledger's free and its
 `init`).
 
-**Left to later phases.** Phase 4: a library's declared size and interface
-version and the editor's refusal (`Package::export` is where a
-wrapper-built library declares them, and `REQUIRED` is the size it
-declares). Phase 5: acp's port, which joins `editor-package`'s wrappers
+**Left to later phases.** Phase 4 is done: `package!` takes `interface N;`
+and exports the declaration beside the init (`editor_package::declaration`,
+whose runtime is `REQUIRED`), and the editor refuses a library declaring
+another interface or a newer runtime. Phase 5: acp's port, which joins `editor-package`'s wrappers
 and leaves `editor-service`'s, its `Service` static replaced by one held
 in its state. Phase 6: the author guide's dependency line.
+
+### A package's library, staged and loaded, as built
+
+Status: **built**
+(`phase/package-native-libraries/phase-4-stage-and-load-package-libraries`).
+A package's library is found by the package-set build in every package of
+any set, staged beside every editor it links and into the install, and
+loaded from there by the package's glue, never from the package's source
+directory; the editor refuses, before calling anything of it, a library
+declaring another interface or a newer runtime.
+
+**The target.** A package declares its library with one Lake target,
+`editorLibrary`, whose value is the library's absolute path, as it declares
+`editorRustCrate` (`libraryTargetName`). The core finds it by name in each
+package of the set (`setLibraries`, over `setPackages`), fetches it through
+the build's store, and reads its value through its own declaration's query
+format, so no type of the package's is named and no list is kept. The body
+is the author's, in one of two forms or both:
+
+- **Already built**, or checked in: a path inside the package, its content
+  the trace. No process runs, so a user's set builds with no compiler of
+  the user's.
+- **Built with the user's tooling** (Cargo, zig, cc), run through Lake's
+  `proc`.
+
+echo's target does both: `lib/libecho_service.<ext>` when the package holds
+it, else `cargo build -p echo-service` in the repository
+(`tests/packages/echo/lakefile.lean`). The guide's "A native library"
+(`docs/packages/writing-a-package.md`) is the author's side.
+
+**Where it is staged.**
+
+| Build | Library | Record |
+|---|---|---|
+| A set's build (`editor`, `editorFixtures`, a package's `editorLinked`) | `<set>/.lake/build/libraries/<lake>/<file>` (`editorLibraries`, `stagedLibraryPlace`); for a linked test the set is the package, under its own build directory | `<executable>.libraries` beside each executable linked as the editor (`linkAsEditor`, `librariesRecordText`), absolute lines `<lake><TAB><library>` |
+| A per-user install (`editorInstall`) | `<install>/libraries/<lake>/<file>`, copied from the set's staged copy | `<install>/editor.libraries`, relative lines `<lake><TAB>libraries/<lake>/<file>` (`installLibrariesRecord`), so the directory still renames into place |
+| The app bundle | none yet: no default package declares a library, so `stage-bundle` writes none. When one does, `editorShipped` must stage it, a gap | `Contents/Resources/editor.libraries`, read by the grammars' rule when it is there |
+
+- **The copy** is written beside its place and renamed over it, only when
+  its bytes differ (`stageLibrary`): a rename gives a new inode, so an
+  editor that has the old library mapped keeps running (on macOS, a signed
+  library rewritten in place kills the process that maps it). Bytes only:
+  a quarantine attribute is not carried, and the library's signature, in
+  its bytes, is.
+- **The staging is part of every link's job**, so `lake build :editor`
+  fails with a library that fails, and a library that changes is restaged
+  with no relink.
+
+**How the glue finds it.** `Editor.ModuleLookup`'s "The libraries" reads the
+record, `<executable>.libraries` or the bundle's, a relative line resolved
+against the executable's directory (`recordedLibraries`). The core's API
+module `Editor.PackageLibrary` gives `staged appPath readFile package
+lake`, which answers the line of the Lake package or `notStaged`'s
+sentence ("`<package>`: no library is staged for its Lake package `<lake>`
+beside this editor (`<record>`); rebuild the package set (:reload)"); the
+package's `.Real` initialiser, the edge, hands it `IO.appPath` and the real
+file read, and throws the sentence. echo's is
+`load (← stagedLibrary)` (`Echo/Real.lean`), and its glue compiles in no
+path.
+
+**The declaration and the refusals.** Beside its init a library exports
+`editor_package_declaration` ("The package runtime, as built", "The
+declaration"): in Rust through `package! { interface N; … }`, in C, C++ or
+Zig through the header's `EDITOR_PACKAGE_DECLARE(interface, last_member)`.
+The interface version is the package's own, the shape of its table, which
+only its glue and library share; the glue passes the version it was
+compiled for (echo's `ECHO_INTERFACE`, 1). The load
+(`editor_package_library::load::load(libraries, path, interface,
+runtime)`) refuses in this order, each refusal a tag:
+
+| Tag | Refusal | When |
+|---|---|---|
+| 1 | missing | the path is not absolute, or nothing is at it |
+| 2 | not a library | the file will not open |
+| 3 | no init | no `editor_package_init` |
+| 6 | no declaration | no `editor_package_declaration`, or one whose `size` ends before `interface` |
+| 8 | another interface (declared, expected) | the declaration's interface is not the glue's: asked first, since such a library is not the one this glue was built for at all |
+| 7 | newer runtime (needs, has) | the declaration needs more runtime than the core's `size` |
+| 4 | runtime too small | only then the init is called, and answers 1: its own guard behind the core's |
+| 5 | failed init | the init answers anything else, or 0 with no table |
+
+The new tags were appended (6, 7, 8), so 1 to 5 keep their meaning. A
+library refused by its declaration runs none of its code. The adapter
+reads the declaration's `size` alone first, then only the members it
+covers, so an older, shorter declaration is never read past its end. The C
+function a glue calls is
+
+```c
+uint32_t editor_ffi_package_load(const uint8_t *path, size_t len,
+                                 uint32_t interface, const void **table,
+                                 uint64_t *versions /* [2] */);
+```
+
+which writes `versions` for 7 and 8 alone; it changed in place, since no
+glue outside this repository exists yet (the append-only rule binds the
+runtime and the declaration). The Lean reading is the core's
+(`Editor.PackageLibrary.LoadRefusal.of?` and `describe package library`),
+so every package with a library reads the core's tags, naming itself:
+another interface says "`<p>`: the library `<l>` has interface version
+`<declared>`, and this editor's `<p>` expects `<expected>`; rebuild the
+package set so the library and its package match", and a newer runtime
+"… was built for a newer package runtime than this editor's: it needs
+`<needs>` bytes of runtime, and this editor's is `<has>`; update the
+editor, or use a build of `<p>` for this one".
+
+**A missing tool.** The build cannot ask beforehand which tool a target
+needs, so the report is taken from what failed. The staging
+(`stageLibraries`) reads each target's result, not its value: a target
+declared with Lake's DSL registers its job with the build monitor and hands
+back a renewed copy whose log went there, so the staging reads the
+registered job, by its caption. A log entry saying the tool could not be
+run (`libraryToolMissing?`: Lean's `could not execute external process
+'<cmd>'`, which Lake 4.35's `proc` logs under `stderr:`, or Lake's own
+`failed to execute '<cmd>': <error>`) fails the staging with
+`libraryToolRequired`, in `cargoRequired`'s shape: "`<tool>` is required to
+build `<package>`'s library, and none works here (`<how>`): install it (for
+cargo, with rustup from https://rustup.rs), or use the package's prebuilt
+library, as its documentation says, then :reload". The build job's
+`missingTooling?` answers that sentence from Lake's `error:` line, so its
+failure line is `lake build exited with status 1: <sentence>`. Any other
+failure of the target is its own log, which the monitor prints, then "the
+package `<p>`'s library (its `editorLibrary` target) did not build". A tool
+that is there but broken exits non-zero, which is indistinguishable from a
+compile error, so it is reported that way. A tool run outside Lake's
+`proc` is reported only as the target's own failure; the guide says to use
+`proc`.
+
+**`editorRustCrate` until phase 5.** It stays for the crates in the
+repository (acp's). A package with an `editorLibrary` and no
+`editorRustCrate` adds nothing to `setRustCrates`, so a user's set stays
+`prebuilt` (`rustSource`) and no Cargo runs at `:reload`; from the
+installed app a prebuilt library is copied into
+`<data>/editors/staging-<k>/libraries/` and published with its relative
+record. The refusal of a crate outside the repository points at a library
+of its own ("Who can build it").
+
+**What pins it.**
+
+- The declaration's layout: `editor-package-runtime`'s tests; the header,
+  its drift test; the macro, `editor-package`'s `tests/declare.rs`.
+- The port: `contract::check`'s `DECLARED` and `UNDECLARED`, on the fake
+  and, in the adapter's `tests/contract.rs`, on a fixture package library
+  and the fixture grammar library.
+- The order and the values: `editor-package-library`'s `src/load/tests.rs`
+  on the fake; each tag through C on real files, `editor-ffi`'s
+  `tests/package_load.rs` (`no_declaration.c`, `newer_runtime.c`, and
+  `current_runtime.c` loaded for interface 2).
+- The reading and the sentences, the probe's failure line among them, and
+  where a staged library is found: `ModelTest.packageLibraryChecks`,
+  `ModelTest.packageLibraryStagedChecks`, `ModelTest.moduleLookupChecks`.
+- The staging's places, records and the missing tool's words: the
+  `#guard`s beside `stagedLibraryPlace`, `librariesRecordText`,
+  `installLibrariesRecord`, `libraryToolMissing?` (over Lake 4.35's entry,
+  verbatim) and `libraryToolRequired` in `lean/lakefile.lean`; the build
+  job's reading, `ModelTest.packageSetBuildChecks`.
+- Over the real glue and loader: `EchoTest.Linked.echoLoadChecks` (the
+  staged library loads; loaded for another interface, it is refused naming
+  echo and both versions) and `echoProbeChecks` (the fixture set's editor
+  loads its staged library).
+- End to end, with no `cargo` on the child's `PATH`:
+  `EchoTest.Linked.echoUserSetChecks`, a user's set outside the repository
+  with a copy of echo holding its library already built, built with the
+  toolchain's `lake`, whose editor's probe passes once the copy is
+  removed; and a copy with no library, which stops naming echo and cargo.
+- The literal install, on demand: `mise run library-install-check`
+  (`docs/dev-practices/on-demand-checks.md`).
 
 ### The service conventions as a crate of their own
 
