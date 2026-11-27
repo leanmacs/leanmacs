@@ -1,0 +1,17 @@
+[package]
+name = "editor-package-runtime"
+version = "0.1.0"
+description = "The package runtime's C definitions: the struct of the core's capabilities a package's library is handed at its init, its opaque handles, its records, its tags and its init's type, from which the C header is generated"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# No dependency, no build script and no static: a package's library builds
+# against these definitions, so whatever they pulled in would be compiled
+# into every package library, and a static here would be a copy of the
+# core's state in each. The header is generated from `src/lib.rs` by
+# `editor-package-runtime-header`, which nothing depends on.
+[dependencies]
+
+[lints]
+workspace = true
