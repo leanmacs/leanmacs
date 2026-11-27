@@ -30,6 +30,7 @@ packages = { select = ["keyword:editor-interface", "keyword:editor-input-scheme"
   "pkg:files",
   "pkg:frame-commands",
   "pkg:languages",
+  "pkg:link-commands",
   "pkg:login-shell",
   "pkg:menu",
   "pkg:minibuffer",
@@ -148,7 +149,7 @@ linked-root-extra = { select = ["mod:Editor!", "mod:Editor.Headless!",
   "mod:Editor.WindowCheck.Real!",
 ], except = ["mod:Editor.Window.Real!", "mod:Editor.WindowCheck.Real!"] }
 
-package-tests = ["mod:AtPointApiTest", "mod:AtPointTest", "mod:BindingSearchApiTest", "mod:BindingSearchTest", "mod:BuffersApiTest", "mod:BuffersTest", "mod:CompileApiTest", "mod:CompileTest", "mod:CompletionApiTest", "mod:CompletionTest", "mod:EvilApiTest", "mod:EvilTest", "mod:ExApiTest", "mod:ExTest", "mod:ExecuteCommandApiTest", "mod:ExecuteCommandTest", "mod:FilesTest", "mod:FrameCommandsApiTest", "mod:FrameCommandsTest", "mod:LanguagesTest", "mod:LoginShellTest", "mod:MenuTest", "mod:MinibufferApiTest", "mod:MinibufferTest", "mod:MiseTest", "mod:ModeLineTest", "mod:PackageSetTest", "mod:ProjectApiTest", "mod:ProjectSearchApiTest", "mod:ProjectSearchTest", "mod:RestoreTest", "mod:ShellApiTest", "mod:ShellTest", "mod:ShippedThemesTest", "mod:TabCommandsApiTest", "mod:TabCommandsTest", "mod:ThemesApiTest", "mod:ThemesTest", "mod:VcApiTest", "mod:VersionControlTest", "mod:WindowCommandsApiTest", "mod:WindowCommandsTest", "mod:WorkingSetApiTest", "mod:WorkingSetTest", "mod:WorkspaceTest"]
+package-tests = ["mod:AtPointApiTest", "mod:AtPointTest", "mod:BindingSearchApiTest", "mod:BindingSearchTest", "mod:BuffersApiTest", "mod:BuffersTest", "mod:CompileApiTest", "mod:CompileTest", "mod:CompletionApiTest", "mod:CompletionTest", "mod:EvilApiTest", "mod:EvilTest", "mod:ExApiTest", "mod:ExTest", "mod:ExecuteCommandApiTest", "mod:ExecuteCommandTest", "mod:FilesTest", "mod:FrameCommandsApiTest", "mod:FrameCommandsTest", "mod:LanguagesTest", "mod:LinkCommandsTest", "mod:LoginShellTest", "mod:MenuTest", "mod:MinibufferApiTest", "mod:MinibufferTest", "mod:MiseTest", "mod:ModeLineTest", "mod:PackageSetTest", "mod:ProjectApiTest", "mod:ProjectSearchApiTest", "mod:ProjectSearchTest", "mod:RestoreTest", "mod:ShellApiTest", "mod:ShellTest", "mod:ShippedThemesTest", "mod:TabCommandsApiTest", "mod:TabCommandsTest", "mod:ThemesApiTest", "mod:ThemesTest", "mod:VcApiTest", "mod:VersionControlTest", "mod:WindowCommandsApiTest", "mod:WindowCommandsTest", "mod:WorkingSetApiTest", "mod:WorkingSetTest", "mod:WorkspaceTest"]
 package-linked = ["mod:CompileTest.Linked", "mod:CompletionTest.Linked", "mod:EvilTest.Linked", "mod:ExTest.Linked", "mod:FilesTest.Linked", "mod:LoginShellTest.Linked", "mod:MiseTest.Linked", "mod:ProjectSearchTest.Linked", "mod:ShellTest.Linked", "mod:ShippedThemesTest.Linked", "mod:ThemesTest.Linked", "mod:VcApiTest.Linked", "mod:VersionControlTest.Linked", "mod:WorkingSetTest.Linked", "mod:WorkspaceTest.Linked"]
 package-linked-roots = ["mod:CompileTest.Linked!", "mod:CompletionTest.Linked!", "mod:EvilTest.Linked!", "mod:ExTest.Linked!", "mod:FilesTest.Linked!", "mod:LoginShellTest.Linked!", "mod:MiseTest.Linked!", "mod:ProjectSearchTest.Linked!", "mod:ShellTest.Linked!", "mod:ShippedThemesTest.Linked!", "mod:ThemesTest.Linked!", "mod:VersionControlTest.Linked!", "mod:WorkingSetTest.Linked!", "mod:WorkspaceTest.Linked!"]
 
@@ -284,6 +285,7 @@ roots = [
   "mod:FrameCommandsApiTest.Model!",
   "mod:FrameCommandsTest.Model!",
   "mod:LanguagesTest.Model!",
+  "mod:LinkCommandsTest.Model!",
   "mod:LoginShellTest.Model!",
   "mod:MenuTest.Model!",
   "mod:MinibufferApiTest.Model!",
@@ -344,6 +346,7 @@ targets = [
   "pkg:frame-commands",
   "pkg:frame-commands-api",
   "pkg:languages",
+  "pkg:link-commands",
   "pkg:login-shell",
   "pkg:menu",
   "pkg:minibuffer",

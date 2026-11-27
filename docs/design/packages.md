@@ -48,7 +48,7 @@ host registers one are in [lean-runtime.md](lean-runtime.md), "Packages".
 **No feature is in the core's Lake package** (`lean/lakefile.lean`, the
 package `editor-core`): it registers no `Package` and has no entry module
 ("A package's entry module", below). The default package set
-(`packages/lakefile.toml`) requires the core and twenty-seven default
+(`packages/lakefile.toml`) requires the core and twenty-eight default
 packages, in this order, each with the interface packages it requires:
 
 1. `ex` (`ex-api`, `buffers-api`, `shell-api`), `frame-commands`
@@ -75,7 +75,10 @@ packages, in this order, each with the interface packages it requires:
    roadmap's phase 2 ("The core interface library `environment-api`",
    below);
 6. `login-shell`, the base of a child's environment in the window mode,
-   over the same library, that roadmap's phase 3.
+   over the same library, that roadmap's phase 3;
+7. `link-commands`, which follows a buffer's links and moves between them
+   under names the core declares (`lean/Editor/Links.lean`), the
+   rich-text display roadmap's phase 3.
 
 Each has a directory under `packages/`, as each of the eighteen interface
 packages has. "The module map", below, lists them with what each
@@ -4581,8 +4584,9 @@ points it registers at and reads, and the names it declares or reaches.
   `FilesApi.Opened`, `FilesApi.Saved` and `FilesApi.Files` (the core's
   interface library), `EnvironmentApi.DirectorySource` and
   `EnvironmentApi.BaseSource` (the core's other), `BuffersApi.Closing` and `BuffersApi.Buffers`,
-  `ProjectApi.Workspaces`, `VcApi.Backend`, and `Compile.Contribution`
-  and `Compile.ProjectCommands` (`compile-api`'s).
+  `ProjectApi.Workspaces`, `VcApi.Backend`, `Compile.Contribution`
+  and `Compile.ProjectCommands` (`compile-api`'s), and `Editor.Links.Resolver`
+  (the core's, a choice by scheme, `lean/Editor/Links.lean`).
 - **A registration** is an `Extension.add` of a value of the point's type,
   or a call of a setup operation that is one: `compileContribution`
   (`Compile.Contribution`) and `projectCommands` (`Compile.ProjectCommands`),
@@ -4601,6 +4605,7 @@ points it registers at and reads, and the names it declares or reaches.
   | `BuffersApi.buffers?` | `BuffersApi.Buffers` | `packages/buffers-api/BuffersApi.lean` |
   | `ProjectApi.workspaces?` | `ProjectApi.Workspaces` | `packages/project-api/ProjectApi.lean` |
   | `VcApi.connect?`, which chooses among the backends a job over the point is handed | `VcApi.Backend` | `packages/vc-api/VcApi.lean` |
+  | `Links.follow`, through `Links.followTarget` | `Editor.Links.Resolver` | `lean/Editor/Links.lean` |
   | `Compile.hook` | `Compile.Contribution`, `Compile.ProjectCommands` | `packages/compile-api/CompileApi.lean` |
   | `Workspace.markerSettings`, `Compile.refreshListings`, `Compile.listWork`, each through `Compile.hook` | `Compile.Contribution`, `Compile.ProjectCommands` | `packages/compile-api/CompileApi/Listing.lean` |
 - **An interface package declares its points and registers at and reads
@@ -4614,6 +4619,10 @@ points it registers at and reads, and the names it declares or reaches.
   `EnvironmentApi.DirectorySource` and `EnvironmentApi.BaseSource`** in the
   host (`lean/Editor/Headless.lean`) and the reload reducer
   (`lean/Editor/Config/Reload.lean`), through `EnvironmentApi.ofRegistry`.
+  **The core declares `Editor.Links.Resolver`** and its reader
+  (`Links.follow`), which the package `link-commands` registers as the
+  command `link-follow`, so that package is the row that reads it; a
+  package that resolves a scheme of its own registers at it.
 
 | Package | Layer | Requires, beside the core | Extension points it registers at | Extension points it reads | Names it declares, or reaches |
 |---|---|---|---|---|---|
@@ -4662,6 +4671,7 @@ points it registers at and reads, and the names it declares or reaches.
 | `languages` | implementation | none | none | none | registers the `code` mode and the languages that ship |
 | `mise` | implementation | none | `EnvironmentApi.DirectorySource` | none | declares no name; its setting, `Mise.executable`, registers at the same point |
 | `login-shell` | implementation | none | `EnvironmentApi.BaseSource` (and a default `environmentBase`) | none | declares no name; its setting, `LoginShell.timeLimit`, registers at the same point |
+| `link-commands` | implementation | none | none | `Editor.Links.Resolver` (through `Links.follow`) | registers under names the core declares (`lean/Editor/Links.lean`): `link-follow`, `link-next` and `link-previous`, the job `url-open` and the mode `links` |
 
 Two first-party packages live under `packages/` and have no row, as they
 are not of the default set: the agents packages, opt-in (owner decision,
