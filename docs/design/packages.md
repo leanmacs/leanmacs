@@ -416,16 +416,20 @@ the core archive's `rustSource` and acp's `acpLibraryForm`):
   --manifest-path <that Cargo.toml>` every build, so a change to a pin or a
   source is built; Cargo's own up-to-date check keeps a run with nothing
   changed cheap. Each built library is also written to the package's own
-  build directory, `<package>/.lake/build/grammars/<platform>/`.
-- **built**: the set is outside the repository and the package's build
-  directory already holds `grammars/<platform>/` from an in-repository
-  build. Those libraries are taken and no Cargo runs, as a user's set
+  build directory, `<package>/.lake/build/grammars/<platform>/`, when the
+  package is in the repository too (`compiledGrammarPlaces`).
+- **built**: the set is outside the repository, the package is in it, and
+  the package's build directory already holds `grammars/<platform>/` from
+  an in-repository build. Those libraries are taken and no Cargo runs, as a user's set
   reuses the core's archive (`prebuiltRust`). So a user's set over the
   checkout's default set runs no Cargo once `mise run lean` has built the
   default set: acp's installed-set check and echo's user-set check build
   such a set with no `cargo` on the `PATH`.
 - **cargo**, otherwise: a third party's source package outside the
-  repository with nothing built, with the user's own tooling.
+  repository, with the user's own tooling. Its libraries are staged and
+  never kept in its build directory, so every build of it runs Cargo, whose
+  own up-to-date check keeps a run with nothing changed cheap, and a change
+  to its pin or source is built.
 
 Each built library is staged at `<staged>/<platform>/libtree-sitter-<name>.<ext>`
 (`stagedGrammarLibraryPlace`), the prebuilt layout, so registration, the

@@ -1548,6 +1548,38 @@ a `.so` off it. -/
   builtGrammarsPlace "darwin-aarch64" "yaml" true ==
     ("grammars/darwin-aarch64/libtree-sitter-yaml.dylib" : FilePath)
 
+/-- Where the set's build writes the library of the grammar `name` it
+compiled with Cargo on the platform `platform`: its staged place under the
+staged grammars directory `staged` (`stagedGrammarLibraryPlace`); and, when
+the package is in the repository (`packageInRepository`), its built place
+under the package's build directory `buildDir` (`builtGrammarsPlace`), which
+a set outside the repository takes with no Cargo. A package outside the
+repository, a third party's, never gets built libraries: they would be
+taken by every later build of it (`GrammarSourceForm.built`) and never
+compiled again, though its pin or its source changed. -/
+def compiledGrammarPlaces (packageInRepository : Bool) (staged buildDir : FilePath)
+    (platform name : String) (isOSX : Bool) : Array FilePath :=
+  let stagedPlace := staged / stagedGrammarLibraryPlace platform name isOSX
+  if packageInRepository then #[stagedPlace, buildDir / builtGrammarsPlace platform name isOSX]
+  else #[stagedPlace]
+
+/- Guards: where a library compiled with Cargo is written
+(`compiledGrammarPlaces`): for a package in the repository, its staged
+place and its built place under the package's build directory; for one
+outside it, a third party's, its staged place alone, so its build directory
+never holds built libraries and every build of it runs Cargo. -/
+#guard
+  compiledGrammarPlaces true "/s/.lake/build/grammars/languages" "/r/packages/languages/.lake/build"
+      "darwin-aarch64" "yaml" true ==
+    #[("/s/.lake/build/grammars/languages/darwin-aarch64/libtree-sitter-yaml.dylib" : FilePath),
+      ("/r/packages/languages/.lake/build/grammars/darwin-aarch64/libtree-sitter-yaml.dylib" :
+        FilePath)]
+
+#guard
+  compiledGrammarPlaces false "/u/set/.lake/build/grammars/mylang" "/u/mylang/.lake/build"
+      "linux-x86_64" "mylang" false ==
+    #[("/u/set/.lake/build/grammars/mylang/linux-x86_64/libtree-sitter-mylang.so" : FilePath)]
+
 /-- Where a Lake package's grammar libraries come from, in a set's build
 (`grammarSourceForm`). -/
 inductive GrammarSourceForm where
@@ -1732,35 +1764,42 @@ staged place, a fresh copy each build (`copyTree`), then stages its
 libraries at `stagedGrammarLibraryPlace` from where `grammarSourceForm`
 says: nothing more when shipped; compiled with Cargo
 (`grammarSourceLibraries`), each library also written under the package's
-build directory (`builtGrammarsPlace`); or copied from that directory when
-built. Each library is written beside its place and renamed over it
+build directory (`builtGrammarsPlace`) when the package is in the repository
+(`compiledGrammarPlaces`); or copied from that directory when built, which
+only a package in the repository can be. Each library is written beside its place and renamed over it
 (`stageLibrary`). The editor writes the lines as its record
 `<executable>.grammars` (`editor`), the install copies each directory
 (`editorInstall`) and the bundle lists each as its package's `grammars/`
 (`editorShipped`). -/
 package_facet editorGrammars pkg : Array String := do
   let staged ← stagedGrammars pkg
-  let inRepository ← isInRepository (← repositoryRoot) pkg
-  let mut planned : Array (Package × String × FilePath × Option FilePath) := #[]
+  let root ← repositoryRoot
+  let inRepository ← isInRepository root pkg
+  let mut planned : Array (Package × String × FilePath × Option FilePath × Bool) := #[]
   for (dep, lake, directory) in staged do
-    planned := planned.push (dep, lake, directory, ← grammarSourcesManifest? dep)
+    planned :=
+      planned.push (dep, lake, directory, ← grammarSourcesManifest? dep, ← isInRepository root dep)
   Job.async do
       let platform := grammarPlatformOf System.Platform.target
       let mut lines : Array String := #[]
-      for (dep, lake, directory, manifest?) in planned do
+      for (dep, lake, directory, manifest?, packageInRepository) in planned do
         if ← directory.pathExists then
           IO.FS.removeDirAll directory
         copyTree (dep.dir / "grammars") directory
         let built := dep.buildDir / "grammars" / platform
+        -- Only a package in the repository has built libraries to take
+        -- (`compiledGrammarPlaces`); one outside it left by an older build
+        -- is not taken.
         let form :=
           grammarSourceForm manifest?.isSome (← (dep.dir / "grammars" / platform).isDir)
-            inRepository (← built.isDir)
+            inRepository (packageInRepository && (← built.isDir))
         match form, manifest? with
         | .cargo, some manifest =>
           for (name, library) in ← grammarSourceLibraries lake manifest do
-            stageLibrary library (dep.buildDir / builtGrammarsPlace platform name Platform.isOSX)
-            stageLibrary library
-                (directory / stagedGrammarLibraryPlace platform name Platform.isOSX)
+            for place in
+              compiledGrammarPlaces packageInRepository directory dep.buildDir platform name
+                Platform.isOSX do
+              stageLibrary library place
         | .built, _ =>
           for entry in ← built.readDir do
             stageLibrary entry.path (directory / platform / entry.fileName)
