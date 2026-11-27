@@ -1,0 +1,34 @@
+[package]
+name = "editor-package"
+version = "0.1.0"
+description = "The safe Rust crate a package's library is written against: the package runtime the core hands the library at its init, wrapped in safe types that mirror editor-service's, the init and function table declared with one macro, and the runtime's fake, which runs on the test's thread"
+edition.workspace = true
+license.workspace = true
+# Not published to crates.io (docs/design/packages.md, "The package crate
+# wrapper, as built"): a third party's crate depends on it through a git
+# source pinned by revision,
+#   editor-package = { git = "https://github.com/leanmacs/leanmacs", rev = "<sha>" }
+# which Cargo finds by name in the repository, its path dependencies and
+# workspace keys resolved inside the same checkout. Publishing would mean
+# publishing the definitions and the typed bounds too, each with a semver
+# kept in step with the runtime's own version (its `size`, and phase 4's
+# interface version), and claiming the generic `editor-*` names on a
+# global registry, which is the owner's step; no crate-publishing process
+# exists. Its cost: a dependent fetches the whole repository. Publishing
+# later is additive: drop this flag and version the three crates.
+publish = false
+
+# The runtime's C definitions, re-exported as `editor_package::raw`, and the
+# typed time bounds, re-exported as `editor_package::wait`: nothing else of
+# the editor's, and no third-party crate. The definitions have no
+# dependency, no build script and no static, so a library built on this
+# crate carries no copy of the core's state. No dev-dependency: the
+# runtime's contract, which needs the core, runs on this crate's fake from
+# the test-only crate `editor-package-check`, since `deny.toml` refuses
+# this crate any edge to `editor-service` or `editor-package-library`.
+[dependencies]
+editor-package-runtime = { path = "../editor-package-runtime" }
+editor-wait = { path = "../editor-wait" }
+
+[lints]
+workspace = true

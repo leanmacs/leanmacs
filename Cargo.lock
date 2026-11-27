@@ -757,6 +757,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-package"
+version = "0.1.0"
+dependencies = [
+ "editor-package-runtime",
+ "editor-wait",
+]
+
+[[package]]
 name = "editor-package-library"
 version = "0.1.0"
 dependencies = [
