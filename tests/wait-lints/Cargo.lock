@@ -519,6 +519,7 @@ dependencies = [
 name = "editor-package-library"
 version = "0.1.0"
 dependencies = [
+ "editor-package-runtime",
  "editor-service",
 ]
 
@@ -529,6 +530,10 @@ dependencies = [
  "editor-package-library",
  "libloading",
 ]
+
+[[package]]
+name = "editor-package-runtime"
+version = "0.1.0"
 
 [[package]]
 name = "editor-platform"
