@@ -10,7 +10,11 @@
 //! `editorGrammars` facet, `lean/lakefile.lean`) and stages each library it
 //! names. A fixture whose one grammar does not compile,
 //! `editor-grammar-build-fixture`, holds the set's failure check to it.
-//! Nothing here is linked into the editor.
+//! The test-only crate `editor-syntax-fixture-grammars` builds the grammars
+//! the core's tests load with it, fails its build on a grammar that failed,
+//! and stages each grammar's queries from the source directory a built
+//! outcome names ([`Outcome::Built`]). Nothing here is linked into the
+//! editor.
 //!
 //! **What it compiles.** A grammar's source is a directory holding the
 //! generated `src/parser.c`, and `src/scanner.c` when the grammar has one,
@@ -30,7 +34,9 @@
 //! so no `DEP_*` metadata reaches a build script, and the metadata is the
 //! supported way to find a dependency's directory. The version compiled is
 //! the one the root lock pins, resolved through the calling crate's own
-//! node of the resolve.
+//! node of the resolve. [`Source::PackageDirectory`] names a subdirectory of
+//! such a package, for a crate that carries several grammars, each in a
+//! directory of its own (tree-sitter-md's two).
 //!
 //! **What it writes.** [`build`] writes `OUT_DIR/grammars.report`, one line a
 //! grammar, `built<TAB><name><TAB><absolute library>` or
@@ -66,6 +72,11 @@ pub enum Source {
     /// A Cargo package the calling crate depends on, by its name: a
     /// crates.io grammar crate, or a vendored one by path.
     Package(String),
+    /// A subdirectory of a Cargo package the calling crate depends on: the
+    /// package by its name, then the subdirectory that holds `src/parser.c`,
+    /// for a crate that carries several grammars (tree-sitter-md's
+    /// `tree-sitter-markdown/` and `tree-sitter-markdown-inline/`).
+    PackageDirectory(String, PathBuf),
     /// A directory holding `src/parser.c`; a relative one is taken from the
     /// calling crate's directory by [`build`].
     Directory(PathBuf),
@@ -90,6 +101,15 @@ impl Grammar {
         }
     }
 
+    /// The grammar `name` from the subdirectory `subdirectory` of the Cargo
+    /// package `package`.
+    pub fn package_in(name: &str, package: &str, subdirectory: impl Into<PathBuf>) -> Self {
+        Self {
+            name: name.to_owned(),
+            source: Source::PackageDirectory(package.to_owned(), subdirectory.into()),
+        }
+    }
+
     /// The grammar `name` from the directory `directory`.
     pub fn directory(name: &str, directory: impl Into<PathBuf>) -> Self {
         Self {
@@ -108,6 +128,9 @@ pub enum Outcome {
         name: String,
         /// The library, absolute.
         library: PathBuf,
+        /// The grammar's source directory, the one holding `src/`, where
+        /// its crate keeps its `queries/` too.
+        source: PathBuf,
     },
     /// Not compiled, and why.
     Failed {
@@ -139,7 +162,7 @@ impl Report {
         self.outcomes
             .iter()
             .map(|outcome| match outcome {
-                Outcome::Built { name, library } => format!(
+                Outcome::Built { name, library, .. } => format!(
                     "built\t{}\t{}\n",
                     one_line(name),
                     one_line(&library.to_string_lossy())
@@ -243,6 +266,10 @@ pub fn build_with(
                     Ok(directory) => directory,
                     Err(reason) => return failed(reason, None),
                 },
+                Source::PackageDirectory(package, subdirectory) => match locate.locate(package) {
+                    Ok(directory) => directory.join(subdirectory),
+                    Err(reason) => return failed(reason, None),
+                },
                 Source::Directory(directory) => directory.clone(),
             };
             let src = directory.join("src");
@@ -256,6 +283,7 @@ pub fn build_with(
                 Ok(()) => Outcome::Built {
                     name: name.clone(),
                     library,
+                    source: directory,
                 },
                 Err(output) => failed(compiler_failure(&output), Some(output)),
             }
@@ -278,8 +306,10 @@ pub const STDERR_FILE: &str = "grammars.stderr";
 /// again when a grammar's `src/` changes, and warns for each grammar that
 /// failed. It never panics on a grammar that fails (the crate docs); only a
 /// variable Cargo always sets, missing, or a report it cannot write, stops
-/// it.
-pub fn build(grammars: &[Grammar]) {
+/// it. It hands the report back, for a build script that acts on it beyond
+/// the report file (`editor-syntax-fixture-grammars` fails on a failed
+/// grammar and stages each built one's queries).
+pub fn build(grammars: &[Grammar]) -> Report {
     let variable = |name: &str| {
         #[expect(
             clippy::disallowed_methods,
@@ -304,7 +334,7 @@ pub fn build(grammars: &[Grammar]) {
                 name: grammar.name.clone(),
                 source: Source::Directory(manifest_dir.join(directory)),
             },
-            Source::Package(_) => grammar.clone(),
+            Source::Package(_) | Source::PackageDirectory(..) => grammar.clone(),
         })
         .collect();
     let report = build_with(
@@ -344,6 +374,7 @@ pub fn build(grammars: &[Grammar]) {
             );
         }
     }
+    report
 }
 
 /// The sources of the grammar `name` whose source directory is `src`:

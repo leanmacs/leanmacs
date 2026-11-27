@@ -293,3 +293,78 @@ fn a_name_outside_lowercase_letters_digits_and_underscores_is_refused() {
     }
     assert!(is_grammar_name("c_sharp2"));
 }
+
+#[test]
+fn a_grammar_in_a_subdirectory_of_a_located_package_is_compiled_from_that_subdirectorys_src() {
+    let compile = FakeCompile::default();
+    let report = build_with(
+        &[Grammar::package_in(
+            "markdown_inline",
+            "tree-sitter-md",
+            "tree-sitter-markdown-inline",
+        )],
+        &FakeLocate::new(&[("tree-sitter-md", "/r/tree-sitter-md-0.5.4")]),
+        &FakeTree::of(&[
+            "/r/tree-sitter-md-0.5.4/tree-sitter-markdown-inline/src/parser.c",
+            "/r/tree-sitter-md-0.5.4/tree-sitter-markdown-inline/src/scanner.c",
+        ]),
+        &compile,
+        Path::new("/out"),
+        "linux",
+    );
+    assert_eq!(
+        compile.calls.into_inner(),
+        vec![Compiled {
+            sources: paths(&[
+                "/r/tree-sitter-md-0.5.4/tree-sitter-markdown-inline/src/parser.c",
+                "/r/tree-sitter-md-0.5.4/tree-sitter-markdown-inline/src/scanner.c",
+            ]),
+            include: PathBuf::from("/r/tree-sitter-md-0.5.4/tree-sitter-markdown-inline/src"),
+            output: PathBuf::from("/out/libtree-sitter-markdown_inline.so"),
+        }]
+    );
+    assert_eq!(
+        report.watched,
+        paths(&["/r/tree-sitter-md-0.5.4/tree-sitter-markdown-inline/src"])
+    );
+}
+
+#[test]
+fn a_built_outcome_names_the_grammars_source_directory() {
+    let report = build_with(
+        &[
+            Grammar::package("yaml", "tree-sitter-yaml"),
+            Grammar::package_in("markdown", "tree-sitter-md", "tree-sitter-markdown"),
+        ],
+        &FakeLocate::new(&[
+            ("tree-sitter-yaml", "/r/tree-sitter-yaml-0.7.2"),
+            ("tree-sitter-md", "/r/tree-sitter-md-0.5.4"),
+        ]),
+        &FakeTree::of(&[
+            "/r/tree-sitter-yaml-0.7.2/src/parser.c",
+            "/r/tree-sitter-md-0.5.4/tree-sitter-markdown/src/parser.c",
+        ]),
+        &FakeCompile::default(),
+        Path::new("/out"),
+        "linux",
+    );
+    assert_eq!(
+        report.outcomes,
+        vec![
+            Outcome::Built {
+                name: "yaml".to_owned(),
+                library: PathBuf::from("/out/libtree-sitter-yaml.so"),
+                source: PathBuf::from("/r/tree-sitter-yaml-0.7.2"),
+            },
+            Outcome::Built {
+                name: "markdown".to_owned(),
+                library: PathBuf::from("/out/libtree-sitter-markdown.so"),
+                source: PathBuf::from("/r/tree-sitter-md-0.5.4/tree-sitter-markdown"),
+            },
+        ]
+    );
+    assert_eq!(
+        report.lines(),
+        "built\tyaml\t/out/libtree-sitter-yaml.so\nbuilt\tmarkdown\t/out/libtree-sitter-markdown.so\n"
+    );
+}
