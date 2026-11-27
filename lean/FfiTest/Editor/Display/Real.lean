@@ -262,7 +262,8 @@ def sceneChecks (_ : Unit) : List Check :=
         let pastTail := past.words.extract (past.words.size - 10) past.words.size
         return tail == #[1, 3, 24, 1, 0, 46, 32, 2, 4, 0] &&
             pastTail == #[1, 3, (2 ^ 32 - 1 : Nat).toUInt64, 1, 0, 46, 32, 2, 4, 0] &&
-            back.map (·.1) == some ((← real.encode (stopped stops) (some #[])).words) &&
+            -- The theme went with the first publish, so not with this one.
+            back.map (·.1) == some encoded.words &&
             frame != bare &&
             held ==
               "ab
