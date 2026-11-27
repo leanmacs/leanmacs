@@ -1,0 +1,23 @@
+[package]
+name = "editor-package-check"
+version = "0.1.0"
+description = "Tests alone: the package wrapper's fake held to the core's runtime contract, the wrapper's wire against the core's, and a package declared with the wrapper loaded through the core's load and run on the process's runtime"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+
+# The wrapper, and the two crates of the core its checks need: the runtime's
+# contract, its encoder, its load and `RUNTIME` (`editor-package-library`),
+# and the stream port's fake, the queues and the process's stream source
+# (`editor-service`). The wrapper itself may depend on neither, not even for
+# its tests (`deny.toml`), so its fake is held to the core's contract here,
+# in a crate nothing depends on and that links nothing into the editor.
+[dev-dependencies]
+editor-package = { path = "../editor-package" }
+editor-package-library = { path = "../editor-package-library" }
+editor-service = { path = "../editor-service" }
+
+[lints]
+workspace = true

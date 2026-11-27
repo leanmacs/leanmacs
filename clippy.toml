@@ -77,7 +77,10 @@
 #   `await_requests_handled`, the process adapter's ground, which reads
 #   a file until a line is whole, and the package wrapper's stream
 #   contract grounds over `ScriptedSource`, its own and
-#   `editor-package`'s `runtime/tests.rs`'s); the Rust checks of the C functions Lean
+#   `editor-package`'s `runtime/tests.rs`'s; its ground over the real
+#   runtime, `editor-package-check`'s `tests/load.rs`, waits at a gate of
+#   its own, `Observed`, through `editor_wait::wait_while`, which no ban
+#   names: row W94); the Rust checks of the C functions Lean
 #   calls to wait, each at a mark whose reason names its row of
 #   `docs/dev-practices/inferred-waits.md` (W71 and W80 to W84: `c_api.rs`,
 #   `snapshot.rs`, `window.rs`, `common/open.rs`, `syntax.rs`), with its
