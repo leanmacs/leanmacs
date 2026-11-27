@@ -968,6 +968,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-syntax-fixture-grammars"
+version = "0.1.0"
+dependencies = [
+ "editor-grammar-build",
+ "tree-sitter-json",
+ "tree-sitter-lean",
+ "tree-sitter-md",
+ "tree-sitter-rust",
+ "tree-sitter-toml-ng",
+]
+
+[[package]]
 name = "editor-syntax-fixture-ini"
 version = "0.1.0"
 dependencies = [
