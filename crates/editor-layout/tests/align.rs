@@ -178,6 +178,67 @@ fn cells_in_one_column_line_up_whatever_the_widths_before_them() {
 }
 
 #[test]
+fn a_face_over_part_of_a_cell_after_a_stop_shapes_just_that_part_in_its_font() {
+    let source = "ab xyz";
+    let text = text_ref(source);
+    let mut layout = layout();
+    // Each glyph's offset, x from the view's left and advance.
+    let placed = |layout: &mut Layout<CellShaper>, decoration: Decoration| {
+        let laid = frame(
+            layout,
+            &scene(View {
+                decorations: vec![decoration],
+                ..view(&text, 400, vec![stop(3, 60)])
+            }),
+        );
+        let row = &laid.rows[0];
+        row.line
+            .glyphs
+            .iter()
+            .map(|glyph| (glyph.cluster, row.x + glyph.x, glyph.advance))
+            .collect::<Vec<_>>()
+    };
+    // `narrow` over `yz`, starting inside the cell after the stop: `x`
+    // is 10 pixels at the stop, `y` and `z` 7 each, so `z` is at 77, not
+    // 80.
+    let inside = Decoration {
+        start: 4,
+        stop: 6,
+        face: "narrow".to_owned(),
+    };
+    assert_eq!(
+        placed(&mut layout, inside),
+        vec![
+            (0, 0.0, 10.0),
+            (1, 10.0, 10.0),
+            (2, 20.0, 40.0),
+            (3, 60.0, 10.0),
+            (4, 70.0, 7.0),
+            (5, 77.0, 7.0),
+        ]
+    );
+    // `narrow` over `b xy`, across the stop from the first cell into the
+    // second: `b` and the space are 7 pixels, the space spanning the gap
+    // to the stop, then `x` and `y` 7 at the stop and `z` 10.
+    let across = Decoration {
+        start: 1,
+        stop: 5,
+        face: "narrow".to_owned(),
+    };
+    assert_eq!(
+        placed(&mut layout, across),
+        vec![
+            (0, 0.0, 10.0),
+            (1, 10.0, 7.0),
+            (2, 17.0, 43.0),
+            (3, 60.0, 7.0),
+            (4, 67.0, 7.0),
+            (5, 74.0, 10.0),
+        ]
+    );
+}
+
+#[test]
 fn a_stop_past_the_width_breaks_the_row_before_its_cell_which_starts_at_x_0() {
     let source = "ab cd\nef";
     let text = text_ref(source);

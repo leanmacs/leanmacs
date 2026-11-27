@@ -118,13 +118,15 @@ def emptyScene : Editor.Scene :=
 (`Editor.RealDisplay.encode`) that the display fixture does not make: a
 pending prefix and a preedit, a view whose snapshot the table does not
 hold, and a view whose markers are of two texts; and of a theme: its
-definitions as words, when it is sent and when it is not, and the names
-layout reads by itself. The words are compared with the library's layout
-written out here once (`crates/editor-ffi/src/display/wire.rs`), since the
-library writes back what it was sent whatever it was. What a frame holds
-is layout's rule: a view's rows are compared with the rows query's answer,
-and a frame with another frame, never with a colour or a size written
-here. -/
+definitions as words, when it is sent and when it is not, the names
+layout reads by itself, and the faces a run in a theme not yet sent is
+measured in (`Editor.RealDisplay.measure`). The words are compared with the
+library's layout written out here once
+(`crates/editor-ffi/src/display/wire.rs`), since the library writes back
+what it was sent whatever it was. What a frame holds is layout's rule: a
+view's rows are compared with the rows query's answer, a width measured
+with where a published frame draws, and a frame with another frame, never
+with a colour or a size written here. -/
 def sceneChecks (_ : Unit) : List Check :=
   [{  name :=
         "a scene with a pending prefix, a preedit, a title, a menu bar with each kind of item, a view of a snapshot the table does not hold, a view whose markers are of two texts and a divider is the words and the string of the library's layout"
@@ -383,6 +385,38 @@ ef" },
             inSecond != inFirst &&
             withNoneAgain == withNone &&
             stillSecond == inSecond &&
+            held == "ab\ncd\nef" },
+    { name :=
+        "a run decorated in a face of a theme not yet sent is measured in that face's font, wider than the run bare, and as wide as a frame published next draws it"
+      run := do
+        -- `kw` is twice the base size, so its glyphs are wider.
+        let theme : Editor.Theme := #[{ name := ⟨"kw"⟩, face := { size := some 32 } }]
+        let fixture ← sceneFixture theme
+        let real := fixture.real
+        let bare ← real.measure { text := "ab" }
+        let faced ←
+          real.measure { text := "ab", decorations := #[{ start := 0, stop := 2, face := ⟨"kw"⟩ }] }
+        -- View 2 alone, from the start, `ab` in `kw` as decorated, wide
+        -- enough that the row holds it.
+        let scene := fixture.scene (SceneFixture.own fixture.top) #[]
+        let wide : Editor.Rect := { x := 0, y := 0, width := 128, height := 48 }
+        let scene :=
+          { scene with
+            size := { width := 128, height := 48 }
+            views :=
+              (scene.views.extract 1 2).map fun view =>
+                { view with
+                  scroll := SceneFixture.own fixture.top, rect := wide }
+            dividers := #[] }
+        real.publish scene
+        -- Where the line feed after `ab` is drawn: as far right as `ab` is
+        -- wide.
+        let drawn ←
+          real.spot
+              { snapshot := fixture.snapshot, width := 128, height := 32, anchor := 0
+                position := 2 }
+        let held ← fixture.document.read
+        return faced != bare && drawn.toOption.join.map (·.x) == some faced &&
             held == "ab\ncd\nef" },
     { name :=
         "of the built-in theme's names, layout reads default, selection and mode-line by itself: with each renamed in turn the frame is another, and with echo-area renamed, which nothing draws, it is the built-in theme's"
