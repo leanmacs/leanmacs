@@ -288,8 +288,14 @@ end Greeting.EditorPackage
 
 A package can bring the grammars of languages the editor lacks: their
 native libraries and their queries, which the editor reads when it runs.
-No grammar is compiled or fetched by any build; the package ships the
-prebuilt library as it is.
+A package ships a grammar in one of two ways: prebuilt, a library per
+platform under its `grammars/`, as it is; or as pinned source (a crates.io
+grammar crate where one builds against the pinned tree-sitter, its own
+crate vendored unmodified under `vendor/` otherwise) that the set's build
+compiles with Cargo for the platform it builds on ("From source", below).
+Nothing is fetched beyond what cargo fetches for the root lock, and no
+binary is checked in. The editor itself never finds, fetches or compiles a
+grammar at run time.
 
 **The keyword and the layout.** A Lake package that ships grammars keeps
 their files under a `grammars/` directory and carries the keyword
@@ -372,15 +378,94 @@ for) each platform the declaration lists, and copy each library to
 regular files, the names nvim-treesitter and Helix use; a link would
 dangle in a staged or bundled copy.
 
+**From source.** A package may instead ship a grammar as pinned source,
+which the set's build compiles: the `languages` package ships `yaml` so
+(`packages/languages/`, the package `languages-grammars`). Its lakefile
+declares a Lake input file named `editorGrammarSources`
+(`grammarSourcesTargetName` in `lean/lakefile.lean`; a TOML lakefile holds
+it as `[[input_file]] name = "editorGrammarSources"`), whose path is the
+`Cargo.toml` of a crate of the package's own (`rust/`, the crate
+`languages-grammar-sources`). That crate's build script calls the
+workspace crate `editor-grammar-build` with the grammars it declares, each
+a build-dependency it names (`Grammar::package("yaml",
+"tree-sitter-yaml")`), or a directory of its own. `editor-grammar-build`
+finds each grammar crate's directory with `cargo metadata` (the version
+the root lock pins, through the calling crate's own node of the resolve),
+compiles its `src/parser.c` and `src/scanner.c` with the C compiler `cc`
+finds, and links them straight into `libtree-sitter-<name>.dylib` (`.so`
+off macOS), exporting `tree_sitter_<name>`. A Rust `cdylib` cannot wrap
+the grammar crate instead: a forwarder named `tree_sitter_<name>` collides
+with the C symbol of that name in the grammar's archive. The crate's
+binary prints one line a grammar: `built<TAB><name><TAB><library>` or
+`failed<TAB><name><TAB><reason>`, and the compiler's output on standard
+error. A grammar that fails to compile is recorded, not panicked on, so the
+workspace still builds and the set's build is what fails.
+
+The set's build (the core's `editorGrammars` facet, which `editor`,
+`editorInstall` and `editorShipped` fetch) copies each grammars package's
+`grammars/` to its staged place as before, then takes the package's
+libraries from one of three places (`grammarSourceForm`, the counterpart of
+the core archive's `rustSource` and acp's `acpLibraryForm`):
+
+- **shipped**: the package declares no `editorGrammarSources`, or its own
+  `grammars/<platform>/` exists. A prebuilt package, and the bundle's copy
+  of `languages`, which holds the staged libraries. The copy is all there
+  is, and no Cargo runs.
+- **cargo**, in the repository: the set is in the repository (the rule
+  `coreArchive` uses). It runs `cargo run --release --locked --quiet
+  --manifest-path <that Cargo.toml>` every build, so a change to a pin or a
+  source is built; Cargo's own up-to-date check keeps a run with nothing
+  changed cheap. Each built library is also written to the package's own
+  build directory, `<package>/.lake/build/grammars/<platform>/`.
+- **built**: the set is outside the repository and the package's build
+  directory already holds `grammars/<platform>/` from an in-repository
+  build. Those libraries are taken and no Cargo runs, as a user's set
+  reuses the core's archive (`prebuiltRust`). So a user's set over the
+  checkout's default set runs no Cargo once `mise run lean` has built the
+  default set: acp's installed-set check and echo's user-set check build
+  such a set with no `cargo` on the `PATH`.
+- **cargo**, otherwise: a third party's source package outside the
+  repository with nothing built, with the user's own tooling.
+
+Each built library is staged at `<staged>/<platform>/libtree-sitter-<name>.<ext>`
+(`stagedGrammarLibraryPlace`), the prebuilt layout, so registration, the
+record, the install's copy and the bundle are unchanged in shape. A
+`failed` line fails the build with ``the package `<lake>`'s grammar
+`<name>` did not compile from its source: <reason>`` (`grammarDidNotCompile`),
+and a Cargo that exits non-zero with ``the package `<lake>`'s grammar
+sources (its `editorGrammarSources` target, `<manifest>`) did not build``
+(`grammarSourcesDidNotBuild`), after Cargo's own log. The bundle lists the
+set's staged directory as each package's `grammars/`, so the bundled
+`languages` holds its compiled libraries and a user's set built from the
+bundle takes the shipped branch, with no crate to build.
+
+A user's set outside the repository can go stale: the built branch takes
+what the checkout last compiled, as `prebuiltRust` takes the last-built
+archive, so after a pull that changes a grammar it uses the old library
+until the checkout's build runs again (`mise run lean`, or the install).
+
+**Why `languages`' grammars are a package value of their own.** A package
+that declares grammars is refused whole where its Lake package's grammars
+directory is not staged (`Package.noGrammarsDirectory`), and the headless
+fixture harness (`editorFixtures`) stages none and tags no package with
+its Lake package. Were `yaml` declared on `Editor.Language.package`,
+every headless fixture would lose the `code` mode and every shipped
+language. So it sits in a second `Editor.Package` of the Lake package
+`languages`, `languages-grammars` (`Languages/Grammars.lean`): where
+nothing is staged only that package is refused, silently, and no fixture's
+job ids move. That the harness refuses such a package is a gap the
+shipped-grammars roadmap's phase 4 must close before the built-in grammars
+move into the package.
+
 **Where the files go.** Each place an editor runs from gets a copy, and a
 record that names it (`editor.grammars`, lines `<lake><TAB><directory>`,
 read like `editor.oleans`: `Editor/ModuleLookup.lean`, "The grammars"):
 
 | Where the editor runs | Where the grammars are | The record |
 |---|---|---|
-| A set's build (`lake -d <set> build :editor`) | `<set>/.lake/build/grammars/<lake>/`, a fresh copy each build (`stageGrammars`) | `<set>/.lake/build/bin/editor.grammars`, absolute lines |
+| A set's build (`lake -d <set> build :editor`) | `<set>/.lake/build/grammars/<lake>/`, a fresh copy each build of the package's `grammars/`, with the libraries compiled from source, or taken from the package's build directory, staged under `<platform>/` (`editorGrammars`) | `<set>/.lake/build/bin/editor.grammars`, absolute lines |
 | A per-user install (`:editorInstall`) | `<install>/grammars/<lake>/`, copied from the set's staged copy | `<install>/editor.grammars`, relative lines `<lake><TAB>grammars/<lake>`, so the directory still renames into place |
-| The app bundle | `Contents/Resources/lean/set/<rel>/grammars/`, the package's own copy in the bundle's staged set (`editorShipped`'s `file` line), so a user's set built from the bundle stages and installs it in turn | `Contents/Resources/editor.grammars`, `<lake><TAB>lean/set/<rel>/grammars` (`editorShipped`'s `grammars` line, which `stage-bundle` writes) |
+| The app bundle | `Contents/Resources/lean/set/<rel>/grammars/`, the set's staged copy, compiled libraries included, as the package's `grammars/` in the bundle's staged set (`editorShipped`'s `file` line), so a user's set built from the bundle stages and installs it in turn, with no Cargo | `Contents/Resources/editor.grammars`, `<lake><TAB>lean/set/<rel>/grammars` (`editorShipped`'s `grammars` line, which `stage-bundle` writes) |
 
 The install copies rather than references for the reason it copies the
 `.olean` files: a later build of the set must not change what an installed
@@ -545,7 +630,10 @@ whether a set is in the repository (`isUnderRoot`, beside `rustSource`),
 the refusal of a package still declaring `editorRustCrate`
 (`rustCrateRefusal`), the records of where the set and the core are
 (`setRecordText`, `coreDirRecordText`); the grammars' records and staged
-place (`grammarsRecordText`, `stagedGrammarsPlace`); what a bundle ships
+place (`grammarsRecordText`, `stagedGrammarsPlace`); a grammar compiled
+from source (`grammarPlatformOf`, `stagedGrammarLibraryPlace`,
+`builtGrammarsPlace`, `grammarSourceForm`, `grammarSourceLinesOf`,
+`grammarDidNotCompile`, `grammarSourcesDidNotBuild`); what a bundle ships
 (`shipsLibraryNamed`, `builtOf`, `prebuiltRustFiles`, `shippedFileLine`,
 `listsResolved`, `shippedOleansLines`, `shippedGrammarsLines`); the install
 (`installOleansRecord`, `installGrammarsRecord`, `installRefusal?`,
@@ -1143,9 +1231,15 @@ declaration stays in its namespace (`Editor.ModeLine.package` in module
 `ModeLine.Compiled`), as the compile mode's did, so config and tests under
 `open Editor` changed import lines only. Each lakefile is shaped as
 `compile`'s: the core by path, a library whose `globs` hold every module,
-a test library, a test driver, every linter on. The minibuffer, planned
-for the same phase, stayed in the core then, and moved in phase 4 ("The
-default packages of the features-as-packages roadmap's phase 4", below).
+a test library, a test driver, every linter on, and no keyword. Since the
+shipped-grammars-package roadmap's phase 1, `languages`' lakefile declares
+the keyword `editor-grammars` and the input file `editorGrammarSources`,
+holds a grammar-source crate (`rust/`) and a linked test
+(`LanguagesTest/Linked.lean`), and its entry module lists a second
+package, `languages-grammars` ("A package's grammars", above). The
+minibuffer, planned for the same phase, stayed in the core then, and moved
+in phase 4 ("The default packages of the features-as-packages roadmap's
+phase 4", below).
 
 | Package | Library (from) | Entry module | Test driver | Fixtures |
 |---|---|---|---|---|
@@ -2194,7 +2288,7 @@ executable it links, besides `editor.oleans` and `editor.set`:
   was built against.
 - **`editor.grammars`**: where the build staged the `grammars/` directory
   of each Lake package of the set that ships grammars, one line
-  `<lake><TAB><directory>` each, absolute (`stageGrammars`); empty for a
+  `<lake><TAB><directory>` each, absolute (`editorGrammars`); empty for a
   set that ships none. The editor resolves those packages' grammar
   declarations against it ("A package's grammars", above).
 - **`editor.libraries`**: where the build staged the library of each Lake
@@ -3288,6 +3382,18 @@ and "acp, ported, as built". The author's side is the guide,
 [writing-a-package.md](../packages/writing-a-package.md), "A native
 library".
 
+What follows of a package's crate, that it depends on `editor-package`
+alone, holds of a package **library's** crate. A package may hold a second
+kind: a **grammar-source** crate (`packages/languages/rust`, the crate
+`languages-grammar-sources`), which is no library and is loaded by
+nothing. It is a build-time crate whose build script compiles the
+package's grammars from pinned source with `editor-grammar-build`, the one
+crate of the editor's it reaches, as a build-dependency, and whose binary
+the set's build runs ("A package's grammars", "From source"). Its own
+allow list (`packages/languages/rust/deny.toml`, run by `mise run deny`)
+holds that it reaches nothing else of the editor's, as echo's and acp's
+hold theirs.
+
 Decision history: the archive generated from the set's package crates was
 2026-11-19's design (a proposal, built in packages phase 11; "One Rust
 archive per editor, generated from the set", below, keeps how it was). The
@@ -4100,6 +4206,10 @@ record.
   with a copy of echo holding its library already built, built with the
   toolchain's `lake`, whose editor's probe passes once the copy is
   removed; and a copy with no library, which stops naming echo and cargo.
+  The first build covers a package's grammars too: the set requires the
+  checkout's default set, whose `languages` takes its grammar libraries
+  from its build directory with no Cargo (the built branch,
+  `grammarSourceForm`, "A package's grammars").
 - The literal install, on demand: `mise run library-install-check`
   (`docs/dev-practices/on-demand-checks.md`).
 
@@ -4217,7 +4327,10 @@ repository alone, and `coreArchive` matches on it.
   the two packages added by `:package-install`'s core-last edit, acp's
   library in a copy's `lib/`, a stub `Cargo.toml` two above it), built with
   the toolchain's `lake` and no cargo on `PATH`, its editor's probe passing
-  once acp's source is removed. On demand, the install itself:
+  once acp's source is removed. Its no-Cargo build covers a package's
+  grammars too: the config requires the checkout's default set, whose
+  `languages` takes the built branch (`grammarSourceForm`, "A package's
+  grammars"). On demand, the install itself:
   "The agents packages, installed, on demand"
   (`docs/dev-practices/on-demand-checks.md`).
 - The retirement: `ModelTest.packageSetBuildChecks` ("a set's build runs
@@ -4658,7 +4771,7 @@ points it registers at and reads, and the names it declares or reaches.
 | `binding-search` | implementation | `binding-search-api`, `minibuffer-api` | none | none | registers `binding-search-api`'s name; reaches `minibuffer-api`'s names |
 | `compile` | implementation | `minibuffer-api`, `compile-api`, `shell-api` | `Compile.Contribution` | `Compile.Contribution`, `Compile.ProjectCommands`, `FilesApi.Files` | registers the compile mode's commands and its six ex names; reaches `minibuffer-api`'s names and `shell-api`'s history |
 | `at-point` | implementation | `at-point-api`, `evil-api` | none | none | registers `at-point-api`'s names; reaches `insert-newline` and `insert-tab` by `evil-api`'s constants |
-| `languages` | implementation | none | none | none | registers the `code` mode and the languages that ship |
+| `languages` | implementation | none | `defineLanguage yaml` and the grammar `yaml` (package `languages-grammars`) | none | registers the `code` mode and the languages that ship |
 | `mise` | implementation | none | `EnvironmentApi.DirectorySource` | none | declares no name; its setting, `Mise.executable`, registers at the same point |
 | `login-shell` | implementation | none | `EnvironmentApi.BaseSource` (and a default `environmentBase`) | none | declares no name; its setting, `LoginShell.timeLimit`, registers at the same point |
 

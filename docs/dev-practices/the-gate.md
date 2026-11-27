@@ -30,8 +30,9 @@ details:
   under the root `clippy.toml`'s bans, and over `tests/wait-lints/`, whose
   calls of each banned wait must each be refused ("The wait lints", below).
 - **`deny`**: cargo-deny's bans over the workspace's dependency graph
-  (`deny.toml`), stale wrappers errors, and over echo's crate's graph alone
-  ("The Rust bans check").
+  (`deny.toml`), stale wrappers errors, and over each package crate's graph
+  alone, echo's, acp's and `languages`' grammar-source crate's ("The Rust
+  bans check").
 - **`doc`**: rustdoc over every crate, private items included, broken
   intra-doc links denied.
 - **`test`**: `cargo test --workspace`: the Rust unit, integration and doc
@@ -45,8 +46,11 @@ details:
 - **`lean`**: `lake build` of the core and its test executables with every
   linter on and warnings errors, which runs Cargo for the Rust static
   library; the editor and fixture harness of the default set (`packages/`)
-  and of the fixture set (`tests/packages/`), each package's targets and
-  linked test ("The package steps"); the editor of the set that holds
+  and of the fixture set (`tests/packages/`), whose builds compile
+  `languages`' grammar sources through Cargo (`editorGrammars`;
+  [`packages.md`](../design/packages.md), "A package's grammars"), each
+  package's targets and linked test ("The package steps"); the editor of
+  the set that holds
   no package (`tests/empty-set/`); and the editor of the grammar set
   (`tests/grammar-set/`), whose build stages its package's `grammars/`
   and writes `editor.grammars`, with its package's targets and linked
@@ -64,7 +68,10 @@ details:
   `tests/headless` on the default set's fixture harness, stepped on the
   fakes ([`headless-mode.md`](headless-mode.md), "How the gate runs a
   fixture"); each package's linked test and headless fixtures ("The
-  package steps"); and the grammar set's package's linked test, handed the
+  package steps"), `languages`' among them, which checks the grammar the
+  default set's build compiled and that a grammar source that does not
+  compile fails a set's build; and the grammar set's package's linked
+  test, handed the
   grammar set's editor, the fixture grammar library Cargo builds and the
   syntax fixtures. The install check of that package
   (`mise run grammar-install-check`) is on demand, never here
@@ -106,19 +113,28 @@ linked test runs twice. The stress loop's `linked-wiring` suite is `run
 
 ## The Rust bans check
 
-A package's crate is a library of its own, which depends on
-`editor-package` alone and on nothing else of the editor's: no package's
-crate is linked into the editor's Rust archive. The root `deny.toml`
-refuses every edge of a package's crate to a crate of the editor's that
-has an entry (`editor-service`'s wrappers name no package crate), but
-cannot hold the edges to `editor-ffi` or to another package's crate (its
-header says why). So `deny` runs cargo-deny's bans again over each
-library's graph alone, echo's (`--manifest-path
+A package's crate is one of two kinds, and neither is linked into the
+editor's Rust archive:
+
+- a package **library's** crate (echo's, acp's) is a library of its own,
+  loaded by the editor, which depends on `editor-package` alone and on
+  nothing else of the editor's;
+- a package's **grammar-source** crate (`languages-grammar-sources`) is no
+  library: a build-time crate whose binary the set's build runs, which
+  reaches `editor-grammar-build` alone of the editor's crates, as a
+  build-dependency.
+
+The root `deny.toml` refuses every edge of a package's crate to a crate of
+the editor's that has an entry (`editor-service`'s wrappers name no
+package crate), but cannot hold the edges to `editor-ffi` or to another
+package's crate (its header says why). So `deny` runs cargo-deny's bans
+again over each such crate's graph alone, echo's (`--manifest-path
 tests/packages/echo/rust/Cargo.toml`, with
-`tests/packages/echo/rust/deny.toml`) and acp's (`--manifest-path
-packages/acp/rust/Cargo.toml`, with `packages/acp/rust/deny.toml`), each
-config's `allow` list naming every crate that graph may hold and refusing
-the rest. acp's lists the Agent Client Protocol's SDK and its tree, so a
+`tests/packages/echo/rust/deny.toml`), acp's (`--manifest-path
+packages/acp/rust/Cargo.toml`, with `packages/acp/rust/deny.toml`) and
+`languages`' (`--manifest-path packages/languages/rust/Cargo.toml`, with
+`packages/languages/rust/deny.toml`), each config's `allow` list naming
+every crate that graph may hold and refusing the rest. acp's lists the Agent Client Protocol's SDK and its tree, so a
 bump of the SDK that changes the tree changes that list in the same
 commit. `ffi-test` runs cargo-deny's bans, offline, over the crate the
 core's build generates for its archive (`target/editor-rust/core/`,
@@ -213,7 +229,9 @@ only, so `git add` a new C file before running them. They leave `vendor/`
 out: vendored C is upstream's generated code (`vendor/README.md`). They
 leave out the fixture grammar's `crates/editor-syntax-fixture-ini/grammar/src/`
 too, the parser the tree-sitter CLI generated (the fixture's `README.md`);
-the fixture's own `grammar/exports.c` is checked. And they leave out the
+the fixture's own `grammar/exports.c` is checked, and so is the
+grammar-source fixture's `crates/editor-grammar-build-fixture/broken/src/parser.c`,
+one `#error` line of ours. And they leave out the
 package runtime's C header, `crates/editor-package-runtime/include/`,
 which cbindgen generates and a test holds to it
 (`editor-package-runtime-header`).

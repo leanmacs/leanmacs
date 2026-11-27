@@ -916,6 +916,24 @@ grammars"](../design/packages.md#a-packages-grammars); the test package
 [`ini-grammar`](../../tests/grammar-set/ini-grammar/IniGrammar.lean) is a
 whole example.
 
+Or ship the grammar from source, and let the set's build compile it for
+the platform it builds on: hold a small Rust crate of your own (say
+`rust/`) whose build script calls `editor-grammar-build` with the
+grammars you declare, each a pinned build-dependency
+(`build(&[Grammar::package("yaml", "tree-sitter-yaml")])`), and whose
+`main` prints the report it wrote; then declare that crate's `Cargo.toml`
+as a Lake input file named `editorGrammarSources` (`[[input_file]] name =
+"editorGrammarSources"`, `path = "rust/Cargo.toml"`). Keep only the queries
+and each grammar's licence under `grammars/`, and declare the libraries at
+`<platform>/libtree-sitter-<name>.<ext>`, where the build stages them.
+Building it needs Cargo and a C compiler on the user's machine; a source
+that does not compile fails the set's build naming your package and the
+grammar. The `languages` package
+([`Languages/Grammars.lean`](../../packages/languages/Languages/Grammars.lean),
+[`rust/`](../../packages/languages/rust)) is a whole example, and
+[packages.md](../design/packages.md), "A package's grammars", "From
+source", says how the build chooses between compiling and reusing.
+
 ## Publishing
 
 A user's set can require a package in three ways

@@ -303,7 +303,7 @@ staging test (`the_binary_stages_a_packages_grammar_library_and_queries`)
 and the model checks of the declaration, its resolution and its
 registration. Run it after a change to the install (`editorInstall`), the
 records (`editor.grammars`, `Editor/ModuleLookup.lean`), the staging
-(`stageGrammars`, `editorShipped`) or the install's signing.
+(`editorGrammars`, `editorShipped`) or the install's signing.
 
 ## A package's library, installed, on demand
 
