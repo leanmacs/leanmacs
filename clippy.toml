@@ -68,14 +68,16 @@
 #   tests, at the helper each module calls it through or at each call
 #   (`queue`, `service`, `scripted`, the process service's `streaming`,
 #   `handled` and the winit adapter's, `render_loop`, `session`, grep's
-#   `service/tests.rs`, and `editor-ffi`'s `events`, `live` and `syntax`),
-#   and a readout that forwards to another
-#   (`probe::await_requests_handled`, `Syntaxes::settle` and
+#   `service/tests.rs`, `editor-ffi`'s `events`, `live` and `syntax`, and
+#   `editor-package`'s `stream::fake`), and a readout that forwards to
+#   another (`probe::await_requests_handled`, `Syntaxes::settle` and
 #   `settle_exact`); the adapters' contract checks (the window contract's
 #   measurements, the process contract's streaming properties, the winit
 #   contract example's and settings check's reads after
-#   `await_requests_handled`, and the process adapter's ground, which reads
-#   a file until a line is whole); the Rust checks of the C functions Lean
+#   `await_requests_handled`, the process adapter's ground, which reads
+#   a file until a line is whole, and the package wrapper's stream
+#   contract grounds over `ScriptedSource`, its own and
+#   `editor-package`'s `runtime/tests.rs`'s); the Rust checks of the C functions Lean
 #   calls to wait, each at a mark whose reason names its row of
 #   `docs/dev-practices/inferred-waits.md` (W71 and W80 to W84: `c_api.rs`,
 #   `snapshot.rs`, `window.rs`, `common/open.rs`, `syntax.rs`), with its
@@ -153,6 +155,7 @@ disallowed-methods = [
   { path = "editor_service::service::RecordingCompleter::wait_for", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_platform::scripted::ScriptedPlatform::wait_parked", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_process::service::Service::wait_held", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
+  { path = "editor_package::stream::fake::ScriptedChild::wait_pulling", allow-invalid = true, reason = "a readout for tests: only its own tests and the stream contract's grounds call it, each at an `#[expect]`" },
   { path = "editor_platform_winit::probe::await_requests_handled", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_render::render_loop::RenderHandle::wait_resting", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },
   { path = "editor_syntax::session::Session::wait_for", allow-invalid = true, reason = "a readout for tests: only its own tests, a contract check and the C function Lean calls call it, each at an `#[expect]`" },

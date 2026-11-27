@@ -43,6 +43,7 @@ editor-text = { path = "../../crates/editor-text" }
 editor-grep = { path = "../../crates/editor-grep" }
 editor-search = { path = "../../crates/editor-search" }
 editor-ffi = { path = "../../crates/editor-ffi" }
+editor-package = { path = "../../crates/editor-package" }
 # The library behind the font set, for its entry points that reach the
 # machine's fonts, which no crate of the workspace calls (`src/lib.rs`,
 # `unreached`). The root lock's version, pinned as `editor-shape-parley`

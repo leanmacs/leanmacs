@@ -18,6 +18,9 @@
 //! is `fake::ScriptedChild`; `contract::check` holds both to the same
 //! rules.
 
+pub mod contract;
+pub mod fake;
+
 use crate::frame::{Frames, Stream};
 
 /// How a taken-over child ended, as its last delivery says.

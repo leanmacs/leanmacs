@@ -115,6 +115,7 @@ pub fn readouts(
     grep: &editor_grep::service::Service<editor_grep::fake::FakeFiles, editor_search::Literal>,
     syntaxes: &editor_ffi::syntax::Syntaxes,
     snapshot: &editor_ffi::snapshot::Snapshot,
+    child: &editor_package::stream::fake::ScriptedChild,
 ) {
     #[expect(
         clippy::disallowed_methods,
@@ -171,6 +172,11 @@ pub fn readouts(
         reason = "shows the ban on `editor_ffi::syntax::Syntaxes::settle_exact` bites"
     )]
     let _ = syntaxes.settle_exact(snapshot, GUARD);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "shows the ban on `editor_package::stream::fake::ScriptedChild::wait_pulling` bites"
+    )]
+    let _ = child.wait_pulling(GUARD);
 }
 
 /// Each entry point of the outside world that the root `clippy.toml` bans
