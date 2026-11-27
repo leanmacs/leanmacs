@@ -1378,8 +1378,9 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   buffer's links (`Editor/Links.lean`) on a hosted driver over the core's
   `Links.setup`: each kind of target followed by `activate`'s key, the
   links mode's precedence over a mode's own `activate` and the mode's
-  handler off a link, a location's jump and `C-o` back, each refusal, and
-  the link roles' keys stepping across links and stopping at either end;
+  handler off a link, a mode of the buffer's own that fills `activate` with
+  `link-follow` itself not running it again, a location's jump and `C-o`
+  back, each refusal, and the link roles' keys stepping across links and stopping at either end;
 - `columnsChecks`: the column arithmetic of align-to stops
   (`Editor/Columns.lean`), pure and on the display model, and a generated
   buffer's stops and spans reaching its view; `stopChecks`, beside the

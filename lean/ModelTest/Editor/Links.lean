@@ -1,3 +1,4 @@
+import Editor.Command.Dispatch
 import Editor.Link
 import Editor.Links
 import Editor.Role
@@ -27,6 +28,27 @@ def linkUrl : String :=
 /-- The names of the jobs `driver` holds that have not finished. -/
 def pendingNames (driver : TestDriver) : Array String :=
   driver.pending.map (·.name)
+
+/-- `program` run in `driver`'s editor, its requests answered as the loop
+answers them (the registry's questions from what the loop was told is
+registered, the state's from its state, the rest from its models), except
+that a command it runs inside itself is not run: its name is added to
+`ran` and it is answered as run. The names it ran and the driver after its
+last request; `none` once it has made `fuel` requests. -/
+def ranInside {α : Type} :
+    Nat → TestDriver → Array String → Program editorPort α → Option (Array String × TestDriver)
+  | 0, _, _, _ => none
+  | _ + 1, driver, ran, .done _ => some (ran, driver)
+  | fuel + 1, driver, ran, .step (.control (.runCommand name _)) next =>
+    ranInside fuel driver (ran.push name) (next true)
+  | fuel + 1, driver, ran, .step (.registry request) next =>
+    ranInside fuel driver ran (next (driver.keys.registered.answer request))
+  | fuel + 1, driver, ran, .step (.state request) next =>
+    let (reply, state) := driver.loop.state.handle request
+    ranInside fuel { driver with loop := { driver.loop with state } } ran (next reply)
+  | fuel + 1, driver, ran, .step request next =>
+    let (reply, model) := driver.model.handle request
+    ranInside fuel { driver with model } ran (next reply)
 
 /-- The checks of following a link (`Editor/Links.lean`, "Following" and
 "Each kind of target"), on the link checks' driver, `activate`'s key pressed
@@ -126,7 +148,28 @@ def linkFollowChecks : List Check :=
         pure <|
           (linkDriver.map fun driver =>
               linkEcho (linkPressed (linkRan driver "fill-moves") (rolePresses Role.activate))) ==
-            some "link-follow: no link at the cursor" }]
+            some "link-follow: no link at the cursor" },
+    { name :=
+        "activate off a link in a buffer whose own mode fills activate with link-follow says there is no link at the cursor, and does not run link-follow again"
+      run :=
+        pure <|
+          let said := "link-follow: no link at the cursor"
+          match linkDriver.map fun driver => linkRan (linkRan driver "fill-self") "at" [.nat 0] with
+          | none => false
+          | some off =>
+            match off.loop.state.target? ⟨0⟩ with
+            | none => false
+            | some target =>
+              -- `link-follow` run by hand first, a command it runs inside
+              -- itself recorded and not run: were it to run itself again,
+              -- that fails here, where pressing the key would never come
+              -- back. Only once it does not is the key pressed.
+              match ranInside 100 off #[] (Links.follow { target }).run with
+              | none => false
+              | some (ran, followed) =>
+                if ran.isEmpty && linkEcho followed == said then
+                  linkEcho (linkPressed off (rolePresses Role.activate)) == said
+                else false }]
 
 /-- The head of the cursor of the view 0 of `driver`, as a byte offset. -/
 def linkHead (driver : TestDriver) : Option Nat :=

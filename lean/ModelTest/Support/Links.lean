@@ -32,7 +32,10 @@ is visited through, and the commands of the checks:
   (`BufferId.setLinks`) and its major mode `listing`, and shows it;
 - `fill-moves` makes a buffer `moves`, `movesText`, with three links and no
   mode, and shows it;
+- `fill-self` makes a buffer `self` of the same text and links, its major
+  mode `self-follow`, and shows it;
 - `listing` fills `activate` with `listing-visit`, which says `visited`;
+- `self-follow` fills `activate` with `link-follow` itself;
 - `say` says its string argument; `at` puts the cursor at the byte its
   argument names, `row` at the start of the row its argument names
   (`ModelTest/Support/Jumps.lean`), and `back` moves back through the jump
@@ -106,6 +109,11 @@ def fillLinked (name text : String) (links : Array Link) (major : Option String)
 def linkListing : Mode :=
   { name := "listing", roles := [(Role.activate, "listing-visit")] }
 
+/-- The mode `self-follow`, which fills `activate` with `link-follow`
+itself, as a mode that reuses the links mode's roles would. -/
+def linkSelfFollow : Mode :=
+  { name := "self-follow", roles := [(Role.activate, Links.followName)] }
+
 /-- The test package of the link checks: the core's `Links.setup`, and the
 commands, the mode and the resolver of the module docs. -/
 def linksTestPackage : Package :=
@@ -115,6 +123,7 @@ def linksTestPackage : Package :=
       commandWith "fill-links" fun call =>
           fillLinked "links" linkBuffer.1 linkBuffer.2 (some linkListing.name) call
       commandWith "fill-moves" (fillLinked "moves" movesText movesLinks none)
+      commandWith "fill-self" (fillLinked "self" movesText movesLinks (some linkSelfFollow.name))
       commandWith "listing-visit" fun _ => message "visited"
       commandWith "say" fun call =>
           match call.arguments with
@@ -132,6 +141,7 @@ def linksTestPackage : Package :=
           Jumps.placeCursor call.target.window.id (← call.target.buffer.text.offsetOf ⟨row, 0⟩)
       commandWith "back" fun call => discard <| Jumps.move call.target.window.id (-1)
       defineMode linkListing
+      defineMode linkSelfFollow
       Extension.add
           ({ scheme := "test", follow := fun _ rest => message s!"resolved {rest}" } :
             Links.Resolver) }
