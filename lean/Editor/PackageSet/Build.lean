@@ -62,10 +62,19 @@ core directory.
    (`rustSource` in `lean/lakefile.lean`; the editor never ships Cargo,
    decided 2026-11-20). One with a crate needs the user's own, and a
    missing or broken one stops the build with `cargoRequired`, naming the
-   package's crate.
+   package's crate. A package whose native code is a library of its own
+   (an `editorLibrary` target) adds no crate, so a set whose packages
+   declare only libraries needs no Cargo here: an already-built library
+   runs no tool at all.
 4. **Build and install**: `lake build :editorInstall` with
    `EDITOR_INSTALL_DIR=<data>/editors/staging-<k>` (`nextStaging`) and the build
-   environment, its output streamed into the build buffer.
+   environment, its output streamed into the build buffer. The install
+   stages each package's library beside the new editor (`editorLibraries`
+   in `lean/lakefile.lean`). A library target that must build and finds
+   its tool missing stops the build with the core's sentence, `<tool> is
+   required to build <package>'s library, and none works here (<how>): …`,
+   which `missingTooling?` reads off Lake's `error:` line, so the failure
+   line is `lake build exited with status 1: <sentence>`.
 5. **Record**: the new editor's `editor.core` is read, and
    `editor.packages` written beside it: the requires, the pins of the
    manifest the core check read after the resolve, and the set's name.
@@ -375,17 +384,26 @@ def between? (line before after : String) : Option String :=
     | _ => none
   | _ => none
 
-/-- What a line of a failed build's output says is missing of the tooling a
-package's native code needs, with how to get it; none for any other line.
-The app ships the Lean toolchain alone, with no C library headers, no
-macOS SDK beyond the link stubs of what the shipped editor links, and no
-Cargo (decided 2026-11-20), so a package with native code needs the
-user's own tooling or a prebuilt binary its lakefile fetches
-(`docs/design/packages.md`, "Who can build it"). It knows the compiler's
-missing header (`fatal error: '<h>' file not found`) and the linker's
-missing framework or library (`framework not found for -framework <F>`,
-`library not found for -l<L>`). -/
-def missingTooling? (line : String) : Option String :=
+/-- The sentence a line of a failed build's output carries when a package's
+library target found its tool missing: the line Lake prints for the core's
+staging of the set's libraries, `error: <tool> is required to build
+<package>'s library, and none works here (<how>): …`
+(`libraryToolRequired` in `lean/lakefile.lean`), from the tool on; none for
+any other line. -/
+def libraryToolRequired? (line : String) : Option String :=
+  if
+      (line.splitOn " is required to build ").length > 1 &&
+        (line.splitOn "'s library, and none works here (").length > 1 then
+    some
+      (match line.splitOn "error: " with
+        | _ :: rest@(_ :: _) => "error: ".intercalate rest
+        | _ => line).trimAscii.toString
+  else none
+
+/-- What a line of a failed build's output says is missing of the system's
+tooling: a header of the system's C library or SDK, or a framework or a
+library the link lacks (`missingTooling?`). -/
+def missingSystemTooling? (line : String) : Option String :=
   let install :=
     "the app ships the Lean toolchain alone: install the Xcode command line tools (`xcode-select --install`) for a package whose build uses them, or use the package's prebuilt binary, as its documentation says"
   match between? line "fatal error: '" "' file not found" with
@@ -399,6 +417,23 @@ def missingTooling? (line : String) : Option String :=
       match between? (line ++ "\n") "library not found for -l" "\n" with
       | some library => some s!"a package links the system library {library.trimAscii}; {install}"
       | none => none
+
+/-- What a line of a failed build's output says is missing of the tooling a
+package's native code needs, with how to get it; none for any other line.
+The app ships the Lean toolchain alone, with no C library headers, no
+macOS SDK beyond the link stubs of what the shipped editor links, and no
+Cargo (decided 2026-11-20), so a package with native code needs the
+user's own tooling or a prebuilt binary its lakefile fetches
+(`docs/design/packages.md`, "Who can build it"). It knows the compiler's
+missing header (`fatal error: '<h>' file not found`) and the linker's
+missing framework or library (`framework not found for -framework <F>`,
+`library not found for -l<L>`), and a package's library target whose tool
+is missing: the line Lake prints for the core's staging of the set's
+libraries, `error: <tool> is required to build <package>'s library, and
+none works here (<how>): …` (`libraryToolRequired` in `lean/lakefile.lean`),
+answered as that sentence. -/
+def missingTooling? (line : String) : Option String :=
+  (libraryToolRequired? line).orElse fun _ => missingSystemTooling? line
 
 /-- The app bundle the toolchain's `lake` at `lake` is in, when it is a
 bundle's: `<bundle>/Contents/Resources/lean/toolchain/bin/lake`. -/

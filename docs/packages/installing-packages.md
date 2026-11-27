@@ -378,6 +378,12 @@ A failure for want of a tool says which tool and how to get it:
 - **A C header, framework or system library**, for a package with C code:
   install the Xcode command line tools (`xcode-select --install`), or use
   the package's prebuilt binary.
+- **The tool a package's native library is built with** (Cargo, zig, a C
+  compiler), for a package whose library is not already built: the build
+  stops with `<tool> is required to build <package>'s library, and none
+  works here (…)`. Install the tool, or use the package's prebuilt
+  library, as its documentation says. A package whose library is already
+  built needs no tool of yours at all.
 
 A new editor that is built but does not start, because its link is bad or a
 package's `initialize` throws, is caught before the restart: nothing is

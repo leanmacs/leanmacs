@@ -975,18 +975,92 @@ the facet's lines read back. -/
   stagedLibrariesOf #["echo\t/s/libraries/echo/libecho_service.so", "no tab"] ==
     #[("echo", ("/s/libraries/echo/libecho_service.so" : FilePath))]
 
+/-- The tool a library target found missing, and how, from one entry of the
+target's log: Lake's process helpers (`proc`, `captureProc`, through
+`rawProc`, Lake 4.35.0's `Lake/Util/Proc.lean`) log a spawned program's
+standard error as `stderr:` and its text, and Lean's runtime writes
+`could not execute external process '<cmd>'` there when the program is not
+found; a spawn Lake itself cannot make fails with `failed to execute
+'<cmd>': <error>`. None for any other entry. -/
+def libraryToolMissing? (entry : String) : Option (String × String) :=
+  let quoted (before : String) : Option String :=
+    match entry.splitOn before with
+    | _ :: rest :: _ =>
+      match rest.splitOn "'" with
+      | tool :: _ :: _ => some tool
+      | _ => none
+    | _ => none
+  match quoted "could not execute external process '" with
+  | some tool => some (tool, s!"could not execute external process '{tool}'")
+  | none =>
+    match quoted "failed to execute '" with
+    | some tool =>
+      let how :=
+        match entry.splitOn s!"failed to execute '{tool}': " with
+        | _ :: rest :: _ => ((rest.splitOn "\n").headD "").trimAscii.toString
+        | _ => ""
+      some (tool, how)
+    | none => none
+
+/-- What is said when the library of the package `owner` must be built with
+`tool` and none works here (`how`), in the shape of the build job's
+`cargoRequired`: for `cargo` it names rustup, as that does. -/
+def libraryToolRequired (owner tool how : String) : String :=
+  let install :=
+    if tool == "cargo" then "install it with rustup from https://rustup.rs" else "install it"
+  s!"{tool} is required to build {owner}'s library, and none works here ({how}): {install}, or use the package's prebuilt library, as its documentation says, then :reload"
+
+/- Guards: a library target's missing tool, read from its log
+(`libraryToolMissing?`), over the entry Lake 4.35 logged, copied verbatim
+from `lake build :editorLibraries` run with no cargo on the PATH, and over
+Lake's own spawn failure; a log entry that is no spawn failure, the exit
+line Lake logs after it among them, is none; and the sentence the staging
+fails with (`libraryToolRequired`), cargo's naming rustup. -/
+#guard
+  libraryToolMissing? "stderr:\ncould not execute external process 'cargo'" ==
+    some ("cargo", "could not execute external process 'cargo'")
+
+#guard
+  libraryToolMissing? "failed to execute 'zig': no such file or directory (error code: 2)" ==
+    some ("zig", "no such file or directory (error code: 2)")
+
+#guard libraryToolMissing? "external command 'cargo' exited with code 255" == none
+
+#guard libraryToolMissing? "stderr:\nerror[E0425]: cannot find value `x` in this scope" == none
+
+#guard
+  libraryToolRequired "echo" "cargo" "could not execute external process 'cargo'" ==
+    "cargo is required to build echo's library, and none works here (could not execute external process 'cargo'): install it with rustup from https://rustup.rs, or use the package's prebuilt library, as its documentation says, then :reload"
+
+#guard
+  libraryToolRequired "far" "zig" "no such file or directory (error code: 2)" ==
+    "zig is required to build far's library, and none works here (no such file or directory (error code: 2)): install it, or use the package's prebuilt library, as its documentation says, then :reload"
+
+/-- A library target of a set (`setLibraries`): the Lake package that
+declares it, the target's job, its value read as the library's path, and
+the job as the build monitor holds it, when the target registered one.
+A `target` declared with Lake's DSL registers its job and hands back a
+renewed copy, whose log is moved to the monitor; the registered one keeps
+it, so a failed target's log is read there (`stageLibraries`). -/
+structure LibraryTarget where
+  /-- The name of the Lake package that declares the target. -/
+  owner : String
+  /-- The target's job, its value the library's path. -/
+  job : Job String
+  /-- The job the target registered with the build monitor, with its log. -/
+  registered : Option OpaqueJob
+
 /-- The library targets of the set `set`, in the order its packages
-register (`setPackages`), each with the name of its Lake package: a package
-declares its library with a target named `editorLibrary`
-(`libraryTargetName`) whose value is the library's path, fetched through
-the build's store, so it runs once a build, and read through its own
-declaration's query format, as `setRustCrates` reads a crate's manifest;
-so this names no type of the package's, and no list is kept by hand. Each
-job is the target's own, unawaited, so a failed one's log can be read
+register (`setPackages`): a package declares its library with a target
+named `editorLibrary` (`libraryTargetName`) whose value is the library's
+path, fetched through the build's store, so it runs once a build, and read
+through its own declaration's query format, as `setRustCrates` reads a
+crate's manifest; so this names no type of the package's, and no list is
+kept by hand. Each job is unawaited, so a failed one's log can be read
 (`stageLibraries`). -/
-def setLibraries (set : Package) : FetchM (Array (String × Job String)) := do
+def setLibraries (set : Package) : FetchM (Array LibraryTarget) := do
   let ws ← getWorkspace
-  let mut libraries : Array (String × Job String) := #[]
+  let mut libraries : Array LibraryTarget := #[]
   for dep in setPackages ws set do
     let some decl := dep.findTargetDecl? libraryTargetName | continue
     let owner := dep.baseName.toString (escape := false)
@@ -994,7 +1068,10 @@ def setLibraries (set : Package) : FetchM (Array (String × Job String)) := do
       | error s!"the package {owner} declares `editorLibrary`, but not as a target"
     let job : Job (CustomData dep.keyName libraryTargetName) ←
       fetch (BuildInfo.target dep libraryTargetName)
-    libraries := libraries.push (owner, job.map (config.format .text))
+    let caption := (dep.target libraryTargetName).key.toSimpleString
+    let queue : IO.Ref (Array OpaqueJob) := (← getBuildContext).registeredJobs
+    let registered := (← queue.get).reverse.find? (·.caption == caption)
+    libraries := libraries.push { owner, job := job.map (config.format .text), registered }
   return libraries
 
 /-- Copies the library at `source` to `place`, its bytes only, when the
@@ -1017,24 +1094,46 @@ def stageLibrary (source place : FilePath) : IO Unit := do
 /-- Stages the library of each Lake package of the set `set` that declares
 one (`setLibraries`), in register order, under the set's build directory at
 `stagedLibraryPlace` (`stageLibrary`), and answers its lines, the Lake
-package and the staged library, absolute, separated by a tab. A target
-that failed fails the staging with its own log and a line naming the
-package. -/
+package and the staged library, absolute, separated by a tab.
+
+It reads each target's result rather than awaiting its value, so a target
+that failed is read, not replayed: one whose log (`LibraryTarget`) says its
+tool could not be run (`libraryToolMissing?`) fails the staging with
+`libraryToolRequired`, naming the package and the tool, which the build job
+reports as is (`Editor.PackageSet.missingTooling?`); any other failure
+names the package after the target's own log, which the monitor prints. -/
 def stageLibraries (set : Package) : FetchM (Job (Array String)) := do
   let libraries ← setLibraries set
   IO.FS.createDirAll set.buildDir
   let buildDir ← IO.FS.realPath set.buildDir
-  let jobs := libraries.map (·.2)
-  let staged : Job (Array String) := Job.collectArray jobs
-  staged.mapM fun paths => do
+  Job.async do
       let mut lines : Array String := #[]
-      for ((lake, _), library) in libraries.zip paths do
-        let source : FilePath := library
-        let some file := source.fileName
-          | error s!"the package {lake}'s library (its `editorLibrary` target) names no file: {library}"
-        let place := buildDir / stagedLibraryPlace lake file
-        stageLibrary source place
-        lines := lines.push s!"{lake}\t{place}"
+      for { owner := lake, job, registered } in libraries do
+        match ← job.wait with
+        | .ok library _ =>
+          let source : FilePath := library
+          let some file := source.fileName
+            | error s!"the package {lake}'s library (its `editorLibrary` target) names no file: {library}"
+          let place := buildDir / stagedLibraryPlace lake file
+          stageLibrary source place
+          lines := lines.push s!"{lake}\t{place}"
+        | .error _ state =>
+          -- The target's log: the registered job's, which the monitor
+          -- prints itself, or, for a target that registered none, its own,
+          -- replayed here.
+          let log ←
+            match registered with
+            | some monitored =>
+              pure (← monitored.wait).state.log
+            | none =>
+              pure state.log
+          match log.entries.findSome? (libraryToolMissing? ·.message) with
+          | some (tool, how) =>
+            error (libraryToolRequired lake tool how)
+          | none =>
+            if registered.isNone then
+              log.replay
+            error s!"the package {lake}'s library (its `editorLibrary` target) did not build"
       return lines
 
 /-- The libraries of a package set, staged (`lake -d <set dir> query

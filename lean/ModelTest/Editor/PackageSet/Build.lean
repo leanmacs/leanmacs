@@ -416,6 +416,37 @@ def packageSetBuildChecks : List Check :=
                 missingTooling? "ld64.lld: error: undefined symbol: leanmacs_no_such_symbol" ==
                   none) },
     { name :=
+        "a library target whose tool is missing fails the build with the sentence naming the package and the tool, its staging directory removed and nothing published"
+      run :=
+        let facts := lakefileWith #[hello]
+        match orderFor facts with
+        | none => pure false
+        | some order =>
+          let resolve :=
+            streaming
+              (lakeCommand order
+                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
+              #[]
+          -- The line Lake prints for the staging's failure, as a real
+          -- `lake build :editorInstall` with no cargo on the PATH printed it
+          -- (the core's `stageLibraries`, `libraryToolRequired`).
+          let sentence :=
+            "cargo is required to build echo's library, and none works here (could not execute external process 'cargo'): install it with rustup from https://rustup.rs, or use the package's prebuilt library, as its documentation says, then :reload"
+          let failing :=
+            streaming (install order)
+              #["✖ [3/9] Running echo/editorLibrary",
+                "error: external command 'cargo' exited with code 255", s!"error: {sentence}"]
+              1
+          match buildDriver (runningWith facts) (succeeding order).1 #[resolve, failing] with
+          | none => pure false
+          | some driver =>
+            let done := built driver order
+            pure
+              (failedWith done s!"lake build exited with status 1: {sentence}" &&
+                (startedRuns done).contains ("/bin/rm", #["-rf", staging]) &&
+                !(startedRuns done).any (·.1 == "/bin/mv") &&
+                missingTooling? "error: external command 'cargo' exited with code 255" == none) },
+    { name :=
         "a bundle's lake killed at its start, or refused, as macOS refuses a quarantined tool, ends the build saying macOS refused the bundled toolchain and how to remove the flag; a lake outside a bundle, or another failure, says what it said before"
       run :=
         let facts := lakefileWith #[hello]
