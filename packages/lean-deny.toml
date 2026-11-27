@@ -70,6 +70,7 @@ doubles = { select = [
   "mod:Editor.Job.Model",
   "mod:Editor.Process.Model",
   "mod:Editor.SyntaxTree.Model",
+  "mod:Editor.SyntaxTree.Registration.Model",
   "mod:Editor.Text.Model",
   "mod:Editor.Watch.Model",
   "mod:Editor.Clipboard.Contract!",
