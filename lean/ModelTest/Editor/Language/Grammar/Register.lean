@@ -23,6 +23,7 @@ import Editor.Test.Models
 import Editor.Test.Modes
 import ModelTest.Check
 import ModelTest.Support.Elaborator
+import ModelTest.Support.Grammars
 
 /-!
 # Model tests: `Editor/Language/Grammar/Register.lean`
@@ -36,105 +37,6 @@ namespace ModelTest
 
 open Editor
 open Editor.Test
-
-/-- The highlights query the checks' declared grammars read from their
-query directory. -/
-def declaredHighlights : String :=
-  "(number) @number"
-
-/-- The platform the checks' jobs register on, given explicitly so that no
-check depends on the platform the tests run on. -/
-def checkedPlatform : String :=
-  "darwin-aarch64"
-
-/-- The reload reducer's state with a registry holding the shipped languages
-and modes, and nothing installed. -/
-def shippedState : ModelState :=
-  {
-    registry :=
-      (({} : Config.Registry).replaceLanguages .compiled Language.shipped).replaceModes .compiled
-        Language.modes }
-
-/-- `state` with each of `packages` registered, in order, before any config
-(`Config.State.register`), its grammars resolved against the directory
-`grammarDirectories` names for its Lake package; a refused package is
-skipped. -/
-def withPackages (state : ModelState) (packages : Array Package)
-    (grammarDirectories : List (String × System.FilePath)) : ModelState :=
-  packages.foldl
-    (fun state package => (state.register package grammarDirectories).toOption.getD state) state
-
-/-- The package `ini-grammar`, of the Lake package of that name, that
-declares the grammar `ini` for macOS on Apple silicon alone, relative to its
-grammars directory, and the language `ini` of `*.ini` naming it. -/
-def iniPackage : Package :=
-  { name := "ini-grammar"
-    setup :=
-      defineLanguage
-        { name := "ini", patterns := [.extension "ini"], syntaxTree := { grammar := "ini" } }
-    grammars :=
-      #[Language.Grammar.declarePerPlatform "ini"
-          [("darwin-aarch64", "darwin-aarch64/libtree-sitter-ini.so")] "queries"]
-    lakePackage := some "ini-grammar" }
-
-/-- Where the checks stage `ini-grammar`'s grammars directory. -/
-def iniStagedAt : List (String × System.FilePath) :=
-  [("ini-grammar", "/s/grammars/ini-grammar")]
-
-/-- The highlights query `ini-grammar` ships, other than config's. -/
-def packageHighlights : String :=
-  "(string) @string"
-
-/-- The reducer's state once a reload from `state` has installed a config
-whose `setup` is `setup`, with the generation and the grammars of the
-registration the install asked for; `none` when it asked for none. -/
-def installOver (state : ModelState) (setup : SetupM Unit) :
-    Option (ModelState × Nat × Array Language.Grammar) := do
-  let (state, _) := Config.step state .requested
-  let (state, effects) := Config.step state (.finished (accepted ["a"] setup))
-  let (generation, grammars) ←
-    effects.findSome? fun
-        | .registerGrammars generation grammars => some (generation, grammars)
-        | _ => none
-  return (state, generation, grammars)
-
-/-- The loop's driver once a config whose `setup` is `setup` has been
-installed over a registry holding the shipped languages and modes, and
-the work of the registration its install asked for has been started
-(`Loop.Driver.startWork`): the driver runs on the editor's models with
-`json` and `lean` compiled into the syntax tree model, its keys told the
-installed registry, and its jobs given `libraries` as the table grammars
-load from and the files `files`, each a path and its text, and the
-directories `directories`. `none` when the install asked for no
-registration. -/
-def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
-    (files : Array (String × String)) (directories : Array String := #[])
-    (platform : String := checkedPlatform) (packages : Array Package := #[])
-    (grammarDirectories : List (String × System.FilePath) := []) : Option TestDriver := do
-  let (state, generation, grammars) ←
-    installOver (withPackages shippedState packages grammarDirectories) setup
-  let keys : Loop.Keys TestScheme.scheme := { registered := state.registry.registered }
-  let model := { editorModel with syntaxTree := { compiled := #["json", "lean"] } }
-  let fileModel :=
-    files.foldl (fun model (path, text) => model.withFile path text.toUTF8)
-      (directories.foldl (fun model (path : String) => model.withDirectory path) ({} : FileModel))
-  let driver ←
-    (Loop.Driver.over keys (fun _ => none) (EditorState.initial ⟨640, 480⟩) model).toOption
-  let driver :=
-    { driver with jobs := { grammars := { libraries := some libraries }, files := fileModel } }
-  return driver.startWork Language.Grammar.jobName
-      (Language.Grammar.work platform generation grammars)
-
-/-- The driver once a delivered command has opened a buffer called `path`
-over a JSON text, recorded the language the registry's table chooses for
-the path, and set the `code` mode on it. -/
-def openedIn (driver : TestDriver) (path : String) : TestDriver :=
-  let opens : EditorM Unit := do
-    let text ← createText "[1]"
-    let .ok buffer ← addBuffer path text | return
-    discard <| buffer.setLanguage (← languageOf path)
-    discard <| buffer.setMajorMode Language.codeName
-  (driver.stepped (driver.loop.deliver driver.handed s!"open {path}" opens)).1
 
 /-- The grammars the driver's syntax tree model has attached texts with, in
 order. -/
@@ -150,18 +52,6 @@ def highlighters (driver : TestDriver) : Array (Array String) :=
 `lean` language's capture mapping. -/
 def shippedLeanFaces : Array String :=
   #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
-
-/-- The `setup` that declares the grammar `ini` from `library` and the
-language `ini` of `*.ini` that names it. -/
-def declaresIniFrom (library : System.FilePath) : SetupM Unit := do
-  defineGrammar "ini" library
-  defineLanguage
-      { name := "ini", patterns := [.extension "ini"], syntaxTree := { grammar := "ini" } }
-
-/-- The `setup` that declares the grammar `ini` from `/g/libtree-sitter-ini.so`
-and the language `ini` of `*.ini` that names it. -/
-def declaresIni : SetupM Unit :=
-  declaresIniFrom "/g/libtree-sitter-ini.so"
 
 /-- The checks of the core's `register-grammars` job and its command
 (`Editor/Language/Grammar/Register.lean`), driven from the reducer's effect
