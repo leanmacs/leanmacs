@@ -67,8 +67,8 @@ opaque start (id : UInt64) (text : @& String) : IO Bool
 @[extern "echo_glue_cancel"]
 opaque cancel (id : UInt64) : IO Bool
 
-/-- The text of the reply to the request `id`, and the checksum the crate
-took of it from the system's zlib, taken from the crate's service. -/
+/-- The text of the reply to the request `id`, and the CRC-32 the crate
+took of it, taken from the crate's service. -/
 @[extern "echo_glue_take"]
 opaque takeRaw (id : UInt64) : IO (Option (String × UInt32))
 
@@ -92,7 +92,7 @@ every echo request started before has completed or been cancelled. -/
 opaque flush (id : UInt64) : IO Unit
 
 /-- The port over the crate's service. Its replies' checksums are the
-crate's, so the contract holds zlib's CRC-32 to the pure one
+crate's, so the contract holds the crate's CRC-32 to the pure one
 (`Echo.checksum`). -/
 def real : Service where
   start := start

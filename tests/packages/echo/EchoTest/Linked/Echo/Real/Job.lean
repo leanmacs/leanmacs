@@ -28,7 +28,7 @@ here.
 
 - **A job's `say`** (AC1, over the real crate, through the edge's package
   services): `Echo.Job.say "hello"` finishes with the text and the checksum
-  the crate took from the system's zlib, which is the pure one
+  the crate computed, which is the pure one
   (`Echo.checksum`).
 - **The package properties** (`JobContract.packageProperties`) hold of the
   crate: a request's reply, an unknown service, two requests in flight, a
@@ -75,7 +75,7 @@ def endedOf (handle : Job.Handle) : IO (Job.Outcome Bool) := do
     return .cancelled
 
 /-- The subject of the package properties over the crate: a `say` of
-`hello` and one of `héllo`, each answered its text and zlib's checksum. -/
+`hello` and one of `héllo`, each answered its text and the crate's checksum. -/
 def echoSubject : JobContract.PackageSubject :=
   { service := Echo.serviceName, request := Echo.sayRequest "hello"
     answers := fun reply => (reply.get? Echo.Reply) == some (Echo.Reply.to "hello")
@@ -159,7 +159,7 @@ linked test's root hands in. -/
 def echoJobChecks (services : Editor.Test.Linked.Services) (packages : Job.PackageServices) :
     List Check :=
   [{  name :=
-        "AC1, over the real crate, through the package services the edge builds from echo's packages: a running job's say of hello finishes with hello and the checksum the crate took from zlib, which is the pure one"
+        "AC1, over the real crate, through the package services the edge builds from echo's packages: a running job's say of hello finishes with hello and the checksum the crate computed, which is the pure one"
       run := do
         let recorder ← Job.FakeRecorder.new
         let handle ←

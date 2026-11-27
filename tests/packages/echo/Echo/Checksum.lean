@@ -5,8 +5,8 @@ The checksum the echo service answers with each reply, computed here with
 no library: CRC-32 as zlib computes it (the reflected polynomial
 `0xEDB88320`, an initial value and a final mask of all ones), over the
 text's UTF-8 bytes. The pure model answers it, so the contract holds the
-service's checksum, which the crate takes from the system's zlib, to this
-one.
+service's checksum, which the crate computes in Rust (`crc32fast`), to
+this one.
 -/
 
 namespace Echo

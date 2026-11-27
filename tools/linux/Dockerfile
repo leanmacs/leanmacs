@@ -16,11 +16,7 @@ FROM debian@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b
 # dependencies and for the `c-fmt` task's file list, curl and the
 # certificates for downloads, zstd for the Lean toolchain's archive,
 # pkg-config for build scripts of the window library's dependencies,
-# pipx, through which mise installs clang-format, and zlib's development
-# library, which the fixture package `echo`'s crate links by name
-# (tests/packages/echo/rust/src/zlib.rs; `-lz` reaches the link through the
-# Rust archive's system libraries, docs/design/packages.md, "Rust in a
-# package"). The `ubuntu-24.04` runner image already carries it.
+# and pipx, through which mise installs clang-format.
 #
 # The second line is for `linux-window` alone: a display that needs no
 # screen (Xvfb), a way to type into it (xdotool), and the libraries the
@@ -35,7 +31,7 @@ FROM debian@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b
 # runs the same with them there.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates curl git build-essential zstd pkg-config pipx python3-venv zlib1g-dev \
+        ca-certificates curl git build-essential zstd pkg-config pipx python3-venv \
         xvfb xdotool libx11-6 libx11-xcb1 libxcursor1 libxi6 libxrandr2 \
         libxkbcommon0 libxkbcommon-x11-0 libxcb1 \
         mesa-vulkan-drivers libvulkan1 \

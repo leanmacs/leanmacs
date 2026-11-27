@@ -30,6 +30,13 @@ crate-type = ["cdylib", "rlib"]
 # included, fails. No dev-dependency.
 [dependencies]
 editor-package = { path = "../../../../crates/editor-package" }
+# The CRC-32 of a reply's text, behind echo's own seam (`src/crc32.rs`),
+# the one module that names it: CRC-32 in Rust, so the crate has no
+# `unsafe` and links no system library. Pinned exactly to the version the
+# root lock already holds for PNG's `flate2`, so it adds none. Not std's:
+# `hash` needs no allocation. The root `deny.toml` and this crate's own
+# allow it.
+crc32fast = { version = "=1.5.5", default-features = false }
 
 [lints]
 workspace = true

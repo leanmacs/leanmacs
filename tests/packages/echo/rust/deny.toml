@@ -10,8 +10,9 @@
 # dev-dependencies, and theirs. An `allow` list that is not empty refuses
 # every crate it does not name ("crate '…' is not explicitly allowed"), so
 # this list is the whole of what echo's library and its tests may contain:
-# the package wrapper and what the wrapper itself is built from, and no
-# other crate of the editor's (docs/design/packages.md, "The package crate
+# the package wrapper and what the wrapper itself is built from, the
+# third-party library echo keeps behind a seam of its own and its
+# dependency, and no other crate of the editor's (docs/design/packages.md, "The package crate
 # wrapper, as built"). It holds what the root `deny.toml` cannot: there,
 # a crate nothing depends on (`editor-ffi`, a `-std` binaries' crate,
 # `editor-package-runtime-header`, `editor-package-check`, another
@@ -38,4 +39,6 @@ allow = [
   { crate = "editor-package", reason = "the package wrapper, the one crate of the editor's echo depends on" },
   { crate = "editor-package-runtime", reason = "the runtime's C definitions, which the wrapper re-exports (`editor_package::raw`); no static" },
   { crate = "editor-wait", reason = "the typed time bounds, which the wrapper re-exports (`editor_package::wait`); no static" },
+  { crate = "crc32fast", reason = "the CRC-32 of a reply's text, behind echo's own seam (src/crc32.rs): a library in Rust, so echo has no `unsafe`" },
+  { crate = "cfg-if", reason = "crc32fast's one dependency" },
 ]

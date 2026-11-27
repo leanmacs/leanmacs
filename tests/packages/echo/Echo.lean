@@ -9,7 +9,7 @@ A package outside the core, used by tests alone, that holds Rust
 (`ffi/glue.c`). This module is the port the service is used through, in
 the editor's terms and with no Rust: start a request of a text, under an
 id the caller chose; cancel it; take its reply once it has completed, the
-text and its CRC-32, which the crate takes from the system's zlib; attach a
+text and its CRC-32, which the crate computes in Rust; attach a
 streaming child a job opened, which the crate takes over and reads, and
 take what it read; and flush, once every request before has completed.
 

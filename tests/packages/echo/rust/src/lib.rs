@@ -1,7 +1,7 @@
 //! The service of the fixture package `echo`: it answers each request with
-//! the request's text and the text's CRC-32, which it takes from the
-//! system's zlib ([`zlib`]), worked on a thread of its own, and reports that the
-//! request has finished through the [`Completer`] port.
+//! the request's text and the text's CRC-32 ([`crc32`]), worked on a thread
+//! of its own, and reports that the request has finished through the
+//! [`Completer`] port.
 //!
 //! It keeps the rules every service keeps (`editor-ffi`'s crate docs,
 //! "Services and completions"):
@@ -42,16 +42,15 @@
 //! The crate depends on nothing of the editor's but the wrapper
 //! (`editor-package`, over the runtime's definitions, with no static): it
 //! reaches the core only through the runtime, so it holds no copy of the
-//! core's statics. It has no `unsafe` of its own over the runtime, its
-//! init, its table or its buffers, which the compiler holds
-//! (`#![deny(unsafe_code)]`); its one marked site is its binding of the
-//! system's zlib ([`zlib`]).
+//! core's statics. It has no `unsafe` of its own, over the runtime, its
+//! init, its table, its buffers or anything else, which the compiler holds
+//! (`#![deny(unsafe_code)]`, with no site allowed).
 
 #![deny(unsafe_code)]
 
 pub mod attach;
+pub mod crc32;
 pub mod ffi;
-pub mod zlib;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -68,8 +67,7 @@ pub const SERVICE_NAME: &str = "echo";
 pub struct Reply {
     /// The request's text.
     pub text: String,
-    /// The CRC-32 of the text's UTF-8 bytes, from the system's zlib
-    /// ([`zlib::checksum`]).
+    /// The CRC-32 of the text's UTF-8 bytes ([`crc32::checksum`]).
     pub checksum: u32,
 }
 
@@ -78,7 +76,7 @@ impl Reply {
     pub fn to(text: &str) -> Self {
         Self {
             text: text.to_owned(),
-            checksum: zlib::checksum(text.as_bytes()),
+            checksum: crc32::checksum(text.as_bytes()),
         }
     }
 }

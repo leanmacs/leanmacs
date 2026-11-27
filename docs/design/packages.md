@@ -3289,7 +3289,7 @@ way (`lean/lakefile.lean`):
   `linkArgs`, which keeps only the toolchain's library directory and the
   entry point. The core's `lean_exe`s read the core's line as a response
   file (`@…/native-static-libs`). `echo`'s library, linked by Cargo as a
-  `cdylib`, links the system's zlib itself.
+  `cdylib`, links its own system libraries itself.
 - **A package's glue** is a C file of its own, compiled by a target of its
   own lakefile against the toolchain's `lean.h`, and the `moreLinkObjs` of
   the library that holds its binding alone, so Lake links it into exactly
@@ -3742,13 +3742,14 @@ cargo-deny holds twice under `mise run deny`: the root `deny.toml` refuses
 it every crate of the editor's that has an entry but the wrapper, and a
 second run over echo's graph alone, with echo's own
 `tests/packages/echo/rust/deny.toml`, allows only the crates that config
-names (echo, the wrapper and what the wrapper is built from), so an edge to
+names (echo, the wrapper and what the wrapper is built from, and
+`crc32fast` with its dependency), so an edge to
 `editor-ffi`, which nothing in the root graph depends on, or to another
 package's crate fails too, a dev-dependency's included. Its
 `src/lib.rs` and each of its tests carry `#![deny(unsafe_code)]`, which
-the compiler holds. Its one marked `unsafe` site is its binding of the
-system's zlib (`src/zlib.rs`): a C library of the package's own choosing,
-no part of the runtime, which the wrapper wraps. Its tests run on
+the compiler holds with no site allowed: its reply's CRC-32 is
+`crc32fast`'s, behind its own seam (`src/crc32.rs`), where it was a binding
+of the system's zlib, echo's last `unsafe`. Its tests run on
 `FakeRuntime`, `ScriptedSource` and `RecordingCompleter`; its `cdylib`,
 built with the macro, is what its glue loads through
 `editor_ffi_package_load` in `ffi-test` (`EchoTest.Linked.echoLoadChecks`,
