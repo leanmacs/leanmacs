@@ -1,0 +1,26 @@
+[package]
+name = "editor-package-runtime-header"
+version = "0.1.0"
+description = "Generates the package runtime's C header from its Rust definitions with cbindgen, and fails a test when the checked-in header differs; nothing depends on it"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# No normal dependency: the build script parses the definitions crate's
+# source by path (`../editor-package-runtime/src/lib.rs`), so this crate
+# needs nothing of it at build or run time, and nothing depends on this
+# crate (`deny.toml`), so cbindgen is compiled for this crate's build alone.
+[dependencies]
+
+[build-dependencies]
+# The C header generator (docs/design/packages.md, "The package runtime,
+# as built"), run as a library by `build.rs`. It is a build tool here, not
+# a library the editor links: this crate is its one wrapper (`deny.toml`),
+# and its types reach no other crate. Pinned exactly to 0.29.4, the current
+# release (2026-06-09); `default-features = false` drops its command line
+# (`clap`). MPL-2.0, used unmodified; the header it writes is generated
+# from our definitions and is not covered by the MPL.
+cbindgen = { version = "=0.29.4", default-features = false }
+
+[lints]
+workspace = true

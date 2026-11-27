@@ -199,7 +199,10 @@ only, so `git add` a new C file before running them. They leave `vendor/`
 out: vendored C is upstream's generated code (`vendor/README.md`). They
 leave out the fixture grammar's `crates/editor-syntax-fixture-ini/grammar/src/`
 too, the parser the tree-sitter CLI generated (the fixture's `README.md`);
-the fixture's own `grammar/exports.c` is checked.
+the fixture's own `grammar/exports.c` is checked. And they leave out the
+package runtime's C header, `crates/editor-package-runtime/include/`,
+which cbindgen generates and a test holds to it
+(`editor-package-runtime-header`).
 
 `mise run lean-format` and its check, `mise run lean-fmt`, run lean-fmt
 over the core and then over each package of the fixture set
