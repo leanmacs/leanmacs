@@ -1825,11 +1825,18 @@ text layout places:
   spans are not built.
 - **Tables, lists and pickers** are text views over generated text.
 - **Columns are aligned with align-to stops** in text layout, the one
-  primitive this adds. Tab stops are the same mechanism. Not built yet:
-  until it is, the minibuffer's completion display aligns candidate
-  annotations by padding with spaces counted in characters, which is exact
-  under the shipped monospace default face and misaligns under a
-  proportional one (rdm task `align-to-stops`).
+  primitive this adds (built by the rich text display roadmap's phase 2;
+  "Display layers", as built, "Align-to stops"). A stop (`AlignStop`, a
+  view's `stops`) names the first character of a cell of a row and the x,
+  in whole points from the start of the text row, the cell starts at; a
+  generator computes the xs from the widths the display measures
+  (`Display.measure`, `Editor/Columns.lean`) and writes them with its
+  buffer's text and spans (`BufferId.setStops`). Tab stops are to become
+  the same mechanism: the tab layer still counts a tab in spaces, and the
+  minibuffer's completion display still aligns candidate annotations by
+  padding with spaces counted in characters, which is exact under the
+  shipped monospace default face and misaligns under a proportional one
+  (rdm task `move-tabs-and-annotations-to-align-stops`).
 - **A popup** (completion, hover, a picker) is a text view in a floating
   rectangle that Lean places against a position it asks layout for
   ("Views as built", the floating layer).
@@ -1900,8 +1907,9 @@ The display pipeline's phase 1 built the contract and two layers, in
   the stop in pixels; on a proportional font it is at the stop counted in
   spaces, the known limit of the choice. Inline boxes (a relayout pass per
   tab) and runs split at stops (layout breaking lines itself) were set
-  aside, and stay possible as the align-to-stop primitive ("Text is the
-  only layout engine"). Its points are a row, a segment and a byte column
+  aside for tabs; runs split at stops is what the align-to-stop primitive
+  was built as ("Align-to stops", below), and moving tabs onto it is rdm
+  task `move-tabs-and-annotations-to-align-stops`. Its points are a row, a segment and a byte column
   of the segment's expanded text. A row's content is its bytes without its
   line feed and without a carriage return before it; the position between
   the two is the row's end.
@@ -1924,7 +1932,54 @@ The display pipeline's phase 1 built the contract and two layers, in
   a line at a row's end holds the row's end and stays).
 
 The round trip of every position through both layers is a property test
-(`tests/layers.rs`).
+(`tests/layers.rs`), over rows with align-to stops too.
+
+**Align-to stops** (the rich text display roadmap's phase 2) are not a
+layer either: they are part of laying out one segment, in the wrap layer's
+entry (`crates/editor-layout/src/align.rs`, `src/line.rs`). A view's stops
+cut each row into cells at their offsets: cell 0 the text before the first
+stop, each later one from its stop's character to the next stop or the
+segment's end. Each cell is shaped and broken on its own through the
+`Shaper` port, which is unchanged, and layout places the pieces itself, by
+these rules, in pixels from the start of the text row (a stop's points
+times the scale, as a padding is):
+
+- Cell 0 is at x 0, broken at the width, as a row with no stop.
+- **The overflow wrap rule**: a later cell whose stop is at or past the
+  view's width, on a visual line that already holds something, breaks the
+  row before it: the cell continues at x 0 on the next visual line, broken
+  at the whole width, and so does every later cell whose stop is past the
+  width. A stop at the very start of a row never breaks before it, so no
+  empty visual line is made.
+- Otherwise a cell starts at its stop, or where the content before it
+  ends when that is further right: cells never overlap, and a cell that
+  runs past the next stop pushes the next cell right. A cell pushed to or
+  past the width breaks before it, by the overflow rule.
+- Otherwise the cell is broken at the room right of where it starts, and
+  its later visual lines hang under it at the same x, so a long cell stays
+  in its column.
+- The gap before a stop belongs to the character before it, as a tab's
+  spaces belong to the tab: the last glyph before the stop gets the
+  advance that reaches it, so a cursor on it spans the gap and an x in the
+  gap aims for it.
+- A visual line of several pieces sits on their lowest baseline and is as
+  tall as that plus the deepest any reaches below its own.
+- A stop off a character boundary is moved back to one; one with no
+  character after it in its segment does nothing; of two at one offset
+  the later listed wins.
+- In a row cut into segments, a stop is measured from the start of its
+  segment's first visual line, since each segment starts a new visual line
+  (a limit, as the forced break is). A tab inside a row with stops still
+  expands by the tab layer's rule.
+
+The rows, spot and move queries lay a row out under the stops of the last
+frame that showed the text at its revision, kept in points so a query
+after a change of scale answers at the new scale; an edit drops them until
+the next frame, as it drops the decorations a query reads. An entry cut at
+the same columns at other xs, or at another width, is broken and placed
+again without shaping. The shaper contract holds every adapter to lines
+that start at their left edge and hold their glyphs (`ORIGIN`), which the
+placing relies on.
 
 **Blocks are not a layer** (a departure, the excerpts roadmap's phase 3).
 The contract above says blocks would be a layer after the wrap layer, with
@@ -4443,9 +4498,9 @@ frame journal and the renderer's counters.
   back, and the caller places it.
 - **Tabs** (answered): expanded before shaping, in the tab layer ("Display
   layers", as built). Tab stops on a proportional font are counted in
-  spaces, not in pixels, until an align-to-stop primitive exists, and so
-  are the columns of the minibuffer display's candidate annotations (rdm
-  task `align-to-stops`).
+  spaces, not in pixels, and so are the columns of the minibuffer
+  display's candidate annotations, until they move onto the align-to stops
+  that are now built (rdm task `move-tabs-and-annotations-to-align-stops`).
 - **The other choices the survey left open** are listed in
   [rendering-prior-art.md](rendering-prior-art.md).
 - **Embedded terminals**: a fixed row count, or growing with output up to

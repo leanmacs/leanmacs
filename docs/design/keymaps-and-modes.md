@@ -4345,7 +4345,10 @@ asked and what accepting gives).
   does not exist (`open-file-new-file`). Of phase 4's display:
   - **Align-to stops in pixels.** Annotations are aligned in characters,
     exact under the monospace default face; a proportional default face
-    would misalign them (rdm task `align-to-stops`).
+    would misalign them. Align-to stops are built in layout now
+    (`docs/design/text-and-display.md`, "Display layers"); moving the
+    annotation column onto them is rdm task
+    `move-tabs-and-annotations-to-align-stops`.
   - **A view that does not wrap.** A candidate row wider than the strip
     wraps and pushes the last rows below the strip's edge; the fix is a
     view field the scene and layout would carry, which is Rust work.
