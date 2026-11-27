@@ -50,9 +50,38 @@ pub const PARK: HangGuard = HangGuard::on(
     Duration::from_secs(60),
 );
 
+/// The rules a flawed scripted source breaks, for the stream contract's
+/// own tests, which show that the contract reports each
+/// (`ScriptedSource::flawed`, built for tests alone). The fake keeps every
+/// rule with [`Flaws::default`], and only those tests make it otherwise.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Flaws {
+    /// A pull with nothing to deliver answers [`Pulled::Cancelled`] at
+    /// once, never parking.
+    pub(crate) answer_at_once: bool,
+    /// The newest delivery scripted is pulled first.
+    pub(crate) newest_first: bool,
+    /// A child taken over may be taken over again.
+    pub(crate) second_take_over: bool,
+    /// A child whose last delivery was pulled, or which was cancelled, is
+    /// handed out again.
+    pub(crate) take_over_gone: bool,
+    /// A number never handed out is refused as taken, not as no such
+    /// child.
+    pub(crate) unknown_as_taken: bool,
+    /// A write to a child with no input is answered as written.
+    pub(crate) accept_write_without_input: bool,
+    /// A write after the last delivery was pulled is answered as written.
+    pub(crate) accept_write_after_end: bool,
+    /// A refused write is refused with no words.
+    pub(crate) wordless_refusal: bool,
+}
+
 /// What a scripted child holds.
 #[derive(Debug, Default)]
 struct Script {
+    /// The rules it breaks: none but in the stream contract's own tests.
+    flaws: Flaws,
     /// Whether it has an input.
     input: bool,
     /// The deliveries scripted and not yet pulled, oldest first.
@@ -164,11 +193,12 @@ impl ScriptedChild {
     /// module's tests alone (the root `clippy.toml`).
     pub fn wait_pulling(&self, guard: HangGuard) -> bool {
         let script = self.script();
-        let (_script, parked) =
-            editor_wait::wait_while(&self.shared.changed, script, guard, |script| {
-                script.parked == 0
-            });
-        parked
+        let (script, _) = editor_wait::wait_while(&self.shared.changed, script, guard, |script| {
+            script.parked == 0 && !script.flaws.answer_at_once
+        });
+        // A child whose pull answers at once never parks: no reader is
+        // waited for.
+        script.parked > 0
     }
 
     /// Whether nothing more comes from it.
@@ -180,6 +210,9 @@ impl ScriptedChild {
 impl ChildStreams for ScriptedChild {
     fn pull(&self) -> Pulled {
         let mut script = self.script();
+        if !script.gone() && script.deliveries.is_empty() && script.flaws.answer_at_once {
+            return Pulled::Cancelled;
+        }
         if !script.gone() && script.deliveries.is_empty() {
             script.parked += 1;
             self.shared.changed.notify_all();
@@ -197,7 +230,12 @@ impl ChildStreams for ScriptedChild {
         if script.gone() {
             return Pulled::Cancelled;
         }
-        let Some(delivery) = script.deliveries.pop_front() else {
+        let next = if script.flaws.newest_first {
+            script.deliveries.pop_back()
+        } else {
+            script.deliveries.pop_front()
+        };
+        let Some(delivery) = next else {
             return Pulled::Cancelled;
         };
         if delivery.ended.is_some() {
@@ -210,7 +248,14 @@ impl ChildStreams for ScriptedChild {
         let mut script = self.script();
         script.written.push(bytes.clone());
         if !script.input || script.gone() {
-            return Err(InputClosed(CLOSED.to_owned()));
+            let flaws = script.flaws;
+            if (!script.input && flaws.accept_write_without_input)
+                || (script.gone() && flaws.accept_write_after_end)
+            {
+                return Ok(());
+            }
+            let words = if flaws.wordless_refusal { "" } else { CLOSED };
+            return Err(InputClosed(words.to_owned()));
         }
         if let Some(at) = script.answers.iter().position(|(on, _)| *on == bytes) {
             let (_, answer) = script.answers.remove(at);
@@ -232,6 +277,9 @@ pub struct ScriptedSource {
 /// A scripted source's children.
 #[derive(Debug, Default)]
 struct Children {
+    /// The rules it and each child added to it break: none but in the
+    /// stream contract's own tests.
+    flaws: Flaws,
     /// The last number handed out.
     last: u64,
     /// Each child, by its number, and whether it was taken over.
@@ -253,6 +301,16 @@ impl ScriptedSource {
         Self::default()
     }
 
+    /// A source with no child that breaks the rules `flaws` names, and
+    /// whose children added after break them too: for the stream
+    /// contract's own tests.
+    #[cfg(test)]
+    pub(crate) fn flawed(flaws: Flaws) -> Self {
+        let source = Self::default();
+        source.children().flaws = flaws;
+        source
+    }
+
     /// Locks the children. The lock is never held while a caller's code
     /// runs.
     fn children(&self) -> MutexGuard<'_, Children> {
@@ -263,6 +321,7 @@ impl ScriptedSource {
     /// which a take-over names: from 1 up, never [`super::contract::UNUSED`].
     pub fn add(&self, child: ScriptedChild) -> u64 {
         let mut children = self.children();
+        child.script().flaws = children.flaws;
         children.last += 1;
         let number = children.last;
         children.by_number.insert(number, (child, false));
@@ -281,13 +340,20 @@ impl ScriptedSource {
 impl StreamSource for ScriptedSource {
     fn take_over(&self, child: u64) -> Result<Box<dyn ChildStreams>, Refused> {
         let mut children = self.children();
+        let flaws = children.flaws;
         let Some((scripted, taken)) = children.by_number.get_mut(&child) else {
+            if flaws.unknown_as_taken {
+                return Err(Refused::Taken);
+            }
             return Err(Refused::NoSuchChild);
         };
+        if scripted.gone() && flaws.take_over_gone {
+            return Ok(Box::new(scripted.clone()));
+        }
         if scripted.gone() {
             return Err(Refused::NoSuchChild);
         }
-        if *taken {
+        if *taken && !flaws.second_take_over {
             return Err(Refused::Taken);
         }
         *taken = true;

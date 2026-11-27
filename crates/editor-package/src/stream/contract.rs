@@ -24,6 +24,13 @@
 //! answers at once never parks, and fails them. So the scripted child
 //! parks, as the core's does.
 //!
+//! **Each property bites.** This module's tests run [`check`] on a scripted
+//! source that breaks one rule (the fake's crate-private flaws) and pin the
+//! exact properties it fails: a pull that answers at once, deliveries out
+//! of order, a second take-over, an ended or unknown child not refused as
+//! no such child, a write accepted with no input or after the end, and a
+//! refusal with no words.
+//!
 //! Every thread the check starts is scoped and joined before a property is
 //! decided. Each wait is bounded only by the ground's hang guard
 //! ([`Ground::deadline`]): a pull or write that does not answer by then
@@ -35,9 +42,11 @@
 //! # Where an addition goes
 //!
 //! A new rule is a named `pub const`, an entry of [`PROPERTIES`], a step of
-//! [`check`], a [`Scenario`] for each child it needs, and each ground's
+//! [`check`], a [`Scenario`] for each child it needs, each ground's
 //! mapping of that scenario (the scripted source's, and
-//! `editor-package-check`'s over the core's stream source).
+//! `editor-package-check`'s over the core's stream source), and a flaw of
+//! the scripted source that breaks it, with a test here that the check
+//! reports exactly that property.
 
 use std::sync::mpsc;
 use std::thread;
@@ -380,6 +389,7 @@ fn refused_with_words(written: &Result<(), InputClosed>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream::fake::{Flaws, ScriptedSource};
 
     #[test]
     fn the_properties_are_seven_and_each_is_named_once() {
@@ -387,5 +397,97 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), 7);
+    }
+
+    /// The properties a scripted source that breaks the rules `flaws`
+    /// names fails.
+    fn failures(flaws: Flaws) -> Vec<&'static str> {
+        check(&ScriptedSource::flawed(flaws))
+    }
+
+    #[test]
+    fn a_source_whose_pull_answers_at_once_never_parks_and_is_reported() {
+        let failed = failures(Flaws {
+            answer_at_once: true,
+            ..Flaws::default()
+        });
+
+        assert_eq!(
+            failed,
+            [PULL_WAITS_FOR_DELIVERY, CANCEL_REACHES_A_PARKED_PULL]
+        );
+    }
+
+    #[test]
+    fn a_source_that_delivers_out_of_order_is_reported() {
+        let failed = failures(Flaws {
+            newest_first: true,
+            ..Flaws::default()
+        });
+
+        assert_eq!(failed, [DELIVERED_IN_ORDER_THEN_END]);
+    }
+
+    #[test]
+    fn a_source_that_allows_a_second_take_over_is_reported() {
+        let failed = failures(Flaws {
+            second_take_over: true,
+            ..Flaws::default()
+        });
+
+        assert_eq!(failed, [REFUSED_TAKEN]);
+    }
+
+    #[test]
+    fn a_source_that_hands_out_an_ended_child_again_is_reported() {
+        let failed = failures(Flaws {
+            take_over_gone: true,
+            ..Flaws::default()
+        });
+
+        assert_eq!(failed, [REFUSED_NO_SUCH_CHILD]);
+    }
+
+    #[test]
+    fn a_source_that_refuses_an_unknown_child_as_taken_is_reported() {
+        let failed = failures(Flaws {
+            unknown_as_taken: true,
+            ..Flaws::default()
+        });
+
+        assert_eq!(failed, [REFUSED_NO_SUCH_CHILD]);
+    }
+
+    #[test]
+    fn a_source_that_accepts_a_write_with_no_input_is_reported() {
+        let failed = failures(Flaws {
+            accept_write_without_input: true,
+            ..Flaws::default()
+        });
+
+        assert_eq!(failed, [WRITE_WITHOUT_INPUT_REFUSED]);
+    }
+
+    #[test]
+    fn a_source_that_accepts_a_write_after_the_end_is_reported() {
+        let failed = failures(Flaws {
+            accept_write_after_end: true,
+            ..Flaws::default()
+        });
+
+        assert_eq!(failed, [WRITE_AFTER_END_REFUSED]);
+    }
+
+    #[test]
+    fn a_source_that_refuses_a_write_with_no_words_is_reported() {
+        let failed = failures(Flaws {
+            wordless_refusal: true,
+            ..Flaws::default()
+        });
+
+        assert_eq!(
+            failed,
+            [WRITE_WITHOUT_INPUT_REFUSED, WRITE_AFTER_END_REFUSED]
+        );
     }
 }
