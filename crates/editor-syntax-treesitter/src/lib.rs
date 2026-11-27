@@ -62,13 +62,18 @@
 //! naming the Lean rule that reads it; their capture names follow
 //! nvim-treesitter's, and no third-party query set is used, since each is
 //! written for its own editor's rules (`docs/design/rust-library.md`,
-//! "Injections, indentation and text objects, as built").
+//! "Injections, indentation and text objects, as built"). Markdown's block
+//! highlights are this repository's too, `queries/markdown/highlights.scm`:
+//! the crate's query, copied with its provenance and changed so a heading is
+//! captured by its level and a code block apart from an inline code span,
+//! which the crate's query gives one name; the `text.` faces need both
+//! (`tests/highlights.rs`).
 //!
 //! | Grammar | Reparse | Highlights | Injections | Text objects | Indents |
 //! |---|---|---|---|---|---|
 //! | `json` | incremental | the crate's | none | none | none |
 //! | `rust` | incremental | the crate's | the crate's | `queries/rust/textobjects.scm` | `queries/rust/indents.scm` |
-//! | `markdown` | incremental | the crate's, of its block grammar | the crate's, of its block grammar | none | none |
+//! | `markdown` | incremental | `queries/markdown/highlights.scm` | the crate's, of its block grammar | none | none |
 //! | `markdown_inline` | whole | the crate's, of its inline grammar | the crate's, of its inline grammar | none | none |
 //! | `toml` | incremental | the crate's | none | none | none |
 //! | `lean` | incremental | upstream's, vendored with the grammar | none | none | none |
@@ -273,7 +278,10 @@ const GRAMMARS: [Grammar; 6] = [
         language: || Language::new(tree_sitter_md::LANGUAGE),
         policy: ReparsePolicy::Incremental,
         queries: &[
-            (QueryKind::Highlights, tree_sitter_md::HIGHLIGHT_QUERY_BLOCK),
+            (
+                QueryKind::Highlights,
+                include_str!("../queries/markdown/highlights.scm"),
+            ),
             (QueryKind::Injections, tree_sitter_md::INJECTION_QUERY_BLOCK),
         ],
     },

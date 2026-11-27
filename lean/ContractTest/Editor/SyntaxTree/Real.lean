@@ -563,6 +563,55 @@ def syntaxTreeChecks : List Check :=
         let frame ← display.frameText
         -- `*emphasis*` is bytes 5 to 15 of its row, and `` `code` `` 20 to 26.
         return published.isOk && (frame.splitOn "5..15:00cc00ff").length == 2 &&
-            (frame.splitOn "20..26:0000ccff").length == 2 }]
+            (frame.splitOn "20..26:0000ccff").length == 2 },
+    { name :=
+        "a Markdown text entered with the shipped default is drawn with its heading, emphasis, code span and link in the text faces"
+      run := do
+        let table ← Snapshots.new
+        let real ← RealSyntaxTree.new table.reader
+        let syntaxTree := settlingAttach table real.handle
+        let colours :=
+          [("text.heading.1", Color.rgb 0xcc 0 0), ("text.emphasis", Color.rgb 0 0xcc 0),
+            ("text.code-span", Color.rgb 0 0 0xcc), ("text.link", Color.rgb 0xcc 0xcc 0)]
+        let display ← Ffi.Display.newCells 8 16
+        -- Only the text faces are defined: `syntax.punctuation`, which the
+        -- delimiters are drawn in, sets nothing, so each span is one run.
+        let shown ←
+          RealDisplay.over display table.reader
+              (colours.toArray.map fun (name, colour) =>
+                { name := ⟨name⟩, face := { foreground := some colour } })
+        let heading := "# Title"
+        let paragraph := "Some *em* and `code` and [link](u)."
+        let entered : EditorM (SnapshotId × MarkerId) := do
+          let text ← createText s!"{heading}\n\n{paragraph}\n"
+          Highlight.enter "markdown" text { grammar := "markdown" }
+          return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
+        let (.ok (snapshot, scroll), texts) ←
+          entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
+        let some found ← table.find? snapshot | return false
+        unless ← Ffi.syntaxSettle found Ffi.treeGuard do
+          return false
+        discard drainedParsed
+        let scene : Scene :=
+          { size := { width := 640, height := 64 }
+            views :=
+              #[{ id := ⟨0⟩, rect := { x := 0, y := 0, width := 640, height := 64 }, snapshot
+                  scroll, selections := #[], cursor := { shape := .block, face := ⟨"cursor"⟩ }
+                  decorations := #[], status := #[] }]
+            focused := none, echo := "", pending := "", preedit := none }
+        let publish : EditorM Unit := Display.publish scene
+        let (published, _) ← publish.runReal texts shown.handle
+        let frame ← display.frameText
+        -- The run of `needle` in `row`, from its byte offsets in the row,
+        -- in the colour of `face`.
+        let run (row needle face : String) : String :=
+          let start := (row.splitOn needle).head!.utf8ByteSize
+          let colour := ((colours.lookup face).map (·.word)).getD 0
+          let hex := String.ofList (Nat.toDigits 16 colour.toNat)
+          s!"{start}..{start + needle.utf8ByteSize}:{"".pushn '0' (8 - hex.length)}{hex}"
+        let runs :=
+          [run heading "Title" "text.heading.1", run paragraph "*em*" "text.emphasis",
+            run paragraph "`code`" "text.code-span", run paragraph "link" "text.link"]
+        return published.isOk && runs.all fun expected => (frame.splitOn expected).length == 2 }]
 
 end ContractTest

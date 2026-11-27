@@ -124,6 +124,21 @@ def markupEntries : Array Entry :=
         meaning :=
           "The proportional face a generated buffer's prose is drawn in, setting only the prose family (`Face.proseFamily`); no capture names it, so a markdown file opened as code stays monospace. The code faces set the monospace family, so code over it stays monospace. Declared ahead of the rich-text-display roadmap's phase 5." }]
 
+/-- Each capture name of markdown's highlights queries that draws a markup
+face, with that face: the block grammar's (the repository's query,
+`crates/editor-syntax-treesitter/queries/markdown/highlights.scm`) and the
+inline grammar's (the crate's). The shipped capture-to-face mapping
+(`Highlight.defaultFaces`) is the syntax captures' then these. `text.prose`
+has no capture: a markdown file opened as code stays monospace. -/
+def markupCaptures : Array (String × FaceName) :=
+  (Array.range 6).map
+      (fun index => (s!"text.heading.{index + 1}", ⟨s!"text.heading.{index + 1}"⟩)) ++
+    #[("text.emphasis", ⟨"text.emphasis"⟩), ("text.strong", ⟨"text.strong"⟩),
+      ("text.literal", ⟨"text.code-span"⟩), ("text.code-block", ⟨"text.code-block"⟩),
+      ("text.uri", ⟨"text.link"⟩), ("text.reference", ⟨"text.link"⟩),
+      ("text.quote", ⟨"text.quote"⟩), ("text.list-marker", ⟨"text.list-marker"⟩),
+      ("text.table-header", ⟨"text.table-header"⟩)]
+
 /-- The vocabulary: every face a shipped theme defines, in order. -/
 def vocabulary : Array Entry :=
   #[{   name := ⟨"default"⟩

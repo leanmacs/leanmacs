@@ -1286,7 +1286,8 @@ names a scheme's key:
   query then; and highlighting again, which detaches and enters again only
   the buffers whose language names the grammars, with no on-enter action;
 - `highlightFaceChecks`: the capture-to-face rule (`Editor/Highlight.lean`),
-  pure: the shipped default from the face vocabulary, the fallback of a
+  pure: the shipped default from the face vocabulary, markdown's captures
+  drawn in the `text.` faces by it, the fallback of a
   dotted capture to its first component, and config's mapping over both;
 - `highlightEnterChecks`: a major mode with a syntax tree, on the editor's
   models through the loop's dispatch: the text attached and highlighted in
