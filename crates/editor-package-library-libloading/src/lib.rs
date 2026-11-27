@@ -36,7 +36,7 @@
 use std::io::ErrorKind;
 use std::path::Path;
 
-use editor_package_library::library::{InitFunction, Libraries, Library, Unopened};
+use editor_package_library::library::{Libraries, Library, PackageInit, Unopened};
 
 /// The platform's loader: the library port's real adapter.
 #[derive(Debug)]
@@ -85,7 +85,7 @@ fn there(path: &Path) -> Result<(), Unopened> {
 struct Opened(&'static libloading::Library);
 
 impl Library for Opened {
-    fn init(&self, symbol: &str) -> Option<InitFunction> {
+    fn init(&self, symbol: &str) -> Option<PackageInit> {
         #[expect(
             unsafe_code,
             reason = "finding a package's init is dlsym of its symbol"
@@ -94,7 +94,7 @@ impl Library for Opened {
         // core asks a library for by name; the core decides whether to call
         // it. The library is never closed, so the function stays valid for
         // the life of the process.
-        let init = unsafe { self.0.get::<InitFunction>(symbol.as_bytes()) }.ok()?;
+        let init = unsafe { self.0.get::<PackageInit>(symbol.as_bytes()) }.ok()?;
         Some(*init)
     }
 }

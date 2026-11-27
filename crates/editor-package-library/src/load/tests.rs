@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use super::*;
 use crate::contract::{self, Corpus};
 use crate::fake::FakeLibraries;
-use crate::library::InitFunction;
+use crate::library::PackageInit;
 use crate::runtime::RUNTIME;
 
 /// The table [`writes_its_table`] writes.
@@ -44,7 +44,7 @@ extern "C" fn writes_none(_: *const PackageRuntime, _: *mut *const c_void) -> u3
 /// A fake with one library at `/l/lib.so` exporting `init` as the init
 /// symbol, a library at `/l/other.so` exporting another symbol, and a file
 /// that is no library at `/l/grammar.js`.
-fn fake(init: InitFunction) -> FakeLibraries {
+fn fake(init: PackageInit) -> FakeLibraries {
     FakeLibraries::new()
         .library("/l/lib.so", &[(INIT_SYMBOL, init)])
         .library("/l/other.so", &[("tree_sitter_ini", init)])

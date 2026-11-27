@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
-use crate::library::{InitFunction, Libraries, Library, Unopened};
+use crate::library::{Libraries, Library, PackageInit, Unopened};
 
 /// What a path is canned as.
 #[derive(Debug, Clone)]
@@ -19,7 +19,7 @@ enum Canned {
     /// A file that will not open as a library.
     NotALibrary,
     /// A library exporting these symbols.
-    Library(Vec<(String, InitFunction)>),
+    Library(Vec<(String, PackageInit)>),
 }
 
 /// Libraries canned per path: the port's fake.
@@ -46,7 +46,7 @@ impl FakeLibraries {
 
     /// This fake, with a library at `path` exporting each of `symbols`.
     #[must_use]
-    pub fn library(mut self, path: impl Into<PathBuf>, symbols: &[(&str, InitFunction)]) -> Self {
+    pub fn library(mut self, path: impl Into<PathBuf>, symbols: &[(&str, PackageInit)]) -> Self {
         let symbols = symbols
             .iter()
             .map(|&(symbol, init)| (symbol.to_owned(), init))
@@ -80,10 +80,10 @@ impl Libraries for FakeLibraries {
 
 /// A canned library, opened.
 #[derive(Debug)]
-struct FakeLibrary(Vec<(String, InitFunction)>);
+struct FakeLibrary(Vec<(String, PackageInit)>);
 
 impl Library for FakeLibrary {
-    fn init(&self, symbol: &str) -> Option<InitFunction> {
+    fn init(&self, symbol: &str) -> Option<PackageInit> {
         self.0
             .iter()
             .find(|(exported, _)| exported == symbol)

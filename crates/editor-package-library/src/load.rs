@@ -26,11 +26,13 @@ use std::ffi::c_void;
 use std::path::Path;
 use std::ptr::{self, NonNull};
 
+use editor_package_runtime::{INIT_LOADED, INIT_RUNTIME_TOO_SMALL};
+
 use crate::library::{Libraries, Unopened};
 use crate::runtime::PackageRuntime;
 
 /// The one symbol the core asks a package's library for: its init
-/// ([`crate::library::InitFunction`]).
+/// ([`crate::library::PackageInit`]).
 pub const INIT_SYMBOL: &str = "editor_package_init";
 
 /// Why a package's library was not loaded, in the order [`load`] asks.
@@ -116,10 +118,10 @@ pub fn load(
     // never unloaded, so what it writes stays valid.
     let status = unsafe { init(runtime, &raw mut table) };
     match status {
-        0 => NonNull::new(table.cast_mut())
+        INIT_LOADED => NonNull::new(table.cast_mut())
             .map(Table)
             .ok_or(LoadRefusal::InitFailed),
-        1 => Err(LoadRefusal::RuntimeTooSmall),
+        INIT_RUNTIME_TOO_SMALL => Err(LoadRefusal::RuntimeTooSmall),
         _ => Err(LoadRefusal::InitFailed),
     }
 }

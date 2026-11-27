@@ -3,8 +3,8 @@ use std::mem::MaybeUninit;
 use std::ptr;
 
 use editor_service::frame::Framing;
+use editor_service::stream::StreamSource;
 use editor_service::stream::fake::FakeSource;
-use editor_service::stream::{Delivery, StreamSource};
 
 use super::*;
 
@@ -19,7 +19,7 @@ fn words(encoded: &Encoded) -> Vec<u64> {
 
 /// A fake child of lines on both streams, bound 64, with an input,
 /// taken over as the core's handle.
-fn taken(fake: &FakeSource) -> (editor_service::stream::fake::FakeChild, Box<PackageChild>) {
+fn taken(fake: &FakeSource) -> (editor_service::stream::fake::FakeChild, Box<TakenChild>) {
     let child = fake.child(Framing::Lines, Framing::Lines, 64, true);
     let handle = take_over_from(fake, child.id()).expect("taken over");
     (child, handle)
@@ -50,6 +50,56 @@ fn a_completion_from_a_package_s_id_is_posted_and_one_from_a_core_service_s_is_r
 #[test]
 fn a_completion_the_queue_refuses_answers_false() {
     assert!(!complete_with(FIRST_PACKAGE_ID + 5, 1, |_, _| false));
+}
+
+#[test]
+fn an_event_from_a_package_s_id_is_posted_and_one_from_a_core_service_s_is_refused_unposted() {
+    let posted = RefCell::new(Vec::new());
+    let post = |service, code, text| {
+        posted.borrow_mut().push((service, code, text));
+        true
+    };
+    assert!(post_event_with(
+        FIRST_PACKAGE_ID,
+        7,
+        "héllo".to_owned(),
+        post
+    ));
+    assert!(!post_event_with(3, 8, "core".to_owned(), post));
+    assert!(!post_event_with(
+        FIRST_PACKAGE_ID - 1,
+        9,
+        "core".to_owned(),
+        post
+    ));
+    assert_eq!(
+        posted.into_inner(),
+        [(FIRST_PACKAGE_ID, 7, "héllo".to_owned())]
+    );
+}
+
+#[test]
+fn an_event_the_queue_refuses_answers_false() {
+    assert!(!post_event_with(
+        FIRST_PACKAGE_ID + 5,
+        1,
+        String::new(),
+        |_, _, _| false
+    ));
+}
+
+#[test]
+fn each_tag_reads_back_as_its_refusal_and_no_other_tag_as_any() {
+    for refused in [
+        Refused::NoService,
+        Refused::NoSuchChild,
+        Refused::ReadPending,
+        Refused::Taken,
+    ] {
+        assert_eq!(refused_of_tag(refusal_tag(refused)), Some(refused));
+    }
+    assert_eq!(refused_of_tag(0), None);
+    assert_eq!(refused_of_tag(5), None);
 }
 
 #[test]
@@ -97,44 +147,6 @@ fn a_pull_of_lines_and_an_exit_encodes_to_the_documented_words_and_bytes() {
 }
 
 #[test]
-fn every_end_encodes_its_tag_values_and_words() {
-    let ended = |ended| {
-        let encoded = encode(Pulled::Delivered(Delivery {
-            out: Frames::Bytes(b"xy".to_vec()),
-            err: Frames::Messages(vec![b"{}".to_vec()]),
-            ended,
-        }));
-        (words(&encoded), encoded.bytes)
-    };
-    let frames = [1, 1, 2, 2, 1, 2];
-    let with = |end: [u64; 4]| [frames.as_slice(), end.as_slice()].concat();
-
-    assert_eq!(ended(None), (with([0, 0, 0, 0]), b"xy{}".to_vec()));
-    assert_eq!(
-        ended(Some(Ended::Signalled { signal: 15 })),
-        (with([2, 15, 0, 0]), b"xy{}".to_vec())
-    );
-    assert_eq!(
-        ended(Some(Ended::LineTooLong {
-            stream: Stream::Err,
-            bound: 64
-        })),
-        (with([3, 1, 64, 0]), b"xy{}".to_vec())
-    );
-    assert_eq!(
-        ended(Some(Ended::MessageTooLong {
-            stream: Stream::Out,
-            bound: 9
-        })),
-        (with([4, 0, 9, 0]), b"xy{}".to_vec())
-    );
-    assert_eq!(
-        ended(Some(Ended::Failed("bad".to_owned()))),
-        (with([5, 0, 0, 3]), b"xy{}bad".to_vec())
-    );
-}
-
-#[test]
 fn a_pull_of_a_cancelled_child_is_not_delivered_and_lends_nothing() {
     let fake = FakeSource::new();
     let (child, handle) = taken(&fake);
@@ -164,17 +176,18 @@ fn a_write_reaches_the_child_and_a_refused_one_answers_the_words() {
     reason = "drives the runtime's C members as a library does: a handle, a record filled, and buffers handed back"
 )]
 fn pulled_through_c(handle: *mut PackageChild) -> Encoded {
+    let runtime = &raw const RUNTIME;
     let mut raw = MaybeUninit::<RawPull>::uninit();
     // SAFETY: the handle is live and the record writable; the record is
     // read once filled, and each buffer is handed back once after it is
     // copied.
     unsafe {
-        (RUNTIME.child_pull)(handle, raw.as_mut_ptr());
+        (RUNTIME.child_pull)(runtime, handle, raw.as_mut_ptr());
         let raw = raw.assume_init();
         let words = buffer::borrow(raw.words, raw.words_len).to_vec();
         let bytes = buffer::borrow(raw.bytes, raw.bytes_len).to_vec();
-        (RUNTIME.buffer_free)(raw.words, raw.words_len);
-        (RUNTIME.buffer_free)(raw.bytes, raw.bytes_len);
+        assert!((RUNTIME.buffer_free)(runtime, raw.words, raw.words_len));
+        assert!((RUNTIME.buffer_free)(runtime, raw.bytes, raw.bytes_len));
         Encoded {
             delivered: raw.delivered,
             words,
@@ -197,11 +210,12 @@ fn written_through_c(handle: *mut PackageChild, bytes: &[u8]) -> Result<(), Vec<
     // SAFETY: the handle is live, the bytes are the slice's and the record
     // is writable; a refusal's buffer is copied, then handed back once.
     unsafe {
-        if (RUNTIME.child_write)(handle, bytes.as_ptr(), bytes.len(), &mut refused) {
+        let runtime = &raw const RUNTIME;
+        if (RUNTIME.child_write)(runtime, handle, bytes.as_ptr(), bytes.len(), &mut refused) {
             return Ok(());
         }
         let words = buffer::borrow(refused.bytes, refused.len).to_vec();
-        (RUNTIME.buffer_free)(refused.bytes, refused.len);
+        assert!((RUNTIME.buffer_free)(runtime, refused.bytes, refused.len));
         Err(words)
     }
 }
@@ -213,7 +227,7 @@ fn written_through_c(handle: *mut PackageChild, bytes: &[u8]) -> Result<(), Vec<
 )]
 fn released_through_c(handle: *mut PackageChild) {
     // SAFETY: the handle is live and released this once.
-    unsafe { (RUNTIME.child_release)(handle) };
+    unsafe { (RUNTIME.child_release)(&raw const RUNTIME, handle) };
 }
 
 #[test]
@@ -221,7 +235,7 @@ fn through_the_c_members_a_pull_and_a_write_cross_and_every_lent_buffer_is_hande
     let fake = FakeSource::new();
     let (child, handle) = taken(&fake);
     child.out(b"ping-me\n");
-    let handle = Box::into_raw(handle);
+    let handle = Box::into_raw(handle).cast::<PackageChild>();
 
     let first = pulled_through_c(handle);
     let written = written_through_c(handle, b"pong\n");
@@ -253,8 +267,59 @@ fn through_the_c_members_a_pull_and_a_write_cross_and_every_lent_buffer_is_hande
 }
 
 #[test]
-fn the_runtime_says_its_own_size() {
+fn the_runtime_says_its_own_size_and_keeps_no_private_members() {
     assert_eq!(RUNTIME.size, size_of::<PackageRuntime>());
+    assert!(RUNTIME.private_members.is_null());
+}
+
+/// Lends `bytes` through the runtime's C member, and reads the buffer back.
+#[expect(
+    unsafe_code,
+    reason = "drives the runtime's C member as a library does: bytes lent for the call, a record filled and read"
+)]
+fn lent_through_c(bytes: &[u8]) -> (RawBuffer, Vec<u8>) {
+    let mut out = RawBuffer {
+        bytes: ptr::null_mut(),
+        len: 0,
+    };
+    // SAFETY: the bytes are the slice's for the call, the record writable,
+    // and the buffer read while it is lent.
+    unsafe {
+        (RUNTIME.buffer_lend)(&raw const RUNTIME, bytes.as_ptr(), bytes.len(), &mut out);
+        (out, buffer::borrow(out.bytes, out.len).to_vec())
+    }
+}
+
+/// Hands `lent` back through the runtime's C member.
+#[expect(
+    unsafe_code,
+    reason = "drives the runtime's C member as a library does: a buffer the core lent, handed back"
+)]
+fn freed_through_c(lent: RawBuffer) -> bool {
+    // SAFETY: the buffer is one the runtime lent, handed back this once.
+    unsafe { (RUNTIME.buffer_free)(&raw const RUNTIME, lent.bytes, lent.len) }
+}
+
+// The tests of this binary run in parallel and share the process's ledger,
+// so none hands a buffer back twice here: an address freed by one test may
+// be lent again to another before the second hand-back. A second hand-back
+// is pinned on a ledger of its own (`ledger`'s tests) and by the contract
+// (`tests/contract.rs`, alone in its binary).
+#[test]
+fn a_buffer_lent_through_the_c_member_reads_back_and_is_handed_back() {
+    let (lent, read) = lent_through_c("héllo".as_bytes());
+    assert_eq!(read, "héllo".as_bytes());
+    assert!(freed_through_c(lent));
+}
+
+#[test]
+fn a_pointer_the_runtime_never_lent_is_refused() {
+    let mut own = *b"never lent";
+    assert!(!freed_through_c(RawBuffer {
+        bytes: own.as_mut_ptr(),
+        len: own.len(),
+    }));
+    assert_eq!(&own, b"never lent");
 }
 
 #[test]
