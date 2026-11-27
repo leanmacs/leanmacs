@@ -1641,9 +1641,12 @@ windows; the minibuffer's
 compile mode's locations by severity (`compilation.error`,
 `compilation.warning`, `compilation.note`: the core's names, which the
 compile mode's package draws with, `packages/compile/Compile.lean`,
-"Locations"); `search-match`, the matches of the last search; and the tab
+"Locations"); `search-match`, the matches of the last search; the tab
 bar's (`tab-bar` for each chip and `tab-bar.selected` for the tab in view's,
-window management phase 5). The status fields' faces
+window management phase 5); and the markup faces, `text.heading.1` to
+`text.heading.6`, `text.emphasis`, `text.strong`, `text.code-span`,
+`text.code-block`, `text.link`, `text.quote`, `text.list-marker`,
+`text.table-header` and `text.prose` (rich-text-display phase 1, below). The status fields' faces
 of before (`status.state`, `status.name`, `status.modified`, and
 `status.changed` of the daily-driver roadmap) were replaced by these, not
 kept as aliases: a config that defined them defines faces nothing draws.
@@ -1657,6 +1660,40 @@ vocabulary's syntax captures); `diff.added`, `diff.removed`,
 `diff.changed`, `gutter`, `review-unexamined` and `block-header`. A feature
 that draws a face not listed adds it to the vocabulary and to the palette
 mapping, and so to every shipped theme.
+
+**The markup faces** are a group of the vocabulary of their own, `text.`
+and a role, beside `compilation.` and `cursor.` (not `syntax.` faces):
+
+| Face | What it styles | The capture it is drawn for in a `.md` file opened as code |
+|---|---|---|
+| `text.heading.1` … `text.heading.6` | a heading of that level, its text without the marker | `text.heading.1` … `text.heading.6` (a setext heading is level 1 or 2) |
+| `text.emphasis` | emphasised text | `text.emphasis` |
+| `text.strong` | strong text | `text.strong` |
+| `text.code-span` | an inline code span | `text.literal` (the inline grammar's) |
+| `text.code-block` | a fenced or indented code block | `text.code-block` |
+| `text.link` | a link's text, label or destination | `text.reference`, `text.uri` |
+| `text.quote` | a block quote | `text.quote` |
+| `text.list-marker` | a list item's marker | `text.list-marker` |
+| `text.table-header` | a table's header row | `text.table-header` |
+| `text.prose` | prose in a proportional font | none |
+
+The capture-to-face mapping is Lean data (`Face.markupCaptures`), and the
+shipped default `Highlight.defaultFaces` is the syntax captures' mapping
+followed by it. The block grammar's highlights query that makes those
+captures is the repository's (`docs/design/rust-library.md`, the queries
+table). The shipped look is the palette mapping's (`Palette.theme`): a
+heading bold in an accent, levels 1 to 3 larger; emphasis italic, strong
+bold; a code span in an accent and a code block on the raised colour; a
+link underlined; a quote faint and italic; a list marker in an accent; a
+table's header row bold. `text.prose` sets only a family, `system-ui`
+(`Face.proseFamily`), the platform's proportional UI font, and no capture
+names it, so a `.md` file opened as code stays monospace: it is for the
+prose of generated buffers (phase 5). Faces merge attribute by attribute,
+so a code span over prose would take prose's family unless it set its own:
+the code faces set `monospace` (`Face.monospaceFamily`) themselves, and code
+drawn over the prose face stays monospace. A face's family is a family
+name or a CSS generic family name, which the shaper resolves ("Layout and
+rendering", as built, the font set).
 
 **A theme from a palette.** A shipped theme is written from a `Palette`, a
 small record of named colours (paper, ink, raised, selected, faint, strong,
@@ -3026,7 +3063,16 @@ part are in the module docs; these are the decisions.
   may call it, and its check is on demand (`mise run shaper-system`). A
   character is looked for in the family its run's spec names, then the
   default family, then the set's fallbacks in order, and where none has
-  it, it is the first family's missing glyph. A port for font sources was
+  it, it is the first family's missing glyph. A spec's family is a
+  family's name or a CSS generic family name (`monospace`, `system-ui`,
+  `sans-serif`, …), which the set resolves: the system's set by its
+  platform mapping (fontique's: on macOS `system-ui` is the System Font),
+  a set of given files by the families `FontSet::with_generic` gave for
+  it, and none until then. `system-ui` is followed by `sans-serif`, so a
+  platform that gives no UI family still draws prose proportionally; a
+  generic the set gives nothing for adds nothing, and the default family
+  follows. The shipped `default` face names `monospace` and the prose
+  face `system-ui` (the markup faces, "Decorations"). A port for font sources was
   set aside: it would be a port inside an adapter for one decision.
 - **A line is as tall as the fonts on it.** Parley makes every line at
   least as tall as a layout's default style, as CSS does. Left alone,
@@ -4606,7 +4652,10 @@ frame journal and the renderer's counters.
 - **The system's default family.** The system font set's default is the
   first family fontique gives for the generic `monospace`, which on
   macOS was Courier when it was checked. Which family the editor starts
-  in, and whether config names it, is not decided.
+  in, and whether config names it, is not decided. The prose face's
+  family beside it is the generic `system-ui`, followed by `sans-serif`,
+  whatever fontique gives for them on the platform; which proportional
+  family prose is drawn in is not decided either.
 - **The system's fonts on Linux, and when they change.** No gate runs
   the system font path: `mise run shaper-system` is on demand, and it
   has been run on macOS only. The Linux build of the pin is checked by

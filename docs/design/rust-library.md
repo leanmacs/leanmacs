@@ -2653,7 +2653,7 @@ is used wherever it ships one, as phase 2 decided for highlights:
 |---|---|---|---|---|
 | `rust` | the crate's | the crate's (a macro's or a macro rule's token tree, as Rust, its children included) | ours | ours |
 | `json` | the crate's | none | none | none |
-| `markdown` | the crate's, of the block grammar | the crate's, of the block grammar (a fence's code in the language its info string names, and each `(inline)` node as `markdown_inline`) | none | none |
+| `markdown` | ours, the crate's block query changed (below) | the crate's, of the block grammar (a fence's code in the language its info string names, and each `(inline)` node as `markdown_inline`) | none | none |
 | `markdown_inline` | the crate's, of the inline grammar | the crate's, of the inline grammar (`html` and `latex`, which the service has not, so nothing) | none | none |
 | `toml` | the crate's | none | none | none |
 | `lean` | upstream's, vendored with the grammar | none | none | none |
@@ -2726,9 +2726,24 @@ captures (emphasis, code spans, links). It is of policy `Whole`: in sweeps
 of random incremental reparses on 2026-11-16, 598 of 4,000, and 136 of
 6,400 in a second, gave a tree other than a fresh parse's with no error in
 it, so it fails `GRAMMAR_QUALITY`. A layer is parsed whole each round
-anyway, so the policy changes nothing for it as a layer. The default face
-mapping has no entry for its `text.*` captures, so they draw nothing until
-config maps them; `punctuation.delimiter` draws in `syntax.punctuation`. A
+anyway, so the policy changes nothing for it as a layer. The block
+grammar's highlights query is the repository's,
+`crates/editor-syntax-treesitter/queries/markdown/highlights.scm`
+(rich-text-display phase 1, 2026-11-27): the crate's block query copied
+with its provenance (tree-sitter-md 0.5.4, from nvim-treesitter) and
+changed, because the crate's captures every heading as `@text.title`, with
+no level, and gives a code block `@text.literal`, the name the inline
+grammar gives a code span, so neither a heading's level nor a block apart
+from a span could be styled. Ours captures a heading's text by its level
+(`@text.heading.1` … `@text.heading.6`, a setext heading 1 or 2), a fenced
+or indented code block as `@text.code-block`, a list marker as
+`@text.list-marker`, a block quote as `@text.quote` and a pipe table's
+header row as `@text.table-header`, and keeps the crate's other captures;
+`tests/highlights.rs` pins them. The inline grammar keeps the crate's
+query. The default face mapping (`Highlight.defaultFaces`, from
+`Face.markupCaptures`) draws these and the inline grammar's captures in the
+`text.` faces ([text-and-display.md](text-and-display.md), "The markup
+faces"); `punctuation.delimiter` draws in `syntax.punctuation`. A
 Markdown tree may say it has an error with no error node the walk shows (a
 heading marker that ends the text); its round keeps it as it keeps any
 incremental tree.
