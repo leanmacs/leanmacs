@@ -1299,8 +1299,9 @@ names a scheme's key:
   install through the `register-grammars` job's command: a config-declared
   grammar's highlights read from its query directory, a package grammar's
   from the package's, a declaration overriding the compiled-in `lean`
-  drawn with the declared query, and a language entry's own highlights
-  winning over the grammar's file.
+  drawn with the declared query, a language entry's own highlights
+  winning over the grammar's file, and a declared grammar's injections
+  query read from its directory.
 - `indentRuleChecks`: the indent rule (`Editor/Indent.lean`), pure, over
   hand-built rows: begins on one row count once, a branch takes a level
   away only as a row's first non-blank, the level never below 0, the rows

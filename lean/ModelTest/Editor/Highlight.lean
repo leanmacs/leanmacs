@@ -343,20 +343,34 @@ in, in order. -/
 def injectedFaces (driver : TestDriver) : Array (String × Array String) :=
   driver.model.syntaxTree.languages.map fun (_, name, _, faces, _) => (name, faceNames faces)
 
-/-- The injected languages of a Markdown buffer `/w/a.md` opened after the
+/-- The injected languages the driver's syntax tree model records, each as
+its grammar's name and whether it was given an injections query, in
+order. -/
+def injectedInjections (driver : TestDriver) : Array (String × Bool) :=
+  driver.model.syntaxTree.languages.map fun (_, name, _, _, injections) =>
+    (name, injections.isSome)
+
+/-- The driver once a Markdown buffer `/w/a.md` has been opened after the
 command of the `register-grammars` job of a config whose `setup` is
 `markdownWithFences` and then `setup` (`installedWith`, with `markdown`
 compiled in beside `json` and `lean`); `none` when the install asked for
 no registration. -/
-def injectedAfter (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
+def markdownAfter (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
     (files : Array (String × String)) (packages : Array Package := #[])
-    (grammarDirectories : List (String × System.FilePath) := []) :
-    Option (Array (String × Array String)) := do
+    (grammarDirectories : List (String × System.FilePath) := []) : Option TestDriver := do
   let driver ←
     installedWith (markdownWithFences *> setup) libraries files (packages := packages)
         (grammarDirectories := grammarDirectories) (compiled := #["json", "lean", "markdown"])
   let (answered, _) := driver.finish 1
-  return injectedFaces (openedIn answered "/w/a.md")
+  return openedIn answered "/w/a.md"
+
+/-- The injected languages of `markdownAfter`'s Markdown buffer, by
+`injectedFaces`. -/
+def injectedAfter (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
+    (files : Array (String × String)) (packages : Array Package := #[])
+    (grammarDirectories : List (String × System.FilePath) := []) :
+    Option (Array (String × Array String)) :=
+  (markdownAfter setup libraries files packages grammarDirectories).map injectedFaces
 
 /-- The checks of the languages a buffer's injections are given for
 grammars registered at run time (`Editor/Highlight.lean`, step 7), driven
@@ -414,6 +428,19 @@ def highlightInjectedChecks : List Check :=
           match
             injectedAfter setup iniLibrary #[("/g/queries/highlights.scm", declaredHighlights)] with
           | some languages => languages.filter (·.1 == "ini") == #[("ini", #["syntax.string"])]
+          | none => false },
+    { name :=
+        "a Markdown buffer opened after the job's command gives the injected ini the injections query read from the grammar's injections.scm, and the compiled-in json, which ships none, no injections query"
+      run :=
+        pure <|
+          match
+            markdownAfter declaresIni iniLibrary
+              #[("/g/queries/highlights.scm", declaredHighlights),
+                ("/g/queries/injections.scm", "(pair value: (string) @injection.content)")] with
+          | some driver =>
+            let injections := injectedInjections driver
+            injections.filter (·.1 == "ini") == #[("ini", true)] &&
+              injections.filter (·.1 == "json") == #[("json", false)]
           | none => false }]
 
 end ModelTest
