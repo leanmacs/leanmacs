@@ -508,6 +508,16 @@
 #
 # The crate of a package that holds Rust is a member of this workspace, so
 # the entries above already refuse its edge to any editor crate they name.
+# A package's crate is one of two kinds. A package library's crate (echo's,
+# acp's) is a library of its own, loaded by the editor, and reaches the core
+# through `editor-package` alone. A package's grammar-source crate
+# (`languages-grammar-sources`) is no library: a build-time crate whose
+# binary the set's build runs, which reaches `editor-grammar-build` alone,
+# at build time, and is that entry's wrapper. Neither is linked into the
+# editor's Rust archive, and each kind's ban on everything else of the
+# editor's is held by its own allow list (`tests/packages/echo/rust/deny.toml`,
+# `packages/acp/rust/deny.toml`, `packages/languages/rust/deny.toml`), for
+# the reason below.
 # `editor-service`, the conventions every service keeps, had no entry until
 # 2026-11-26 (the package-native-libraries roadmap's phase 1): any crate
 # could depend on it. Since that roadmap's phase 5 no package's crate is
@@ -601,6 +611,29 @@
 # of its wrappers, it fails ("crate 'crc32fast = 1.5.5' is explicitly
 # banned"), and with it left out of echo's list, the second run fails
 # ("crate 'crc32fast = 1.5.5' is not explicitly allowed").
+#
+# For a package's grammars compiled from pinned source (2026-11-27, the
+# shipped-grammars-package roadmap's phase 1), each entry changed in the
+# commit of the edge it governs. `editor-grammar-build`, which compiles a
+# grammar's C from a build script, got its entry naming its two users, the
+# `languages` package's grammar-source crate and the failure check's
+# fixture, each by a build-dependency: with its wrappers naming other
+# crates, it fails on each edge ("crate 'editor-grammar-build = 0.1.0' is
+# explicitly banned"). It joined `tempfile`'s wrappers for its compiler's
+# test, a dev-dependency: with it not yet there, it fails on that edge
+# ("crate 'tempfile = 3.27.0' is explicitly banned"). `tree-sitter-yaml`,
+# the first grammar a package ships from source, got its entry with that
+# crate its one wrapper: with the entry's wrapper naming another crate, it
+# fails ("crate 'tree-sitter-yaml = 0.7.2' is explicitly banned"); and it
+# joined `tree-sitter-language`'s wrappers, which it depends on itself:
+# with it not yet there, it fails on the new edge ("crate
+# 'tree-sitter-language = 0.1.9' is explicitly banned"). The reasons of
+# `wasmtime`'s and `tree-sitter-loader`'s entries now say "at run time":
+# the editor still never finds, fetches or compiles a grammar, and a set's
+# build compiles pinned sources with `editor-grammar-build`, through Cargo.
+# The grammar-source crate's ban on every other crate of the editor's is
+# held by its own allow list (`packages/languages/rust/deny.toml`), as
+# echo's and acp's are.
 
 [graph]
 all-features = false
@@ -636,7 +669,7 @@ deny = [
   { crate = "parley", wrappers = ["editor-shape-parley"], reason = "Parley stays behind the Shaper port: only its adapter crate may name its types" },
   { crate = "fontique", wrappers = ["editor-shape-parley", "parley", "parley_engine"], reason = "fontique is Parley's font library and stays behind the Shaper port with it: beside Parley's own crates, only the adapter may name its types" },
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },
-  { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi", "editor-process-std", "editor-watch-notify", "editor-release-std", "editor-grep-ripgrep", "editor-launch-std", "editor-config-migrate-std", "editor-syntax-fixture-ini", "editor-package-check", "cbindgen"], reason = "a temporary directory is for a test that touches real files: the fixture grammar's on-demand install check, which installs a package set there, the package library's on-demand install check, which installs a set with echo there, the file adapter's contract test, the process adapter's contract test, whose children run and write there, the watch adapter's contract test, which watches and writes there, the project search adapter's contract and ignore tests, which write files and ignore files there, editor-ffi's wiring tests, and release tooling's wiring tests, a git repository made for the resolvers, the mount point of the .dmg's check, the files adapter's contract and the directories its binaries write into, the launcher's contract, fallback and identity tests, whose helpers and fake bundle are there, and config conversion's contract and binary tests, which convert and refuse config directories there; editor-text's, editor-process's, editor-watch's, editor-grep's, editor-release's and editor-config-migrate's tests run on their fakes and make no file; cbindgen, the package runtime's header generator, depends on it itself" },
+  { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi", "editor-process-std", "editor-watch-notify", "editor-release-std", "editor-grep-ripgrep", "editor-launch-std", "editor-config-migrate-std", "editor-syntax-fixture-ini", "editor-package-check", "cbindgen", "editor-grammar-build"], reason = "a temporary directory is for a test that touches real files: the grammar-source compiler's test, which writes C sources and links a library there, the fixture grammar's on-demand install check, which installs a package set there, the package library's on-demand install check, which installs a set with echo there, the file adapter's contract test, the process adapter's contract test, whose children run and write there, the watch adapter's contract test, which watches and writes there, the project search adapter's contract and ignore tests, which write files and ignore files there, editor-ffi's wiring tests, and release tooling's wiring tests, a git repository made for the resolvers, the mount point of the .dmg's check, the files adapter's contract and the directories its binaries write into, the launcher's contract, fallback and identity tests, whose helpers and fake bundle are there, and config conversion's contract and binary tests, which convert and refuse config directories there; editor-text's, editor-process's, editor-watch's, editor-grep's, editor-release's and editor-config-migrate's tests run on their fakes and make no file; cbindgen, the package runtime's header generator, depends on it itself" },
   { crate = "editor-process", wrappers = ["editor-process-std", "editor-ffi"], reason = "the Processes port and the process service have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the service over the adapter; a third is a decision, so it is made here" },
   { crate = "editor-process-std", wrappers = ["editor-ffi"], reason = "the process adapter is linked only by the crate that wires the library together, for the process's process service; everything else reaches a process through the port, and editor-process's tests through its fake" },
   { crate = "editor-watch", wrappers = ["editor-watch-notify", "editor-ffi"], reason = "the Watch port and the watch service have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the service over the adapter; a third is a decision, so it is made here" },
@@ -656,7 +689,9 @@ deny = [
   { crate = "tree-sitter-md", wrappers = ["editor-syntax-treesitter"], reason = "a grammar is compiled into the Syntax port's adapter and named only there, in its table of grammars" },
   { crate = "tree-sitter-toml-ng", wrappers = ["editor-syntax-treesitter"], reason = "a grammar is compiled into the Syntax port's adapter and named only there, in its table of grammars" },
   { crate = "tree-sitter-lean", wrappers = ["editor-syntax-treesitter"], reason = "a grammar is compiled into the Syntax port's adapter and named only there, in its table of grammars" },
-  { crate = "tree-sitter-language", wrappers = ["tree-sitter", "tree-sitter-rust", "tree-sitter-json", "tree-sitter-md", "tree-sitter-toml-ng", "tree-sitter-lean", "editor-syntax-treesitter"], reason = "the type a grammar crate hands its language in is between tree-sitter and its grammars, and the Syntax port's adapter names it once, to wrap the language function of a native grammar library it loads (`LanguageFn::from_raw`), which tree-sitter does not re-export; no other crate of the workspace names it" },
+  { crate = "tree-sitter-language", wrappers = ["tree-sitter", "tree-sitter-rust", "tree-sitter-json", "tree-sitter-md", "tree-sitter-toml-ng", "tree-sitter-lean", "tree-sitter-yaml", "editor-syntax-treesitter"], reason = "the type a grammar crate hands its language in is between tree-sitter and its grammars, and the Syntax port's adapter names it once, to wrap the language function of a native grammar library it loads (`LanguageFn::from_raw`), which tree-sitter does not re-export; no other crate of the workspace names it" },
+  { crate = "tree-sitter-yaml", wrappers = ["languages-grammar-sources"], reason = "a grammar the languages package ships from pinned source: a build-dependency of its grammar-source crate alone, whose build script compiles its C into the library the set's build stages; nothing links its crate" },
+  { crate = "editor-grammar-build", wrappers = ["languages-grammar-sources", "editor-grammar-build-fixture"], reason = "a package's grammar sources are compiled from the build script of its grammar-source crate, by a build-dependency: the languages package's, and the fixture of the set build's failure check; the editor never links it" },
   { crate = "libloading", wrappers = ["editor-syntax-treesitter", "editor-package-library-libloading", "ash", "dlib", "khronos-egl", "wgpu-hal", "x11rb"], reason = "a library is opened at run time by two adapters alone: a native grammar library by the Syntax port's adapter, in its `native` module, and a package's library by the library port's adapter; no other crate of the workspace may load a library at run time; the other wrappers are the third-party crates that already depend on it" },
   { crate = "editor-syntax-fixture-ini", wrappers = ["editor-syntax-treesitter", "editor-ffi", "editor-release-std", "editor-package-library-libloading"], reason = "the fixture grammar library is built for tests alone: the adapter's contract and registration tests and editor-ffi's grammar wiring test and package-load test load it, stage-bundle's wiring test stages it as a package's grammar, and the library port's adapter's contract test opens it as a library, each by a dev-dependency; the editor never links it" },
   { crate = "editor-service", wrappers = ["editor-ffi", "editor-process", "editor-process-std", "editor-package-library", "editor-package-check"], reason = "the conventions every service keeps are shared by the crates linked into the editor's one Rust archive: the crate that wires the library together, the process service and its adapter's tests, and the package runtime, whose members are the core's over it; and by the test-only crate that holds the package wrapper's fake to the runtime's contract over the stream port's fake, by a dev-dependency. No package crate is linked into the archive: each ships a library of its own and reaches the core through the package wrapper alone, so it carries no copy of these statics, and cargo-deny counts its dev-dependencies too, so not even its tests may take it back; nor may the wrapper itself" },
@@ -670,8 +705,8 @@ deny = [
   { crate = "editor-package-library-libloading", wrappers = ["editor-ffi"], reason = "the library port's real adapter is linked only by the crate that wires the library together, for the process's one loader of package libraries; everything else reaches a library through the port, and editor-package-library's tests through its fake" },
   { crate = "streaming-iterator", wrappers = ["tree-sitter"], reason = "tree-sitter's query cursor iterates with it, and the adapter names it only through tree-sitter's re-export: no crate of the workspace depends on it" },
   { crate = "regex", wrappers = ["tree-sitter"], reason = "regular expressions are tree-sitter's, for a query's `#match?` predicates, behind the Syntax port: no crate of the workspace depends on it" },
-  { crate = "wasmtime", reason = "the editor never finds, fetches or compiles a grammar, and loads native ones through `libloading` (crates/editor-syntax-treesitter, \"How grammars are loaded\"); WebAssembly grammars, tree-sitter's `wasm` feature, are set aside" },
-  { crate = "tree-sitter-loader", reason = "the editor never finds, fetches or compiles a grammar, and loads native ones through `libloading` (crates/editor-syntax-treesitter, \"How grammars are loaded\"): nothing finds or builds a grammar" },
+  { crate = "wasmtime", reason = "the editor never finds, fetches or compiles a grammar at run time, and loads native ones through `libloading` (crates/editor-syntax-treesitter, \"How grammars are loaded\"); WebAssembly grammars, tree-sitter's `wasm` feature, are set aside" },
+  { crate = "tree-sitter-loader", reason = "the editor never finds, fetches or compiles a grammar at run time, and loads native ones through `libloading` (crates/editor-syntax-treesitter, \"How grammars are loaded\"); a set's build compiles a package's pinned grammar sources with `editor-grammar-build`, through Cargo: nothing finds or fetches a grammar" },
   { crate = "regex-cursor", wrappers = ["editor-search-regex"], reason = "the regex library stays behind the search engine port: only its adapter crate may name its types" },
   { crate = "regex-automata", wrappers = ["regex-cursor", "regex", "globset", "ignore"], reason = "regex-cursor's engines are built on it, and so are regex's, tree-sitter's for a query's `#match?` predicates, and ignore's and globset's, which compile an ignore file's globs to regexes inside the library; it stays behind the search engine port, the Syntax port and the files port with them: no crate of the workspace may name it" },
   { crate = "regex-syntax", wrappers = ["editor-search-regex", "regex-cursor", "regex-automata", "regex", "proptest", "globset"], reason = "the regex syntax's tree is built by the search engine port's adapter alone, from the pattern tree of editor-search, so no pattern string in the library's syntax is ever made by a crate of the workspace; the other wrappers are the third-party crates that depend on it: regex-cursor and regex-automata, regex, tree-sitter's, proptest, for its generated strings, and globset, ignore's, which compiles an ignore file's globs to regexes inside the library" },

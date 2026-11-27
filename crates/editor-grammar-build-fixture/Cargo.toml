@@ -1,0 +1,16 @@
+[package]
+name = "editor-grammar-build-fixture"
+version = "0.1.0"
+description = "A test fixture: a grammar-source crate whose one grammar, `broken`, does not compile, for the set build's failure check; never linked into the editor"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[build-dependencies]
+# Compiles the crate's grammar from its build script, as a package's
+# grammar-source crate does; records the failure and carries on, so the
+# workspace builds and the set's build is what fails (README.md).
+editor-grammar-build = { path = "../editor-grammar-build" }
+
+[lints]
+workspace = true

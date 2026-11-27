@@ -1,0 +1,71 @@
+# The crates the `languages` package's grammar-source crate may be built
+# from, checked by `mise run deny` (AGENTS.md, "Test behaviour, never
+# text"), which runs cargo-deny's bans over this crate's own graph:
+#
+#   cargo deny --locked --manifest-path packages/languages/rust/Cargo.toml \
+#     check --config packages/languages/rust/deny.toml -D unused-wrapper bans
+#
+# Given the manifest of a workspace member, cargo-deny roots the graph at
+# that crate alone, so the graph is this crate's: its build-dependencies,
+# and theirs. An `allow` list that is not empty refuses every crate it does
+# not name ("crate '…' is not explicitly allowed"), so this list is the
+# whole of what the crate may contain: `editor-grammar-build`, the one crate
+# of the editor's it may reach, and that only at build time; the grammars
+# it compiles, each a build-dependency; the trees of `cc` and
+# `serde_json`, which `editor-grammar-build` compiles and locates with; and
+# that of `tempfile`, its dev-dependency, which cargo-deny counts since
+# `editor-grammar-build` is a path dependency, though nothing of it is
+# built for this crate. It
+# is no library: a build-time crate whose binary the set's build runs
+# (docs/design/packages.md, "A package's grammars"), linked into nothing.
+#
+# It holds what the root `deny.toml` cannot: there, a crate nothing depends
+# on (`editor-ffi`, a `-std` binaries' crate, `editor-package-runtime-header`,
+# `editor-package-check`, another package's crate) has no parent to name as
+# a wrapper, so an edge from this crate to it cannot be refused. Neither
+# `editor-package`, `editor-service` nor `editor-ffi` is named, so an edge
+# to any of them fails.
+#
+# Seen to bite by hand (2026-11-27): with `editor-ffi` added to the crate's
+# build-dependencies, which the root `deny.toml` lets through, it fails
+# ("crate 'editor-ffi = 0.1.0' is not explicitly allowed").
+#
+# A crate added to this graph gets its entry here in the commit of its edge:
+# each grammar the package's later phases add to `Cargo.toml` adds its line,
+# listed again from
+# `cargo tree -p languages-grammar-sources -e normal,build,dev --prefix none --target all`.
+# cargo-deny does not report an entry that matches no crate, so one is taken
+# out with the edge that needed it.
+
+[bans]
+multiple-versions = "allow"
+allow = [
+  { crate = "languages-grammar-sources", reason = "the crate itself, the root of the graph" },
+  { crate = "editor-grammar-build", reason = "compiles the package's grammars from the build script: the one crate of the editor's this crate reaches, as a build-dependency" },
+  { crate = "tree-sitter-yaml", reason = "the grammar `yaml`, pinned exactly (=0.7.2), whose C the build script compiles" },
+  { crate = "tree-sitter-language", reason = "the grammar crates' one normal dependency" },
+  { crate = "cc", reason = "the C compiler `editor-grammar-build` and the grammar crates' own builds find (=1.11.1)" },
+  { crate = "find-msvc-tools", reason = "a dependency of cc's tree" },
+  { crate = "shlex", reason = "a dependency of cc's tree" },
+  { crate = "serde_json", reason = "reads `cargo metadata`'s JSON in `editor-grammar-build` (=1.0.154)" },
+  { crate = "serde", reason = "a dependency of serde_json's tree" },
+  { crate = "serde_core", reason = "a dependency of serde_json's tree" },
+  { crate = "serde_derive", reason = "a dependency of serde_json's tree" },
+  { crate = "proc-macro2", reason = "a dependency of serde_json's tree" },
+  { crate = "quote", reason = "a dependency of serde_json's tree" },
+  { crate = "syn", reason = "a dependency of serde_json's tree" },
+  { crate = "unicode-ident", reason = "a dependency of serde_json's tree" },
+  { crate = "itoa", reason = "a dependency of serde_json's tree" },
+  { crate = "memchr", reason = "a dependency of serde_json's tree" },
+  { crate = "zmij", reason = "a dependency of serde_json's tree" },
+  { crate = "tempfile", reason = "`editor-grammar-build`'s dev-dependency, for its compiler's test, which cargo-deny counts in this graph since that crate is a path dependency (=3.27.0); nothing of it is built for this crate" },
+  { crate = "fastrand", reason = "a dependency of tempfile's tree" },
+  { crate = "once_cell", reason = "a dependency of tempfile's tree" },
+  { crate = "rustix", reason = "a dependency of tempfile's tree" },
+  { crate = "bitflags", reason = "a dependency of tempfile's tree" },
+  { crate = "errno", reason = "a dependency of tempfile's tree" },
+  { crate = "libc", reason = "a dependency of tempfile's tree" },
+  { crate = "linux-raw-sys", reason = "a dependency of tempfile's tree, on Linux alone" },
+  { crate = "windows-link", reason = "a dependency of tempfile's tree, on Windows alone" },
+  { crate = "windows-sys", reason = "a dependency of tempfile's tree, on Windows alone" },
+]

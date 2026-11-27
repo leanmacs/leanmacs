@@ -1,0 +1,30 @@
+[package]
+name = "languages-grammar-sources"
+version = "0.1.0"
+description = "The languages package's grammar sources: a build-time crate whose build script compiles each grammar the package ships from pinned source, and whose binary the set's build runs to stage the libraries; never linked into the editor"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Each grammar is a build-dependency: that gets its crate locked in the root
+# lock and fetched with the rest (`cargo fetch --locked`), and lets
+# `editor-grammar-build` find its directory with `cargo metadata`. Its own
+# build compiles its C once more, into an archive nothing links, at the
+# build-override's opt-level 0: a cost accepted for one grammar
+# (docs/design/packages.md, "A package's grammars"). Each grammar added here
+# gets its line in this crate's `deny.toml` and in the licences table of
+# the package's README.md.
+[build-dependencies]
+# Compiles the package's grammars from the build script: the one crate of
+# the editor's this crate may reach, and that only at build time
+# (`deny.toml`).
+editor-grammar-build = { path = "../../../crates/editor-grammar-build" }
+# The grammar `yaml`: tree-sitter-grammars' YAML grammar, released
+# 2025-10-07, the newest on crates.io. Its parser is ABI 14, which the
+# pinned tree-sitter (0.27.2) loads; its one normal dependency is
+# `tree-sitter-language ^0.1`, already locked. MIT, used unmodified; its
+# notice travels with the library at `grammars/licenses/tree-sitter-yaml`.
+tree-sitter-yaml = { version = "=0.7.2" }
+
+[lints]
+workspace = true

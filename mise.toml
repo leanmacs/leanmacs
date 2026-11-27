@@ -68,7 +68,7 @@ run = [
 ]
 
 [tasks.deny]
-description = "cargo-deny's bans over the dependency graph (deny.toml), stale `wrappers` errors; and over echo's and acp's crates' own graphs, each of which may hold only the crates its deny.toml allows"
+description = "cargo-deny's bans over the dependency graph (deny.toml), stale `wrappers` errors; and over echo's and acp's crates' own graphs and that of the languages package's grammar-source crate, each of which may hold only the crates its deny.toml allows"
 run = [
   "cargo deny --locked check -D unused-wrapper bans",
   # echo's library is built from the package wrapper and nothing else of
@@ -80,6 +80,12 @@ run = [
   # Protocol's SDK and their tree, and nothing else of the editor's
   # (packages/acp/rust/deny.toml).
   "cargo deny --locked --manifest-path packages/acp/rust/Cargo.toml check --config packages/acp/rust/deny.toml -D unused-wrapper bans",
+  # The languages package's grammar-source crate, which is no library: a
+  # build-time crate whose binary the set's build runs. It reaches
+  # `editor-grammar-build` alone of the editor's crates, at build time, its
+  # grammars and their trees, and nothing else
+  # (packages/languages/rust/deny.toml).
+  "cargo deny --locked --manifest-path packages/languages/rust/Cargo.toml check --config packages/languages/rust/deny.toml -D unused-wrapper bans",
 ]
 
 [tasks.doc]

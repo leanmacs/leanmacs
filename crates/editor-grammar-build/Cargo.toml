@@ -1,0 +1,32 @@
+[package]
+name = "editor-grammar-build"
+version = "0.1.0"
+description = "Compiles a package's pinned grammar sources into the shared libraries a set's build stages, from the build script of the package's grammar-source crate; never linked into the editor"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The C compiler, found as the grammar crates' own builds find it: the
+# adapter asks `cc` for the compiler and its flags for the target and links
+# a grammar's generated parser (and scanner) as a shared library, as
+# `editor-syntax-fixture-ini`'s build script does. Pinned to the version
+# already locked for tree-sitter's and the grammar crates' builds (1.11.1,
+# 2026-11-26), so it adds nothing to the graph. MIT or Apache-2.0, used
+# unmodified.
+cc = { version = "=1.11.1" }
+# Reads `cargo metadata`'s JSON, the one supported way a build script finds
+# the directory of a dependency that declares no `links` (the crate docs).
+# Pinned to the version already locked for acp's crate (1.0.154), so it
+# adds nothing to the graph. MIT or Apache-2.0, used unmodified.
+serde_json = { version = "=1.0.154" }
+
+[dev-dependencies]
+# The temporary directory the real compiler's test writes its C sources
+# into (`tests/compile.rs`). Pinned exactly, as in `editor-fs-std`, whose
+# manifest says why this library and no other; `deny.toml` lists the crates
+# that may depend on it.
+tempfile = { version = "=3.27.0", default-features = false }
+
+[lints]
+workspace = true
