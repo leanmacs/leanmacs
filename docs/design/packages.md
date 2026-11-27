@@ -3356,7 +3356,10 @@ capabilities at its init.
   `echo`'s `builtin_initialize` (`Echo.Real`), before `main`, in every
   executable that links `Echo.Real` natively: the set's editor, its
   fixture harness and `echo`'s linked test. The path is the one the build
-  compiled into the glue (`-DECHO_LIBRARY`, `Echo.Real.library`).
+  compiled into the glue (`-DECHO_LIBRARY`, `Echo.Real.library`). Phase 4
+  replaced both: the target is `editorLibrary`, the library is staged
+  beside each editor, and the initialiser reads its path from the record
+  there ("A package's library, staged and loaded, as built").
 - **What the glue forwards.** The six `@[extern]` functions of
   `Echo.Real` (`start`, `cancel`, `takeRaw`, `flush`, `attach`,
   `attachTakeRaw`), each through the library's table (its size, then
