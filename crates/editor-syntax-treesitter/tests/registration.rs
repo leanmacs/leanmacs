@@ -55,9 +55,23 @@ fn corpus() -> RegistrationCorpus {
     }
 }
 
+/// An adapter with the compiled-in table turned on, as `OVERRIDES` needs a
+/// compiled-in `json` to register over: this makes the registration
+/// contract a table test (the crate docs, "Tests"), until phase 4 removes
+/// the table and this switch.
+fn with_the_table() -> TreeSitter {
+    let syntax = TreeSitter::default();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the registration contract's OVERRIDES registers over the compiled-in json, so it is a table test until phase 4 removes the table"
+    )]
+    syntax.use_compiled_grammars();
+    syntax
+}
+
 #[test]
 fn the_adapter_keeps_the_registration_contract_on_the_fixture_library() {
-    assert_eq!(check(TreeSitter::default, &corpus()), [""; 0]);
+    assert_eq!(check(with_the_table, &corpus()), [""; 0]);
 }
 
 #[test]
@@ -65,7 +79,7 @@ fn the_fixture_grammar_is_not_compiled_in() {
     let name = source(fixture::LIBRARY, fixture::SYMBOL).name();
 
     assert_eq!(name, GrammarName::new(fixture::NAME));
-    assert!(!TreeSitter::default().grammars().contains(&name));
+    assert!(!with_the_table().grammars().contains(&name));
 }
 
 #[test]

@@ -254,6 +254,15 @@ disallowed-methods = [
   { path = "editor_render_wgpu::WgpuRenderer::on_this_machine", allow-invalid = true, reason = "no test asks for this machine's GPU: the gate runs wgpu on its no-op back end, and an on-demand example asks for a real one" },
   { path = "editor_raster_coretext::SystemDefaults::new", allow-invalid = true, reason = "no test reads this machine's defaults: a window's Core Text rasteriser reads them in one place, and a test runs on `defaults::fake::Canned`" },
   { path = "editor_shape_parley::FontSet::system", allow-invalid = true, reason = "no test reads the machine's fonts, which differ from machine to machine: a test is handed the fixture fonts by `FontSet::only`; the process's display and the on-demand examples read the system's" },
+  # The syntax adapter's compiled-in grammars, hidden unless turned on
+  # (crates/editor-syntax-treesitter, "How grammars are loaded"): turned on
+  # by the editor's startup, at the one C function Lean's `Editor.Main.run`
+  # calls (`editor_ffi_syntax_use_compiled_grammars`), and by the adapter's
+  # table tests, each at an `#[expect]`; every other test registers its
+  # grammars from `editor-syntax-fixture-grammars`. `allow-invalid`: a crate
+  # that does not reach the adapter cannot resolve the path. Phase 4 of the
+  # roadmap `shipped-grammars-package` removes the method and this entry.
+  { path = "editor_syntax_treesitter::TreeSitter::use_compiled_grammars", allow-invalid = true, reason = "the compiled-in grammars are turned on by the editor's startup and the adapter's table tests alone, and go in phase 4; a test registers the grammars it uses from `editor-syntax-fixture-grammars`" },
   # The third-party entry points behind them.
   { path = "arboard::Clipboard::new", allow-invalid = true, reason = "the system clipboard is opened in one place, `SystemClipboard::open`, which no test calls" },
   { path = "parley::FontContext::new", allow-invalid = true, reason = "a font context of Parley's own making holds the system's fonts; a `FontSet` says where fonts come from" },

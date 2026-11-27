@@ -22,6 +22,25 @@
 //! name, the language of the grammar's crate, its reparse policy, and the
 //! queries it ships, each with its kind.
 //!
+//! **The table is hidden unless turned on.** A fresh adapter
+//! ([`TreeSitter::default`], and so the process's syntax service in
+//! `editor-ffi`) lists no compiled-in name, opens no parser and compiles
+//! no query for one, declares it no policy and ships it no query: it
+//! answers for registered grammars alone, as it will once phase 4 of the
+//! roadmap `shipped-grammars-package` removes the table.
+//! [`TreeSitter::use_compiled_grammars`] turns the table on, for that
+//! adapter and the clones made after. Two places call it, and the root
+//! `clippy.toml` refuses it everywhere else: the editor's startup
+//! (`editor_ffi_syntax_use_compiled_grammars`, which Lean's
+//! `Editor.Main.run` calls first), so the editor behaves as before; and
+//! this crate's table tests ("Tests", below). Every other test, in Rust or
+//! Lean, registers the grammars it uses from the native libraries the
+//! test-only crate `editor-syntax-fixture-grammars` builds from the same
+//! pinned sources, so a passing gate shows no other test depends on a
+//! compiled-in grammar. It is a switch at run time, not a Cargo feature:
+//! the editor and every Lean test program link one release archive, and
+//! `cargo test --workspace` would unify a feature on.
+//!
 //! **Native libraries, at run time.** A grammar the table lacks, or one
 //! that takes a compiled-in grammar's place, is registered
 //! ([`Syntax::register`]) from a shared library (`.dylib` on macOS, `.so`
@@ -108,6 +127,9 @@
 //! on, a compiled-in grammar of the same name included; a parser opened
 //! before keeps the language it was opened with.
 //!
+//! While the table is hidden, every answer below that names the table
+//! answers as though it were empty.
+//!
 //! - [`Syntax::grammars`]: the compiled-in names in the table's order, then
 //!   each registered name the table lacks (`editor_syntax::registry`).
 //! - [`Syntax::reparse_policy`]: the registered entry's policy, else the
@@ -147,27 +169,39 @@
 //!
 //! # Tests
 //!
-//! `tests/contract.rs` holds the adapter to the port's contract, once for
-//! each grammar compiled in, over the fixtures checked in under the
-//! repository's `tests/syntax/` and a few texts written there, and once for
-//! the fixture INI grammar (`editor-syntax-fixture-ini`) registered from
-//! its native library and drawn with the highlights query beside it.
-//! `tests/registration.rs` holds it to the registration contract on that
-//! fixture library: a new grammar, one that overrides `json` (after which
-//! `json` ships none of the compiled-in queries and is reparsed by the
-//! source's policy), and one source for each refusal; and pins that a
-//! loaded grammar outlives the syntax it was registered on. `native`'s unit
-//! tests pin the ABI range with version numbers and the refusal of a
-//! relative path. The unit tests here pin what the contract does not ask:
-//! a Rust function's name captured by a field, a predicate that reads text
-//! across two of the rope's chunks, and a query of a grammar that is not
-//! compiled in.
+//! `tests/contract.rs` holds the adapter to the port's contract once for
+//! each of the six grammars loaded from the native library
+//! `editor-syntax-fixture-grammars` builds, each drawn with the highlights
+//! staged beside it, and once for the fixture INI grammar
+//! (`editor-syntax-fixture-ini`), over the fixtures checked in under the
+//! repository's `tests/syntax/` and a few texts written there
+//! (`tests/corpora/mod.rs`). `tests/injections.rs` and `tests/refresh.rs`
+//! register the grammars they use from the same crate and draw with its
+//! queries. `native`'s unit tests pin the ABI range with version numbers
+//! and the refusal of a relative path. The unit tests here pin what the
+//! contract does not ask: that a fresh adapter hides the table and a clone
+//! keeps the switch, a Rust function's name captured by a field and a
+//! predicate that reads text across two of the rope's chunks (each over
+//! the fixture's rust), and a query of a grammar the adapter has not.
+//!
+//! **The table tests** are the only tests that turn the table on, each
+//! through one helper `fn` under an `#[expect]`: the unit tests that list
+//! the table's names and its policies; `tests/table.rs`, which holds each
+//! compiled-in grammar, with the queries it ships, to the port's contract
+//! over the same corpora; and `tests/registration.rs`, the registration
+//! contract on the INI fixture library, whose `OVERRIDES` registers over
+//! the compiled-in `json` (after which `json` ships none of the compiled-in
+//! queries and is reparsed by the source's policy), with one source for
+//! each refusal, and which pins that a loaded grammar outlives the syntax
+//! it was registered on. They pin what the editor still uses in phase 3,
+//! and go with the table in phase 4.
 
 #![deny(unsafe_code)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
 use std::fmt;
 use std::ops::Range;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_syntax::registry::Registry;
@@ -181,21 +215,26 @@ use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree}
 mod native;
 
 /// The adapter: tree-sitter, with the grammars compiled in (`json`,
-/// `rust`, `markdown`, `markdown_inline`, `toml` and `lean`), and the
-/// grammars registered on it at run time.
+/// `rust`, `markdown`, `markdown_inline`, `toml` and `lean`), hidden until
+/// [`TreeSitter::use_compiled_grammars`] turns them on, and the grammars
+/// registered on it at run time.
 #[derive(Default)]
 pub struct TreeSitter {
     /// The grammars registered, each with its language. An entry wins over
     /// a compiled-in grammar of the same name.
     registry: Mutex<Registry<Language>>,
+    /// Whether the compiled-in table is seen: false in every constructor.
+    compiled_in: AtomicBool,
 }
 
 impl Clone for TreeSitter {
     /// Another adapter with the grammars registered on this one, which
-    /// registrations on either do not reach.
+    /// registrations on either do not reach, and the table seen as it is
+    /// on this one.
     fn clone(&self) -> Self {
         Self {
             registry: Mutex::new(self.registry().clone()),
+            compiled_in: AtomicBool::new(self.compiled_in()),
         }
     }
 }
@@ -217,12 +256,45 @@ impl TreeSitter {
     }
 
     /// The language of the grammar `name`: the registered entry's, else
-    /// the compiled-in grammar's; `None` for a grammar it has not.
+    /// the compiled-in grammar's while the table is seen; `None` for a
+    /// grammar it has not.
     fn language(&self, name: &GrammarName) -> Option<Language> {
         if let Some(entry) = self.registry().get(name) {
             return Some(entry.grammar.clone());
         }
-        grammar(name).map(|grammar| (grammar.language)())
+        self.compiled(name).map(|grammar| (grammar.language)())
+    }
+
+    /// Turns the compiled-in grammars on: from then on this adapter, and a
+    /// clone made after, lists them, opens their parsers, compiles their
+    /// queries, declares their policies and ships their queries. Until
+    /// then it answers for registered grammars alone.
+    ///
+    /// Two places call it, and clippy refuses it everywhere else (the root
+    /// `clippy.toml`): the editor's startup, through the process's syntax
+    /// service (`editor-ffi`'s `editor_ffi_syntax_use_compiled_grammars`,
+    /// which `Editor.Main.run` calls first), and this crate's table tests
+    /// (the crate docs, "Tests"). Every other test registers the grammars
+    /// it uses from `editor-syntax-fixture-grammars`. Phase 4 of the
+    /// roadmap `shipped-grammars-package` removes the table, this switch
+    /// and both callers.
+    pub fn use_compiled_grammars(&self) {
+        self.compiled_in.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether the compiled-in table is seen.
+    fn compiled_in(&self) -> bool {
+        self.compiled_in.load(Ordering::Relaxed)
+    }
+
+    /// The grammar `name` in the compiled-in table, while the table is
+    /// seen.
+    fn compiled(&self, name: &GrammarName) -> Option<&'static Grammar> {
+        if self.compiled_in() {
+            grammar(name)
+        } else {
+            None
+        }
     }
 }
 
@@ -364,18 +436,16 @@ impl Syntax for TreeSitter {
     type Query = TreeSitterQuery;
 
     fn grammars(&self) -> Vec<GrammarName> {
-        self.registry().grammars(
-            GRAMMARS
-                .iter()
-                .map(|grammar| GrammarName::new(grammar.name)),
-        )
+        let table: &[Grammar] = if self.compiled_in() { &GRAMMARS } else { &[] };
+        self.registry()
+            .grammars(table.iter().map(|grammar| GrammarName::new(grammar.name)))
     }
 
     fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy> {
         if let Some(entry) = self.registry().get(grammar) {
             return Some(entry.policy);
         }
-        self::grammar(grammar).map(|grammar| grammar.policy)
+        self.compiled(grammar).map(|grammar| grammar.policy)
     }
 
     fn register(&self, source: &GrammarSource) -> Result<GrammarName, RegistrationRefusal> {
@@ -441,7 +511,7 @@ impl Syntax for TreeSitter {
         if self.registry().get(name).is_some() {
             return None;
         }
-        grammar(name)?
+        self.compiled(name)?
             .queries
             .iter()
             .find(|(shipped, _)| *shipped == kind)
@@ -612,16 +682,18 @@ impl Syntax for TreeSitter {
 #[cfg(test)]
 mod tests {
     use editor_syntax::query::captures_in;
+    use editor_syntax_fixture_grammars as fixture;
     use editor_text::Text;
 
     use super::*;
 
-    /// The texts of the captures of `source` in `text`, parsed with
-    /// `grammar`, each with its capture's name.
-    fn captured(grammar: &str, source: &str, text: &str) -> Vec<(String, String)> {
-        let grammar = GrammarName::new(grammar);
+    /// The texts of the captures of `source` in `text`, parsed with the
+    /// rust grammar registered from the fixture crate, each with its
+    /// capture's name.
+    fn captured(source: &str, text: &str) -> Vec<(String, String)> {
+        let grammar = GrammarName::new("rust");
         let snapshot = Text::from(text).snapshot();
-        let syntax = TreeSitter::default();
+        let syntax = with_registered(&fixture::RUST);
         let mut parser = syntax.parser(&grammar).unwrap();
         let tree = syntax.parse(&mut parser, &snapshot, None);
         let query = syntax.compile(&grammar, source).unwrap();
@@ -636,6 +708,37 @@ mod tests {
             .collect()
     }
 
+    /// An adapter with the compiled-in table turned on: the table tests'
+    /// one way to it.
+    fn with_the_table() -> TreeSitter {
+        let syntax = TreeSitter::default();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the adapter's table tests pin the compiled-in table the editor's startup turns on, until phase 4 removes it"
+        )]
+        syntax.use_compiled_grammars();
+        syntax
+    }
+
+    /// An adapter with the fixture `grammar` registered from its native
+    /// library.
+    fn with_registered(grammar: &fixture::Grammar) -> TreeSitter {
+        let syntax = TreeSitter::default();
+        let policy = if grammar.incremental {
+            ReparsePolicy::Incremental
+        } else {
+            ReparsePolicy::Whole
+        };
+        syntax
+            .register(&GrammarSource {
+                library: grammar.library.into(),
+                symbol: grammar.symbol.to_owned(),
+                policy: Some(policy),
+            })
+            .unwrap_or_else(|refusal| panic!("registering {}: {refusal:?}", grammar.name));
+        syntax
+    }
+
     /// `(name, text)` as owned.
     fn pair(name: &str, text: &str) -> (String, String) {
         (name.to_owned(), text.to_owned())
@@ -645,7 +748,6 @@ mod tests {
     fn a_rust_functions_name_is_captured_through_its_field() {
         assert_eq!(
             captured(
-                "rust",
                 "(function_item name: (identifier) @name)",
                 "fn one() {}\nstruct S;\nimpl S { fn two(&self) {} }\n",
             ),
@@ -679,7 +781,7 @@ mod tests {
 
         let source = format!("((identifier) @found (#eq? @found \"{name}\"))");
         let grammar = GrammarName::new("rust");
-        let syntax = TreeSitter::default();
+        let syntax = with_registered(&fixture::RUST);
         let mut parser = syntax.parser(&grammar).unwrap();
         let tree = syntax.parse(&mut parser, &snapshot, None);
         let query = syntax.compile(&grammar, &source).unwrap();
@@ -690,9 +792,61 @@ mod tests {
         );
     }
 
+    /// The six compiled-in names, in the table's order.
+    const TABLE: [&str; 6] = [
+        "json",
+        "rust",
+        "markdown",
+        "markdown_inline",
+        "toml",
+        "lean",
+    ];
+
+    #[test]
+    fn a_fresh_adapter_lists_no_grammar_opens_no_parser_and_compiles_no_query_for_a_compiled_in_name_declares_it_no_policy_and_ships_it_no_query()
+     {
+        let syntax = TreeSitter::default();
+        assert_eq!(syntax.grammars(), Vec::<GrammarName>::new());
+        for name in TABLE {
+            let grammar = GrammarName::new(name);
+            assert!(syntax.parser(&grammar).is_none(), "{name}");
+            assert_eq!(
+                syntax
+                    .compile(&grammar, "(_) @x")
+                    .map(|_| ())
+                    .unwrap_err()
+                    .kind,
+                QueryErrorKind::Language,
+                "{name}"
+            );
+            assert_eq!(syntax.reparse_policy(&grammar), None, "{name}");
+            for kind in [
+                QueryKind::Highlights,
+                QueryKind::Injections,
+                QueryKind::TextObjects,
+                QueryKind::Indents,
+            ] {
+                assert_eq!(syntax.shipped_query(&grammar, kind), None, "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_clone_keeps_the_switch() {
+        let hidden = TreeSitter::default();
+        assert_eq!(hidden.clone().grammars(), Vec::<GrammarName>::new());
+        let shown = with_the_table();
+        assert_eq!(shown.clone().grammars(), TABLE.map(GrammarName::new));
+    }
+
+    #[test]
+    fn turned_on_the_adapter_lists_the_six_compiled_in_names_in_the_tables_order() {
+        assert_eq!(with_the_table().grammars(), TABLE.map(GrammarName::new));
+    }
+
     #[test]
     fn each_grammar_declares_the_reparse_policy_of_the_table_and_one_not_compiled_in_none() {
-        let syntax = TreeSitter::default();
+        let syntax = with_the_table();
         let policy = |name: &str| syntax.reparse_policy(&GrammarName::new(name));
 
         assert_eq!(policy("rust"), Some(ReparsePolicy::Incremental));

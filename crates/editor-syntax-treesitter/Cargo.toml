@@ -1,7 +1,7 @@
 [package]
 name = "editor-syntax-treesitter"
 version = "0.1.0"
-description = "The syntax port's real adapter, over tree-sitter, with the Rust, JSON, Markdown, Markdown inline, TOML and Lean grammars compiled in, and native grammar libraries loaded at run time"
+description = "The syntax port's real adapter, over tree-sitter, with the Rust, JSON, Markdown, Markdown inline, TOML and Lean grammars compiled in, hidden until the editor's startup turns them on, and native grammar libraries loaded at run time"
 edition.workspace = true
 license.workspace = true
 publish = false
@@ -181,6 +181,12 @@ editor-wait = { path = "../editor-wait" }
 # keeps the registration contract on it, and `tests/contract.rs` the syntax
 # contract on its grammar loaded at run time.
 editor-syntax-fixture-ini = { path = "../editor-syntax-fixture-ini" }
+# The six compiled-in grammars built as native libraries, with their
+# queries beside them, for tests alone: every test but the table tests
+# (the crate docs, "Tests") registers the grammars it uses from here, since
+# the compiled-in table is hidden unless turned on. The `round` example
+# registers its grammar from here too.
+editor-syntax-fixture-grammars = { path = "../editor-syntax-fixture-grammars" }
 
 [lints]
 workspace = true

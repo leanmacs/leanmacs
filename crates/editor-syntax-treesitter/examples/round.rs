@@ -7,7 +7,9 @@
 //! Its figures are recorded in `docs/design/rust-library.md`, "Syntax, as
 //! built", dated, beside the Rust measurement.
 //!
-//! Its arguments are a path and a grammar name. It reads the file into an
+//! Its arguments are a path and a grammar name, one of the six
+//! `editor-syntax-fixture-grammars` builds, which it registers from its
+//! native library with its policy. It reads the file into an
 //! `editor_text::Text` behind a lock, as a document holds one, and opens a
 //! session of the grammar over it. It prints the file's bytes and lines,
 //! the grammar's reparse policy and its tree's error nodes, then times:
@@ -28,7 +30,8 @@ use std::time::Duration;
 
 use editor_wait::Stopwatch;
 
-use editor_syntax::{GrammarName, Latest, Session, Source, Syntax};
+use editor_syntax::{GrammarName, GrammarSource, Latest, ReparsePolicy, Session, Source, Syntax};
+use editor_syntax_fixture_grammars as grammars;
 use editor_syntax_treesitter::TreeSitter;
 use editor_text::{Revision, Text};
 
@@ -84,9 +87,29 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let Some(fixture) = grammars::ALL
+        .into_iter()
+        .find(|known| known.name == grammar)
+    else {
+        eprintln!("round: no fixture grammar {grammar}");
+        return ExitCode::FAILURE;
+    };
     let grammar = GrammarName::new(grammar);
     let text = Arc::new(Mutex::new(Text::from(source.as_str())));
     let syntax = TreeSitter::default();
+    let registered = syntax.register(&GrammarSource {
+        library: fixture.library.into(),
+        symbol: fixture.symbol.to_owned(),
+        policy: Some(if fixture.incremental {
+            ReparsePolicy::Incremental
+        } else {
+            ReparsePolicy::Whole
+        }),
+    });
+    if let Err(refusal) = registered {
+        eprintln!("round: {} was refused: {refusal:?}", fixture.library);
+        return ExitCode::FAILURE;
+    }
     let Some(session) = Session::new(
         &syntax,
         grammar.clone(),
