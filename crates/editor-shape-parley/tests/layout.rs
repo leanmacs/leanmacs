@@ -6,15 +6,26 @@
 //! the adapter's counters with layout's own, and with the longest segment
 //! layout hands a shaper, by name. They state no row, no width and no
 //! number of layout's.
+//!
+//! The wiring of face families is here too: layout merges a span's faces
+//! attribute by attribute (`editor-layout`'s rule) and this crate resolves
+//! a generic family name to the set's family (`tests/shaping.rs`), so a
+//! span in a face naming `system-ui` is drawn in the proportional fixture
+//! and a face naming `monospace` over it in the monospace one. The faces
+//! are the tests' own; which faces the editor ships is Lean's.
 
 mod common;
 
-use editor_layout::Layout;
-use editor_layout::scene::{Padding, Rect, Scene};
-use editor_layout::tabs::SEGMENT_BYTES;
-use editor_shape_parley::{ParleyShaper, ShapeCounters};
+use std::ops::Range;
 
-use common::shaper;
+use editor_layout::Layout;
+use editor_layout::face::{Face, FaceDef};
+use editor_layout::scene::{Decoration, Padding, Rect, Scene};
+use editor_layout::shaper::Shaper;
+use editor_layout::tabs::SEGMENT_BYTES;
+use editor_shape_parley::{FontSet, ParleyShaper, ShapeCounters};
+
+use common::{MONO, MONO_FAMILY, SANS, SANS_FAMILY, shaper};
 
 /// A view's rectangle `width` pixels across, tall enough for every row of
 /// the texts here.
@@ -154,4 +165,83 @@ fn a_selection_across_latin_and_hebrew_covers_the_glyphs_of_what_is_selected() {
     assert!(view.selections.iter().all(|area| area.width > 0.0));
     let covered: f32 = view.selections.iter().map(|area| area.width).sum();
     assert!((covered - advances).abs() < 0.01, "{covered} of {advances}");
+}
+
+/// A shaper over the proportional and the monospace fixture, the
+/// monospace family the default, with `monospace` given as it and
+/// `system-ui` as the proportional one.
+fn generic_shaper() -> ParleyShaper {
+    let fonts = FontSet::only(MONO_FAMILY, &[], [SANS.to_vec(), MONO.to_vec()])
+        .and_then(|fonts| fonts.with_generic("monospace", &[MONO_FAMILY]))
+        .and_then(|fonts| fonts.with_generic("system-ui", &[SANS_FAMILY]))
+        .expect("the fixture fonts");
+    ParleyShaper::new(fonts)
+}
+
+/// A face of the family `name` and nothing else, as `face`.
+fn family_def(face: &str, name: &str) -> FaceDef {
+    FaceDef {
+        name: face.to_owned(),
+        face: Face {
+            family: Some(name.to_owned()),
+            ..Face::default()
+        },
+    }
+}
+
+/// `text` in a wide view, with `default` in `monospace`, `prose` in
+/// `system-ui` and `code` in `monospace`, and each of `spans` drawn in
+/// its face, in that order.
+fn faced(text: &str, spans: &[(Range<usize>, &str)]) -> Scene {
+    let mut scene = Scene::of_text(text, rect(800));
+    scene.faces = Some(vec![
+        family_def("default", "monospace"),
+        family_def("prose", "system-ui"),
+        family_def("code", "monospace"),
+    ]);
+    scene.views[0].decorations = spans
+        .iter()
+        .map(|(bytes, face)| Decoration {
+            start: bytes.start,
+            stop: bytes.end,
+            face: (*face).to_owned(),
+        })
+        .collect();
+    scene
+}
+
+/// Whether each glyph of the first row of `scene`'s frame is drawn from
+/// the bytes of `SANS` when `proportional` holds of its cluster, and from
+/// `MONO` when it does not.
+fn drawn_proportional_where(scene: &Scene, proportional: impl Fn(usize) -> bool) {
+    let mut layout = Layout::new(generic_shaper());
+    let frame = layout.frame(scene);
+    let glyphs = &frame.views[0].rows[0].line.glyphs;
+    assert!(!glyphs.is_empty());
+    let resolved = layout.shaper().resolved();
+    for glyph in glyphs {
+        let data = &resolved[glyph.font.0 as usize].data;
+        let expected = if proportional(glyph.cluster) {
+            SANS
+        } else {
+            MONO
+        };
+        assert_eq!((**data).as_ref(), expected, "{glyph:?}");
+    }
+}
+
+#[test]
+fn a_span_in_a_face_naming_system_ui_is_shaped_in_the_sets_proportional_family() {
+    let text = "some prose here";
+    let word = 5..10;
+    let scene = faced(text, &[(word.clone(), "prose")]);
+    drawn_proportional_where(&scene, |cluster| word.contains(&cluster));
+}
+
+#[test]
+fn a_code_face_naming_monospace_over_the_prose_face_is_shaped_in_monospace() {
+    let text = "prose with code inside";
+    let code = 11..15;
+    let scene = faced(text, &[(0..text.len(), "prose"), (code.clone(), "code")]);
+    drawn_proportional_where(&scene, |cluster| !code.contains(&cluster));
 }

@@ -36,7 +36,14 @@
 //!   default family, then the set's fallback families as the families a
 //!   character is looked for in, in that order; its size in pixels; its
 //!   weight; its slant; its line height. A spec with no family starts at
-//!   the default family. A font run that reaches past the text is held to
+//!   the default family. A spec's family that is a CSS generic family
+//!   name (`monospace`, `system-ui`, `sans-serif`, ...) is the families
+//!   the set gives for that generic: fontique's platform mapping for
+//!   [`FontSet::system`], and what [`FontSet::with_generic`] gave for a
+//!   set of given files, which gives none until then. `system-ui` is
+//!   followed by `sans-serif`, so a set with no UI family still shapes it
+//!   proportionally where it has a sans-serif family. A generic the set
+//!   gives nothing for adds nothing: the default family follows. A font run that reaches past the text is held to
 //!   it, and one that starts at or past its end is over none of it.
 //! - **A line is as tall as the fonts on it.** Parley makes a line at
 //!   least as tall as a layout's default style; a text's default style
@@ -106,13 +113,16 @@
 //!
 //! - the port's contract, [`editor_layout::shaper::contract`]
 //!   (`tests/contract.rs`);
-//! - what a font set holds and refuses, and that no font but the fixture
+//! - what a font set holds and refuses (a generic family by a name that
+//!   is none, or as a family it does not hold, among them), and that no font but the fixture
 //!   files' is drawn in: a character no fixture covers is the primary's
 //!   missing glyph (`tests/fixtures.rs`);
 //! - fallback: a character the primary lacks is drawn in the fallback
 //!   that covers it, at the spec's size, and a character is looked for in
 //!   the spec's family, then the default, then the fallbacks in the set's
-//!   order (`tests/shaping.rs`);
+//!   order; a generic family name is shaped in what the set gives for it,
+//!   `system-ui` in its `sans-serif` where it gives no UI family, and in
+//!   the default where it gives neither (`tests/shaping.rs`);
 //! - that shaping describes every font a line is drawn in before it
 //!   returns, each once, so a break adds none, and what setting the fonts
 //!   again does, the new set's fallbacks in their order among it
