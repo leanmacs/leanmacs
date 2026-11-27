@@ -424,7 +424,8 @@ run = [
   ".lake/build/bin/ffi-test window-host-base \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/base/config",
   ".lake/build/bin/ffi-test window-host-generate \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/window/title-bar/config",
   # As the default set's editor and the fixture set's start it when run
-  # directly, finding their `.olean` directories by default.
+  # directly, finding their `.olean` directories by default, each in a
+  # temporary home of its own, never the developer's.
   ".lake/build/bin/ffi-test window-host-direct ../packages/.lake/build/bin/editor \"$(lean --print-prefix)\" ../tests/window/title-bar/config",
   ".lake/build/bin/ffi-test window-host-direct ../tests/packages/.lake/build/bin/editor \"$(lean --print-prefix)\" ../tests/window/title-bar/config",
   ".lake/build/bin/ffi-test window-host-undrawn ../tests/headless/ex/note.txt",

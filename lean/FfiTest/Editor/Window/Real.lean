@@ -38,7 +38,9 @@ The tests of `Editor/Window/Real.lean`: the `window-host`, `window-host-config`,
 the end with no deadline the restart scenario gives the journal's drain
 (`journalDrained`) and of what the window mode's options hand its host's
 collaborators (`Window.Options.handedTo`), where the set's grammars
-directories are staged among them, with no host started. The root module `FfiTest` runs them, and each
+directories are staged among them, and of the direct scenario's
+environment, which takes nothing from the process (`directEnvironment`),
+with no host started. The root module `FfiTest` runs them, and each
 scenario's own doc says what it shows.
 
 It imports the config base, `Editor`, for the link alone: the window host
@@ -82,11 +84,30 @@ def journalDrained (drained : Task Bool) (guard : Editor.HangGuard := Editor.Hea
         s!"ffi-test: a hang: the journal had not drained {guard.ms} ms after it was asked; waiting for it"
   IO.wait drained
 
+/-- The variables the `window-host-direct` scenario hands the window mode,
+in the scenario's own `home`: `HOME` is `home` and every other variable,
+each `XDG_*` among them, is unset. A pure function, so that no variable of
+the process can reach it. -/
+def directVariables (home : System.FilePath) (name : String) : Option String :=
+  if name == "HOME" then some home.toString else none
+
+/-- What the `window-host-direct` scenario tells the window mode of the
+world, for the editor at `editorPath` (`Window.environmentAt`), in the
+scenario's own `home`, with its variables `directVariables`, whatever the
+process's are, so its state, data and config directories lie under
+`home`, and a session the developer kept is never restored or written. -/
+def directEnvironment (editorPath : String) (home : System.FilePath) :
+    IO Editor.Window.Environment :=
+  Editor.Window.environmentAt editorPath (readVariable := fun name =>
+    pure (directVariables home name))
+
 /-- The checks of `journalDrained`, on a drain the check ends: with a guard of
 0, the drain is ended only from the hang report, so a wait that gave up at
 its guard is seen every run, with no sleep; and of `Window.Options.handedTo`,
 on the collaborators of the executable's host (`Headless.shippedOver`), made
-and never started. -/
+and never started; of `Window.environmentAt`, on a reader of sentinels; and
+of `directVariables` and `directEnvironment`, on a home they name and never
+make. -/
 def windowRealChecks (_ : Unit) : List Check :=
   [{  name :=
         "a scenario's wait for the journal's drain has no deadline: a drain not ended at its guard is said as a hang once and still waited for, and the wait returns only once the drain has ended"
@@ -137,7 +158,61 @@ def windowRealChecks (_ : Unit) : List Check :=
             IO.eprintln
                 s!"ffi-test: handed grammarDirectories={handed.grammarDirectories} launch arguments={handed.launch.arguments}"
             return false
-          return true }]
+          return true },
+    { name :=
+        "the window-host-direct scenario's environment takes no variable from the process: its home is the scenario's own, and its state, data and config directories lie under it"
+      run := do
+        -- No directory is made: `home` is a path the check names. The
+        -- environment takes no reader, so the process's variables, the
+        -- developer's own where a kept session lies, cannot reach it.
+        let home : System.FilePath := "/scenario/home"
+        let environment ← directEnvironment "/opt/leanmacs/bin/editor" home
+        match Editor.Window.parse environment ["--sysroot", "/s", "--config", "/c"] with
+        | .error reason =>
+          IO.eprintln s!"ffi-test: the options were refused: {reason}"
+          return false
+        | .ok options =>
+          let ownHomeAlone :=
+            environment.home == some home.toString && environment.xdgStateHome.isNone &&
+              environment.xdgDataHome.isNone &&
+              environment.xdgConfigHome.isNone
+          let underHome := options.data.any (·.startsWith (home.toString ++ "/"))
+          unless
+            options.stateDirectory == some (home / ".local" / "state" / "leanmacs") && underHome &&
+              ownHomeAlone do
+            IO.eprintln
+                s!"ffi-test: the direct scenario's environment was {repr environment}, its state {repr options.stateDirectory} and data {repr options.data}"
+            return false
+          return true },
+    { name :=
+        "the window mode's environment takes each of its variables from the reader it is handed, and from nothing else (Window.environmentAt)"
+      run := do
+        -- Every variable has a sentinel of its own, so a variable read from
+        -- the process, or from another name, is seen whatever the runner's
+        -- variables are. The editor's path names no file, so nothing is read.
+        let sentinel (name : String) : Option String := some s!"/sentinel/{name}"
+        let environment ←
+          Editor.Window.environmentAt "/opt/leanmacs/bin/editor" (readVariable := fun name =>
+              pure (sentinel name))
+        unless
+          environment.xdgStateHome == sentinel "XDG_STATE_HOME" &&
+            environment.xdgDataHome == sentinel "XDG_DATA_HOME" &&
+            environment.xdgConfigHome == sentinel "XDG_CONFIG_HOME" &&
+            environment.home == sentinel "HOME" do
+          IO.eprintln s!"ffi-test: the environment read was {repr environment}"
+          return false
+        return true },
+    { name :=
+        "the window-host-direct scenario's variables are its own home's alone: HOME is its home and every XDG_* variable is unset (directVariables)"
+      run := do
+        let home : System.FilePath := "/scenario/home"
+        let read := directVariables home
+        let xdg := ["XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"]
+        unless read "HOME" == some home.toString && xdg.all (read · |>.isNone) do
+          IO.eprintln
+              s!"ffi-test: the direct variables were HOME={read "HOME"} {xdg.map fun name => (name, read name)}"
+          return false
+        return true }]
 
 /-- Whether the scripted window's record `asked` holds the shutdown's
 minimise before the close: the window records the close in its place among
@@ -457,13 +532,20 @@ so the directories of the editor's `.olean` files are the default for it,
 which the edge reads from the record the build wrote beside that
 executable (`Window.environmentAt`), and the host runs on the library's
 scripted platform as in `windowHostConfigScenario`, on the same fixture
-config. 0 when the command
-line was taken, the window mode ended with status 0 and the scripted window
+config. It runs in `home`, a temporary directory of its own, never the
+process's: its home, state, data and config directories are read from
+there alone (`directEnvironment`), so a session the developer kept is never
+restored or written. Its shutdown waits for the journal's drain with no
+deadline (`journalDrained`) before the window mode's own, so nothing writes
+into `home` once the run has returned. 0 when the command
+line was taken, the window mode ended with status 0, the scripted window
 was opened with the standard title bar, which only the loaded config
-chooses: the default directory held the modules config is elaborated on. 1
-otherwise, saying why on stderr. -/
-def windowHostDirectScenario (editorPath sysroot configDir : String) : IO UInt8 := do
-  let environment ← Editor.Window.environmentAt editorPath
+chooses: the default directory held the modules config is elaborated on,
+and the run kept its session under `home`. 1 otherwise, saying why on
+stderr. -/
+def windowHostDirectScenario (editorPath sysroot configDir : String) (home : System.FilePath) :
+    IO UInt8 := do
+  let environment ← directEnvironment editorPath home
   let options ←
     match Editor.Window.parse environment ["--sysroot", sysroot, "--config", configDir] with
     | .ok options =>
@@ -479,9 +561,21 @@ def windowHostDirectScenario (editorPath sysroot configDir : String) : IO UInt8 
         -- mode's `awaitConfig` waits for over `Host.waitWhile`'s untracked branch
         -- (follow-up window-mode-waits-poll-progress); only a hang reaches the
         -- task's time limit, and the scenario then fails as a hang.
-        Editor.Window.shutdown .headless (patience := none)
+        (fun drained => do
+          -- The journal writes under `home`, removed once this returns: its
+          -- drain is waited for with no deadline, and the window mode's
+          -- shutdown, whose own wait is bounded, finds it done.
+          let drain ← drained
+          discard <| journalDrained drain
+          Editor.Window.shutdown (pure drain))
+        .headless (patience := none)
   unless status == 0 do
     IO.eprintln s!"ffi-test window-host-direct: the window mode ended with status {status}"
+    return 1
+  let kept := home / ".local" / "state" / "leanmacs" / "session"
+  unless ← kept.isDir do
+    IO.eprintln
+        s!"ffi-test window-host-direct: the run kept no session under its own home, at {kept}"
     return 1
   let opened ← Editor.Ffi.windowOpenedWith .scripted
   unless opened == some (true, .standard) do
@@ -691,7 +785,8 @@ mise.toml's `window-scenarios` task (`.agents/rules/structure.md`, "The
 wiring set's runs"). `window-host` with a file, `window-host-undrawn` and
 `window-host-generate` each run on a copy of what they are given, in a
 temporary directory of their own (`onCopyOf`), so a caller hands them a
-checked-in fixture as it is. -/
+checked-in fixture as it is; `window-host-direct` runs in a temporary home
+of its own (`directEnvironment`). -/
 def windowScenarios : List Editor.Scenario :=
   [{  command := "window-host"
       run := fun
@@ -717,7 +812,8 @@ def windowScenarios : List Editor.Scenario :=
         | _ => scenarioUsage "window-host-generate" "<sysroot> <olean dir> <config dir>" },
     { command := "window-host-direct"
       run := fun
-        | [editorPath, sysroot, configDir] => windowHostDirectScenario editorPath sysroot configDir
+        | [editorPath, sysroot, configDir] =>
+          IO.FS.withTempDir fun home => windowHostDirectScenario editorPath sysroot configDir home
         | _ => scenarioUsage "window-host-direct" "<editor> <sysroot> <config dir>" },
     { command := "window-host-undrawn"
       run := fun
