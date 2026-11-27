@@ -155,6 +155,17 @@ def windowOptionChecks : List Check :=
               options.oleans == ["/Applications/Leanmacs.app/Contents/Resources/lean/lean/lib"] &&
               options.configPlan true == .load "/Users/ada/.config/leanmacs" },
     { name :=
+        "where the set's grammars directories are staged, as the environment read them, are the options' grammars directories, with a file or none, whatever the options given; an environment with none gives none"
+      run :=
+        let staged := [("ini-grammar", System.FilePath.mk "/s/grammars/ini-grammar")]
+        let shipping := { windowEnvironment with grammarDirectories := staged }
+        pure
+          ((parsed [] shipping).map (·.grammarDirectories) == some staged &&
+            (parsed ["--no-ime", "f"] shipping).map (·.grammarDirectories) == some staged &&
+            (parsed ["--sysroot", "/s", "--config", "/c"] shipping).map (·.grammarDirectories) ==
+              some staged &&
+            (parsed ["f"]).map (·.grammarDirectories) == some []) },
+    { name :=
         "with no option, config is looked for in the directory leanmacs under XDG_CONFIG_HOME, or under HOME's .config when that is unset; no toolchain is given; the editor's .olean files are beside the executable's directory; and an input method may compose"
       run :=
         let unset := { windowEnvironment with xdgConfigHome := none }

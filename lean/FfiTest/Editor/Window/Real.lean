@@ -36,7 +36,9 @@ The tests of `Editor/Window/Real.lean`: the `window-host`, `window-host-config`,
 `windowHostDirectScenario`, `windowHostUndrawnScenario`,
 `windowHostRestartScenario`), of `Window.host`, and `windowRealChecks`, of
 the end with no deadline the restart scenario gives the journal's drain
-(`journalDrained`). The root module `FfiTest` runs them, and each
+(`journalDrained`) and of what the window mode's options hand its host's
+collaborators (`Window.Options.handedTo`), where the set's grammars
+directories are staged among them, with no host started. The root module `FfiTest` runs them, and each
 scenario's own doc says what it shows.
 
 It imports the config base, `Editor`, for the link alone: the window host
@@ -82,7 +84,9 @@ def journalDrained (drained : Task Bool) (guard : Editor.HangGuard := Editor.Hea
 
 /-- The checks of `journalDrained`, on a drain the check ends: with a guard of
 0, the drain is ended only from the hang report, so a wait that gave up at
-its guard is seen every run, with no sleep. -/
+its guard is seen every run, with no sleep; and of `Window.Options.handedTo`,
+on the collaborators of the executable's host (`Headless.shippedOver`), made
+and never started. -/
 def windowRealChecks (_ : Unit) : List Check :=
   [{  name :=
         "a scenario's wait for the journal's drain has no deadline: a drain not ended at its guard is said as a hang once and still waited for, and the wait returns only once the drain has ended"
@@ -102,7 +106,38 @@ def windowRealChecks (_ : Unit) : List Check :=
         unless answered && ended && said.size == 1 do
           IO.eprintln s!"ffi-test: saw answered={answered} ended={ended} said={said}"
           return false
-        return true }]
+        return true },
+    { name :=
+        "the window mode's options hand its host's collaborators where the set's grammars directories are staged, and the launch with the options as given as a restart's arguments (Window.Options.handedTo)"
+      run := do
+        let completions ← Editor.Job.Completions.new
+        let clock ← Editor.Job.FakeClock.new completions
+        let services : Editor.Job.Services := { completions, timers := clock.timers }
+        -- The module files' directory is made only when a config file is
+        -- written, and nothing here loads config.
+        let files ← Editor.Config.Elaborate.ModuleFiles.temporary
+        let shipped :=
+          Editor.Headless.shippedOver Editor.TestScheme.scheme #[] #[`Editor] "" [] ""
+            (fun _ => pure ()) services (← Editor.Snapshots.new) (← Editor.Job.HeldSnapshots.new)
+            files
+        let staged := [("ini-grammar", System.FilePath.mk "/s/grammars/ini-grammar")]
+        let environment : Editor.Window.Environment :=
+          { workingDirectory := "/work", xdgConfigHome := none, home := none
+            appPath := "/opt/leanmacs/bin/editor", grammarDirectories := staged }
+        match Editor.Window.parse environment ["--no-ime", "f"] with
+        | .error reason =>
+          IO.eprintln s!"ffi-test: the options were refused: {reason}"
+          return false
+        | .ok options =>
+          let handed := options.handedTo shipped
+          unless
+            handed.grammarDirectories == staged &&
+              handed.launch.arguments == options.restartArguments &&
+              shipped.grammarDirectories.isEmpty do
+            IO.eprintln
+                s!"ffi-test: handed grammarDirectories={handed.grammarDirectories} launch arguments={handed.launch.arguments}"
+            return false
+          return true }]
 
 /-- Whether the scripted window's record `asked` holds the shutdown's
 minimise before the close: the window records the close in its place among

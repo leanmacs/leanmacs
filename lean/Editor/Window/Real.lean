@@ -240,6 +240,19 @@ def closeOnceEnded (platform : Ffi.Platform) (loop : Task (Except IO.Error Unit)
   Ffi.windowClose platform
   return ended matches .ok _
 
+/-- What the window mode's options hand the collaborators its host is made
+of, `collaborators`, which they then hold: the launch the run was started
+with, with the options as given as what a restart hands on
+(`Options.restartArguments`), and where the set's grammars directories are
+staged (`Options.grammarDirectories`), which the host's packages' grammars
+are resolved against as they register (`Headless.Collaborators.grammarDirectories`).
+`host` hands them so, and `ffi-test`'s `windowRealChecks` pins it. -/
+def Options.handedTo {β σ : Type} {scheme : InputScheme} (options : Options)
+    (collaborators : Headless.Collaborators β σ scheme) : Headless.Collaborators β σ scheme :=
+  { collaborators with
+    launch := { options.launch with arguments := options.restartArguments }
+    grammarDirectories := options.grammarDirectories }
+
 /-- The mark of `host`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
 def host.realHost : RealHost :=
   .loop
@@ -296,17 +309,16 @@ def host (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Na
     Headless.shipped scheme packages base (options.sysroot.getD "") options.oleans
         (options.config.getD "") IO.eprintln processes (stateDirectory := options.stateDirectory)
   let collaborators :=
-    { shipped with
-      display := hostDisplay display platform
-      clipboard := pure clipboard
-      generator, workingDirectory, replace
-      home := processes.home
-      launch := { options.launch with arguments := options.restartArguments }
-      packageSet, package := package.getD shipped.package
-      grammarDirectories := options.grammarDirectories
-      -- The window mode keeps no count of its activity: its steps of it
-      -- do nothing.
-      tracksIdle := false }
+    options.handedTo
+      { shipped with
+        display := hostDisplay display platform
+        clipboard := pure clipboard
+        generator, workingDirectory, replace
+        home := processes.home
+        packageSet, package := package.getD shipped.package
+        -- The window mode keeps no count of its activity: its steps of it
+        -- do nothing.
+        tracksIdle := false }
   display.present
   -- The host lives in its bracket, which returns only once the loop has
   -- ended. The loop's end is the closer's to say, and the halt below throws

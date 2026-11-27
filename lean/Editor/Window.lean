@@ -198,7 +198,8 @@ structure Options where
   launch : Restart.Launch := {}
   /-- Where the grammars directories of the set's Lake packages are staged,
   from the environment (`Environment.grammarDirectories`), which the host
-  hands its packages' registration (`Headless.Collaborators.grammarDirectories`). -/
+  hands its packages' registration (`Headless.Collaborators.grammarDirectories`,
+  through `Options.handedTo` in `Editor/Window/Real.lean`). -/
   grammarDirectories : List (String × System.FilePath) := []
   deriving DecidableEq, Repr
 
