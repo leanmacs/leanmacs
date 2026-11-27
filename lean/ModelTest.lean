@@ -1244,7 +1244,8 @@ names a scheme's key:
   (`Editor/Language/Grammar.lean`), pure: its defaults, the values it is
   given, the problems of a symbol that registers another name and of a
   relative path, a later owner's declaration over an earlier's, the tree
-  a buffer's language resolves to in each case, and the sentences a
+  a buffer's language resolves to in each case, that of an injected
+  language by its grammar's first language entry, and the sentences a
   refusal and an unread query file are said in; the platform a target
   triple names, the library a per-platform declaration gives on a listed
   and an unlisted platform, its problems, and the rule a package's

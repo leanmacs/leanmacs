@@ -105,7 +105,23 @@ of the current config generation (`Editor/Language/Grammar/Answer.lean`):
 
 It is applied to the language's tree, not a mode's: a mode with a tree of
 its own naming a declared grammar gets the grammar but not the declared
-queries.
+queries. The same rule gives each injected language its tree, by grammar
+name (`injectedTreeOf`, below).
+
+## An injected language's tree (`injectedTreeOf`)
+
+The highlighting of a buffer with injections gives each grammar the
+library lists an injected language (`Editor/Highlight.lean`, step 7). The
+dispatch hands it `injectedTreeOf`, which resolves the grammar's tree by
+`treeOf` above: the tree is that of the first entry of the language table,
+in precedence order (config's, then the compiled-in ones it did not
+replace), whose tree names the grammar, or the bare tree of the grammar
+when no entry names it, so a package grammar with no language entry still
+gets its declared queries. So an undeclared grammar keeps the entry's tree
+and the grammar's shipped queries under it; a declared, registered one
+takes the queries read from its directory, the entry's own source winning;
+and one with no answer yet, or refused and no longer listed, gives no
+injected language.
 
 ## The query files (`queryFiles`)
 
@@ -137,6 +153,7 @@ query file that could not be read.
 | A new rule for a package's relative path | `within?`, pinned by `ModelTest.grammarDeclarationChecks` |
 | A new kind of query file | An entry of `queryFiles`, its field of `Queries` (`Editor/Language/Grammar/Answer.lean`) and its case in `Queries.over` |
 | A new case of which tree a buffer gets | `treeOf`, pinned by `ModelTest.grammarDeclarationChecks` |
+| A new case of which tree an injected language gets | `injectedTreeOf`, pinned by `ModelTest.grammarDeclarationChecks` |
 | A new consequence of a refusal | `said` |
 
 Pinned by `ModelTest.grammarDeclarationChecks` (the rules, pure).
@@ -382,6 +399,15 @@ def treeOf (declared : List Language.Grammar) (answers : Answers) (generation : 
           | some queries => queries.over tree
           | none => tree
       else none
+
+/-- The tree an injected language of the grammar named `grammar` gets
+(the module docs): `treeOf` over the tree of the first of `languages`, in
+precedence order, whose tree names `grammar`, or the bare tree of `grammar`
+when none does; `none` for a grammar that gives no injected language. -/
+def injectedTreeOf (declared : List Language.Grammar) (answers : Answers) (generation : Nat)
+    (languages : List Language) (grammar : String) : Option Mode.SyntaxTree :=
+  treeOf declared answers generation
+    (((languages.find? (·.syntaxTree.grammar == grammar)).map (·.syntaxTree)).getD { grammar })
 
 /-- What a refusal leaves, when the service still lists the name and this
 process never registered it. -/

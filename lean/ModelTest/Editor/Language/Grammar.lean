@@ -17,7 +17,7 @@ open Editor
 /-- The checks of a grammar declaration and its pure rules
 (`Editor/Language/Grammar.lean`): the defaults, the problems, a later
 owner's declaration over an earlier's, which tree a buffer's language
-resolves to, and the sentences a refusal is said in. -/
+and an injected language resolve to, and the sentences a refusal is said in. -/
 def grammarDeclarationChecks : List Check :=
   [{  name :=
         "a declaration given a name and a library alone has the symbol tree_sitter_<name>, no policy and the query directory queries/ in the library's directory"
@@ -89,6 +89,37 @@ def grammarDeclarationChecks : List Check :=
                   indents := some "(own) @indent" } &&
             resolve (answered (.refused (.refused .notFound) false)) == none &&
             resolve (answered (.registered read)) (generation := 3) == none) },
+    { name :=
+        "an injected language's tree is that of the first language entry naming its grammar, resolved as a buffer's: undeclared with no entry it is the bare tree, undeclared it is the entry's own; declared and registered it takes the read queries, the entry's own source winning; declared with no answer of this generation, or refused and unknown, it has none"
+      run :=
+        let declared := [Language.Grammar.declare "ini" "/g/libini.so"]
+        let read : Language.Grammar.Queries :=
+          { highlights := some "(number) @number", injections := some "(file) @injection" }
+        let answered (answer : Language.Grammar.Answer) : Language.Grammar.Answers :=
+          { generation := 2, answers := #[("ini", answer)] }
+        let entry (grammar : String) (highlights : Option String) : Language :=
+          { name := grammar, patterns := [], syntaxTree := { grammar, highlights } }
+        let languages :=
+          [entry "toml" (some "(own) @toml"), entry "ini" (some "(string) @string"),
+            entry "ini" (some "(later) @later")]
+        let injected (answers : Language.Grammar.Answers) (languages : List Language)
+            (grammar : String) :=
+          Language.Grammar.injectedTreeOf declared answers 2 languages grammar
+        pure
+          (injected {} [] "json" == some { grammar := "json" } &&
+            injected {} languages "toml" ==
+              some { grammar := "toml", highlights := some "(own) @toml" } &&
+            injected (answered (.registered read)) [] "ini" ==
+              some
+                { grammar := "ini", highlights := some "(number) @number"
+                  injections := some "(file) @injection" } &&
+            injected (answered (.registered read)) languages "ini" ==
+              some
+                { grammar := "ini", highlights := some "(string) @string"
+                  injections := some "(file) @injection" } &&
+            injected {} languages "ini" == none &&
+            injected (answered (.refused (.refused .notFound) false)) languages "ini" ==
+              none) },
     { name :=
         "a refusal's sentence names the grammar, the error and what stays: the compiled-in grammar, the grammar registered before, or no syntax tree for its languages; a query file's refusal names the grammar, the file and the error"
       run :=
