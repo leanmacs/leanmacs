@@ -7,6 +7,13 @@
 //! change of width breaks the kept value again ([`ShapedLine::break_lines`])
 //! without shaping it again.
 //!
+//! The one exception is a row with align-to stops: layout cuts it at its
+//! stops into cells, shapes and breaks each cell through this port, and
+//! places the cells at their stops itself, breaking before a stop past the
+//! width, from the widths the shaper gave (`align`, and
+//! [`line`](mod@crate::line)). For that it relies on every line starting at
+//! its own left edge and holding its glyphs ([`contract::ORIGIN`]).
+//!
 //! What a shaper is handed is one segment of one buffer row, after the
 //! display layers below it: no tab (the tab layer has expanded it into
 //! spaces, `docs/design/text-and-display.md`) and no line feed. Every

@@ -55,9 +55,19 @@ pub const RESOLVED: &str = "every glyph is drawn in a font the shaper describes,
 pub const ORDERED: &str =
     "a line's glyphs are in order from its left edge, none starting before the one before it";
 
+/// A line starts at its left edge and holds its glyphs: what layout
+/// relies on to place the cells of a row at align-to stops (the port's
+/// module docs, [`shaper`](crate::shaper)).
+pub const ORIGIN: &str =
+    "a line's first glyph's pen is at 0, and no glyph ends past the line's width";
+
+/// How far a glyph may be from where [`ORIGIN`] puts it, in pixels: a
+/// 64th, so that float noise in an adapter's sums is no fault.
+const ORIGIN_TOLERANCE: f32 = 1.0 / 64.0;
+
 /// Every property, by name.
-pub const PROPERTIES: [&str; 9] = [
-    COVER, FIT, UNBROKEN, KEPT, CLUSTERS, HEIGHTS, FONTS, RESOLVED, ORDERED,
+pub const PROPERTIES: [&str; 10] = [
+    COVER, FIT, UNBROKEN, KEPT, CLUSTERS, HEIGHTS, FONTS, RESOLVED, ORDERED, ORIGIN,
 ];
 
 /// The texts the properties are run over: empty, one character, a long
@@ -130,6 +140,7 @@ pub fn check<S: Shaper>(shaper: &S) -> Vec<&'static str> {
             failed[8] |= !lines
                 .iter()
                 .all(|line| line.glyphs.windows(2).all(|pair| pair[0].x <= pair[1].x));
+            failed[9] |= !lines.iter().all(starts_at_its_edge);
             // Broken at every other width first, then at this one.
             for other in widths() {
                 kept.break_lines(other);
@@ -235,6 +246,20 @@ fn fonts_are_told_apart<S: Shaper>(shaper: &S) -> bool {
         && distinct
 }
 
+/// Whether `line`'s first glyph from its left edge has its pen at 0 and
+/// none of its glyphs ends past its width, each within
+/// [`ORIGIN_TOLERANCE`]. The leftmost pen is found whatever order the
+/// glyphs are listed in, which is [`ORDERED`]'s to hold.
+fn starts_at_its_edge(line: &VisualLine) -> bool {
+    let leftmost = line.glyphs.iter().map(|glyph| glyph.x).reduce(f32::min);
+    let first = leftmost.is_none_or(|x| x.abs() <= ORIGIN_TOLERANCE);
+    let held = line
+        .glyphs
+        .iter()
+        .all(|glyph| glyph.x + glyph.advance <= line.width + ORIGIN_TOLERANCE);
+    first && held
+}
+
 /// Whether `lines` cover `0..len` in order, with no gap and no overlap,
 /// and each holds a byte unless the text is empty.
 fn covers(lines: &[VisualLine], len: usize) -> bool {
@@ -266,7 +291,9 @@ mod tests {
     use std::ops::Range;
     use std::sync::{Arc, Mutex};
 
-    use super::{CLUSTERS, COVER, FIT, FONTS, HEIGHTS, KEPT, ORDERED, RESOLVED, UNBROKEN, check};
+    use super::{
+        CLUSTERS, COVER, FIT, FONTS, HEIGHTS, KEPT, ORDERED, ORIGIN, RESOLVED, UNBROKEN, check,
+    };
     use crate::shaper::fake::{CellLine, CellShaper};
     use crate::shaper::{
         FontId, FontSpec, Glyph, Metrics, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine,
@@ -300,6 +327,11 @@ mod tests {
         /// It breaks after a carriage return, U+2028 and U+2029, as a
         /// paragraph layout does, even with no width.
         BreaksAtReturns,
+        /// Every glyph of its lines is a pixel right of where the fake
+        /// puts it, the line's width unchanged.
+        Indents,
+        /// Its lines' widths are a pixel short of their last glyph's end.
+        Overruns,
     }
 
     /// `line` cut after each of its glyphs that is a carriage return,
@@ -373,6 +405,16 @@ mod tests {
                         }
                     }
                     Fault::Flat => line.height = 0.0,
+                    Fault::Indents => {
+                        for glyph in &mut line.glyphs {
+                            glyph.x += 1.0;
+                        }
+                    }
+                    Fault::Overruns => {
+                        if let Some(last) = line.glyphs.last() {
+                            line.width = last.x + last.advance - 1.0;
+                        }
+                    }
                     Fault::UnknownFont => {
                         for glyph in &mut line.glyphs {
                             glyph.font = ResolvedFontId(glyph.font.0 + 1000);
@@ -460,6 +502,16 @@ mod tests {
     #[test]
     fn a_shaper_that_breaks_at_a_return_or_a_separator_is_not_one_line() {
         assert_eq!(failures(Fault::BreaksAtReturns), vec![UNBROKEN]);
+    }
+
+    #[test]
+    fn a_shaper_whose_first_glyph_is_not_at_its_lines_left_edge_fails_the_origin_rule() {
+        assert_eq!(failures(Fault::Indents), vec![ORIGIN]);
+    }
+
+    #[test]
+    fn a_shaper_whose_glyphs_end_past_their_lines_width_fails_the_origin_rule() {
+        assert_eq!(failures(Fault::Overruns), vec![ORIGIN]);
     }
 
     #[test]
