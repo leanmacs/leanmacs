@@ -7,7 +7,9 @@
 //! The counter starts at [`FIRST_PACKAGE_ID`]: the ids below it are the
 //! core's, whose services in `editor-ffi` keep the fixed ids they had (the
 //! timers 1, the files 2 and so on), so Lean and the tests see the same
-//! sources as before. [`registered`] lists the services that have an id.
+//! sources as before. A service registered at run time ([`register`]), a
+//! package library's, takes its id from the same counter. [`registered`]
+//! lists the services that have an id.
 //!
 //! A service reports that a request has finished through the port
 //! [`Completer`], so its logic is tested with no queue: [`RecordingCompleter`]
@@ -64,14 +66,7 @@ impl Service {
     /// The service's id: taken from the process-wide counter the first time
     /// it is asked for, from any thread, and the same every time after.
     pub fn id(&self) -> u64 {
-        *self.id.get_or_init(|| {
-            let id = NEXT.fetch_add(1, Ordering::Relaxed);
-            REGISTERED
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push((self.name, id));
-            id
-        })
+        *self.id.get_or_init(|| next(self.name))
     }
 
     /// Queues the completion of the request `request` on the process's
@@ -88,6 +83,30 @@ impl Completer for Service {
     fn complete(&self, request: u64) -> bool {
         Self::complete(self, request)
     }
+}
+
+/// Takes the next id from the counter for the service `name`, and records
+/// the two in [`registered`]'s list.
+fn next(name: &'static str) -> u64 {
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    REGISTERED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push((name, id));
+    id
+}
+
+/// Registers a service named `name` at run time, and gives its id: the
+/// next from the counter a [`Service`] takes its id from, so a service
+/// registered here and a static one never share an id. Each call is a
+/// registration of its own, with an id of its own. The name is copied and
+/// kept for the life of the process, as a service lives for it.
+///
+/// It is how a package's library, which reaches the core through the
+/// package runtime and holds no [`Service`] of its own, gets the id its
+/// completions carry (`editor-package-library`'s runtime).
+pub fn register(name: &str) -> u64 {
+    next(Box::leak(name.to_owned().into_boxed_str()))
 }
 
 /// The services that have been given an id, with their ids, in the order
@@ -393,6 +412,24 @@ mod tests {
         let id = NAMED.id();
         assert_eq!(NAMED.name(), "named");
         assert!(registered().contains(&("named", id)));
+    }
+
+    #[test]
+    fn a_service_registered_by_name_at_run_time_takes_an_id_from_the_counter_apart_from_a_static_services()
+     {
+        static BESIDE: Service = Service::named("beside a library's");
+        let fixed = BESIDE.id();
+        let first = register("a library's");
+        let second = register("a library's");
+        assert!(first >= FIRST_PACKAGE_ID && second >= FIRST_PACKAGE_ID);
+        assert_ne!(
+            first, fixed,
+            "a static service's id is never handed out again"
+        );
+        assert_ne!(first, second, "each registration takes an id of its own");
+        let listed = registered();
+        assert!(listed.contains(&("a library's", first)));
+        assert!(listed.contains(&("a library's", second)));
     }
 
     #[test]

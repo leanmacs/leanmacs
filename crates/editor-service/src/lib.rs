@@ -52,7 +52,8 @@ pub mod stream;
 pub mod worker;
 
 pub use service::{
-    Completer, FIRST_PACKAGE_ID, RecordingCompleter, Service, completer_contract, registered,
+    Completer, FIRST_PACKAGE_ID, RecordingCompleter, Service, completer_contract, register,
+    registered,
 };
 pub use worker::Worker;
 
