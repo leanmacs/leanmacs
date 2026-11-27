@@ -62,7 +62,10 @@ saying it cannot show the property, rather than passing.
 
 **What it writes outside its directory** is only what the core's and the
 default set's builds would write in place, which `mise run lean` built
-just before. Its directory is removed only once a flush of the process
+just before. `languages`' grammar libraries come from
+`packages/languages/.lake/build/grammars/<platform>/`, which `mise run
+lean` filled, so the set still runs no Cargo (`grammarSourceForm`'s built
+branch, `lean/lakefile.lean`). Its directory is removed only once a flush of the process
 service has completed (`Editor.Test.Linked.withFlushedBase`), so nothing
 still runs in it. Each run's completion is waited for on the run itself,
 the bound a hang guard.

@@ -43,8 +43,11 @@ directory of its own, with no `cargo` on the child's `PATH`
    `editor-core` in that order, the core last, as `coreRefusal?` and the
    install require.
 4. It runs `lake update --keep-toolchain`, then `lake build :editor`, both
-   exiting 0: any Cargo run, for the core's archive or for acp's library,
-   fails to spawn and fails the build.
+   exiting 0: any Cargo run, for the core's archive, for acp's library or
+   for a package's grammars, fails to spawn and fails the build. The config
+   requires the checkout's default set, whose `languages` takes its grammar
+   libraries from its build directory, which `mise run lean` filled
+   (`grammarSourceForm`'s built branch, `lean/lakefile.lean`).
 5. It removes the copy of acp, asserts the editor's `editor.libraries`
    names acp's library staged under the config's build directory, and that
    the editor's `--probe` passes the build's own judgement

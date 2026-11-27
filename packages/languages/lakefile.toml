@@ -8,17 +8,32 @@
 # core to the rule in `.agents/rules/structure.md`.
 #
 # - `Languages` is the package's library: `Languages/Compiled.lean`, the
-#   `Package` value, and its entry module `Languages/EditorPackage.lean`,
+#   `Package` value `languages`; `Languages/Grammars.lean`, the `Package`
+#   value `languages-grammars`, the languages whose grammar the package
+#   ships from source; and its entry module `Languages/EditorPackage.lean`,
 #   which the package-set build reads. Its `globs` hold every module under
-#   `Languages`, so the library's build reaches each one. The data it
-#   registers, the `code` mode and the shipped languages, is the core's
-#   (`lean/Editor/Language.lean`): the core's file commands, loop and tests
-#   read it.
+#   `Languages`, so the library's build reaches each one. The data
+#   `languages` registers, the `code` mode and the shipped languages, is the
+#   core's (`lean/Editor/Language.lean`): the core's file commands, loop and
+#   tests read it.
+# - `grammars/` holds the files of the grammars it ships (docs/design/
+#   packages.md, "A package's grammars"): in git, only each grammar's
+#   queries (`queries/<name>/`) and its licence (`licenses/<crate>`). No
+#   library is checked in, and no `<platform>/` directory ever: the set's
+#   build compiles each grammar from pinned source and stages it.
+# - `editorGrammarSources` is the input file that says where that source is
+#   built from: `rust/Cargo.toml`, the crate `languages-grammar-sources`,
+#   whose build script compiles each grammar with `editor-grammar-build` and
+#   whose binary the set's build runs (`editorGrammars`, lean/lakefile.lean).
 # - `languages-test` is its test driver (`lake test`): the tests that need
 #   no Rust library, rooted at `LanguagesTest/Model.lean`. It is no default
 #   target, as the core's `model-test` is not: `mise run lean` links with
 #   the system compiler, which this executable has no flags for.
-# - `LanguagesTest` holds the test modules.
+# - `LanguagesTest` holds the test modules, `LanguagesTest/Linked.lean`
+#   among them: the root of the executable the core's `editorLinked` facet
+#   links as the editor is, which the package steps build and run
+#   (tools/package-set.sh): the wiring checks of the grammars the set's
+#   build compiled.
 #
 # It has no headless fixture: what it registers is pinned by its model
 # test.
@@ -28,13 +43,17 @@
 # as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
 #
 # It is an implementation package (docs/design/extension-points.md, "Three
-# layers"): it declares no `keywords`, so no package may import its modules,
-# and the three-layer rule (.agents/rules/structure.md) holds it to that.
+# layers"): its one keyword is `editor-grammars` (`grammarsKeyword`,
+# lean/lakefile.lean), which says it ships grammars under `grammars/`, and
+# not `editor-interface`, so it still exports nothing to other packages: no
+# package may import its modules, and the three-layer rule
+# (.agents/rules/structure.md) holds it to that.
 #
 # After changing a `require`, run in lean/:
 #   lake -d ../packages/languages update --keep-toolchain
 # then the same for every set that reaches this package (../, tests/packages), and commit each lake-manifest.json.
 name = "languages"
+keywords = ["editor-grammars"]
 testDriver = "«languages-test»"
 defaultTargets = ["Languages", "LanguagesTest"]
 leanOptions = { linter.all = true, warningAsError = true }
@@ -55,3 +74,7 @@ globs = ["LanguagesTest.+"]
 [[lean_exe]]
 name = "languages-test"
 root = "LanguagesTest.Model"
+
+[[input_file]]
+name = "editorGrammarSources"
+path = "rust/Cargo.toml"

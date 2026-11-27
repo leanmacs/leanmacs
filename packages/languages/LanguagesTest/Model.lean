@@ -1,5 +1,6 @@
 import LanguagesTest.Check
 import LanguagesTest.Languages.Compiled
+import LanguagesTest.Languages.Grammars
 
 /-!
 # The test driver of the package `languages`
@@ -11,17 +12,22 @@ by running it with a `cargo` that fails first on the `PATH`. It only
 imports the test modules and runs their checks.
 
 Each test module mirrors the module it tests: the checks of
-`Languages/Compiled.lean` are in `LanguagesTest/Languages/Compiled.lean`.
+`Languages/Compiled.lean` are in `LanguagesTest/Languages/Compiled.lean`,
+and those of `Languages/Grammars.lean` in
+`LanguagesTest/Languages/Grammars.lean`.
 
 - `languagePackageChecks`: the `Package` value (`Languages/Compiled.lean`):
   what it registers is the `code` mode and the shipped languages, in
   order, and no command. It was the core's (`ModelTest.languagePackageChecks`)
   while the package was a module of the core.
+- `grammarPackageChecks`: the `Package` value `languages-grammars`
+  (`Languages/Grammars.lean`): what it registers against a staged grammars
+  directory, its refusal with none, and the entry module's two packages.
 -/
 
 /-- Every check of the test driver, in the order they run. -/
 def LanguagesTest.checks : List LanguagesTest.Check :=
-  LanguagesTest.languagePackageChecks
+  LanguagesTest.languagePackageChecks ++ LanguagesTest.grammarPackageChecks
 
 /-- Runs the checks and prints each that failed; the exit status is 1 when
 one did. -/
