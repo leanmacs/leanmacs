@@ -7,25 +7,43 @@ license.workspace = true
 publish = false
 
 [lib]
-# The package-set build links it into the one archive it generates from
-# the set (lean/lakefile.lean, `editorRust`); `rlib` is what that crate
-# depends on, and what the tests link.
-crate-type = ["rlib"]
+# A library of its own, loaded by the core when the editor starts
+# (docs/design/packages.md, "A package's library, staged and loaded, as
+# built"): the package's lakefile builds the `cdylib` (its `editorLibrary`
+# target), which the package-set build stages beside every editor it links,
+# and the glue asks the core to load it from there. `rlib` is what this
+# crate's own tests link.
+crate-type = ["cdylib", "rlib"]
 
-# Of the editor's crates, a package's crate depends on `editor-service`
-# alone (docs/design/packages.md, "Rust in a package"), which the generated
-# crate's cargo-deny bans hold (`ffi-test`). The SDK is pinned exactly and
-# kept inside this crate: the root `deny.toml` names this crate its one
-# wrapper, and no SDK type is in this crate's C functions or plain events.
-# No feature of the SDK is on: no async runtime, no process spawning, no
-# stdio adapter. `futures`' executor runs the connection on a thread of the
-# crate's own and, in the tests, on the test's thread (`LocalPool`), and its
-# `select_biased!` (`async-await`) waits on the orders and the prompts'
-# responses together. `serde` and `serde_json` read the protocol's names of
-# the SDK's enums and write a tool call's raw input as compact text; the
-# replay test reads its fixtures with `serde_json`.
+# Of the editor's crates, the package wrapper alone (`editor-package`): the
+# runtime the core hands the library at its init, as safe types that mirror
+# `editor-service`'s (`Runtime`, `Service`, `Completer`, `stream`, `frame`),
+# the FFI-safe types of its table (`buffer`), the macro that declares its
+# init and table (`package!`), and the fakes its tests run on
+# (`RecordingCompleter`, `ScriptedSource`, `FakeRuntime`). The wrapper
+# depends on the runtime's definitions and `editor-wait` alone, which have
+# no static, so the library carries no copy of any of the core's statics.
+# Nothing else of the editor's, for the library or its tests, and `mise run
+# deny` holds it twice: the root `deny.toml` names this crate a wrapper of
+# `editor-package` and of no other crate of the editor's, and this crate's
+# own `deny.toml`, over its graph alone, allows the crates it names and
+# refuses every other, so an edge to any other, a dev-dependency included,
+# fails.
+#
+# The SDK is pinned exactly and kept inside this library: the root
+# `deny.toml` names this crate its one wrapper, and no SDK type is in this
+# crate's table or plain events. No feature of the SDK is on: no async
+# runtime, no process spawning, no stdio adapter. `futures`' executor runs
+# the connection on a thread of the crate's own and, in the tests, on the
+# test's thread (`LocalPool`), and its `select_biased!` (`async-await`)
+# waits on the orders and the prompts' responses together. `serde` and
+# `serde_json` read the protocol's names of the SDK's enums and write a
+# tool call's raw input as compact text; the replay test reads its fixtures
+# with `serde_json`. A bump of the SDK that changes its tree changes this
+# crate's `deny.toml` in the same commit (docs/design/agent-hosting.md,
+# "Upgrading the SDK"). No dev-dependency.
 [dependencies]
-editor-service = { path = "../../../crates/editor-service" }
+editor-package = { path = "../../../crates/editor-package" }
 agent-client-protocol = { version = "=5.5.1", default-features = false }
 futures = { version = "=0.3.34", default-features = false, features = ["std", "executor", "async-await"] }
 serde = "=1.0.229"

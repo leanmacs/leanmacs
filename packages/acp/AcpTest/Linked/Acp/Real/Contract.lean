@@ -7,27 +7,32 @@ import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Services
 
 /-!
-# Linked tests: `agents-api`'s contract on the acp crate
+# Linked tests: `agents-api`'s contract on acp's library
 
 The contract of the service `agents` (`AgentsApiTest/Contract.lean`)
-against the crate's binding as the runner's package service
+against acp's library, loaded from where the build staged it and reached
+only through the glue's table, as the runner's package service
 (`Acp.Real.service`), over the linked test kit's table of waits and its
 completion pump (`Editor.Test.Linked.Services.start`), the same queue and
 pump the editor runs. Each property's canonical agent is the scripted
 agent executable (`AcpTest.ScriptedAgent`), opened as a streaming child
 through the real process port with `AgentsApi.lineBound` and its input
-piped, and handed to the crate by its number, which takes it over; each
+piped, and handed to the library by its number, which takes it over
+through the package runtime; each
 property's child is ended at its end, whatever state its session is in.
-So the fake the package's driver holds to the contract and the crate
-cannot drift apart.
+So the fake the package's driver holds to the contract and the library
+cannot drift apart. The session's load (`Acp.Real.load`) reaches the
+table's `load` entry through the property "a load answers the session
+asked for, with its mode and modes, its first events are the agent's
+history in order, and nothing is parked".
 
-It runs the contract against the real crate, outside the rule of the
+It runs the contract against the real library, outside the rule of the
 wiring set (`docs/dev-practices/real-thread-checks.md`).
 -/
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
 def wiringSet.AcpTest.Linked.Acp.Real.Contract : Editor.WiringSet :=
-  .contract "agents-api's service agents, on the acp crate"
+  .contract "agents-api's service agents, on acp's library"
 
 namespace AcpTest.Linked
 

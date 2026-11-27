@@ -15,14 +15,17 @@
 //!   with its line feed, straight through [`ChildStreams::write`], on the
 //!   session's own thread, the one writer.
 //!
-//! Each step is tested on `editor-service`'s fake source, stepped before the
-//! pull.
+//! Each step is tested on the package wrapper's scripted child
+//! (`editor_package::stream::fake::ScriptedChild`), each delivery scripted as
+//! the core frames it: framing and the line bound are the core's process
+//! service's rule (`editor-service`'s stream contract), applied before a
+//! pull crosses the runtime.
 
 use std::io;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use editor_service::frame::Frames;
-use editor_service::stream::{ChildStreams, Ended, Pulled};
+use editor_package::frame::Frames;
+use editor_package::stream::{ChildStreams, Ended, Pulled};
 use futures::Sink;
 use futures::channel::mpsc;
 
@@ -138,9 +141,9 @@ pub fn transport(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor_service::frame::Framing;
-    use editor_service::stream::StreamSource;
-    use editor_service::stream::fake::FakeSource;
+    use editor_package::frame::Stream;
+    use editor_package::stream::Delivery;
+    use editor_package::stream::fake::ScriptedChild;
     use futures::SinkExt;
 
     /// The lines the receiver holds now, and whether it has ended.
@@ -156,22 +159,33 @@ mod tests {
         }
     }
 
+    /// A delivery of `out` lines of standard output and `err` lines of
+    /// standard error, as the core frames them, with `ended`.
+    fn delivery(out: &[&str], err: &[&str], ended: Option<Ended>) -> Delivery {
+        let lines = |lines: &[&str]| {
+            Frames::Lines(lines.iter().map(|line| line.as_bytes().to_vec()).collect())
+        };
+        Delivery {
+            out: lines(out),
+            err: lines(err),
+            ended,
+        }
+    }
+
     #[test]
     fn standard_output_s_lines_are_handed_on_standard_error_is_dropped_and_the_exit_ends_the_lines()
     {
-        let fake = FakeSource::new();
-        let child = fake.child(Framing::Lines, Framing::Lines, 1 << 20, true);
-        let (mut transport, pump) =
-            transport(Arc::from(fake.take_over(child.id()).expect("taken over")));
+        let child = ScriptedChild::new(true)
+            .delivery(delivery(&["{\"one\":1}"], &["a secret on stderr"], None))
+            .delivers(&["{\"two\":2}"], Some(Ended::Exited { code: 0 }));
+        let (mut transport, pump) = transport(Arc::new(child));
 
-        child.out(b"{\"one\":1}\n").err(b"a secret on stderr\n");
         assert!(pump.step());
         assert_eq!(
             received(&mut transport.incoming),
             (vec!["{\"one\":1}".to_owned()], false)
         );
 
-        child.out(b"{\"two\":2}\n").exit(0);
         assert!(!pump.step(), "the child's end is the last pull");
         assert_eq!(
             received(&mut transport.incoming),
@@ -185,11 +199,17 @@ mod tests {
 
     #[test]
     fn a_line_longer_than_the_bound_ends_the_session_as_line_too_long() {
-        let fake = FakeSource::new();
-        let child = fake.child(Framing::Lines, Framing::Lines, 8, true);
-        let (mut transport, pump) =
-            transport(Arc::from(fake.take_over(child.id()).expect("taken over")));
-        child.out(b"a line far past the bound\n");
+        // The core frames and bounds the lines (`editor-service`'s stream
+        // contract): a line past the bound reaches the library as the end
+        // it caused, with no line.
+        let child = ScriptedChild::new(true).delivers(
+            &[],
+            Some(Ended::LineTooLong {
+                stream: Stream::Out,
+                bound: 8,
+            }),
+        );
+        let (mut transport, pump) = transport(Arc::new(child));
         assert!(!pump.step());
         assert_eq!(received(&mut transport.incoming), (Vec::new(), true));
         assert_eq!(
@@ -200,17 +220,12 @@ mod tests {
 
     #[test]
     fn a_cancelled_child_ends_the_lines_and_a_signal_says_so() {
-        let fake = FakeSource::new();
-        let cancelled = fake.child(Framing::Lines, Framing::Lines, 64, true);
-        let signalled = fake.child(Framing::Lines, Framing::Lines, 64, true);
-        let (cancelled_transport, cancelled_pump) = transport(Arc::from(
-            fake.take_over(cancelled.id()).expect("taken over"),
-        ));
-        let (signalled_transport, signalled_pump) = transport(Arc::from(
-            fake.take_over(signalled.id()).expect("taken over"),
-        ));
+        let cancelled = ScriptedChild::new(true);
+        let signalled =
+            ScriptedChild::new(true).delivers(&[], Some(Ended::Signalled { signal: 15 }));
+        let (cancelled_transport, cancelled_pump) = transport(Arc::new(cancelled.clone()));
+        let (signalled_transport, signalled_pump) = transport(Arc::new(signalled));
         cancelled.cancel();
-        signalled.signal(15);
         assert!(!cancelled_pump.step());
         assert!(!signalled_pump.step());
         assert!(matches!(
@@ -226,12 +241,10 @@ mod tests {
     #[test]
     fn a_line_sent_is_written_whole_with_its_line_feed_and_a_closed_input_is_the_transport_s_error()
     {
-        let fake = FakeSource::new();
-        let child = fake.child(Framing::Lines, Framing::Lines, 64, true);
-        let closed = fake.child(Framing::Lines, Framing::Lines, 64, false);
-        let (open, _pump) = transport(Arc::from(fake.take_over(child.id()).expect("taken over")));
-        let (shut, _shut_pump) =
-            transport(Arc::from(fake.take_over(closed.id()).expect("taken over")));
+        let child = ScriptedChild::new(true);
+        let closed = ScriptedChild::new(false);
+        let (open, _pump) = transport(Arc::new(child.clone()));
+        let (shut, _shut_pump) = transport(Arc::new(closed));
         let mut open = Box::pin(open.outgoing);
         let mut shut = Box::pin(shut.outgoing);
         futures::executor::block_on(async {
@@ -244,9 +257,6 @@ mod tests {
                 Err(io::ErrorKind::BrokenPipe)
             );
         });
-        assert_eq!(
-            fake.record().written.first(),
-            Some(&(child.id(), b"{\"jsonrpc\":\"2.0\"}\n".to_vec()))
-        );
+        assert_eq!(child.written(), [b"{\"jsonrpc\":\"2.0\"}\n".to_vec()]);
     }
 }

@@ -23,7 +23,7 @@ name = "acp-service"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
- "editor-service",
+ "editor-package",
  "futures",
  "serde",
  "serde_json",

@@ -3,6 +3,7 @@ import AcpTest.Check
 import AcpTest.Linked.Acp.Conversation
 import AcpTest.Linked.Acp.Permissions
 import AcpTest.Linked.Acp.Real.Contract
+import AcpTest.Linked.Acp.Real.Load
 import AcpTest.Linked.Acp.Real.Session
 import AcpTest.Linked.Acp.Table
 import AgentsApiTest.Contract
@@ -17,8 +18,10 @@ import Editor.Test.Linked.Services
 
 The root of an executable linked as the editor is linked (the core's
 `editorLinked` facet, `lake build +AcpTest.Linked:editorLinked`), with the
-core's glue, the package's glue and the Rust archive generated from the
-package's own workspace, which holds the package's crate. The gate builds
+core's glue, the package's glue and the core's Rust archive; the package's
+crate is a library of its own, staged under the package's
+`.lake/build/libraries/acp/`, which `Acp.Real`'s initialiser loads before
+`main`. The gate builds
 it in `mise run lean` and runs it in `mise run ffi-test`
 (`tools/package-set.sh`), in the package's directory, with the toolchain's
 directory and the core's `.olean` directory as its arguments.
@@ -33,7 +36,7 @@ pump, one pump a process, which only the wired groups use, and runs:
   `AcpTest/Linked/Acp/Conversation.lean`): AC1 to AC4 of the
   sessions-and-conversation phase, the commands' refusals and the close of
   a conversation buffer, handed `Acp.packages`, which only this root may
-  import since they bring the crate's binding;
+  import since they bring the library's binding;
 - the queue of a project's permission requests, the policy and the audit
   log through the same stepped host (`AcpTest.Linked.permissionChecks`,
   `AcpTest/Linked/Acp/Permissions.lean`): AC2 to AC4 of the permissions
@@ -45,10 +48,13 @@ pump, one pump a process, which only the wired groups use, and runs:
   `AcpTest/Linked/Acp/Table.lean`): AC2 to AC5 of the agent-table phase,
   likewise handed `Acp.packages`;
 
-- `agents-api`'s contract against the crate's binding, each property on a
+- the load of acp's library through its glue and the core's loader
+  (`AcpTest.Linked.acpLoadChecks`, `AcpTest/Linked/Acp/Real/Load.lean`, a
+  plain group);
+- `agents-api`'s contract against the library's binding, each property on a
   scripted agent executable of its own (`AcpTest.Linked.contractChecks`,
   `AcpTest/Linked/Acp/Real/Contract.lean`);
-- AC4, the crate on a real child through the process service, reached by
+- AC4, the library on a real child through the process service, reached by
   running jobs through `agents-api`'s wrappers alone, given the package
   services the program's edge builds from acp's packages
   (`Editor.Headless.packageServices Acp.packages`, named here as only this
@@ -57,8 +63,8 @@ pump, one pump a process, which only the wired groups use, and runs:
 
 and says so. Its checks are a check set (`AcpTest.Linked.checks`,
 `Editor.CheckGroup`, `docs/dev-practices/real-thread-checks.md`, "How the
-set runs"): the conversation's, the permissions' and the table's checks in
-a plain group each, then two groups,
+set runs"): the conversation's, the permissions', the table's and the
+load's checks in a plain group each, then two groups,
 of its two modules of the wiring set, which the build's `linter.wiringSet`
 holds true and complete. With `--wiring` after
 the two directories it runs those groups alone, the stress loop's
@@ -68,7 +74,8 @@ the two directories it runs those groups alone, the stress loop's
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
 def wiringSet.AcpTest.Linked : Editor.WiringSet :=
-  .edge "its main starts the library's services and pump and hands them to the acp crate's checks"
+  .edge
+    "its main starts the library's services and pump and hands them to the checks of acp's library"
 
 /-- What every check is handed: the harness's context and the services
 started for the run (`Services.start`). -/
@@ -76,8 +83,8 @@ abbrev AcpTest.Linked.Context :=
   Editor.Test.Linked.HostContext × Editor.Test.Linked.Services
 
 /-- Every check of the linked test: its check set, the conversation's, the
-permissions' and the table's checks over `Acp.packages` in a plain group each, the
-contract's one check in the group
+permissions' and the table's checks over `Acp.packages` and the load's checks in a plain
+group each, the contract's one check in the group
 of `AcpTest/Linked/Acp/Real/Contract.lean`, and AC4 in the group of
 `AcpTest/Linked/Acp/Real/Session.lean`, over the package services the edge
 builds from acp's packages. -/
@@ -85,6 +92,7 @@ def AcpTest.Linked.checks : List (Editor.CheckGroup AcpTest.Linked.Context AcpTe
   [.plain fun (context, _) => AcpTest.Linked.conversationChecks context Acp.packages,
     .plain fun (context, _) => AcpTest.Linked.permissionChecks context Acp.packages,
     .plain fun (context, _) => AcpTest.Linked.tableChecks context Acp.packages,
+    .plain fun _ => AcpTest.Linked.acpLoadChecks,
     .wired "AcpTest.Linked.Acp.Real.Contract" wiringSet.AcpTest.Linked.Acp.Real.Contract
       fun (_, services) => AcpTest.Linked.contractChecks services,
     .wired "AcpTest.Linked.Acp.Real.Session" wiringSet.AcpTest.Linked.Acp.Real.Session
@@ -110,7 +118,7 @@ private def AcpTest.Linked.runSelected (sysroot oleans : String) (mode : Editor.
     IO.eprintln s!"FAILED: {name}"
   if failed.isEmpty then
     IO.println
-        s!"acp linked test: the conversation and the permissions hold on the stepped host over agents-api's fake, and agents-api's {AgentsApiTest.Contract.properties.length} properties and AC4 hold on the acp crate over scripted agents, each request completed through the completion queue"
+        s!"acp linked test: the conversation and the permissions hold on the stepped host over agents-api's fake, and agents-api's {AgentsApiTest.Contract.properties.length} properties and AC4 hold on acp's library over scripted agents, each request completed through the completion queue"
   (← IO.getStdout).flush
   let stopped ← services.stop
   unless stopped do

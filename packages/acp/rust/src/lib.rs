@@ -42,17 +42,32 @@
 //!
 //! The logic is here and in the modules below, over two ports: the
 //! [`Completer`] and the [`Connector`], which starts a session on a child.
-//! Its tests run on `editor-service`'s `RecordingCompleter` and a connector
-//! whose sessions run on a `LocalPool` the test steps over a scripted
-//! transport. The real connector ([`Threads`]) takes the child over
-//! (`editor_service::stream::take_over`) and runs the session on one thread
-//! and its pull on another. The process's instance and the C functions
-//! Lean's glue calls are in [`ffi`], and `tests/wiring.rs` runs one over the
-//! process's completion queue.
+//! Its tests run on the package wrapper's `RecordingCompleter` and a
+//! connector whose sessions run on a `LocalPool` the test steps over a
+//! scripted transport. The real connector ([`Threads`]) takes the child over
+//! through the stream source it is handed, the package runtime the core gave
+//! the library ([`editor_package::Runtime`]), and runs the session on one
+//! thread and its pull on another.
 //!
-//! No SDK type leaves the crate: the C functions and the plain events are
-//! the crate's own, and the root `deny.toml` lets no other crate depend on
-//! the SDK.
+//! The crate is a library of its own, loaded by the core when the editor
+//! starts (docs/design/packages.md, "A package's library, staged and loaded,
+//! as built"): its one export is its init, [`ffi::editor_package_init`],
+//! declared with the wrapper's macro, which is handed the core's package
+//! runtime, registers the service `acp` through it, and answers the table of
+//! C functions the glue forwards acp's `@[extern]` calls through
+//! ([`ffi::AcpFunctions`]). `tests/init.rs` runs the init and the table on
+//! the wrapper's fake runtime, and `tests/not_loaded.rs` the table before
+//! any init.
+//!
+//! No SDK type leaves the crate: the table's functions and the plain events
+//! are the crate's own, and the root `deny.toml` lets no other crate depend
+//! on the SDK. The crate depends on nothing of the editor's but the wrapper
+//! (`editor-package`, over the runtime's definitions, with no static): it
+//! reaches the core only through the runtime, so it holds no copy of the
+//! core's statics. It has no `unsafe` of its own, which the compiler holds
+//! (`#![deny(unsafe_code)]`, with no site allowed).
+
+#![deny(unsafe_code)]
 
 pub mod event;
 pub mod ffi;
@@ -66,8 +81,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 
-use editor_service::Completer;
-use editor_service::stream::ChildStreams;
+use editor_package::Completer;
+use editor_package::stream::{ChildStreams, StreamSource};
 
 use crate::event::{Event, Reply};
 use crate::session::{Link, Order, Outbox, Output, Setup};
@@ -84,23 +99,28 @@ pub trait Connector {
     fn connect(&self, child: u64, setup: Setup, outbox: Outbox) -> Result<Link, String>;
 }
 
-/// The real connector: takes the child over through `editor-service`'s
-/// stream source, and runs the session on one thread, blocked on its
-/// future, and the pull of the child's output on another
-/// (`docs/design/rust-library.md`, "Threads"). Every write goes straight
-/// from the session's thread through the child's streams, so it has one
-/// writer.
-#[derive(Debug, Default)]
-pub struct Threads {
+/// The real connector: takes the child over through its stream source `S`
+/// (the package runtime, [`editor_package::Runtime`], in the library), and
+/// runs the session on one thread, blocked on its future, and the pull of
+/// the child's output on another (`docs/design/rust-library.md`,
+/// "Threads"). Every write goes straight from the session's thread through
+/// the child's streams, so it has one writer.
+#[derive(Debug)]
+pub struct Threads<S> {
+    /// What takes a child over.
+    source: S,
     /// The threads started and not yet joined: those that have ended are
     /// joined at the next start, so none is left detached.
     workers: Mutex<Vec<JoinHandle<()>>>,
 }
 
-impl Threads {
-    /// A connector that has started nothing.
-    pub fn new() -> Self {
-        Self::default()
+impl<S: StreamSource> Threads<S> {
+    /// A connector over `source` that has started nothing.
+    pub fn new(source: S) -> Self {
+        Self {
+            source,
+            workers: Mutex::new(Vec::new()),
+        }
     }
 
     /// Runs the session over the taken-over child `streams`.
@@ -137,9 +157,11 @@ impl Threads {
     }
 }
 
-impl Connector for Threads {
+impl<S: StreamSource> Connector for Threads<S> {
     fn connect(&self, child: u64, setup: Setup, outbox: Outbox) -> Result<Link, String> {
-        let streams = editor_service::stream::take_over(child)
+        let streams = self
+            .source
+            .take_over(child)
             .map_err(|refused| format!("the take-over was refused: {refused:?}"))?;
         self.run(streams, setup, outbox)
     }

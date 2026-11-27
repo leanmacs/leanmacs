@@ -1,0 +1,107 @@
+# The crates acp's library may be built from, checked by `mise run deny`
+# (AGENTS.md, "Test behaviour, never text"), which runs cargo-deny's bans
+# over this crate's own graph:
+#
+#   cargo deny --locked --manifest-path packages/acp/rust/Cargo.toml \
+#     check --config packages/acp/rust/deny.toml -D unused-wrapper bans
+#
+# Given the manifest of a workspace member, cargo-deny roots the graph at
+# that crate alone, so the graph is acp's: its dependencies and its
+# dev-dependencies, and theirs, build edges included. An `allow` list that
+# is not empty refuses every crate it does not name ("crate '…' is not
+# explicitly allowed"), so this list is the whole of what acp's library and
+# its tests may contain: the package wrapper and what the wrapper itself is
+# built from, the Agent Client Protocol's SDK, `futures`, `serde` and
+# `serde_json`, which acp pins exactly, and the rest of their tree, and no
+# other crate of the editor's (docs/design/packages.md, "acp, ported, as
+# built"). It holds what the root `deny.toml` cannot: there, a crate nothing
+# depends on (`editor-ffi`, a `-std` binaries' crate,
+# `editor-package-runtime-header`, `editor-package-check`, another
+# package's crate) has no parent to name as a wrapper, so an edge from acp
+# to it cannot be refused. Neither `editor-service`, `editor-ffi` nor
+# `echo-service` is named, so an edge to any of them, a dev-dependency's
+# included, fails. The root `deny.toml` still holds that acp reaches the
+# definitions and the typed bounds through the wrapper alone, and that no
+# crate but acp's depends on the SDK, which an allow list cannot say.
+#
+# A crate added to acp's graph, a third party's included, gets its entry
+# here in the commit of its edge: a bump of the SDK that changes its tree
+# changes this list in the same commit (docs/design/agent-hosting.md,
+# "Upgrading the SDK"), listed again from
+# `cargo tree -p acp-service -e normal,build,dev --prefix none --target all`. cargo-deny
+# does not report an entry that matches no crate, so one is taken out with
+# the edge that needed it.
+
+[bans]
+multiple-versions = "allow"
+allow = [
+  { crate = "acp-service", reason = "acp's crate itself, the root of the graph" },
+  { crate = "agent-client-protocol", reason = "the Agent Client Protocol's SDK, pinned exactly (=5.5.1), which acp keeps inside its library" },
+  { crate = "agent-client-protocol-derive", reason = "the SDK's own derive macros" },
+  { crate = "agent-client-protocol-schema", reason = "the protocol's messages, reached through the SDK's re-export alone" },
+  { crate = "anyhow", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "cfg-if", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "convert_case", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "darling", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "darling_core", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "darling_macro", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "derive_more", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "derive_more-impl", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "editor-package", reason = "the package wrapper, the one crate of the editor's acp depends on" },
+  { crate = "editor-package-runtime", reason = "the runtime's C definitions, which the wrapper re-exports (`editor_package::raw`); no static" },
+  { crate = "editor-wait", reason = "the typed time bounds, which the wrapper re-exports (`editor_package::wait`); no static" },
+  { crate = "equivalent", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "fastrand", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "fixedbitset", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "foldhash", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "futures", reason = "the executor acp runs a session's connection on, and its `select_biased!` (=0.3.34)" },
+  { crate = "futures-channel", reason = "one of futures' own crates" },
+  { crate = "futures-concurrency", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "futures-core", reason = "one of futures' own crates" },
+  { crate = "futures-executor", reason = "one of futures' own crates" },
+  { crate = "futures-io", reason = "one of futures' own crates" },
+  { crate = "futures-lite", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "futures-macro", reason = "one of futures' own crates" },
+  { crate = "futures-sink", reason = "one of futures' own crates" },
+  { crate = "futures-task", reason = "one of futures' own crates" },
+  { crate = "futures-util", reason = "one of futures' own crates" },
+  { crate = "getrandom", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "hashbrown", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "heck", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "ident_case", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "indexmap", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "itoa", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "libc", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "memchr", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "once_cell", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "parking", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "pin-project", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "pin-project-internal", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "pin-project-lite", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "proc-macro2", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "quote", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "r-efi", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock), on the UEFI targets alone, which `cargo tree` leaves out without `--target all`" },
+  { crate = "rustc-hash", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "rustc_version", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "semver", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "serde", reason = "reads the protocol's names of the SDK's enums (=1.0.229)" },
+  { crate = "serde_core", reason = "serde's own core" },
+  { crate = "serde_derive", reason = "serde's own derive macros" },
+  { crate = "serde_json", reason = "writes a tool call's raw input as compact text, and reads the replay test's fixtures (=1.0.154)" },
+  { crate = "serde_with", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "serde_with_macros", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "slab", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "smallvec", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "strsim", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "strum", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "strum_macros", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "syn", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "tracing", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "tracing-attributes", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "tracing-core", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "unicode-ident", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "unicode-segmentation", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "unicode-xid", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "uuid", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+  { crate = "zmij", reason = "a dependency of the SDK's tree (agent-client-protocol =5.5.1, pinned by the root lock)" },
+]

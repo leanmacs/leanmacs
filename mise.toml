@@ -68,7 +68,7 @@ run = [
 ]
 
 [tasks.deny]
-description = "cargo-deny's bans over the dependency graph (deny.toml), stale `wrappers` errors; and over echo's crate's own graph, which may hold only the crates its deny.toml allows"
+description = "cargo-deny's bans over the dependency graph (deny.toml), stale `wrappers` errors; and over echo's and acp's crates' own graphs, each of which may hold only the crates its deny.toml allows"
 run = [
   "cargo deny --locked check -D unused-wrapper bans",
   # echo's library is built from the package wrapper and nothing else of
@@ -76,6 +76,10 @@ run = [
   # its config's `allow` list refuses every crate it does not name
   # (tests/packages/echo/rust/deny.toml says why the root's cannot).
   "cargo deny --locked --manifest-path tests/packages/echo/rust/Cargo.toml check --config tests/packages/echo/rust/deny.toml -D unused-wrapper bans",
+  # acp's library the same way: the package wrapper, the Agent Client
+  # Protocol's SDK and their tree, and nothing else of the editor's
+  # (packages/acp/rust/deny.toml).
+  "cargo deny --locked --manifest-path packages/acp/rust/Cargo.toml check --config packages/acp/rust/deny.toml -D unused-wrapper bans",
 ]
 
 [tasks.doc]

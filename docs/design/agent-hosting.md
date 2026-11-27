@@ -549,7 +549,11 @@ The SDK is pinned exactly (`agent-client-protocol = "=5.5.1"`, which pins
 its schema at `=1.21.2`), and only `acp-service` may depend on it
 (`deny.toml`). To upgrade: bump the pin, run `cargo test -p acp-service`,
 and treat any change to a `tests/fixtures/*.events` file, or a failed
-replay, as a change of wire shape to review.
+replay, as a change of wire shape to review. A bump that changes the SDK's
+tree changes acp's allow list, `packages/acp/rust/deny.toml`, in the same
+commit, listed again from `cargo tree -p acp-service -e normal,build,dev
+--prefix none --target all`: `mise run deny` refuses a crate of acp's graph
+that the list does not name.
 
 The replay fixtures are hand-written and synthetic: the repository is
 public, and no recorded transcript is committed, verbatim or scrubbed

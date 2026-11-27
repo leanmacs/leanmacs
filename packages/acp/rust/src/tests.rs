@@ -1,4 +1,5 @@
-//! The service on `editor-service`'s recording completer, its sessions
+//! The service on the package wrapper's recording completer
+//! (`editor_package::RecordingCompleter`), its sessions
 //! started by a connector that runs each on a `LocalPool` the test steps on
 //! its own thread, over a scripted transport whose agent side is the test.
 //! So every report the service makes is made on the test's thread, during a
@@ -10,7 +11,7 @@ use std::io;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use editor_service::RecordingCompleter;
+use editor_package::RecordingCompleter;
 use futures::SinkExt;
 use futures::channel::mpsc;
 use futures::executor::{LocalPool, LocalSpawner};

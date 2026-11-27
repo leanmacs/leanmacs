@@ -11,16 +11,18 @@ import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Services
 
 /-!
-# Linked tests: the acp crate on a real child, through the process service
+# Linked tests: acp's library on a real child, through the process service
 
-The crate's service as the job runner's package service, given the
+acp's library, loaded from where the build staged it and reached only
+through the glue's table, as the job runner's package service, given the
 package services the program's edge builds from acp's packages
 (`Editor.Headless.packageServices Acp.packages`, which the linked test's
 root hands in, as only the root may import the headless host), over the
 linked test kit's real services and the completion pump running over their
 table. A session runs as a consumer runs it, through `agents-api`'s job
 wrappers alone, on the scripted agent executable (`AcpTest.ScriptedAgent`),
-a real child of the core's process service that the crate takes over.
+a real child of the core's process service that the library takes over
+through the package runtime.
 
 - **AC4**: one session job opens the session with `AgentsApi.Job.open`,
   prompts it `ask`, and loops on `next`, posting each event; a second job
@@ -39,7 +41,7 @@ a real child of the core's process service that the crate takes over.
   every job here on the job protocol's model, its package waits as service
   waits. Once the session job has
   ended, the runner's flushes of the service `agents` and of the process
-  service complete, so the crate and the process service have finished
+  service complete, so the library and the process service have finished
   what was handed to them.
 
 Each wait is on an event (a job's outcome, a post, a flush's end), the
@@ -52,7 +54,7 @@ forced on the stepped host over the fake (`agents-api`'s
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
 def wiringSet.AcpTest.Linked.Acp.Real.Session : Editor.WiringSet :=
-  .wiring "the acp crate on a real child through the process service"
+  .wiring "acp's library on a real child through the process service"
     "only a real child exercises the take-over, the SDK's threads and the completion queue together"
 
 namespace AcpTest.Linked

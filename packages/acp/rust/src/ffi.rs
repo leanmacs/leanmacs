@@ -1,39 +1,141 @@
-//! The C functions the package's glue (`ffi/glue.c`) calls: the process's
-//! one [`Acp`] over the real completer and the real connector, the service
-//! [`SERVICE`], whose completions go to the process's completion queue,
-//! which the editor's completion pump reads.
+//! The library's C interface, declared with the package wrapper's macro
+//! (`editor_package::package!`): its two exported symbols, its init
+//! ([`editor_package_init`]) and its declaration
+//! ([`editor_package_declaration`]: interface 1, the shape of
+//! [`AcpFunctions`], which the glue's `ACP_INTERFACE` names, and the runtime
+//! the wrapper needs), and the table of C functions it answers
+//! ([`AcpFunctions`], behind the table's size), through which the package's
+//! glue (`ffi/glue.c`) forwards acp's `@[extern]` calls. A change to the
+//! table's shape is a new interface version, here and in the glue together.
 //!
-//! Plain data only, as `editor-ffi`'s bindings are: a text crosses as a
-//! pointer and a length, borrowed for the call
-//! ([`editor_service::buffer::borrow`]); a reply crosses as one [`RawReply`]
-//! filled in one call, its text the encoding `event.rs` defines, whose
-//! buffer the caller hands back with [`acp_ffi_free`]. A session's MCP
-//! servers cross as text too, one server a line ([`servers_of`]).
+//! The init is the wrapper's ([`editor_package::Package::export`]): it
+//! refuses no runtime and one smaller than the wrapper requires, the table
+//! unwritten; otherwise it makes the library's state once ([`Loaded::new`]:
+//! the service `acp` registered through the runtime, and the process's one
+//! [`Acp`] over it and a connector that takes children over through the
+//! runtime), writes the table and answers 0. A second init answers the same
+//! table. Each table function reaches the state through [`PACKAGE`], and
+//! answers false, or none, before the library is loaded.
+//!
+//! Plain data only, in the wrapper's FFI-safe types, so no function here has
+//! `unsafe` of its own: each is declared with the wrapper's `functions!`,
+//! whose body sees what the caller lent borrowed for the call alone. A text
+//! crosses as [`Bytes`], read as its `&[u8]` with U+FFFD in place of each
+//! invalid sequence (a Lean string is UTF-8); a reply as one [`RawReply`]
+//! written through an [`Out`] in a single call, its text the encoding
+//! `event.rs` defines, a [`Lent`] the glue hands back through the table's
+//! `free` ([`editor_package::buffer::free`]), so this library's allocator
+//! frees what it made. A session's MCP servers cross as text too, one server
+//! a line ([`servers_of`]). The table is a static of the library, valid for
+//! the life of the process, since the core never unloads the library.
 
-use std::sync::LazyLock;
-
-use editor_service::Service;
-use editor_service::buffer;
+use editor_package::buffer::{Bytes, Lent, Out};
+use editor_package::{Package, Runtime, Service, functions, package};
 
 use crate::event::fields;
 use crate::session::{McpServer, Order, Setup};
 use crate::{Acp, Threads};
 
-/// The service, as the completion queue names it.
-pub static SERVICE: Service = Service::named("acp");
+/// The name acp's service registers under, through the runtime.
+pub const SERVICE_NAME: &str = "acp";
 
-/// The process's service.
-pub(crate) static ACP: LazyLock<Acp<&'static Service, Threads>> =
-    LazyLock::new(|| Acp::new(&SERVICE, Threads::new()));
+/// The library, once its init has run: the process's acp service, which
+/// reports through the runtime's service and takes children over through
+/// the runtime.
+pub struct Loaded {
+    /// The process's acp service.
+    acp: Acp<Service, Threads<Runtime>>,
+}
 
-/// A reply as it crosses the boundary.
+impl Loaded {
+    /// The library's init: registers the service `acp` through `runtime`
+    /// and makes the process's one [`Acp`] over it, whose connector takes
+    /// children over through `runtime`.
+    pub fn new(runtime: Runtime) -> Self {
+        Self {
+            acp: Acp::new(runtime.register(SERVICE_NAME), Threads::new(runtime)),
+        }
+    }
+}
+
+/// The library's service, once its init has run; none before.
+fn acp() -> Option<&'static Acp<Service, Threads<Runtime>>> {
+    PACKAGE.state().map(|loaded| &loaded.acp)
+}
+
+/// A reply as it crosses the boundary, mirrored by the glue's
+/// `acp_raw_reply`: `{ acp_lent text; }`.
 #[repr(C)]
+#[derive(Debug)]
 pub struct RawReply {
-    /// The reply's text: a buffer of `text_len` bytes of UTF-8, owned by the
-    /// caller until it is handed back with [`acp_ffi_free`].
-    pub text: *mut u8,
-    /// The length of `text` in bytes.
-    pub text_len: usize,
+    /// The reply's text, UTF-8, the encoding `event.rs` defines, lent by
+    /// this library until it is handed back through the table's `free`.
+    pub text: Lent,
+}
+
+/// acp's functions, behind the table's size, mirrored by the glue's
+/// `acp_table` in this order.
+#[repr(C)]
+#[derive(Debug)]
+pub struct AcpFunctions {
+    /// Opens a new session on a child ([`Acp::open`]).
+    pub open: extern "C" fn(request: u64, child: u64, cwd: Bytes<'_>, mcp: Bytes<'_>) -> bool,
+    /// Loads a stored session on a child ([`Acp::open`] with
+    /// [`Setup::load`]).
+    pub load: extern "C" fn(
+        request: u64,
+        child: u64,
+        cwd: Bytes<'_>,
+        mcp: Bytes<'_>,
+        session: Bytes<'_>,
+    ) -> bool,
+    /// Waits for a session's next events ([`Acp::next`]).
+    pub next: extern "C" fn(request: u64, session: u64) -> bool,
+    /// Sends a session a prompt ([`Acp::send`]).
+    pub prompt: extern "C" fn(request: u64, session: u64, text: Bytes<'_>) -> bool,
+    /// Cancels a session's turn ([`Acp::send`]).
+    pub cancel_turn: extern "C" fn(request: u64, session: u64) -> bool,
+    /// Sets a session's mode ([`Acp::send`]).
+    pub set_mode: extern "C" fn(request: u64, session: u64, id: Bytes<'_>) -> bool,
+    /// Answers a parked permission request ([`Acp::answer`]).
+    pub answer: extern "C" fn(request: u64, session: u64, ticket: u64, option: Bytes<'_>) -> bool,
+    /// Takes a request's reply into a [`RawReply`] ([`Acp::take`]).
+    pub take: extern "C" fn(request: u64, out: Out<'_, RawReply>) -> bool,
+    /// Withdraws a request ([`Acp::cancel`]).
+    pub withdraw: extern "C" fn(request: u64) -> bool,
+    /// Asks for a flush ([`Acp::flush`]).
+    pub flush: extern "C" fn(request: u64),
+    /// Hands back a reply's text, freed by this library's allocator
+    /// ([`editor_package::buffer::free`]).
+    pub free: extern "C" fn(text: Lent),
+}
+
+package! {
+    interface 1;
+
+    /// acp's library: its init ([`Loaded::new`]) and its table.
+    pub static PACKAGE: Package<Loaded, AcpFunctions> = Package::new(
+        Loaded::new,
+        AcpFunctions {
+            open,
+            load,
+            next,
+            prompt,
+            cancel_turn,
+            set_mode,
+            answer,
+            take,
+            withdraw,
+            flush,
+            free: editor_package::buffer::free,
+        },
+    );
+}
+
+/// The text of `bytes`, U+FFFD in place of each invalid sequence; a Lean
+/// string is UTF-8.
+fn text_of(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 /// The MCP servers `text` lists, one a line: `server`, then `name=`,
@@ -69,17 +171,6 @@ pub fn servers_of(text: &str) -> Option<Vec<McpServer>> {
         .collect()
 }
 
-/// The text of `len` bytes at `text`, U+FFFD in place of each invalid
-/// sequence; a Lean string is UTF-8.
-///
-/// # Safety
-///
-/// `text` points to `len` readable bytes.
-unsafe fn text_of(text: *const u8, len: usize) -> String {
-    // SAFETY: the caller guarantees the pointer and the length.
-    String::from_utf8_lossy(unsafe { buffer::borrow(text, len) }).into_owned()
-}
-
 /// The setup of a session in `cwd` with the MCP servers `mcp` lists
 /// ([`servers_of`]), loading the session `load` when there is one; `None`
 /// when `mcp` does not read.
@@ -91,174 +182,92 @@ fn setup_of(cwd: String, mcp: &str, load: Option<String>) -> Option<Setup> {
     })
 }
 
-/// Opens a new session on the streaming child `child`, in the directory of
-/// the `cwd_len` bytes at `cwd`, with the MCP servers the `mcp_len` bytes at
-/// `mcp` list ([`servers_of`]), as the request `request` ([`Acp::open`]):
-/// whether it started.
-///
-/// # Safety
-///
-/// `cwd` points to `cwd_len` readable bytes, and `mcp` to `mcp_len`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn acp_ffi_open(
-    request: u64,
-    child: u64,
-    cwd: *const u8,
-    cwd_len: usize,
-    mcp: *const u8,
-    mcp_len: usize,
-) -> bool {
-    // SAFETY: the caller guarantees both pointers and lengths.
-    let (cwd, mcp) = unsafe { (text_of(cwd, cwd_len), text_of(mcp, mcp_len)) };
-    setup_of(cwd, &mcp, None).is_some_and(|setup| ACP.open(request, child, setup))
-}
+functions! {
+    /// Opens a new session on the streaming child `child`, in the directory
+    /// `cwd`, with the MCP servers `mcp` lists ([`servers_of`]), as the
+    /// request `request` ([`Acp::open`]): whether it started.
+    extern "C" fn open(request: u64, child: u64, cwd: Bytes<'_>, mcp: Bytes<'_>) -> bool {
+        acp().is_some_and(|acp| {
+            setup_of(text_of(cwd), &text_of(mcp), None)
+                .is_some_and(|setup| acp.open(request, child, setup))
+        })
+    }
 
-/// Loads the session whose agent's id is the `session_len` bytes at
-/// `session` (`session/load`) on the streaming child `child`, in the
-/// directory of the `cwd_len` bytes at `cwd`, with the MCP servers the
-/// `mcp_len` bytes at `mcp` list ([`servers_of`]), as the request `request`
-/// ([`Acp::open`]): whether it started. It completes as an open does, once
-/// the agent has replayed the session's history, which the session's first
-/// `next` takes.
-///
-/// # Safety
-///
-/// `cwd` points to `cwd_len` readable bytes, `mcp` to `mcp_len` and
-/// `session` to `session_len`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn acp_ffi_load(
-    request: u64,
-    child: u64,
-    cwd: *const u8,
-    cwd_len: usize,
-    mcp: *const u8,
-    mcp_len: usize,
-    session: *const u8,
-    session_len: usize,
-) -> bool {
-    // SAFETY: the caller guarantees the three pointers and lengths.
-    let (cwd, mcp, session) = unsafe {
-        (
-            text_of(cwd, cwd_len),
-            text_of(mcp, mcp_len),
-            text_of(session, session_len),
-        )
-    };
-    setup_of(cwd, &mcp, Some(session)).is_some_and(|setup| ACP.open(request, child, setup))
-}
+    /// Loads the session whose agent's id is `session` (`session/load`) on
+    /// the streaming child `child`, in the directory `cwd`, with the MCP
+    /// servers `mcp` lists ([`servers_of`]), as the request `request`
+    /// ([`Acp::open`]): whether it started. It completes as an open does,
+    /// once the agent has replayed the session's history, which the
+    /// session's first `next` takes.
+    extern "C" fn load(
+        request: u64,
+        child: u64,
+        cwd: Bytes<'_>,
+        mcp: Bytes<'_>,
+        session: Bytes<'_>,
+    ) -> bool {
+        acp().is_some_and(|acp| {
+            setup_of(text_of(cwd), &text_of(mcp), Some(text_of(session)))
+                .is_some_and(|setup| acp.open(request, child, setup))
+        })
+    }
 
-/// Waits for the session `session`'s next events, as the request
-/// `request` ([`Acp::next`]): whether it started.
-#[unsafe(no_mangle)]
-pub extern "C" fn acp_ffi_next(request: u64, session: u64) -> bool {
-    ACP.next(request, session)
-}
+    /// Waits for the session `session`'s next events, as the request
+    /// `request` ([`Acp::next`]): whether it started.
+    extern "C" fn next(request: u64, session: u64) -> bool {
+        acp().is_some_and(|acp| acp.next(request, session))
+    }
 
-/// Sends the session `session` a prompt of the `len` bytes at `text`, as the
-/// request `request` ([`Acp::send`]): whether it started.
-///
-/// # Safety
-///
-/// `text` points to `len` readable bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn acp_ffi_prompt(
-    request: u64,
-    session: u64,
-    text: *const u8,
-    len: usize,
-) -> bool {
-    // SAFETY: the caller guarantees the pointer and the length.
-    let text = unsafe { text_of(text, len) };
-    ACP.send(request, session, Order::Prompt(text))
-}
+    /// Sends the session `session` a prompt of `text`, as the request
+    /// `request` ([`Acp::send`]): whether it started.
+    extern "C" fn prompt(request: u64, session: u64, text: Bytes<'_>) -> bool {
+        acp().is_some_and(|acp| acp.send(request, session, Order::Prompt(text_of(text))))
+    }
 
-/// Cancels the session `session`'s current turn, as the request `request`
-/// ([`Acp::send`]): whether it started.
-#[unsafe(no_mangle)]
-pub extern "C" fn acp_ffi_cancel_turn(request: u64, session: u64) -> bool {
-    ACP.send(request, session, Order::Cancel)
-}
+    /// Cancels the session `session`'s current turn, as the request
+    /// `request` ([`Acp::send`]): whether it started.
+    extern "C" fn cancel_turn(request: u64, session: u64) -> bool {
+        acp().is_some_and(|acp| acp.send(request, session, Order::Cancel))
+    }
 
-/// Sets the session `session`'s mode to the `len` bytes at `id`, as the
-/// request `request` ([`Acp::send`]): whether it started.
-///
-/// # Safety
-///
-/// `id` points to `len` readable bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn acp_ffi_set_mode(
-    request: u64,
-    session: u64,
-    id: *const u8,
-    len: usize,
-) -> bool {
-    // SAFETY: the caller guarantees the pointer and the length.
-    let id = unsafe { text_of(id, len) };
-    ACP.send(request, session, Order::SetMode(id))
-}
+    /// Sets the session `session`'s mode to `id`, as the request `request`
+    /// ([`Acp::send`]): whether it started.
+    extern "C" fn set_mode(request: u64, session: u64, id: Bytes<'_>) -> bool {
+        acp().is_some_and(|acp| acp.send(request, session, Order::SetMode(text_of(id))))
+    }
 
-/// Answers the session `session`'s parked permission request `ticket` with
-/// the option of the `len` bytes at `option`, as the request `request`
-/// ([`Acp::answer`]): whether it started.
-///
-/// # Safety
-///
-/// `option` points to `len` readable bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn acp_ffi_answer(
-    request: u64,
-    session: u64,
-    ticket: u64,
-    option: *const u8,
-    len: usize,
-) -> bool {
-    // SAFETY: the caller guarantees the pointer and the length.
-    let option = unsafe { text_of(option, len) };
-    ACP.answer(request, session, ticket, &option)
-}
+    /// Answers the session `session`'s parked permission request `ticket`
+    /// with the option `option`, as the request `request` ([`Acp::answer`]):
+    /// whether it started.
+    extern "C" fn answer(request: u64, session: u64, ticket: u64, option: Bytes<'_>) -> bool {
+        acp().is_some_and(|acp| acp.answer(request, session, ticket, &text_of(option)))
+    }
 
-/// Takes the reply to the request `request` ([`Acp::take`]): returns whether
-/// there was one, and if so fills `out` with its text.
-///
-/// # Safety
-///
-/// `out` points to a writable [`RawReply`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn acp_ffi_take(request: u64, out: *mut RawReply) -> bool {
-    let Some(reply) = ACP.take(request) else {
-        return false;
-    };
-    let (text, text_len) = buffer::lend(reply.encode().into_bytes());
-    // SAFETY: the caller guarantees `out` is writable.
-    unsafe { out.write(RawReply { text, text_len }) };
-    true
-}
+    /// Takes the reply to the request `request` ([`Acp::take`]): returns
+    /// whether there was one, and if so writes its text to `out`.
+    extern "C" fn take(request: u64, out: Out<'_, RawReply>) -> bool {
+        let Some(reply) = acp().and_then(|acp| acp.take(request)) else {
+            return false;
+        };
+        out.put(RawReply {
+            text: Lent::of(reply.encode().into_bytes()),
+        });
+        true
+    }
 
-/// Withdraws the request `request` ([`Acp::cancel`]), and returns whether it
-/// was in use.
-#[unsafe(no_mangle)]
-pub extern "C" fn acp_ffi_withdraw(request: u64) -> bool {
-    ACP.cancel(request)
-}
+    /// Withdraws the request `request` ([`Acp::cancel`]), and returns
+    /// whether it was in use.
+    extern "C" fn withdraw(request: u64) -> bool {
+        acp().is_some_and(|acp| acp.cancel(request))
+    }
 
-/// Asks for `request` to be completed on the completion queue once every
-/// `open` and order started before has been ([`Acp::flush`]).
-#[unsafe(no_mangle)]
-pub extern "C" fn acp_ffi_flush(request: u64) {
-    ACP.flush(request);
-}
-
-/// Takes back a buffer a [`RawReply`] lent, and frees it.
-///
-/// # Safety
-///
-/// `text` and `len` are the pointer and length of a reply's text, which has
-/// not been handed back and is not used again.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn acp_ffi_free(text: *mut u8, len: usize) {
-    // SAFETY: the caller guarantees the buffer was lent and is handed back
-    // once.
-    unsafe { buffer::reclaim(text, len) };
+    /// Asks for `request` to be completed through the runtime once every
+    /// `open` and order started before has been ([`Acp::flush`]).
+    extern "C" fn flush(request: u64) {
+        if let Some(acp) = acp() {
+            acp.flush(request);
+        }
+    }
 }
 
 #[cfg(test)]
