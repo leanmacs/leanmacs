@@ -467,7 +467,10 @@ your glue mirrors. Your glue passes the version it was compiled for to the
 core's load (`editor_ffi_package_load`), and the editor refuses, before it
 calls anything of the library, one that declares nothing, another
 interface version, or a newer runtime than the editor's, with a message
-naming your package and both versions. Change the interface version, in
+naming your package and both versions. The editor opens the library to
+read its declaration, so the library's load-time initialisers (C
+constructors, Rust static initialisers) have run even when it is refused:
+keep them free of work that needs the runtime. Change the interface version, in
 the library and the glue together, whenever the table's shape changes.
 
 - In Rust, with the package wrapper (`editor-package`), the macro writes

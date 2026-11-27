@@ -55,8 +55,12 @@
 //! share. The core reads it before it calls anything of the library, and
 //! refuses a library that declares nothing, one whose declaration ends
 //! before `interface` ([`DECLARATION_REQUIRED`]), one of another interface
-//! than the glue's, and one that needs more runtime than the core's; a
-//! refused library runs none of its code. The declaration is append-only
+//! than the glue's, and one that needs more runtime than the core's; the
+//! core never calls a refused library's init or table. The library is
+//! opened before its declaration is read, though, and opening it with the
+//! platform's loader runs its load-time initialisers (C constructors, Rust
+//! static initialisers), so the check does not keep all of its code from
+//! running (`editor_package_library::load`). The declaration is append-only
 //! like the runtime: a member is added at its end, and the core reads only
 //! the members its `size` covers.
 //!

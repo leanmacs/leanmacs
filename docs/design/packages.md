@@ -3583,8 +3583,15 @@ version, append-only like the runtime (`DECLARATION_REQUIRED` is the end of
 and refuses, naming the package and both versions, a library built for a
 newer runtime or another interface ("A package's library, staged and
 loaded, as built"). It was chosen over the init's protocol because a
-static is read before any of the library's code runs: a refused library
-registers no service and starts no thread. Until phase 4 any library
+static is read before the core calls anything of the library: a refused
+library's init is never called, so it is handed no runtime and registers
+no service. That is not a guarantee that none of its code runs: the
+library is opened before its declaration is read, and opening it with
+`dlopen` runs its load-time initialisers (ELF `.init_array`, Mach-O
+`__mod_init_func`: C constructors, Rust static initialisers), which may do
+anything, a thread started among it. A check that runs no code of the
+library would have to read the declaration without `dlopen`, by parsing
+the object file, or verify a hash or signature before the open. Until phase 4 any library
 exporting `editor_package_init` was taken as the package's.
 
 **The model and the contract.** `editor_package_library::runtime::model::ModelRuntime`
@@ -3912,8 +3919,12 @@ runtime)`) refuses in this order, each refusal a tag:
 | 4 | runtime too small | only then the init is called, and answers 1: its own guard behind the core's |
 | 5 | failed init | the init answers anything else, or 0 with no table |
 
-The new tags were appended (6, 7, 8), so 1 to 5 keep their meaning. A
-library refused by its declaration runs none of its code. The adapter
+The new tags were appended (6, 7, 8), so 1 to 5 keep their meaning. The
+core never calls the init or the table of a library refused by its
+declaration, but the library was opened first, and `dlopen` has already
+run its load-time initialisers (C constructors, Rust static
+initialisers): the declaration is no gate that keeps a mismatched or
+untrusted library's code from running. The adapter
 reads the declaration's `size` alone first, then only the members it
 covers, so an older, shorter declaration is never read past its end. The C
 function a glue calls is

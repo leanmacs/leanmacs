@@ -30,8 +30,17 @@
 //! 9. An init that answers anything else, or 0 with no table, is
 //!    [`LoadRefusal::InitFailed`], so no status is left unmapped.
 //!
-//! So a library refused by its declaration runs none of its code: the
-//! declaration is a static, read before anything is called.
+//! So the core never calls the init, or anything of the table, of a
+//! library refused by its declaration: the declaration is a static, read
+//! before the core calls anything. That is not a guarantee that none of
+//! the library's code runs. The library is opened (step 2) before its
+//! declaration is read, and opening it with the platform's loader
+//! (`dlopen`) runs its load-time initialisers (ELF `.init_array`, Mach-O
+//! `__mod_init_func`: C constructors, Rust static initialisers), so a
+//! library refused here has already run those in the editor's process. A
+//! check that no code of a library runs would have to read the declaration
+//! without opening it, by parsing the object file, or verify a hash or a
+//! signature before `open`.
 //!
 //! Each refusal crosses as its [`LoadRefusal::tag`], 1 to 8, the tags of
 //! the declaration's refusals (6 to 8) appended after the five that came
