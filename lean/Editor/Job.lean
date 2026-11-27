@@ -7,6 +7,7 @@ import Editor.PackageService
 import Editor.Process
 import Editor.Process.Environment
 import Editor.SyntaxTree.Registration
+import Editor.UrlOpener
 
 /-!
 # Jobs
@@ -255,6 +256,18 @@ one: the hosts give the library's binding, `Fuzzy.real`. Its contract is a
 list of its own, `JobContract.fuzzyProperties`: the fuzzy port's contract,
 asked from inside a job, and that it registers no wait.
 
+The system's URL opener is one more, and is asked from a job alone, since
+an open may block until the system has the request:
+`JobRequest.urlOpener`, whose requests are `UrlOpenerRequest`s
+(`Editor/UrlOpener.lean`), with the operation `Job.openUrl`. Its model is
+`JobModel.urlOpener`, a `UrlOpenerModel`, which answers at once and moves
+no clock; the runner's service is a `UrlOpenerHandler`
+(`Job.Services.urlOpener`), answered on the job's own thread, as the
+matcher is, which is `UrlOpener.absent` unless the runner is given one:
+the window mode gives the library's binding over the desktop's opener
+(`UrlOpener.Real.system`), and the headless mode none. Its contract is
+`JobContract.urlOpenerProperties`.
+
 ## The pieces
 
 - the port, here: the requests, the reply to each, the operations a job is
@@ -272,6 +285,8 @@ asked from inside a job, and that it registers no wait.
   project search, `Editor/Grep/Model.lean`;
 - the grammar registration's data, `Editor/SyntaxTree/Registration.lean`,
   and the pure model of the registry, `Editor/SyntaxTree/Registration/Model.lean`;
+- the URL opener's requests as data, `Editor/UrlOpener.lean`, and its pure
+  model, `Editor/UrlOpener/Model.lean`;
 - its pure model, `Editor/Job/Model.lean`, which tests run against;
 - its contract, `Editor/Job/Contract.lean`: three lists of properties, of
   the clock, of the file requests and of the process requests, run against
@@ -331,6 +346,9 @@ inductive JobRequest where
   /-- Register a grammar with the syntax service
   (`Editor/SyntaxTree/Registration.lean`), and wait for its answer. -/
   | grammar (request : GrammarRequest)
+  /-- Ask the system's URL opener (`Editor/UrlOpener.lean`): answered on the
+  job's own thread once the system has taken the URL or refused it. -/
+  | urlOpener (request : UrlOpenerRequest)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request: the clock's reading for `now`,
@@ -350,6 +368,7 @@ def JobRequest.Reply : JobRequest → Type
   | .snapshot _ => Option String
   | .package _ => PackageReply
   | .grammar request => request.Reply
+  | .urlOpener request => request.Reply
 
 /-- The job port: `JobRequest` and the reply to each request. -/
 abbrev jobPort : Port :=
@@ -409,6 +428,12 @@ that names no snapshot, or one that was released. It is answered at once
 and never waits. -/
 def readSnapshot (id : SnapshotId) : JobM (Option String) :=
   ExceptT.lift (Program.request (port := jobPort) (.snapshot id))
+
+/-- Hands `url` to the system's URL opener (`Editor/UrlOpener.lean`):
+`.ok` once the system took it, and the reason otherwise. It may block until
+the system has the request, which is why it is a job's. -/
+def Job.openUrl (url : String) : JobM (Except String Unit) :=
+  ExceptT.lift (Program.request (port := jobPort) (.urlOpener (.openUrl url)))
 
 /-- `program`, a program over the fuzzy port, as one over the job port that
 ends with its value or with the error a fuzzy request was answered: each

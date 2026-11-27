@@ -47,6 +47,10 @@ model and the runner over the fake grammar service, each given a table that
 describes the fixture library, and against the runner over the library's
 syntax worker, which loads the built fixture library, so all three answer a
 registration of its grammar with its name and each refusal alike.
+The URL opener request has one too, `urlOpenerProperties`, before the
+grammar registration's: against the model's opener, against the runner over
+the fake clock given the opener's model, and against the runner given the
+library's recording and failing openers, each read back for what it took.
 The fuzzy request has one too, `fuzzyProperties`, after them: against the
 model, against the runner over the fake clock given the fuzzy model's
 handler, and against the runner given the library's binding. What needs
@@ -1751,6 +1755,85 @@ def fuzzyProperties : List Property :=
     FuzzyContract.properties.map fun property =>
       { name := s!"a fuzzy request in a job: {property.name}"
         holds := Job.embedFuzzy property.holds }
+
+/-! ## The URL opener
+
+A property of the URL opener request (`JobRequest.urlOpener`) is a job that
+opens URLs and returns whether it was answered as it should be, with what
+the opener must have been handed once it has ended, in order, and the
+reason the opener refuses with, if it does. Whoever runs the list gives the
+runner an opener that takes every URL, or one that refuses every one with
+the property's reason, and reads back what it took: the job model's opener
+(`UrlOpenerModel`), the model's handler for the fake (`UrlOpenerModel.fake`),
+and the library's recording and failing openers for the real binding, so no
+run launches anything. An open waits for nothing on the job clock. -/
+
+/-- One property of the URL opener request. -/
+structure UrlOpenerProperty where
+  /-- What must hold, as a sentence; printed when it does not. -/
+  name : String
+  /-- The reason the opener the job runs against refuses every URL with;
+  `none` for one that takes every URL. -/
+  refusal : Option String := none
+  /-- The job: whether its answers were the property's. -/
+  job : JobM Bool
+  /-- What the opener has taken once the job has ended, oldest first. -/
+  opened : Array String
+
+/-- URLs that hold a space, `&`, `#` and characters outside ASCII, the
+first twice. -/
+def openedUrls : Array String :=
+  #["https://example.com/a b?x=1&y=2#frag", "mailto:café@example.com", "https://例え.jp/日本語",
+    "https://example.com/a b?x=1&y=2#frag"]
+
+/-- Whether an open was answered that the system took it. -/
+def opened? : Except String Unit → Bool
+  | .ok () => true
+  | .error _ => false
+
+/-- Whether an open was answered the refusal `reason`. -/
+def openRefusedWith (reason : String) : Except String Unit → Bool
+  | .ok () => false
+  | .error said => said == reason
+
+/-- The properties every implementation of the job port's URL opener
+request has. -/
+def urlOpenerProperties : List UrlOpenerProperty :=
+  [{  name :=
+        "each URL a job opens reaches the opener once, in order and byte for byte, and each is answered ok"
+      job := do
+        let answers ← openedUrls.mapM Job.openUrl
+        return answers.all opened?
+      opened := openedUrls },
+    { name :=
+        "a URL the opener refuses is answered its reason, as an error the job reads, and the job goes on to open the next"
+      refusal := some "aucun gestionnaire: é"
+      job := do
+        let first ← Job.openUrl "https://example.com"
+        let second ← Job.openUrl "mailto:x@example.com"
+        return openRefusedWith "aucun gestionnaire: é" first &&
+            openRefusedWith "aucun gestionnaire: é" second
+      opened := #[] },
+    { name :=
+        "an open is answered without a wait on the job clock: the job goes on, and the clock has not gone back across it"
+      job := do
+        let before ← now
+        let answer ← Job.openUrl "https://example.com/clock"
+        return before ≤ (← now) && opened? answer
+      opened := #["https://example.com/clock"] }]
+
+/-- Runs each of `properties` with `run`, which runs the job to its end
+against an opener that refuses with the property's reason, if it has one,
+and answers whether the job held and what the opener took, and returns the
+names of those that did not hold. -/
+def urlOpenerFailures (run : Option String → JobM Bool → IO (Option Bool × Array String))
+    (properties : List UrlOpenerProperty) : IO (List String) :=
+  properties.filterMapM fun property => do
+    let (held, opened) ← run property.refusal property.job
+    if held == some true && opened == property.opened then
+      return none
+    else
+      return some s!"{property.name} (held {repr held}, opened {repr opened})"
 
 /-! ## Grammar registrations
 

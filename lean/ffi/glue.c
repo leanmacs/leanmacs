@@ -2690,6 +2690,98 @@ lean_obj_res editor_glue_clipboard_live(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_clipboard_live()));
 }
 
+// ---- The URL opener ----
+//
+// A URL opener handle is the library's, held by Lean as an external object
+// freed by its finaliser, as a clipboard is.
+
+// The Rust library's URL opener.
+typedef struct editor_ffi_url_opener editor_ffi_url_opener;
+editor_ffi_url_opener *editor_ffi_url_opener_recording(void);
+editor_ffi_url_opener *editor_ffi_url_opener_failing(const uint8_t *reason,
+                                                     size_t reason_len);
+editor_ffi_url_opener *editor_ffi_url_opener_system(void);
+bool editor_ffi_url_opener_open(const editor_ffi_url_opener *opener,
+                                const uint8_t *url, size_t url_len,
+                                editor_ffi_raw_text *out);
+bool editor_ffi_url_opener_opened(const editor_ffi_url_opener *opener,
+                                  editor_ffi_raw_text *out);
+void editor_ffi_url_opener_free(editor_ffi_url_opener *opener);
+uint64_t editor_ffi_url_opener_live(void);
+
+static lean_external_class *url_opener_class;
+static pthread_once_t url_opener_class_once = PTHREAD_ONCE_INIT;
+
+// Runs when Lean drops the last reference to a URL opener.
+static void url_opener_finalize(void *opener) {
+  editor_ffi_url_opener_free(opener);
+}
+
+// A URL opener holds no Lean objects, so there is nothing to visit.
+static void url_opener_foreach(void *opener, b_lean_obj_arg visitor) {
+  (void)opener;
+  (void)visitor;
+}
+
+static void url_opener_class_register(void) {
+  url_opener_class =
+      lean_register_external_class(url_opener_finalize, url_opener_foreach);
+}
+
+// A new external object over `opener`.
+static lean_obj_res url_opener_handed(editor_ffi_url_opener *opener) {
+  pthread_once(&url_opener_class_once, url_opener_class_register);
+  return lean_io_result_mk_ok(lean_alloc_external(url_opener_class, opener));
+}
+
+// `Editor.Ffi.UrlOpener.recording : IO UrlOpener`
+lean_obj_res editor_glue_url_opener_recording(void) {
+  return url_opener_handed(editor_ffi_url_opener_recording());
+}
+
+// `Editor.Ffi.UrlOpener.failing : @& String → IO UrlOpener`
+lean_obj_res editor_glue_url_opener_failing(b_lean_obj_arg reason) {
+  return url_opener_handed(
+      editor_ffi_url_opener_failing(string_bytes(reason), string_len(reason)));
+}
+
+// `Editor.Ffi.UrlOpener.system : IO UrlOpener`
+lean_obj_res editor_glue_url_opener_system(void) {
+  return url_opener_handed(editor_ffi_url_opener_system());
+}
+
+// `Editor.Ffi.UrlOpener.openUrl : @& UrlOpener → @& String → IO (Option
+// String)`: `none` when the system took it, and `some` of the reason
+// otherwise.
+lean_obj_res editor_glue_url_opener_open(b_lean_obj_arg opener,
+                                         b_lean_obj_arg url) {
+  editor_ffi_raw_text reason;
+  if (editor_ffi_url_opener_open(lean_get_external_data(opener),
+                                 string_bytes(url), string_len(url), &reason)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *some = lean_alloc_ctor(1, 1, 0);
+  lean_ctor_set(some, 0, text_take(reason));
+  return lean_io_result_mk_ok(some);
+}
+
+// `Editor.Ffi.UrlOpener.openedRaw : @& UrlOpener → IO (Option String)`:
+// `some` of what a recording opener was handed, and `none` for any other.
+lean_obj_res editor_glue_url_opener_opened(b_lean_obj_arg opener) {
+  editor_ffi_raw_text opened;
+  if (!editor_ffi_url_opener_opened(lean_get_external_data(opener), &opened)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *some = lean_alloc_ctor(1, 1, 0);
+  lean_ctor_set(some, 0, text_take(opened));
+  return lean_io_result_mk_ok(some);
+}
+
+// `Editor.Ffi.UrlOpener.live : IO UInt64`
+lean_obj_res editor_glue_url_opener_live(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_url_opener_live()));
+}
+
 // ---- The exec and the main bundle ----
 
 void editor_ffi_exec(const uint8_t *words, size_t words_len,

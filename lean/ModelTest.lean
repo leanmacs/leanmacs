@@ -943,7 +943,11 @@ The job port's contract (`Editor/Job/Contract.lean`) is run here against the
 model and against the runner over the fake clock, and its file properties
 against the model of files and against the runner over the fake of the file
 service, in a made-up directory: no file is touched. `contract-test` runs
-the same lists against the runner over the Rust library's services.
+the same lists against the runner over the Rust library's services. Its URL
+opener properties (`urlOpenerJobFailures`) run against the job model's
+opener and the runner given the opener's model, which record what they
+take, so nothing is launched; `urlOpenerWaitChecks` pins that an open
+moves neither clock and registers no wait.
 
 The cases that cross the text port and the job port
 (`Editor/File/Cases.lean`) are played here on the two models
@@ -1543,6 +1547,7 @@ pure code on a promise: pure code blocked in `Task.get` on a pool thread
 makes Lean add a thread to the pool, which a later burst can land on. -/
 def checks : List Check :=
   typedPathChecks ++ poolChecks ++ programChecks ++ jobModelChecks ++ snapshotReadChecks ++
+    urlOpenerWaitChecks ++
     protocolChecks ++
     waitChecks ++
     activityChecks ++
@@ -1773,6 +1778,7 @@ def main : IO UInt32 := do
       (← ModelTest.jobRunnerFailures) ++
       (← ModelTest.postFailures) ++
       (← ModelTest.fuzzyJobFailures) ++
+      (← ModelTest.urlOpenerJobFailures) ++
       (← ModelTest.grammarJobFailures) ++
       (← ModelTest.fileFailures) ++
       (← ModelTest.processFailures) ++
@@ -1791,6 +1797,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {(Editor.JobContract.grammarProperties ModelTest.modelFixture).length} grammar properties of the job model and of the job runner over the fake grammar service, each with the fixture grammar library's table, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.urlOpenerProperties.length} URL opener properties of both, and {(Editor.JobContract.grammarProperties ModelTest.modelFixture).length} grammar properties of the job model and of the job runner over the fake grammar service, each with the fixture grammar library's table, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
   (← IO.getStdout).flush
   IO.Process.exit 0

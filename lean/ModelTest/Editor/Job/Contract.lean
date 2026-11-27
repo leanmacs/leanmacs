@@ -16,13 +16,15 @@ import Editor.Program
 import Editor.Test.Jobs
 import Editor.Text
 import Editor.Text.Model
+import Editor.UrlOpener.Model
 import ModelTest.Check
 
 /-!
 # Model tests: `Editor/Job/Contract.lean`
 
 The model tests of `Editor/Job/Contract.lean`: `jobRunnerFailures`,
-`postFailures`, `snapshotJobFailures`, `fuzzyJobFailures`, `grammarJobFailures`, `fileFailures`,
+`postFailures`, `snapshotJobFailures`, `fuzzyJobFailures`, `urlOpenerJobFailures`,
+`urlOpenerWaitChecks`, `grammarJobFailures`, `fileFailures`,
 `processFailures`, `fileWatchFailures`, `jobModelFailures` and
 `snapshotReadChecks`. The job port's contract is run here against the job model
 and against the runner over its fakes. The root module `ModelTest` runs them;
@@ -122,6 +124,68 @@ def fuzzyJobFailures : IO (List String) := do
         JobContract.fuzzyProperties
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake clock: {·}")
+
+/-- Whether a job held, from how it ended: `none` for one that failed or was
+cancelled. -/
+def heldOf : Job.Outcome Bool → Option Bool
+  | .finished held => some held
+  | _ => none
+
+-- inferred-waits W95: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
+/-- The names of the job port's URL opener properties that do not hold of the
+job model, and of those that do not hold of the runner over the fake clock
+given the opener's model as its URL opener service
+(`UrlOpenerModel.fake`). -/
+def urlOpenerJobFailures : IO (List String) := do
+  let onModel ←
+    JobContract.urlOpenerFailures
+        (fun refusal job =>
+          let (outcome, model) := job.runModel { urlOpener := { refusal } }
+          pure (heldOf outcome, model.urlOpener.opened))
+        JobContract.urlOpenerProperties
+  let onFake ←
+    JobContract.urlOpenerFailures
+        (fun refusal job => do
+          let rig ← Rig.new
+          let (urlOpener, opened) ← UrlOpenerModel.fake refusal
+          let outcome ←
+            runOnFake job (some { rig with services := { rig.services with urlOpener } })
+          return (heldOf outcome, ← opened))
+        JobContract.urlOpenerProperties
+  return onModel.map (s!"the job model: {·}") ++
+      onFake.map (s!"the job runner over the fake clock: {·}")
+
+-- inferred-waits W96: stays (the rig's count and fake clock are the check's own, and the stepped driver moves the clock at its idle)
+set_option linter.inferredWait false in
+/-- A check of `urlOpenerWaitChecks`, a declaration of its own so that the
+allow above it covers it alone. -/
+def jobModelUrlOpenerWaitCheck : Check :=
+  { name :=
+      "in the job model, an open leaves the clock where it was; on the runner over the fake clock it registers no wait and starts none on the clock"
+    run := do
+      let job : JobM (Nat × Nat) := do
+        let before ← now
+        discard <| Job.openUrl "https://example.com"
+        return (before, ← now)
+      let onModel := modelled job { now := 7 }
+      let rig ← Rig.new
+      let (urlOpener, _) ← UrlOpenerModel.fake
+      let outcome ←
+        runOnFake
+            (do
+              return JobContract.opened? (← Job.openUrl "https://example.com"))
+            (some { rig with services := { rig.services with urlOpener } })
+      let state ← rig.clock.state.get
+      return onModel == (.finished (7, 7), 7) && outcome == .finished true &&
+          state.started.isEmpty &&
+          (← rig.services.completions.waiting) == 0 }
+
+/-- The checks of the job port's URL opener request that need equality,
+against the job model and the runner over the fake clock (`JobContract`,
+"The URL opener", `Editor/Job/Contract.lean`). -/
+def urlOpenerWaitChecks : List Check :=
+  [jobModelUrlOpenerWaitCheck]
 
 /-- The fixture grammar library as the model's runs name it: a path they
 never read from disk, described by its table

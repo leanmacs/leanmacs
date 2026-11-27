@@ -4505,7 +4505,10 @@ registers: `shippedOver` the library's timer service,
 file service, process service, watch service and diff service for the
 jobs, the library's matcher (`Fuzzy.real`), which the loop's match jobs ask,
 the environments they share for the mode `host` (`reportedEnvironments`),
-and the services the packages bring (`packageServices`). Config is elaborated on `base`, which every caller names (`shippedOver`).
+the system's URL opener `urlOpener`, which the window mode hands the
+desktop's (`UrlOpener.Real.system`) and every other caller leaves
+`UrlOpener.absent`, so the headless mode launches nothing, and the services
+the packages bring (`packageServices`). Config is elaborated on `base`, which every caller names (`shippedOver`).
 
 Making them warms the pool, so the first burst of jobs finds every thread
 made, and starts the completion pump on a dedicated task, which quitting the
@@ -4513,7 +4516,8 @@ queues ends. -/
 def shipped (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Name)
     (sysroot : String) (oleans : List String) (configDir : String) (emit : String → IO Unit)
     (host : Process.Host) (fakeClock : Bool := false)
-    (stateDirectory : Option System.FilePath := none) :
+    (stateDirectory : Option System.FilePath := none)
+    (urlOpener : UrlOpenerHandler := UrlOpener.absent) :
     IO (Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme) := do
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
@@ -4549,7 +4553,7 @@ def shipped (scheme : InputScheme) (packages : Array Package) (base : Array Lean
         greps := Job.realGreps completions published.reader held greps
         grammars := Job.realGrammars completions refusedGrammars
         environments := reportedEnvironments environments 4 Queue.library, fuzzy := Fuzzy.real
-        snapshots := Job.realSnapshots published.reader
+        urlOpener, snapshots := Job.realSnapshots published.reader
         packages := packageServices packages } published held files stateDirectory
   return { collaborators with clock }
 

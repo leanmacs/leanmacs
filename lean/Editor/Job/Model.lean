@@ -6,6 +6,7 @@ import Editor.Job
 import Editor.PackageService
 import Editor.Process.Model
 import Editor.SyntaxTree.Registration.Model
+import Editor.UrlOpener.Model
 
 /-!
 # The pure model of the job port
@@ -73,6 +74,10 @@ here.
   `JobModel.fuzzyRefusal` is set, with an error, `fuzzy: ` and the refusal,
   as the runner answers a service that threw. A test sets it, as it sets
   the files.
+- A URL opener request is answered at once, without moving the clock, by
+  the model of the opener (`JobModel.urlOpener`, a `UrlOpenerModel`), which
+  records each URL it takes, or refuses every one with the reason a test
+  sets.
 - A package request is answered at once, without moving the clock, by the
   model of package services (`JobModel.packages`, a `PackageModel`): its
   reply, or `noSuchService` for a service it does not know, which by
@@ -130,6 +135,9 @@ structure JobModel where
   (`Editor/SyntaxTree/Registration/Model.lean`). By default it has no table,
   so every registration is refused `unsupported`. -/
   grammars : GrammarRegistry := {}
+  /-- The system's URL opener (`Editor/UrlOpener/Model.lean`): what it took,
+  and whether it refuses. By default it takes every URL. -/
+  urlOpener : UrlOpenerModel := {}
 
 namespace JobModel
 
@@ -175,6 +183,9 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
   | .grammar (.register source), model =>
     let (answer, grammars) := model.grammars.register source
     (answer.mapError .refused, { model with grammars })
+  | .urlOpener request, model =>
+    let (reply, urlOpener) := model.urlOpener.handle request
+    (reply, { model with urlOpener })
 
 /-- The model once the job has ended: every streaming child it started is
 ended (`ProcessModel.endAll`), as the runner cancels them, every watch
