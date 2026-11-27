@@ -13,15 +13,21 @@
 //! platform's words ([`InputClosed`]) when the child has no input or ended;
 //! one writer at a time, beside a pull.
 //!
-//! The real adapter is `Child`, a child taken over through the runtime,
-//! each pull and write through the runtime's members. Its published fake
-//! is `fake::ScriptedChild`; `contract::check` holds both to the same
-//! rules.
+//! The real adapter is [`Child`], a child taken over through the runtime
+//! ([`crate::Runtime::take_over`]), each pull and write through the
+//! runtime's members. Its published fake is [`fake::ScriptedChild`], handed
+//! out by number by [`fake::ScriptedSource`]; [`contract::check`] holds
+//! both to the same rules.
 
 pub mod contract;
 pub mod fake;
 
+use editor_package_runtime::PackageChild;
+
+use crate::buffer::CoreBuffer;
 use crate::frame::{Frames, Stream};
+use crate::runtime::Calls;
+use crate::wire::{self, Encoded, UNREADABLE};
 
 /// How a taken-over child ended, as its last delivery says.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,4 +131,73 @@ pub trait StreamSource: Send + Sync {
     ///
     /// Why it was refused.
     fn take_over(&self, child: u64) -> Result<Box<dyn ChildStreams>, Refused>;
+}
+
+/// A streaming child taken over through the runtime: each pull through the
+/// runtime's `child_pull`, decoded ([`wire::decode`]), and each write
+/// through its `child_write`, every buffer the core lends handed back once;
+/// the handle released through `child_release` when it drops. A pull whose
+/// words cannot be read delivers [`Ended::Failed`] with [`UNREADABLE`].
+#[derive(Debug)]
+pub struct Child {
+    /// The runtime's members.
+    calls: Calls,
+    /// The runtime's handle of the child, live until this drops.
+    handle: *mut PackageChild,
+}
+
+// SAFETY: the handle is the runtime's, which may be pulled from one thread
+// and written from another, one writer at a time (the runtime's rules);
+// this type only hands it back to the runtime.
+#[expect(
+    unsafe_code,
+    reason = "a child handle crosses threads as the runtime's rules allow: pulled on one, written on another"
+)]
+unsafe impl Send for Child {}
+
+// SAFETY: as for `Send`.
+#[expect(
+    unsafe_code,
+    reason = "a child handle crosses threads as the runtime's rules allow: pulled on one, written on another"
+)]
+unsafe impl Sync for Child {}
+
+impl Child {
+    /// The child the runtime of `calls` took over as `handle`.
+    pub(crate) const fn taken(calls: Calls, handle: *mut PackageChild) -> Self {
+        Self { calls, handle }
+    }
+}
+
+impl ChildStreams for Child {
+    fn pull(&self) -> Pulled {
+        let raw = self.calls.pull(self.handle);
+        let words = CoreBuffer::lent(self.calls, raw.words, raw.words_len);
+        let bytes = CoreBuffer::lent(self.calls, raw.bytes, raw.bytes_len);
+        let encoded = Encoded {
+            delivered: raw.delivered,
+            words: words.as_bytes().to_vec(),
+            bytes: bytes.as_bytes().to_vec(),
+        };
+        wire::decode(&encoded).unwrap_or_else(|| {
+            Pulled::Delivered(Delivery {
+                out: Frames::Lines(Vec::new()),
+                err: Frames::Lines(Vec::new()),
+                ended: Some(Ended::Failed(UNREADABLE.to_owned())),
+            })
+        })
+    }
+
+    fn write(&self, bytes: Vec<u8>) -> Result<(), InputClosed> {
+        self.calls.write(self.handle, &bytes).map_err(|refused| {
+            let words = CoreBuffer::lent(self.calls, refused.bytes, refused.len);
+            InputClosed(String::from_utf8_lossy(words.as_bytes()).into_owned())
+        })
+    }
+}
+
+impl Drop for Child {
+    fn drop(&mut self) {
+        self.calls.release(self.handle);
+    }
 }
