@@ -156,7 +156,12 @@ def highlightsDirectiveCheck (context : Context) : Check :=
       -- Wiring only: the directive waits on the library's delivery of the
       -- focused view's tree and reads its captures through the real
       -- binding. That it is read, and refused stepped, is
-      -- `scriptChecks`' and `ModelTest.fixtureSetupChecks`'.
+      -- `scriptChecks`' and `ModelTest.fixtureSetupChecks`', and so is what
+      -- the driver does with each answer of the tree's delivery. The first
+      -- `highlights`, on a text not attached, holds that the real delivery
+      -- (`Headless.TreeDelivery.real`) tells it from a hang, which would
+      -- fail the run as `undelivered`: seen to bite once by hand, with the
+      -- attachment probe answering attached for every text.
       IO.FS.withTempDir fun directory => do
         writeConfig directory [("init.lean", tomlText)]
         let stage ← Stage.new context context.elaborator (Config.Directory.source directory)

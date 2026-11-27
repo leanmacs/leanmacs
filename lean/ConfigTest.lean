@@ -236,7 +236,9 @@ show:
   (`exChecks`, `exScriptChecks`) is the package `ex`'s linked test's
   (`ExTest.Linked`, `packages/ex/`);
 - `scriptChecks`: the headless mode's script (its `indexed`, `workspaces`
-  and `highlights` directives among them) and its driver, and the editor
+  and `highlights` directives among them) and its driver, what its
+  `highlights` does with each answer of the tree's delivery (a hang among
+  them, over a hand-written hosting and delivery), and the editor
   loop through the host: a commit and the scene it prints, read from the
   library, a scene published after a reload's install and a job's command
   once the frame exists, the scene whose echo is the refusal once a command

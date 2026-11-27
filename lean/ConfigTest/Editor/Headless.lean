@@ -1404,6 +1404,68 @@ def scriptChecks (context : Context) : List Check :=
                   "bracket ends"])
             s!"failure={repr failure} calls={seen}" },
     { name :=
+        "a script's highlights tells apart what the library says of the focused view's tree, never by time: a tree delivered, or a text not attached, is read on the editor thread; an attached text whose tree is not delivered at the guard is a hang, said once through waitHung with its line, that fails the run as undelivered with nothing read; and no focused view, or its snapshot not published, is printed in place of the faces with nothing asked or read"
+      run := do
+        let script ←
+          IO.ofExcept ((Headless.script "settle\nhighlights\nshow\n").mapError IO.userError)
+        -- Over a hand-written hosting whose waits settle at once, whose
+        -- progress names `focused`, and whose tree delivery answers
+        -- `delivery`: the run's result, the requests sent, what the driver
+        -- printed, what it said as a hang, and the snapshots and guards the
+        -- delivery was asked of.
+        let run (focused : Option SnapshotId) (delivery : Headless.TreeDelivery) :
+          IO
+            (Headless.Ran ×
+              Array Headless.Request × Array String × Array String × Array (SnapshotId × Nat)) :=
+          do
+          let stage ← Stage.new context context.elaborator (memorySource [])
+          let sent ← IO.mkRef (#[] : Array Headless.Request)
+          let hung ← IO.mkRef (#[] : Array String)
+          let asked ← IO.mkRef (#[] : Array (SnapshotId × Nat))
+          let driven :=
+            Headless.Driven.over (fun request => sent.modify (·.push request)) (fun _ => pure ())
+              (fun _ _ _ _ _ _ => pure .settled) (pure { focused }) (pure none) none fun _ _ =>
+              pure none
+          let hosting : Headless.Hosting _ _ TestScheme.scheme :=
+            {
+              hosted := fun _ body => do
+                return .ok (← body driven, .ok ()) }
+          let collaborators :=
+            { stage.collaborators with
+              treeDelivery := fun _ snapshot guard => do
+                asked.modify (·.push (snapshot, guard.ms))
+                return delivery }
+          let ran ←
+            Headless.runOn hosting collaborators script hangGuard (waitHung := fun line =>
+                hung.modify (·.push line))
+          return (ran, ← sent.get, ← stage.output.get, ← hung.get, ← asked.get)
+        let snapshot : SnapshotId := ⟨4⟩
+        let delivered ← run (some snapshot) .delivered
+        let unattached ← run (some snapshot) .notAttached
+        let undelivered ← run (some snapshot) .hung
+        let unpublished ← run (some snapshot) .notPublished
+        let unfocused ← run none .delivered
+        let read :=
+          ((none, none), #[Headless.Request.highlights, .show], #[], #[],
+            #[(snapshot, hangGuard.ms)])
+        saw
+            (delivered == read && unattached == read &&
+              undelivered ==
+                ((some (.undelivered 2), none), #[], #[],
+                  #[Headless.waitHangLine "delivery of the focused view's tree" (some 2) hangGuard],
+                  #[(snapshot, hangGuard.ms)]) &&
+              unpublished ==
+                ((none, none), #[.show], #[Headless.highlightsNotPublished], #[],
+                  #[(snapshot, hangGuard.ms)]) &&
+              unfocused == ((none, none), #[.show], #[Headless.highlightsNoFocused], #[], #[]))
+            s!"delivered={repr delivered} unattached={repr unattached} undelivered={repr undelivered} unpublished={repr unpublished} unfocused={repr unfocused}" },
+    { name :=
+        "the real tree delivery says a snapshot the table of published snapshots does not hold is not published, asking the library nothing"
+      run := do
+        let table ← Snapshots.new
+        let answer ← Headless.TreeDelivery.real table.reader ⟨0⟩ hangGuard
+        saw (answer == .notPublished) s!"answer={repr answer}" },
+    { name :=
         "restarted is a directive with its line's number, refused with anything after it but a number of seconds, and the error message of a line that is no directive lists it; a run resumed past k restarteds runs the script from the line after the k-th"
       run :=
         let script :=

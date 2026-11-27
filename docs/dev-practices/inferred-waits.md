@@ -136,7 +136,10 @@ readout whose fake exists. Phase 3 marked each as its fake landed:
   checks and the kit's grammar module. And `Editor.Headless`, the
   headless host's driver: the script's `highlights` waits in the library
   for the delivery of the focused view's tree before it asks the editor
-  thread for the captures, the readout the on-demand install check reads.
+  thread for the captures, the readout the on-demand install check reads,
+  through the collaborator `treeDelivery`, whose real one,
+  `TreeDelivery.real`, asks the library first whether the text is attached
+  and so tells a hang from a text with no tree to wait for.
   It is a subject rather than a caller of a kit wrapper because
   `Editor.Headless` is production code, the CLI's driver, which may import
   no test kit; as a subject that is no test module it hands the wait on

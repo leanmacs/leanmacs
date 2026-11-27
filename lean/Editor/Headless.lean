@@ -625,11 +625,17 @@ echo area (`Running.said`). No script directive sends them.
 `commit <text>` and `resize <width> <height>` are the driver's own. A
 `highlights` settles, waits for the library to deliver the tree of the
 snapshot the focused view of the last scene shows (`Progress.focused`,
-`Ffi.syntaxSettle`, a wait in the library under the run's patience, which
-makes `Editor.Headless` a subject of that wait's mark), then has the editor
-thread print the faces of that text's captures (`Request.highlights`,
-`highlights`): the readout an installed editor's highlighting is checked by
-(`docs/dev-practices/on-demand-checks.md`). An
+`Collaborators.treeDelivery`, whose real one, `TreeDelivery.real`, is
+`Ffi.syntaxSettle`, a wait in the library under the run's patience as a
+hang guard, which makes `Editor.Headless` a subject of that wait's mark),
+then has the editor thread print the faces of that text's captures
+(`Request.highlights`, `highlights`): the readout an installed editor's
+highlighting is checked by (`docs/dev-practices/on-demand-checks.md`). The
+library tells the cases apart, never the time a wait took: a text not
+attached is not waited for and its faces are none; an attached text whose
+tree is not delivered at the guard is a hang, said with its line through
+`waitHung`, and fails the run (`Failure.undelivered`); and no focused view,
+or its snapshot not published, is printed in place of the faces. An
 `installed` settles, then fails the run (`Failure.notInstalled`) unless
 the last reload that finished installed its config
 (`Progress.installed`): for a script that must not go on, or exit 0, on a
@@ -969,6 +975,46 @@ def drawn (display : Host.Display) : BaseIO String :=
 
 end Host.Display
 
+/-- What the library says of the delivery of a published snapshot's tree,
+which a script's `highlights` waits for before it reads the faces
+(`Collaborators.treeDelivery`). -/
+inductive TreeDelivery where
+  /-- A tree of the snapshot's revision, or a newer one, was delivered. -/
+  | delivered
+  /-- The snapshot's text is not attached: there is no tree to wait for,
+  and the faces read are none. -/
+  | notAttached
+  /-- The table of snapshots holds none of that id. -/
+  | notPublished
+  /-- A hang: the text is attached, and no tree of the snapshot's revision
+  was delivered within the wait's hang guard. -/
+  | hung
+  deriving DecidableEq, Repr
+
+/-- Whether the library's syntax service has the document `snapshot` is of
+attached: asked of the document's kept queries, which the library answers
+at once, refused as not attached only when it has no session of it. -/
+private def attached (snapshot : Ffi.Snapshot) : IO Bool := do
+  return !(← Ffi.syntaxKeptNames snapshot (RealSyntaxTree.kindTag .highlights)) matches
+        .error .notAttached
+
+/-- The library's answer (`TreeDelivery`) for the snapshot `id` of the table
+`snapshots` reads: not published when the table holds none; not attached,
+with no wait, when its document has no session; otherwise the library's
+wait for the tree (`Ffi.syntaxSettle`), within `guard`, a hang guard, and
+a hang when it gave up with the document still attached. A wait that ends
+`false` with the document no longer attached, detached meanwhile, is not
+attached. Each case is told apart by what the library says, never by how
+long the wait took. -/
+def TreeDelivery.real (snapshots : SnapshotReader) (id : SnapshotId) (guard : HangGuard) :
+    IO TreeDelivery := do
+  let some snapshot ← snapshots.find? id | return .notPublished
+  unless ← attached snapshot do
+    return .notAttached
+  if ← Ffi.syntaxSettle snapshot guard then
+    return .delivered
+  return if ← attached snapshot then .hung else .notAttached
+
 /-- What a host that runs the input scheme `scheme` needs from outside. The
 scheme is a parameter, as it is of the loop (`Loop`): it is in `Type 1`, and
 cannot be a field of what a task is handed. -/
@@ -1094,6 +1140,12 @@ structure Collaborators (β σ : Type) (scheme : InputScheme) where
   what it is asked. -/
   syntaxTree : SnapshotReader → IO SyntaxTreeHandler := fun snapshots => do
     return (← RealSyntaxTree.new snapshots).handle
+  /-- How a script's `highlights` waits, within a hang guard, for the tree
+  of a snapshot of the table of snapshots the text binding publishes
+  (`published`), read through its read half: the library's syntax service
+  (`TreeDelivery.real`). A test hands one that answers as it says, to force
+  each case the driver tells apart. -/
+  treeDelivery : SnapshotReader → SnapshotId → HangGuard → IO TreeDelivery := TreeDelivery.real
   /-- The render loop the host's display draws through, for the driver's
   `idle` and `journal`; none when nothing draws, as in the headless mode
   without `--render`. -/
@@ -3500,11 +3552,16 @@ inductive Directive where
   | installed
   /-- Settle as `settle` does, then wait for the library to deliver the tree
   of the snapshot the focused view of the last scene shows
-  (`Progress.focused`, `Ffi.syntaxSettle`, a wait in the library, under the
-  run's patience as a hang guard), then ask the editor thread to print the
-  faces its text is drawn in (`Request.highlights`). The driver's own. Its
-  subject is the library's real parse, so the fixture harness refuses it
-  stepped. -/
+  (`Progress.focused`, `Collaborators.treeDelivery`: `Ffi.syntaxSettle`, a
+  wait in the library, under the run's patience as a hang guard), then ask
+  the editor thread to print the faces its text is drawn in
+  (`Request.highlights`). A text not attached is not waited for, and its
+  faces are none. An attached text whose tree is not delivered at the guard
+  is a hang, said through the run's `waitHung` with the line, and fails the
+  run (`Failure.undelivered`). With no focused view, or its snapshot not
+  published, that is printed in place of the faces (`highlightsNoFocused`,
+  `highlightsNotPublished`). The driver's own. Its subject is the library's
+  real parse, so the fixture harness refuses it stepped. -/
   | highlights
   deriving DecidableEq, Repr
 
@@ -3744,6 +3801,10 @@ inductive Failure where
   finished did not install its config: it was rejected, or none had
   finished. -/
   | notInstalled (line : Nat)
+  /-- A hang: the `highlights` on `line` found the focused view's text
+  attached, and the library delivered no tree of its snapshot within the
+  patience (`TreeDelivery.hung`). -/
+  | undelivered (line : Nat)
   /-- The loop had not ended `grace` milliseconds after the hang was said,
   itself `guard` milliseconds after the run stopped it: the headless mode
   gave up on it (`runFrom`'s `grace`). -/
@@ -3761,6 +3822,18 @@ inductive Failure where
 /-- What an `advance` on a host whose clock is real says. -/
 def advanceNeedsClock : String :=
   "advance needs the headless mode's fake clock"
+
+/-- What a script's `highlights` prints in place of the faces when the last
+scene published has no focused view, or none has been published
+(`Progress.focused`): there is no tree to wait for. -/
+def highlightsNoFocused : String :=
+  "highlights: no focused view"
+
+/-- What a script's `highlights` prints in place of the faces when the
+snapshot the focused view of the last scene shows is not in the table of
+published snapshots (`TreeDelivery.notPublished`). -/
+def highlightsNotPublished : String :=
+  "highlights: the focused view's snapshot is not published"
 
 /-- What went wrong, for the user: `patience` is how long each wait was, in
 milliseconds, but for a wait that had its own (`waited`). -/
@@ -3784,6 +3857,8 @@ def Failure.describe (patience : Nat) : Failure → String
     s!"the restarted on line {line} of the script found no restart within {patience} ms: the loop did not end with the session handed over"
   | .notInstalled line =>
     s!"the installed on line {line} of the script found the config not installed: the last reload was rejected, or none had finished"
+  | .undelivered line =>
+    s!"a hang: the highlights on line {line} of the script found the focused view's text attached, and the library delivered no tree of its snapshot within {patience} ms. The library's parse of it is slow, or does not end"
   | .hung guard grace =>
     s!"the editor loop had not ended {grace} ms after the hang was said ({guard} ms after the script stopped it); giving up"
   | .waited milliseconds failure => failure.describe milliseconds
@@ -4083,13 +4158,25 @@ private def runScript {β σ : Type} {scheme : InputScheme} (collaborators : Col
         let wait ← await line.number
         if wait == .settled then
           -- The library's delivery of the focused view's tree, waited for in
-          -- the library, never for time; `false` at once for a text that is
-          -- not attached, whose line then says `none`. Then the editor
-          -- thread reads the captures of the delivered tree.
-          if let some snapshot := (← driven.progress).focused then
-            if let some found← collaborators.published.find? snapshot then
-              discard (Ffi.syntaxSettle found waitGuard)
-          driven.send .highlights
+          -- the library, never for time, the patience only its hang guard;
+          -- a text not attached is not waited for, and its line says
+          -- `none`. Then the editor thread reads the captures of the
+          -- delivered tree. With no snapshot to wait for, that is said in
+          -- place of the faces.
+          match (← driven.progress).focused with
+          | none =>
+            collaborators.emit highlightsNoFocused
+          | some snapshot =>
+            match
+              ← collaborators.treeDelivery collaborators.published.reader snapshot waitGuard with
+            | .delivered | .notAttached =>
+              driven.send .highlights
+            | .notPublished =>
+              collaborators.emit highlightsNotPublished
+            | .hung =>
+              waitHung
+                  (waitHangLine "delivery of the focused view's tree" (some line.number) waitGuard)
+              return (some (.undelivered line.number), none)
         pure wait
       | .abort =>
         -- The headless mode's ends the process (`abortProcess`); one that
