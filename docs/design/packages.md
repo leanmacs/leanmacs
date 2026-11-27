@@ -3368,16 +3368,39 @@ capabilities at its init.
   as a sentence naming the path; the initialiser throws it, Lean's
   generated `main` prints it as `uncaught exception: <text>` and exits 1,
   and the package-set build's probe carries it to its failure line
-  (`Restore.probeFailure`), so a refused load is a value, never an abort.
-  Pinned by the load's tests on the port's fake, the adapter's contract on
-  the fixture grammar library, `editor-ffi`'s `tests/package_load.rs`
-  (tags 1, 2, 3 through C), echo's `tests/init.rs` (its init answers 1 to
-  a smaller runtime), `EchoTest.echoLibraryChecks`,
-  `ModelTest.packageSetBuildChecks` and `EchoTest.Linked.echoLoadChecks`.
-  That an initialiser's error makes Lean's generated `main` exit 1 is
-  Lean's own; no committed test runs an editor whose library is refused
-  (it was seen by hand: the set's editor, its library moved away, printed
-  the refusal and exited 1).
+  (`PackageSet.probeFailed`, over `Restore.probeFailure`), so a refused
+  load is a value, never an abort. Pinned, for each of the five refusals:
+  - its distinct value by the load's tests on the port's fake
+    (`editor-package-library`'s `src/load/tests.rs`), and its tag through
+    C on a real file by `editor-ffi`'s `tests/package_load.rs`: missing,
+    on a path nothing is at and a relative one; not a library, on a
+    source file; no init, on the fixture grammar library; runtime too
+    small and a failed init, on the fixture package libraries
+    (`editor-package-library-fixture`), whose inits answer 1 and 7 to the
+    process's real runtime. The adapter's contract holds the first three
+    on the fixture grammar library, and echo's `tests/init.rs` pins that
+    echo's own init answers 1, with no table, to no runtime and to one
+    smaller than it requires.
+  - its sentence and its reading from the tag by
+    `EchoTest.echoLibraryChecks`, which also pins, refusal by refusal,
+    that a probe whose standard error is the initialiser's
+    `uncaught exception: <sentence>` fails the build with
+    `the new editor did not start: it exited with status 1; uncaught
+    exception: <sentence>` (`PackageSet.probeFailed`). That the build's
+    failure line is that text, with the staging directory removed and
+    nothing published, is `ModelTest.packageSetBuildChecks`'s, on the
+    build's driver.
+  - that the initialiser's body (`Echo.Real.load`) throws that sentence,
+    over the real glue and loader, by `EchoTest.Linked.echoLoadChecks`
+    for missing and not a library; it reaches no file without
+    `editor_package_init` and no library whose init refuses, which the C
+    test covers.
+
+  What no committed test runs is an editor whose library is refused: that
+  an initialiser's error makes Lean's generated `main` print
+  `uncaught exception: <text>` and exit 1 is Lean's own (it was seen by
+  hand: the set's editor, its library moved away, printed the refusal and
+  exited 1).
 - **Shown end to end** by `EchoTest.Linked.echoProbeChecks`: the fixture
   set's editor, run with `--probe`, passes the build's own judgement only
   once echo's initialiser loaded the library.
