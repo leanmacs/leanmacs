@@ -102,6 +102,7 @@ import ModelTest.Editor.Menu
 import ModelTest.Editor.Mode
 import ModelTest.Editor.ModeLine
 import ModelTest.Editor.ModuleLookup
+import ModelTest.Editor.PackageLibrary
 import ModelTest.Editor.PackageSet.Build
 import ModelTest.Editor.PackageSet.Edit
 import ModelTest.Editor.PackageSet.Fingerprint
@@ -1126,6 +1127,12 @@ The config session's decisions are tested here too, with no elaborator:
   directory; a success that writes the record, publishes version 1 and
   restarts into it; and what is pruned, never the running
   editor's version;
+- `packageLibraryChecks`: how a package's library load is read back
+  (`Editor/PackageLibrary.lean`): each status the core's load answers, 0
+  and the eight refusals, a newer runtime and another interface carrying
+  both of their numbers; each refusal's sentence, naming the package, the
+  library and, for those two, both versions; and each sentence carried to
+  the package build's failure line by its probe;
 - the core's Lake package registers no package and has no entry module
   (the features-as-packages roadmap's phase 8): `packageChecks` holds that
   a host handed no package starts from a registry that holds nothing, and
@@ -1576,6 +1583,7 @@ def checks : List Check :=
     packageSetRunningChecks ++
     packageSetEditChecks ++
     packageSetBuildChecks ++
+    packageLibraryChecks ++
     headlessCommandLineChecks ++
     executableModeChecks ++
     executableRefusalChecks ++

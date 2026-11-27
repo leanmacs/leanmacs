@@ -4082,6 +4082,7 @@ and the core's Lake package registers no `Package`.
 | Session restore: the journal reconciler the loop runs after each publish, and the data and formats it keeps: `Editor.Restore`, `Editor.Restore.Document`, `Editor.Restore.Frame`, `Editor.Restore.Indexed`, `Editor.Restore.Journal`, `Editor.Restore.Kept`, `Editor.Restore.Records`, `Editor.Restore.Value`, `Editor.Restore.Workspaces` | 9 | core | yes |
 | Session restore's run and restart, which the package `restore` registers: `Editor.Restore.Restart`, `Editor.Restore.Run` | 2 | core | yes |
 | The package set's data, edit and build, which the reload, the hosts and the package `package-set` use: `Editor.PackageSet.Build`, `Editor.PackageSet.Edit`, `Editor.PackageSet.Fingerprint`, `Editor.PackageSet.Layout`, `Editor.PackageSet.Running` | 5 | core | yes |
+| A package's native library as the core reads it, which every package with a library reads its load through: what a refused load says, and where the build staged the library: `Editor.PackageLibrary` | 1 | core | yes |
 | The restart's hand-over: `Editor.Restart.Handover`, `Editor.Restart.Launch` | 2 | core | yes |
 | The theme completeness check: `Editor.Theme.Check` | 1 | core | yes |
 
