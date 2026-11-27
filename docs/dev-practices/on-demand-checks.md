@@ -305,6 +305,57 @@ registration. Run it after a change to the install (`editorInstall`), the
 records (`editor.grammars`, `Editor/ModuleLookup.lean`), the staging
 (`stageGrammars`, `editorShipped`) or the install's signing.
 
+## A package's library, installed, on demand
+
+```sh
+mise run library-install-check
+```
+
+The roadmap `package-native-libraries`' phase 4 asks that each package's
+library be copied into the editor's install directory and that the
+installed editor load it from there after the package's source directory is
+removed ([packages.md](../design/packages.md), "A package's library, staged
+and loaded, as built"). The task builds what `mise run lean` builds, then
+runs the ignored test `crates/editor-package-check/tests/package_install.rs`
+with `LEANMACS_SYSROOT` naming the toolchain's directory (the test panics
+when that is unset). In a temporary directory it owns, it:
+
+- copies the fixture package `tests/packages/echo`, puts the library the
+  fixture set's build staged for it at the copy's `lib/`, so its
+  `editorLibrary` target answers that and runs no process, and points the
+  copy's `editor-core` require at the core's absolute directory;
+- writes a user's set requiring the default set, the copy and the core
+  last, and resolves it with the toolchain's `lake update
+  --keep-toolchain`;
+- installs it with `lake build :editorInstall`, with `EDITOR_INSTALL_DIR`
+  in the temporary directory, the fixture set's `editor.build`,
+  `PATH=/usr/bin:/bin` (no `cargo`) and a `HOME` of its own, the user's
+  Lean, Lake and compiler variables removed, as the build job runs it, and
+  reads back the library the install copied to `libraries/echo/` and its
+  relative `editor.libraries`;
+- removes the copy of echo and the set's `.lake`, and runs the installed
+  editor's `--probe`, which prints `probe: ok` only once echo's initialiser
+  loaded its library from the install.
+
+It writes nothing outside its temporary directory but what the default
+set's and the core's builds would write in place, which `mise run lean`
+has already built. It ends `library-install-check: an install of a set with
+echo loads echo's library from the install, with echo's source and the
+set's build removed: probe: ok`.
+
+It is not part of the gate, for the grammar check's reason (the operator's
+decision, 2026-11-26): an install is about 420 MB, and no gate step
+installs a set. The gate shows the same load on the set build's staged
+copy, with the package's source removed (`EchoTest.Linked.echoUserSetChecks`,
+in `mise run ffi-test`), and the install's places and relative lines by the
+guards on `installLibrariesRecord` and `stagedLibraryPlace` and
+`ModelTest.moduleLookupChecks`. Run it after a change to the install
+(`editorInstall`), the libraries record (`editor.libraries`,
+`Editor/ModuleLookup.lean`, `Editor.PackageLibrary.staged`) or the staging
+(`editorLibraries`). Running the same test un-ignored in `ffi-test` would
+put it in the gate, at the install's disk and time; that is the owner's to
+decide.
+
 ## The nightly's preparation, on demand
 
 ```sh

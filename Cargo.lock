@@ -771,6 +771,7 @@ dependencies = [
  "editor-package",
  "editor-package-library",
  "editor-service",
+ "tempfile",
 ]
 
 [[package]]

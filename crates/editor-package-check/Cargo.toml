@@ -1,7 +1,7 @@
 [package]
 name = "editor-package-check"
 version = "0.1.0"
-description = "Tests alone: the package wrapper's fake held to the core's runtime contract, the wrapper's wire against the core's, and a package declared with the wrapper loaded through the core's load and run on the process's runtime"
+description = "Tests alone: the package wrapper's fake held to the core's runtime contract, the wrapper's wire against the core's, a package declared with the wrapper loaded through the core's load and run on the process's runtime, and, on demand, a package's library installed and loaded"
 edition.workspace = true
 license.workspace = true
 publish = false
@@ -18,6 +18,11 @@ publish = false
 editor-package = { path = "../editor-package" }
 editor-package-library = { path = "../editor-package-library" }
 editor-service = { path = "../editor-service" }
+# The temporary directory of the on-demand library install check
+# (`tests/package_install.rs`, `mise run library-install-check`). Pinned
+# exactly, as in `editor-fs-std`, whose manifest says why this library and
+# no other; `deny.toml` lists the crates that may depend on it.
+tempfile = { version = "=3.27.0", default-features = false }
 
 [lints]
 workspace = true
