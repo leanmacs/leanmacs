@@ -32,7 +32,14 @@ registered name that is not among them.
 The job model answers a job's registration from one
 (`JobModel.grammars`, `Editor/Job/Model.lean`), and the syntax tree model
 lists, attaches and compiles for the grammars one holds
-(`SyntaxTreeModel.registry`, `Editor/SyntaxTree/Model.lean`). Pinned by
+(`SyntaxTreeModel.registry`, `Editor/SyntaxTree/Model.lean`).
+
+`testGrammars` is the registry the model kits hold by default: the six
+grammars `editor-syntax-fixture-grammars` builds for the core's tests,
+registered as a test registers them from the library's directory, each with
+its policy. The library hides its compiled-in grammars from every test, so
+a fake-backed check attaches and compiles for these names as the real
+checks do, from a registration. Pinned by
 `ModelTest.grammarRegistryChecks`, the answer with no table among them; and,
 given the table that describes the fixture grammar library
 (`JobContract.GrammarFixture.registry`), held to the real service's answers
@@ -113,6 +120,25 @@ def register (registry : GrammarRegistry) (source : GrammarSource) :
           registry.registered.map fun held => if held.1 == name then entry else held
         else registry.registered.push entry
       (.ok name, { registry with registered })
+
+/-- The grammars `editor-syntax-fixture-grammars` builds for the core's
+tests, in the adapter's table's order, each with its policy: every one is
+reparsed incrementally but `markdown_inline`. -/
+def testGrammarNames : Array (String × ReparsePolicy) :=
+  #[("json", .incremental), ("rust", .incremental), ("markdown", .incremental),
+    ("markdown_inline", .whole), ("toml", .incremental), ("lean", .incremental)]
+
+/-- The registry with the test grammars registered (`testGrammarNames`),
+each from a library of the test grammars' directory, as the real tests
+register them, with its policy; and no table, so any other registration is
+refused `unsupported`, as the default is. -/
+def testGrammars : GrammarRegistry :=
+  { registered :=
+      testGrammarNames.map fun (name, policy) =>
+        (name,
+          { library := s!"/test-grammars/libtree-sitter-{name}.so", symbol := s!"tree_sitter_{name}"
+            policy := some policy },
+          policy) }
 
 /-- The names to list: `compiled` in its order, then each registered name
 that is not among them, in the order it was first registered. -/

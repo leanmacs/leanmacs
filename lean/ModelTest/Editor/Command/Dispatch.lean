@@ -221,26 +221,35 @@ def declaredIni : Language.Grammar :=
 def iniLanguage : Language :=
   { name := "ini", patterns := [.extension "ini"], syntaxTree := { grammar := "ini" } }
 
+/-- The shipped language `json`, drawn with the syntax tree model's own
+highlights query: `json` is a registered test grammar, which ships no query,
+so its language hands its own, as a grammar's own query is handed. -/
+def drawnJson : Language :=
+  { Language.json with
+    syntaxTree := { Language.json.syntaxTree with highlights := some SyntaxTreeModel.highlights } }
+
 /-- The registry of the checks of a declared grammar's tree: the on-enter
 checks' modes with `modes` for config, the languages `json` and `ini`, the
 declaration of `ini`, and the config generation 1. -/
 def declaredRegistry (modes : Array Mode) : Config.Registry :=
   {
     ((enterRegistry.replaceModes .config modes).replaceLanguages .compiled
-          #[Language.json, iniLanguage]).replaceGrammars
+          #[drawnJson, iniLanguage]).replaceGrammars
       .config #[declaredIni] with
     generation := 1 }
 
-/-- The editor's models with `ini` registered in the syntax tree model, as
-the library lists it once the registration's job has answered. -/
+/-- The editor's models with `ini` registered in the syntax tree model beside
+the test grammars, as the library lists it once the registration's job has
+answered. -/
 def iniModel : EditorModel :=
   { editorModel with
     syntaxTree :=
       {
         registry :=
-          {
+          { GrammarRegistry.testGrammars with
             registered :=
-              #[("ini", (declaredIni.sourceOn "darwin-aarch64").getD default, .whole)] } } }
+              GrammarRegistry.testGrammars.registered.push
+                ("ini", (declaredIni.sourceOn "darwin-aarch64").getD default, .whole) } } }
 
 /-- The answers of generation 1 that record `ini` registered with
 `queries`. -/

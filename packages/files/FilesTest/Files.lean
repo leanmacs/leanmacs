@@ -82,10 +82,11 @@ def snapshotRefusal (driver : TestDriver) (snapshot : SnapshotId) : Option (Opti
   ((refusalOf snapshot.read).runModel driver.model.texts).1.toOption
 
 /-- The registry of the language open checks: the `code` mode, and the
-languages `json` and `modelRs`, as compiled code registers them. -/
+languages `json`, drawn with the syntax tree model's own highlights
+(`modelJson`), and `modelRs`, as compiled code registers them. -/
 def languageRegistry : Config.Registry :=
   (({} : Config.Registry).replaceModes .compiled Language.modes).replaceLanguages .compiled
-    #[Language.json, modelRs]
+    #[modelJson, modelRs]
 
 /-- The files of the language open checks: the file command checks', and,
 beside `note.txt`, `data.json` and `main.rs`, each holding a JSON text. -/
@@ -125,8 +126,9 @@ started is finished. -/
 def openedBy (driver : TestDriver) (keys : String) (job : Nat := 1) : TestDriver :=
   ((fedTo driver (presses keys)).1.finish job).1
 
-/-- The faces the syntax tree model's shipped `json` highlights query is
-drawn in by the shipped default: each of its capture names'. -/
+/-- The faces the syntax tree model's own `json` highlights query
+(`SyntaxTreeModel.highlights`) is drawn in by the shipped default: each of
+its capture names'. -/
 def modelJsonFaces : Array String :=
   #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
 
@@ -167,7 +169,7 @@ knows one grammar, `json`, so every language here is parsed with it; Rust
 and Markdown are `FilesTest.Linked.languageChecks`'s, over the real binding. -/
 def languageOpenChecks : List Check :=
   [{  name :=
-        "opening a .json file gives its buffer the language json and the major mode code, and its text is attached with json and highlighted in the faces of the grammar's shipped query"
+        "opening a .json file gives its buffer the language json and the major mode code, and its text is attached with json and highlighted in the faces of its language's query"
       run :=
         pure <|
           match languageDriver with

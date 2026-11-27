@@ -39,8 +39,9 @@ namespace Editor
 
 /-- What the fake syntax service holds. -/
 structure FakeSyntaxService.State where
-  /-- What the questions are answered from. -/
-  model : SyntaxTreeModel := {}
+  /-- What the questions are answered from: by default the model with the
+  test grammars registered (`SyntaxTreeModel.withTestGrammars`). -/
+  model : SyntaxTreeModel := SyntaxTreeModel.withTestGrammars
   /-- The thread of each request, oldest first. -/
   requestThreads : Array UInt64 := #[]
   /-- The snapshots whose text's delivery is pending, oldest first. -/
@@ -61,8 +62,9 @@ structure FakeSyntaxService where
 
 namespace FakeSyntaxService
 
-/-- A service over `model`, nothing pending. -/
-def new (model : SyntaxTreeModel := {}) (post : BaseIO Unit := pure ())
+/-- A service over `model`, by default the model with the test grammars
+registered, nothing pending. -/
+def new (model : SyntaxTreeModel := SyntaxTreeModel.withTestGrammars) (post : BaseIO Unit := pure ())
     (learn : SnapshotId → BaseIO (Option String) := fun _ => pure none) :
     BaseIO FakeSyntaxService :=
   return { state := ← IO.mkRef { model }, post, learn }

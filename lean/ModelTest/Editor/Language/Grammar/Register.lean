@@ -102,8 +102,13 @@ def grammarRegisterChecks : List Check :=
     { name :=
         "a refused registration of a declaration named lean says the compiled-in grammar stays, and a .lean buffer opened before or after the job's command keeps the compiled-in lean grammar and its shipped highlights"
       run :=
+        -- `lean` and `json` compiled in, the override rule's subject
+        -- (`Language.Grammar.compiledStays`): phase 4 of the roadmap
+        -- `shipped-grammars-package` removes the rule and this opt-in.
         pure <|
-          match installedWith (defineGrammar "lean" "/g/libtree-sitter-lean.so") #[] #[] with
+          match
+            installedWith (defineGrammar "lean" "/g/libtree-sitter-lean.so") #[] #[] (compiled :=
+              #["json", "lean"]) with
           | none => false
           | some driver =>
             let before := openedIn driver "/w/A.lean"
@@ -220,7 +225,7 @@ def grammarRegisterChecks : List Check :=
             delivered.isSome &&
               answered.loop.state.echo ==
                 "grammar `ini`: the grammar's registration failed: it declares no library for the platform `linux-x86_64`, so its languages have no syntax tree" &&
-              answered.jobs.grammars.registered == #[] },
+              answered.jobs.grammars.registered == GrammarRegistry.testGrammars.registered },
     { name :=
         "and an .ini buffer opened before or after the job's command opens with no syntax tree"
       run :=
@@ -289,7 +294,7 @@ def grammarRegisterChecks : List Check :=
                 some
                   (.refused (.failed "it declares no library for the platform `linux-riscv64`")
                     false) &&
-              answered.jobs.grammars.registered == #[] &&
+              answered.jobs.grammars.registered == GrammarRegistry.testGrammars.registered &&
               attachedGrammars opened == #[] &&
               highlighters opened == #[] }]
 

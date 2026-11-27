@@ -39,14 +39,18 @@ Its state has three parts:
 - `refreshAfter`: the refresh delay it was handed last. It parses at once,
   so every tree is exact and the delay changes no answer; it is what the
   editor's checks read.
-- `compiled`: the names of its compiled-in grammars, `#[json]` by default.
-  Each is parsed as JSON, ships the model's highlights (`highlights`) and
-  nothing else, and is overridden by a registration of its name. A test of
-  the editor that needs a second compiled-in grammar (`lean`, the grammar a
-  declaration may override) names it here; the contract runs on the
-  default.
+- `compiled`: the names of its compiled-in grammars, none by default, as the
+  library hides its compiled-in grammars from every test. Each is parsed as
+  JSON, ships the model's highlights (`highlights`) and nothing else, and is
+  overridden by a registration of its name. Only the checks of the two rules
+  that still read a compiled-in grammar set it: the core's shipped-query
+  fallback and a declaration that overrides a compiled-in name
+  (`Language.Grammar.compiledStays`). Phase 4 of the roadmap
+  `shipped-grammars-package` removes the field with those rules.
 - `registry`: the grammars registered at run time
   (`Editor/SyntaxTree/Registration/Model.lean`), empty by default. The model
+  kits (`withTestGrammars`) hold `GrammarRegistry.testGrammars`, the six
+  names the core's tests register from the cargo-built directory. The model
   lists each registered name after the compiled ones, attaches and compiles for it,
   and parses its texts as JSON, the one grammar it has; it ships no query
   for a registered name, `json` included once a registration overrides it,
@@ -61,11 +65,11 @@ Its state has three parts:
   before it, as the clipboard model is taken away
   (`ClipboardModel.available`).
 
-Its shipped highlights query (`highlights`) is its own, in its query subset:
-the library's JSON one uses an alternation, which the model refuses as
-unsupported. Each implementation's source is its own, and the contract
-compares only that it compiles. It ships no query of another kind, as the
-library ships none for `json`.
+Its highlights query (`highlights`) is its own, in its query subset: the
+library's JSON one uses an alternation, which the model refuses as
+unsupported. It ships it for a compiled-in name alone; a check of a
+registered `json` that draws hands its language this query as the tree's
+`highlights`, as a grammar's own query would be handed.
 
 A request is checked in the order the real binding checks it: the
 snapshot and the query ids first, then whether the text is attached, the
@@ -107,8 +111,8 @@ structure SyntaxTreeModel where
   parses at once, so it changes nothing it answers. -/
   refreshAfter : Option Nat := none
   /-- The names of its compiled-in grammars, each parsed as JSON and
-  shipping the model's highlights. -/
-  compiled : Array String := #["json"]
+  shipping the model's highlights; none by default. -/
+  compiled : Array String := #[]
   /-- The grammars registered at run time: listed after `compiled`, attached and
   compiled for, parsed as JSON, and shipping no query. -/
   registry : GrammarRegistry := {}
@@ -119,9 +123,14 @@ structure SyntaxTreeModel where
 
 namespace SyntaxTreeModel
 
-/-- The one grammar the model knows, compiled in by default. -/
+/-- The one grammar the model knows. -/
 def grammar : String :=
   "json"
+
+/-- The model the kits hold by default: the test grammars registered
+(`GrammarRegistry.testGrammars`), nothing compiled in. -/
+def withTestGrammars : SyntaxTreeModel :=
+  { registry := GrammarRegistry.testGrammars }
 
 /-- The highlights query the model ships for each compiled-in name, in its
 own query subset. -/

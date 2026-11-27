@@ -94,7 +94,14 @@ registry of the on-enter checks with `modes` registered for config, and
 config's syntax refresh delay `refreshDelay`, the compiled languages
 `languages` and buffer 1's language `language`, on the editor's models: what each left in the echo area, buffer 1's major mode at
 the end, and the syntax tree model then. `none` when the run was
-refused. -/
+refused.
+
+The syntax tree model has `json` compiled in, and no grammar registered:
+these checks pin the core's shipped-query fallback (a tree that names no
+highlights is drawn with its grammar's shipped query), which reads a
+compiled-in grammar, the one the editor's startup turns on. Phase 4 of the
+roadmap `shipped-grammars-package` removes the fallback with the compiled-in
+grammars, and this opt-in with it. -/
 def highlightedBy (modes : Array Mode) (steps : List String) (refreshDelay : Option Nat := none)
     (languages : Array Language := #[]) (language : Option String := none) :
     Option (List String × Option String × SyntaxTreeModel) :=
@@ -108,7 +115,8 @@ def highlightedBy (modes : Array Mode) (steps : List String) (refreshDelay : Opt
       state := (← Loop.run (enterKeys registry) state (entersMode ⟨1⟩ name) []).state
       echoes := echoes ++ [state.echo]
     return (echoes, state)
-  match program.runModel editorModel with
+  let model := { editorModel with syntaxTree := { compiled := #["json"] } }
+  match program.runModel model with
   | (.ok (echoes, state), model) =>
     some (echoes, (state.buffer? ⟨1⟩).bind (·.major), model.syntaxTree)
   | (.error _, _) => none
@@ -353,7 +361,10 @@ def injectedInjections (driver : TestDriver) : Array (String × Bool) :=
 command of the `register-grammars` job of a config whose `setup` is
 `markdownWithFences` and then `setup` (`installedWith`, with `markdown`
 compiled in beside `json` and `lean`); `none` when the install asked for
-no registration. -/
+no registration. The three are compiled in, not registered: these checks
+pin the shipped-query fallback a fence's language reads, and the override
+of a compiled-in name, which phase 4 of the roadmap
+`shipped-grammars-package` removes with this opt-in. -/
 def markdownAfter (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
     (files : Array (String × String)) (packages : Array Package := #[])
     (grammarDirectories : List (String × System.FilePath) := []) : Option TestDriver := do
@@ -461,6 +472,8 @@ def highlightInjectedChecks : List Check :=
       run :=
         pure <|
           let library := "/g/libtree-sitter-lean.so"
+          -- Compiled in, for the override of a compiled-in lean and the
+          -- shipped-query fallback: phase 4 removes this opt-in with both.
           match
             installedWith (markdownWithFences *> defineGrammar "lean" library)
               #[(library, .exports #[("tree_sitter_lean", .grammar)])]
@@ -501,6 +514,8 @@ def highlightInjectedChecks : List Check :=
         "a Markdown buffer given its mode through a window after the job's command gives its fences a language for the grammar config declared, its highlights read from the grammar's query directory"
       run :=
         pure <|
+          -- Compiled in, for the shipped-query fallback of the Markdown
+          -- host: phase 4 removes this opt-in with it.
           match
             installedWith (markdownWithFences *> declaresIni) iniLibrary
               #[("/g/queries/highlights.scm", declaredHighlights)] (compiled :=

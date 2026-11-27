@@ -80,10 +80,11 @@ def fuzzyBroken (handle : (request : FuzzyRequest) → Unit → request.Reply ×
     FuzzyContract.properties
 
 /-- The syntax tree model knowing `texts`, as the snapshots `0`, `1` and so
-on, and the ids of those snapshots. -/
+on, with the test grammars registered (`SyntaxTreeModel.withTestGrammars`),
+and the ids of those snapshots. -/
 def syntaxTreeModelOf (texts : Array String) : SyntaxTreeModel × Array SnapshotId :=
   let ids := (Array.range texts.size).map (⟨·⟩)
-  ({ texts := ids.zip texts }, ids)
+  ({ SyntaxTreeModel.withTestGrammars with texts := ids.zip texts }, ids)
 
 /-- The names of the syntax tree contract's properties that do not hold of
 `handle`, run from a model knowing each property's texts. -/

@@ -82,20 +82,23 @@ def driverChecks : List Check :=
           | none => false
           | some driver =>
             let library := "/g/libtree-sitter-ini.so"
+            -- The library holds the test grammars, registered as every
+            -- test registers them, on the job model as on the syntax tree's.
             let driver :=
               { driver with
                 jobs :=
                   {
                     grammars :=
-                      {
+                      { GrammarRegistry.testGrammars with
                         libraries :=
                           some #[(library, .exports #[("tree_sitter_ini", .grammar)])] } } }
             let work : Work :=
               Work.of (fun _ => Grammar.register { library, symbol := "tree_sitter_ini" }) fun _ =>
                 makes "registered"
             let started := driver.startWork "register" work
-            driver.model.syntaxTree.grammars == #["json"] &&
-              started.model.syntaxTree.grammars == #["json", "ini"] &&
+            let tests := GrammarRegistry.testGrammarNames.map (·.1)
+            driver.model.syntaxTree.grammars == tests &&
+              started.model.syntaxTree.grammars == tests.push "ini" &&
               started.pending.map (·.id) == #[1] &&
               !started.model.texts.contents.contains "registered" },
     { name :=

@@ -7,10 +7,13 @@ import Editor.SyntaxTree.Model
 What every syntax service keeps of the background half, its deliveries of
 parses, as a list of properties over a `DeliveryRig`: the rig gives the
 handler, how to make a json text and how to edit it to a new snapshot of
-the same text, and how to settle a snapshot's delivery. The answers
-themselves are the model's (`Editor/SyntaxTree/Model.lean`): each property
-compares a question's answer with the model's for the same text. The same
-list runs two ways:
+the same text, and how to settle a snapshot's delivery. The rig's service
+has `json` registered, as the core's tests register it, since the library
+hides its compiled-in grammars from every test. The answers themselves are
+the model's (`Editor/SyntaxTree/Model.lean`), with the test grammars
+registered (`SyntaxTreeModel.withTestGrammars`): each property compares a
+question's answer with the model's for the same text. The same list runs
+two ways:
 
 - over the fake (`FakeSyntaxService`, `Editor/SyntaxTree/Fake.lean`), by
   `model-test` (`ModelTest.syntaxDeliveryChecks`): `settle` steps the fake
@@ -62,14 +65,15 @@ structure Property where
 def query : String :=
   "(number) @n"
 
-/-- The model's answer to the query over `contents`, attached to `json`. -/
+/-- The model's answer to the query over `contents`, attached to `json`, on
+the model with the test grammars registered. -/
 def modelAnswer (contents : String) : Except SyntaxTreeError (Array SyntaxTree.Capture) :=
   let snapshot : SnapshotId := ⟨0⟩
   let program : SyntaxTreeM (Array SyntaxTree.Capture) := do
     SyntaxTree.attach snapshot "json"
     let compiled ← SyntaxTree.compile "json" query
     SyntaxTree.captures snapshot compiled 0 contents.utf8ByteSize
-  (program.runModel { texts := #[(snapshot, contents)] }).1
+  (program.runModel { SyntaxTreeModel.withTestGrammars with texts := #[(snapshot, contents)] }).1
 
 /-- Two answers alike: the same captures, or the same refusal. -/
 def same (a b : Except SyntaxTreeError (Array SyntaxTree.Capture)) : Bool :=

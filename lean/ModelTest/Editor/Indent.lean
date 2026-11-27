@@ -7,6 +7,7 @@ import Editor.Mode
 import Editor.Program
 import Editor.Scene
 import Editor.SyntaxTree
+import Editor.SyntaxTree.Model
 import Editor.Test.Models
 import Editor.Text
 import ModelTest.Check
@@ -266,6 +267,13 @@ def indentEditChecks : List Check :=
             Indent.breakAt "\r\n" (some "  ") 10 2 3 == (⟨8, 13⟩, "\r\n  ") &&
             Indent.breakAt "\n" (some "") 10 0 0 == (⟨10, 10⟩, "\n")) }]
 
+/-- `syntaxTree`, drawn with the syntax tree model's own highlights query when
+it names none: its grammar is registered (the test grammars), and a
+registered grammar ships no query, so a test mode hands its own, as a
+grammar's own query is handed. -/
+def drawnWithModelHighlights (syntaxTree : Mode.SyntaxTree) : Mode.SyntaxTree :=
+  { syntaxTree with highlights := syntaxTree.highlights <|> some SyntaxTreeModel.highlights }
+
 /-- The indent levels of rows `first` through `last` of a text of `text`, set
 to a test mode with `syntaxTree` when given, on the editor's models: the
 levels on the right, a refusal on the left; `none` when the command was
@@ -275,7 +283,7 @@ def indentLevelsOf (text : String) (syntaxTree : Option Mode.SyntaxTree) (first 
   let program : EditorM (Except SyntaxTreeError (Array (Option Nat))) := do
     let id ← createText text
     if let some syntaxTree := syntaxTree then
-      Highlight.enter "test" id syntaxTree
+      Highlight.enter "test" id (drawnWithModelHighlights syntaxTree)
     id.indentLevels first last
   match program.runModel editorModel with
   | (.ok (.ok levels), _) => some (.inr levels)
@@ -297,7 +305,7 @@ def openingLevelOf (text : String) (syntaxTree : Option Mode.SyntaxTree) (offset
   let program : EditorM (Except SyntaxTreeError (Option Nat)) := do
     let id ← createText text
     if let some syntaxTree := syntaxTree then
-      Highlight.enter "test" id syntaxTree
+      Highlight.enter "test" id (drawnWithModelHighlights syntaxTree)
     id.openingLevel offset rest
   match program.runModel editorModel with
   | (.ok (.ok level), _) => some (.inr level)
@@ -313,7 +321,7 @@ def reindentEditsOf (text : String) (syntaxTree : Option Mode.SyntaxTree) (first
   let program : EditorM (Except SyntaxTreeError (Array (Extent × String))) := do
     let id ← createText text
     if let some syntaxTree := syntaxTree then
-      Highlight.enter "test" id syntaxTree
+      Highlight.enter "test" id (drawnWithModelHighlights syntaxTree)
     id.reindentEdits first last unit
   match program.runModel editorModel with
   | (.ok (.ok edits), _) => some (.inr edits)

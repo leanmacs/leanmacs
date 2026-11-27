@@ -18,6 +18,7 @@ import Editor.ModeLine
 import Editor.Program
 import Editor.Scene
 import Editor.State
+import Editor.SyntaxTree.Model
 import Editor.Test.Excerpt
 import Editor.Test.Keys
 import Editor.Test.Loop
@@ -268,8 +269,8 @@ def jsonTextObjects : String :=
 /-- A driver of the evil checks over the state the fixture `fixture` says,
 with the unnamed register holding `evilSentinel`, whose buffer's text is
 entered in a test mode of the model's JSON grammar that keeps the text
-objects source `textObjects`, `jsonTextObjects` unless another is given, on
-the editor's models. -/
+objects source `textObjects`, `jsonTextObjects` unless another is given, and
+draws with the model's own highlights query, on the editor's models. -/
 def treeRegistered (fixture : String) (textObjects : String := jsonTextObjects) :
     Option EvilDriver :=
   let (contents, head) := barred fixture
@@ -277,18 +278,23 @@ def treeRegistered (fixture : String) (textObjects : String := jsonTextObjects) 
     let state ← evilState contents head
     if let some (some buffer) := state.buffers[0]? then
       Highlight.enter "json-objects" buffer.text
-          { grammar := "json", textObjects := some textObjects }
+          { grammar := "json", highlights := some SyntaxTreeModel.highlights
+            textObjects := some textObjects }
     return state.setRegister Evil.unnamed evilSentinel
   match prepared.runModel editorModel with
   | (.ok state, model) => (Loop.Driver.over evilHanded (fun _ => none) (pure state) model).toOption
   | (.error _, _) => none
 
 /-- The test language of the indent checks: the model's JSON grammar with
-`jsonIndents` and `jsonTextObjects`, indented by two spaces. -/
+`jsonIndents` and `jsonTextObjects`, indented by two spaces, and drawn with
+the model's own highlights query (`SyntaxTreeModel.highlights`): `json` is a
+registered test grammar, which ships no query, so the language hands its
+own. -/
 def modelJsonIndented : Language :=
   { name := "model-json", patterns := [.extension "json"]
     syntaxTree :=
-      { grammar := "json", indents := some jsonIndents, textObjects := some jsonTextObjects }
+      { grammar := "json", highlights := some SyntaxTreeModel.highlights
+        indents := some jsonIndents, textObjects := some jsonTextObjects }
     indentUnit := .spaces 2 }
 
 /-- What a step of the indent checks is handed: evil's commands

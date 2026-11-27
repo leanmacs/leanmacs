@@ -103,27 +103,37 @@ def installOver (state : ModelState) (setup : SetupM Unit) :
 installed over a registry holding the shipped languages and modes, and
 the work of the registration its install asked for has been started
 (`Loop.Driver.startWork`): the driver runs on the editor's models with
-the grammars `compiled` compiled into the syntax tree model (`json` and
-`lean` unless given), its keys told the installed registry, and its jobs
-given `libraries` as the table grammars load from and the files `files`,
+the test grammars registered (`GrammarRegistry.testGrammars`), its keys
+told the installed registry, and its jobs given `libraries` as the table
+grammars load from, over the same test grammars, and the files `files`,
 each a path and its text, and the directories `directories`. `none` when
-the install asked for no registration. -/
+the install asked for no registration.
+
+`compiled` names grammars compiled into the syntax tree model instead of
+registered, none by default: only the checks of a declaration that
+overrides a compiled-in grammar (`Language.Grammar.compiledStays`) and of
+the shipped-query fallback a Markdown fence's language reads pass it.
+Phase 4 of the roadmap `shipped-grammars-package` removes it with those
+rules. -/
 def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
     (files : Array (String × String)) (directories : Array String := #[])
     (platform : String := checkedPlatform) (packages : Array Package := #[])
     (grammarDirectories : List (String × System.FilePath) := [])
-    (compiled : Array String := #["json", "lean"]) : Option TestDriver := do
+    (compiled : Array String := #[]) : Option TestDriver := do
   let (state, generation, grammars) ←
     installOver (withPackages shippedState packages grammarDirectories) setup
   let keys : Loop.Keys TestScheme.scheme := { registered := state.registry.registered }
-  let model := { editorModel with syntaxTree := { compiled } }
+  let registered : GrammarRegistry :=
+    { registered := GrammarRegistry.testGrammars.registered.filter (!compiled.contains ·.1) }
+  let model := { editorModel with syntaxTree := { compiled, registry := registered } }
   let fileModel :=
     files.foldl (fun model (path, text) => model.withFile path text.toUTF8)
       (directories.foldl (fun model (path : String) => model.withDirectory path) ({} : FileModel))
   let driver ←
     (Loop.Driver.over keys (fun _ => none) (EditorState.initial ⟨640, 480⟩) model).toOption
   let driver :=
-    { driver with jobs := { grammars := { libraries := some libraries }, files := fileModel } }
+    { driver with
+      jobs := { grammars := { registered with libraries := some libraries }, files := fileModel } }
   return driver.startWork Language.Grammar.jobName
       (Language.Grammar.work platform generation grammars)
 

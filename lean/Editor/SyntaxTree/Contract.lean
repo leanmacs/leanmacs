@@ -26,7 +26,11 @@ snapshots of them, in that order:
 ## What it asks
 
 Every property is over the grammar `json`, which the model reproduces and
-the library has:
+the library has. Each runner hands an implementation on which `json` is
+registered, as the core's tests register it from the directory of grammars
+cargo builds for them (`editor-syntax-fixture-grammars`): the library hides
+its compiled-in grammars from every test, and the model runs with the test
+grammars registered (`SyntaxTreeModel.withTestGrammars`).
 
 - the grammars listed, and a grammar that is not listed refused;
 - a question of a text that is not attached, or no longer, refused;
@@ -42,12 +46,11 @@ the library has:
 - the range rule: of each case's text, several ranges, each answering the
   whole text's rows that are in it;
 - a range that is not two positions in order refused;
-- a grammar's shipped highlights query, which compiles (its source is each
-  implementation's own and is not compared), and an unlisted grammar's
-  refused;
+- a registered grammar's shipped queries refused, of every kind, as
+  neither ships one for a registered name, and an unlisted grammar's
+  refused as unknown;
 - a highlighter set, and refused for a text not attached, a face table of
   the wrong size, and a released query;
-- json's shipped queries of the other kinds refused, as neither ships one;
 - an injection and a keep refused for a text not attached, and a language
   with faces of the wrong size;
 - a refresh delay accepted, and no answer changed by it;
@@ -221,14 +224,14 @@ def properties : List Property :=
           let query ← SyntaxTree.compile json "(number) @n"
           return (← refusedWith .badRange (SyntaxTree.captures snapshot query 0 7)) &&
               (← refusedWith .badRange (SyntaxTree.captures snapshot query 4 2)) },
-      { name := "json ships a highlights query that compiles, and an unlisted grammar ships none"
+      { name :=
+          "json, registered, ships no query of any kind, and an unlisted grammar's shipped query is refused as unknown"
         texts := #[]
         holds := fun _ => do
-          let source ← SyntaxTree.shippedQuery json .highlights
-          let query ← SyntaxTree.compile json source
-          let named := !(← SyntaxTree.captureNames query).isEmpty
-          SyntaxTree.release query
-          return named &&
+          let shipsNone ←
+            [QueryKind.highlights, .injections, .textObjects, .indents].allM fun kind =>
+                refusedWith .noShippedQuery (SyntaxTree.shippedQuery json kind)
+          return shipsNone &&
               (← refusedWith .unknownGrammar (SyntaxTree.shippedQuery "no-such" .highlights)) },
       { name := "a well-formed highlight is answered, and one of a text not attached is refused"
         texts := #["{\"a\": [1, true]}"]
@@ -251,12 +254,6 @@ def properties : List Property :=
               (←
                 refusedWith .badFaces
                     (SyntaxTree.highlight snapshot query #[none, none, some ⟨"x"⟩])) },
-      { name := "json ships no injections, text objects or indents query"
-        texts := #[]
-        holds := fun _ => do
-          return (← refusedWith .noShippedQuery (SyntaxTree.shippedQuery json .injections)) &&
-              (← refusedWith .noShippedQuery (SyntaxTree.shippedQuery json .textObjects)) &&
-              (← refusedWith .noShippedQuery (SyntaxTree.shippedQuery json .indents)) },
       { name :=
           "an injection and a keep of a text not attached are refused, and a language with faces not one for each capture name"
         texts := #["[1]"]

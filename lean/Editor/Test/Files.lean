@@ -16,6 +16,7 @@ import Editor.Mode
 import Editor.ModeLine
 import Editor.Scene
 import Editor.State
+import Editor.SyntaxTree.Model
 import Editor.Test.Driver
 import Editor.Test.Jobs
 import Editor.Test.Minibuffer
@@ -125,10 +126,20 @@ def heldFile (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option Buffer.Fi
   (showing driver view).bind (·.buffer.file)
 
 /-- A test language for the language open checks: `*.rs`, parsed with the
-syntax tree model's one grammar, `json`, so a path's extension is seen to
-choose it on the models. -/
+syntax tree model's one grammar, `json`, a registered test grammar, so a
+path's extension is seen to choose it on the models. A registered grammar
+ships no query, so it is drawn with the model's own highlights query
+(`SyntaxTreeModel.highlights`), as a language hands its grammar's own. -/
 def modelRs : Language :=
-  { name := "model-rs", patterns := [.extension "rs"], syntaxTree := { grammar := "json" } }
+  { name := "model-rs", patterns := [.extension "rs"]
+    syntaxTree := { grammar := "json", highlights := some SyntaxTreeModel.highlights } }
+
+/-- The shipped language `json`, drawn with the syntax tree model's own
+highlights query: `json` is a registered test grammar, which ships no
+query, so the language hands its own, as `modelRs` does. -/
+def modelJson : Language :=
+  { Language.json with
+    syntaxTree := { Language.json.syntaxTree with highlights := some SyntaxTreeModel.highlights } }
 
 /-- The language and the major mode of the buffer view 0 of `driver`
 shows. -/

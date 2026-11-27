@@ -73,9 +73,10 @@ structure EditorModel where
   /-- The clipboard model: available, and holding nothing, unless a test
   says otherwise. -/
   clipboard : ClipboardModel := {}
-  /-- The syntax tree model. Its `texts` are filled from `texts` before
-  each syntax tree request. -/
-  syntaxTree : SyntaxTreeModel := {}
+  /-- The syntax tree model, by default with the test grammars registered
+  (`SyntaxTreeModel.withTestGrammars`). Its `texts` are filled from `texts`
+  before each syntax tree request. -/
+  syntaxTree : SyntaxTreeModel := SyntaxTreeModel.withTestGrammars
 
 namespace EditorModel
 
