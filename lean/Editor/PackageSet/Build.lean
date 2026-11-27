@@ -56,39 +56,34 @@ core directory.
    and :package-remove write it), then :reload`. A git core may already have
    been fetched by the resolve: the manifest is authoritative only after
    it.
-3. **Rust**: `lake query :editorRustCrates`, then, when the set holds a
-   package with a Rust crate, `cargo --version`. A set with no crate needs
-   no Cargo: its link reuses the core's archive as it is built
-   (`rustSource` in `lean/lakefile.lean`; the editor never ships Cargo,
-   decided 2026-11-20). One with a crate needs the user's own, and a
-   missing or broken one stops the build with `cargoRequired`, naming the
-   package's crate. A package whose native code is a library of its own
-   (an `editorLibrary` target) adds no crate, so a set whose packages
-   declare only libraries needs no Cargo here: an already-built library
-   runs no tool at all.
-4. **Build and install**: `lake build :editorInstall` with
+3. **Build and install**: `lake build :editorInstall` with
    `EDITOR_INSTALL_DIR=<data>/editors/staging-<k>` (`nextStaging`) and the build
-   environment, its output streamed into the build buffer. The install
-   stages each package's library beside the new editor (`editorLibraries`
-   in `lean/lakefile.lean`). A library target that must build and finds
+   environment, its output streamed into the build buffer. A set's build
+   runs no Cargo of its own: every set's editor links the core's Rust
+   archive, which a user's set reuses as it is built (`rustSource` in
+   `lean/lakefile.lean`; the editor never ships Cargo, decided 2026-11-20),
+   and a package's native code is a library of its own (an `editorLibrary`
+   target). The install stages each package's library beside the new
+   editor (`editorLibraries` in `lean/lakefile.lean`), so the only tool a
+   package can need is its library target's: one that must build and finds
    its tool missing stops the build with the core's sentence, `<tool> is
    required to build <package>'s library, and none works here (<how>): …`,
    which `missingTooling?` reads off Lake's `error:` line, so the failure
    line is `lake build exited with status 1: <sentence>`.
-5. **Record**: the new editor's `editor.core` is read, and
+4. **Record**: the new editor's `editor.core` is read, and
    `editor.packages` written beside it: the requires, the pins of the
    manifest the core check read after the resolve, and the set's name.
-6. **Probe**: `<staging>/editor --probe`, within 10 s, must print `probe:
+5. **Probe**: `<staging>/editor --probe`, within 10 s, must print `probe:
    ok`, which catches a bad link, a bad signature or an `initialize` that
    throws before anything is published. A probe that did not pass fails
    the build with `probeFailed`'s text, which carries the first line the
    probe wrote to standard error: an initialiser's uncaught error, such as
    a package's library that was refused, as Lean's generated `main` prints
    it.
-7. **Publish**: `/bin/mv <staging> <data>/editors/<core>/<n>`.
-8. **Prune**: `/bin/rm -rf` for each directory `pruned` names, never the
+6. **Publish**: `/bin/mv <staging> <data>/editors/<core>/<n>`.
+7. **Prune**: `/bin/rm -rf` for each directory `pruned` names, never the
    one that holds the running executable.
-9. **Restart** into the new editor (`Editor.restart`), or, with no state
+8. **Restart** into the new editor (`Editor.restart`), or, with no state
    directory, `packages: built <exe>; it starts at the next launch`.
 
 Every command of the build runs in the config directory with the editor's
@@ -137,13 +132,9 @@ def opener : String :=
 def lineBound : Nat :=
   65536
 
-/-- How long `git --version` and `cargo --version` may take. -/
+/-- How long `git --version`, a read of a file and a move may take. -/
 def checkPatience : Nat :=
   10000
-
-/-- How long `lake query :editorRustCrates` may take. -/
-def queryPatience : Nat :=
-  120000
 
 /-- How much of a run's output is kept. -/
 def runLimit : Nat :=
@@ -361,13 +352,6 @@ def rootCommand (program : String) (arguments : Array String) : Process.Command 
 /-- What is said when git is needed for `names` and none works (`how`). -/
 def gitRequired (names : Array String) (how : String) : String :=
   s!"git is required to fetch {", ".intercalate names.toList}, and none works here ({how}): install it with `xcode-select --install` on macOS, or from https://git-scm.com, then :reload"
-
-/-- What is said when Cargo is needed and none works (`how`), for the
-crates `crates` (each its package and its crate). -/
-def cargoRequired (crates : Array (String × String)) (how : String) : String :=
-  let what :=
-    ", ".intercalate (crates.toList.map fun (owner, crate) => s!"{owner}'s Rust crate {crate}")
-  s!"Cargo is required to build {what}, and none works here ({how}): install it with rustup from https://rustup.rs, then :reload"
 
 /-- How a run ended, as a clause. -/
 def Ended.describe : Process.Exit → String
@@ -640,14 +624,6 @@ def readText (path : String) : JobM (Option String) := do
   | _ =>
     return none
 
-/-- The crates `lake query :editorRustCrates` printed: each line's package
-and crate. -/
-def cratesIn (text : String) : Array (String × String) :=
-  ((text.splitOn "\n").filterMap fun line =>
-      match line.splitOn "\t" with
-      | owner :: crate :: _ => some (owner, crate)
-      | _ => none).toArray
-
 /-- The job `package-build` ("The steps", in the module docs). Its
 argument is the order's text (`Order.encode`). -/
 def buildWork (arguments : List Argument) : Work := fun _ => do
@@ -670,29 +646,7 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
   let manifest ← readText (order.config ++ "/lake-manifest.json")
   if let some how := coreRefusal? order.config order.core manifest then
     return ← fail how
-  -- 3. Rust: the set's crates, then Cargo, which every link runs.
-  let crates ←
-    match ← runOf (lakeCommand order #["query", ":editorRustCrates"]) queryPatience with
-    | .error how =>
-      return ←
-          fail
-              ((LakeFailure.of order.lake how).describe
-                "lake query :editorRustCrates could not run:")
-    | .ok ran =>
-      match ran.exit with
-      | .code 0 =>
-        pure (cratesIn ((String.fromUTF8? ran.stdout).getD ""))
-      | exit =>
-        let said := ((String.fromUTF8? ran.stderr).getD "").splitOn "\n" |>.filter (!·.isEmpty)
-        post { command := outputName, arguments := said.map .str }
-        return ←
-            fail
-                ((LakeFailure.of order.lake (Ended.describe exit)).describe
-                  "lake query :editorRustCrates")
-  unless crates.isEmpty do
-    if let some how← toolFailure order "cargo" then
-      return ← fail (cargoRequired crates how)
-  -- 4. Build and install into a staging directory.
+  -- 3. Build and install into a staging directory.
   discard <| File.makeDirectory (editorsDirectory order.data)
   let present :=
     match ← File.list (editorsDirectory order.data) with
@@ -706,7 +660,7 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
         (lakeCommand order #["build", ":editorInstall"] #[("EDITOR_INSTALL_DIR", staging)]) then
     removeStaging
     return ← fail (failure.describe "lake build")
-  -- 5. The new editor's core, and its record.
+  -- 4. The new editor's core, and its record.
   let some core := (← readText (staging ++ "/editor.core")).bind coreIn
     |
     removeStaging
@@ -718,14 +672,14 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
   if let .error error← File.append (staging ++ "/editor.packages") record.text.toUTF8 then
     removeStaging
     return ← fail s!"{staging}/editor.packages could not be written: {error.describe}"
-  -- 6. The probe.
+  -- 5. The probe.
   let probe ←
     Process.request
         (.runWithin (rootCommand (staging ++ "/editor") #["--probe"]) 65536 Restore.probePatience)
   if let some how := probeFailed probe then
     removeStaging
     return ← fail how
-  -- 7. Publish.
+  -- 6. Publish.
   let directory := coreDirectory order.data core
   discard <| File.makeDirectory directory
   let names :=
@@ -740,14 +694,14 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
   | _ =>
     removeStaging
     return ← fail s!"{staging} could not be moved to {target}"
-  -- 8. Prune.
+  -- 7. Prune.
   let entries :=
     match ← File.list (editorsDirectory order.data) with
     | .ok entries => entries.map (·.name)
     | .error _ => #[]
   for gone in pruned order.data core n names entries order.running do
     discard <| runOf (rootCommand "/bin/rm" #["-rf", gone]) checkPatience
-  -- 9. Restart.
+  -- 8. Restart.
   let executable := target ++ "/editor"
   return succeeded executable ((← now) - started)
 

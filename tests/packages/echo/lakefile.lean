@@ -6,10 +6,8 @@ open Lake DSL System
 "Rust in a package"), used by tests alone: it shows a package shipping its
 Rust as a library of its own, loaded by the core when the editor starts,
 and the glue that binds it (docs/design/packages.md, "A package's library,
-staged and loaded, as built"). Its crate is not folded into the Rust archive
-the package-set build generates from a set: it declares no
-`editorRustCrate`, so an editor of a set that holds echo links the core's
-archive, or the one of the set's other crates.
+staged and loaded, as built"). An editor of a set that holds echo links
+the core's Rust archive, as every set's does.
 
 Its lakefile is Lean and not TOML, as every other fixture's is: a TOML
 lakefile cannot declare a target that compiles C, a library's

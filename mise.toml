@@ -287,7 +287,7 @@ description = "Build the app's launcher and its test helper, release (crates/edi
 run = "cargo build --quiet --locked --release -p editor-launch-std --bins"
 
 [tasks.ffi-test]
-description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), cargo-deny over each set's generated crate, the headless fixtures under tests/headless on the default set's fixture harness, stepped on the fakes, and the linked test and headless fixtures of each package of the fixture set, which names every default package, so each linked test runs once, then the default set's headless fixtures alone (tools/package-set.sh --no-linked)"
+description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), cargo-deny over the core's generated crate, the headless fixtures under tests/headless on the default set's fixture harness, stepped on the fakes, and the linked test and headless fixtures of each package of the fixture set, which names every default package, so each linked test runs once, then the default set's headless fixtures alone (tools/package-set.sh --no-linked)"
 depends = ["lean"]
 dir = "lean"
 # Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max). On 2026-11-27, with
@@ -298,18 +298,18 @@ dir = "lean"
 # raised by more than that check's share under load.
 timeout = "360s"
 run = [
-  # A package's crate depends on `editor-service` and on nothing else of
-  # the editor's, held by cargo-deny's bans over the crate generated from
-  # the set (`lake -d <set> query :editorRustCrate`, which writes it under
-  # target/editor-rust/ and prints its directory, building nothing), with
-  # the `deny.toml` the build writes beside it, in which the generated
-  # crate is the one crate allowed to depend on `editor-ffi` or on a
-  # package's crate (docs/dev-practices/the-gate.md, "The Rust bans
-  # check"). It holds of the fixture set and of the default set, and passes
-  # by cargo-deny's exit status, offline: the crate's lock is seeded from
-  # the root's.
-  "dir=$(lake -d ../tests/packages query :editorRustCrate) && cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" -D unused-wrapper bans",
-  "dir=$(lake -d ../packages query :editorRustCrate) && cargo deny --offline --manifest-path \"$dir/Cargo.toml\" check --config \"$dir/deny.toml\" -D unused-wrapper bans",
+  # The core's archive, the one Rust archive every set's editor links, is
+  # built from `editor-ffi` alone and holds no `editor-release-std`, held by
+  # cargo-deny's bans over the crate the core's build generates for it
+  # (`rustlib`, which `mise run lean` built just before, under
+  # target/editor-rust/core/), with the `deny.toml` the build writes beside
+  # it, in which the generated crate is `editor-ffi`'s one wrapper
+  # (docs/dev-practices/the-gate.md, "The Rust bans check"). The root
+  # `deny.toml` cannot say either. A package's crate is in no archive: each
+  # ships a library of its own, whose edges its own allow list holds
+  # (`mise run deny`). It passes by cargo-deny's exit status, offline: the
+  # crate's lock is seeded from the root's.
+  "cargo deny --offline --manifest-path ../target/editor-rust/core/Cargo.toml check --config ../target/editor-rust/core/deny.toml -D unused-wrapper bans",
   # One of these checks measures the stack the entry point gives Lean's
   # threads, and LEAN_STACK_SIZE_KB overrides that size, so a variable in the
   # developer's shell must not reach it.

@@ -106,21 +106,26 @@ linked test runs twice. The stress loop's `linked-wiring` suite is `run
 
 ## The Rust bans check
 
-An archive-linked package crate depends on `editor-service` alone, a
-library of its own on `editor-package` alone, and neither on anything else
-of the editor's. The root `deny.toml` refuses every edge of echo's crate
-to a crate of the editor's that has an entry, but cannot hold the edges to
-`editor-ffi` or to another package's crate (its header says why). So
-`deny` runs cargo-deny's bans a second time, over echo's crate's graph
-alone (`--manifest-path tests/packages/echo/rust/Cargo.toml`), with echo's
-own config (`tests/packages/echo/rust/deny.toml`), whose `allow` list names
-every crate that graph may hold and refuses the rest. For an
-archive-linked crate,
-`ffi-test` runs cargo-deny's bans, offline, over the crate the package-set
-build generates from the fixture set and from the default set (`lake -d
-<set> query :editorRustCrate`), with the `deny.toml` the build writes
-beside it (`rustDenyConfig` in `lean/lakefile.lean`), and passes by
-cargo-deny's exit status.
+A package's crate is a library of its own, which depends on
+`editor-package` alone and on nothing else of the editor's: no package's
+crate is linked into the editor's Rust archive. The root `deny.toml`
+refuses every edge of a package's crate to a crate of the editor's that
+has an entry (`editor-service`'s wrappers name no package crate), but
+cannot hold the edges to `editor-ffi` or to another package's crate (its
+header says why). So `deny` runs cargo-deny's bans again over each
+library's graph alone, echo's (`--manifest-path
+tests/packages/echo/rust/Cargo.toml`, with
+`tests/packages/echo/rust/deny.toml`) and acp's (`--manifest-path
+packages/acp/rust/Cargo.toml`, with `packages/acp/rust/deny.toml`), each
+config's `allow` list naming every crate that graph may hold and refusing
+the rest. acp's lists the Agent Client Protocol's SDK and its tree, so a
+bump of the SDK that changes the tree changes that list in the same
+commit. `ffi-test` runs cargo-deny's bans, offline, over the crate the
+core's build generates for its archive (`target/editor-rust/core/`,
+written by `rustlib` in `mise run lean`), with the `deny.toml` the build
+writes beside it (`rustDenyConfig` in `lean/lakefile.lean`): `editor-ffi`'s
+one parent there is the generated crate, and `editor-release-std` is not in
+the archive. Each passes by cargo-deny's exit status.
 
 ## The structure check
 

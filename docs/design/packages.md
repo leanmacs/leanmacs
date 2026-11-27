@@ -179,15 +179,13 @@ could move later.
 | `editorBase` | a package, the set | For `lake query`: the set's config base, one module a line: `Editor`, then the entry module of each package of the set outside the core |
 | `editorShipped` | a package, the set | For `lake query`: what an app bundle ships of the set, built: one line `file<TAB><source><TAB><place>` a file (the core's `Editor` library, its interface libraries `FilesApi` and `EnvironmentApi`, with their test libraries, and each other package's libraries but its tests, with their sources and every file Lake wrote; the lakefiles; the core's glue; the Rust archive), and one `oleans<TAB><place>` a `.olean` directory, for the `stage-bundle` binary (`editor_release::bundle`; [lean-runtime.md](lean-runtime.md), "The app ships the toolchain") |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
-| `editorRustCrates` | a package, the set | For `lake query`: the set's package crates, one a line ("Rust in a package", below) |
-| `editorRustCrate` | a package, the set | For `lake query`: writes the crate generated from the set's package crates and prints its directory; builds nothing |
-| `editorRust` | a package, the set | The set's one Rust archive: the generated crate, built, or the core's (`rustlib`) for a set with no package crate |
 
 `linkAsEditor` is the one link: a root module's object and those of every
 module it imports, with their symbols exported (`-rdynamic`), the glue of
-every package library among them, then the core's glue and the set's one
-Rust archive (`editorRust`), then the link arguments and the system
-libraries that archive needs. `editor` and `editorLinked` both call it, the
+every package library among them, then the core's glue and the core's
+Rust archive (`coreArchive`: `rustlib`, or its prebuilt copy for a user's
+set), the one Rust archive of every set's editor, then the link arguments
+and the system libraries that archive needs. `editor` and `editorLinked` both call it, the
 latter for the set of the module's package, and the core's test
 executables are `lean_exe`s configured to the same line. The editor built this way has the same size, minimum
 macOS and link line as the `lean_exe` it replaced, but for its root's

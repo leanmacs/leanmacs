@@ -66,15 +66,13 @@ def manifestRead (manifest : String := ownManifest) : Process.Script :=
   replied (rootCommand "/bin/cat" #["/c/lake-manifest.json"]) 0 manifest
 
 /-- The scripts of a whole build of `order` that succeeds: the manifest's
-read (answering `manifest`), the query (listing `crates`), Cargo when
-there are crates, the install, the record's read, the probe (exiting
-`probeCode` with `probe` and `probeStderr`), the move and the prune. -/
-def succeeding (order : Order) (crates : String := "") (probe : String := "probe: ok\n")
-    (manifest : String := ownManifest) (probeCode : Nat := 0) (probeStderr : String := "") :
+read (answering `manifest`), the install, the record's read, the probe
+(exiting `probeCode` with `probe` and `probeStderr`), the move and the
+prune. -/
+def succeeding (order : Order) (probe : String := "probe: ok\n") (manifest : String := ownManifest)
+    (probeCode : Nat := 0) (probeStderr : String := "") :
     Array Process.Script × Array Process.StreamScript :=
-  (#[manifestRead manifest, replied (lakeCommand order #["query", ":editorRustCrates"]) 0 crates,
-      replied (tool order "cargo") 0 "cargo 1.98.1",
-      replied (rootCommand "/bin/cat" #[staging ++ "/editor.core"]) 0 "c0\n",
+  (#[manifestRead manifest, replied (rootCommand "/bin/cat" #[staging ++ "/editor.core"]) 0 "c0\n",
       replied (rootCommand (staging ++ "/editor") #["--probe"]) probeCode probe probeStderr,
       replied (rootCommand "/bin/mv" #[staging, "/d/editors/c0/1"]),
       replied (rootCommand "/bin/rm" #["-rf", staging]),
@@ -297,34 +295,37 @@ def packageSetBuildChecks : List Check :=
                 !(startedRuns done).any (·.1 == order.lake) &&
                 failedWith done "git is required") },
     { name :=
-        "with a Rust crate in the set and no Cargo, the build says Cargo is required for that crate and how to get it, and builds nothing; with no crate no Cargo is run"
+        "a set's build runs no lake query and no cargo: the commands it starts are git (when fetched), lake update (when resolving), cat, lake build, the probe, mv and rm"
       run :=
-        let facts := lakefileWith #[hello]
+        let facts := lakefileWith #[gitPackage, hello]
         match orderFor facts with
         | none => pure false
         | some order =>
-          let query :=
-            replied (lakeCommand order #["query", ":editorRustCrates"]) 0
-              "echo\techo-service\t/r/echo/rust/Cargo.toml\n"
           let resolve :=
-            streaming
-              (lakeCommand order
-                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
-              #[]
-          match buildDriver (runningWith facts) #[manifestRead, query] #[resolve],
+            streaming (lakeCommand order (#["update", "--keep-toolchain"] ++ order.resolve)) #[]
+          let (scripts, streams) := succeeding order
+          match
             buildDriver (runningWith facts)
-              ((succeeding order).1.filter (·.command.program != "cargo"))
-              ((succeeding order).2.push resolve) with
-          | some withCrate, some without =>
-            let refused := built withCrate order
-            let done := built without order
+              (#[replied (tool order "git") 0 "git version 2.50.0"] ++ scripts)
+              (streams.push resolve) with
+          | none => pure false
+          | some driver =>
+            let done := built driver order
+            let started := startedRuns done
+            let allowed (program : String) (arguments : Array String) : Bool :=
+              program == "git" ||
+                (program == order.lake &&
+                  (arguments.take 1 == #["update"] ||
+                    arguments.take 2 == #["build", ":editorInstall"])) ||
+                ["/bin/cat", "/bin/mv", "/bin/rm"].contains program ||
+                program.endsWith "/editor"
             pure
-              (refused.loop.state.echo.startsWith
-                  "packages: Cargo is required to build echo's Rust crate echo-service, and none works here (" &&
-                !(startedRuns refused).any (·.2.contains ":editorInstall") &&
-                !(startedRuns done).any (·.1 == "cargo") &&
-                (startedRuns done).any (·.2.contains ":editorInstall"))
-          | _, _ => pure false },
+              (done.handOver.isSome &&
+                started.all (fun (program, arguments) => allowed program arguments) &&
+                !started.any
+                    (fun (program, arguments) =>
+                      program == "cargo" || arguments.contains "query") &&
+                started.any (·.2.contains ":editorInstall")) },
     { name :=
         "the resolve runs lake update for the requires the manifest lacks, and a failing build is shown, removes its staging directory, publishes nothing and keeps the editor running"
       run :=
@@ -353,7 +354,7 @@ def packageSetBuildChecks : List Check :=
                 !(startedRuns done).any (·.1 == "/bin/mv") &&
                 done.handOver.isNone) },
     { name :=
-        "every command the build runs with the toolchain, git, lake update, lake query, cargo and lake build, has the user's Lean, Lake and compiler variables removed and then the build record set over them, LEAN_CC too when the record holds it"
+        "every command the build runs with the toolchain, git, lake update and lake build, has the user's Lean, Lake and compiler variables removed and then the build record set over them, LEAN_CC too when the record holds it"
       run :=
         let facts := lakefileWith #[gitPackage, hello]
         match orderFor facts with
@@ -361,21 +362,17 @@ def packageSetBuildChecks : List Check :=
         | some order =>
           let resolve :=
             streaming (lakeCommand order (#["update", "--keep-toolchain"] ++ order.resolve)) #[]
-          let query :=
-            replied (lakeCommand order #["query", ":editorRustCrates"]) 0
-              "echo\techo-service\t/r/echo/rust/Cargo.toml\n"
           let (scripts, streams) := succeeding order
           match
             buildDriver (runningWith facts)
-              (#[replied (tool order "git") 0 "git version 2.50.0", query] ++ scripts)
+              (#[replied (tool order "git") 0 "git version 2.50.0"] ++ scripts)
               (streams.push resolve) with
           | none => pure false
           | some driver =>
             let done := built driver order
             let tools := done.jobs.processes.started.filter (·.directory.toString == "/c")
             pure
-              (tools.map (·.program) ==
-                  #["git", "/t/bin/lake", "/t/bin/lake", "cargo", "/t/bin/lake"] &&
+              (tools.map (·.program) == #["git", "/t/bin/lake", "/t/bin/lake"] &&
                 tools.all
                   (fun command =>
                     !command.environment.clear && command.environment.unset == clearedVariables &&
@@ -472,7 +469,7 @@ def packageSetBuildChecks : List Check :=
                 refusedToolchain? bundled "exited with status 1" == none)
         | _ => pure false },
     { name :=
-        "macOS refusing the bundle's lake at lake query :editorRustCrates, which cannot start or is killed, or at lake build :editorInstall, killed, ends the build saying so and how to remove the flag, and nothing else"
+        "macOS refusing the bundle's lake at lake update or at lake build :editorInstall, killed, ends the build saying so and how to remove the flag, and nothing else"
       run :=
         let facts := lakefileWith #[hello]
         let bundled := "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain/bin/lake"
@@ -481,14 +478,10 @@ def packageSetBuildChecks : List Check :=
         | .build order =>
           let refusal :=
             s!"macOS refused to run the bundled toolchain ({bundled}); remove the quarantine flag: xattr -dr com.apple.quarantine /Applications/Leanmacs.app"
-          let resolve :=
-            streaming
-              (lakeCommand order
-                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
-              #[]
-          let query := lakeCommand order #["query", ":editorRustCrates"]
-          let (scripts, streams) := succeeding order
-          let others := scripts.filter (·.command != query)
+          let resolveCommand :=
+            lakeCommand order #["update", "--keep-toolchain", "default-set", "editor-core", "hello"]
+          let resolve := streaming resolveCommand #[]
+          let scripts := (succeeding order).1
           let refusedWith (scripts : Array Process.Script) (streams : Array Process.StreamScript) :
             Bool :=
             match buildDriver running scripts streams with
@@ -505,15 +498,9 @@ def packageSetBuildChecks : List Check :=
                 (#[resolve,
                   { command := install order, steps := #[], exit := .signal 9 :
                     Process.StreamScript }]) &&
-              refusedWith
-                (others.push
-                  { command := query, reply := .error (.denied "Operation not permitted") })
-                (streams.push resolve) &&
-              refusedWith
-                (others.push
-                  { command := query
-                    reply := .ok { exit := .signal 9, stdout := .empty, stderr := .empty } })
-                (streams.push resolve))
+              refusedWith scripts
+                #[{ command := resolveCommand, steps := #[], exit := .signal 9 :
+                    Process.StreamScript }])
         | _ => pure false },
     { name :=
         "how a step running lake failed is decided once: macOS refusing a bundle's lake is said as it is at every step, and any other end after the step"
@@ -532,7 +519,7 @@ def packageSetBuildChecks : List Check :=
             (LakeFailure.ended "exited with status 1").describe "lake build" ==
               "lake build exited with status 1") },
     { name :=
-        "a manifest whose editor-core is git, a path at another directory, or missing ends the build after lake update, before lake query and lake build, makes no staging directory, and says why and how to fix it; the set's inherited entry for the running core, spelled <set>/../lean, passes"
+        "a manifest whose editor-core is git, a path at another directory, or missing ends the build after lake update, before lake build, makes no staging directory, and says why and how to fix it; the set's inherited entry for the running core, spelled <set>/../lean, passes"
       run :=
         let facts := lakefileWith #[hello]
         match orderFor facts with
@@ -553,7 +540,6 @@ def packageSetBuildChecks : List Check :=
               let how := s!"the package set resolves editor-core to {what}, {fix}"
               done.loop.state.echo == s!"packages: {how}; this editor keeps running" &&
                 failedWith done how &&
-                !(startedRuns done).any (·.2.contains "query") &&
                 !(startedRuns done).any (·.2.contains ":editorInstall") &&
                 (startedRuns done).any (·.2.contains "update") &&
                 !done.jobs.files.directories.any (·.toString == "/d/editors")
@@ -692,37 +678,6 @@ def packageSetBuildChecks : List Check :=
                 done.loop.state.echo ==
                   "packages: built /d/editors/c0/1/editor; it starts at the next launch" &&
                 done.handOver.isNone) },
-    { name :=
-        "a lake query :editorRustCrates that exits 1 posts what it said on stderr to the build's buffer, ends the build failed naming the query and its status, and runs neither Cargo nor lake build"
-      run :=
-        let facts := lakefileWith #[hello]
-        match orderFor facts with
-        | none => pure false
-        | some order =>
-          let resolve :=
-            streaming
-              (lakeCommand order
-                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
-              #[]
-          let query := lakeCommand order #["query", ":editorRustCrates"]
-          let refusal := "error: the crate /elsewhere/rust is outside the editor's workspace"
-          let (scripts, streams) := succeeding order
-          let scripts :=
-            (scripts.filter (·.command != query)).push
-              { command := query
-                reply :=
-                  .ok { exit := .code 1, stdout := .empty, stderr := (refusal ++ "\n").toUTF8 } }
-          match buildDriver (runningWith facts) scripts (streams.push resolve) with
-          | none => pure false
-          | some driver =>
-            let done := built driver order
-            let how := "lake query :editorRustCrates exited with status 1"
-            let cargo := tool order "cargo"
-            pure
-              ((bufferLines done).contains refusal && failedWith done how &&
-                done.loop.state.echo == s!"packages: {how}; this editor keeps running" &&
-                !(startedRuns done).contains (cargo.program, cargo.arguments) &&
-                !(startedRuns done).any (·.2.contains ":editorInstall")) },
     { name :=
         "pruning keeps the version before the new one and the running editor's core, and removes older versions, other cores and staging directories"
       run :=

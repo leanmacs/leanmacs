@@ -11,10 +11,10 @@ import Editor.Test.Linked.UserSet
 /-!
 # Linked tests: a user's set with echo builds with no Cargo, and its editor loads echo's library from the set's build
 
-A user's set is a set outside the repository, so its Rust archive is the
-core's as it is built (`rustSource` in `lean/lakefile.lean`: `prebuilt`)
-and no Cargo runs for it; a package whose native code is a library of its
-own adds nothing there. These checks build such a set with the toolchain's
+A user's set is a set outside the repository, so it reuses the core's Rust
+archive as it is built (`rustSource false`, `prebuilt`, in
+`lean/lakefile.lean`) and no Cargo runs for it; a package whose native code
+is a library of its own adds nothing there. These checks build such a set with the toolchain's
 `lake` the linked test is handed, the one the app bundles and its build
 job runs, through the real process port, in a temporary directory of the
 check's own, with no `cargo` on the child's `PATH`

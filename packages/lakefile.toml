@@ -50,12 +50,13 @@
 # Two first-party packages live here and are deliberately not required:
 # agents (agents-api/, the interface, and acp/, its implementation over the
 # Agent Client Protocol's Rust SDK). They are opt-in (owner decision,
-# 2026-11-26): `acp` holds a crate, and requiring it here would make this
-# set's Rust archive one generated from that crate, which the app's bundle,
-# shipping the core's prebuilt archive and no Cargo, cannot build. A user
-# who wants them adds both to their own set and builds `acp`'s crate with
-# their own Cargo, which the package-set build asks for (`cargoRequired`);
-# `mise run install -- --agents` adds both to the config's lakefile.
+# 2026-11-26): `acp` ships a library of its own (its `editorLibrary`),
+# which the package-set build stages beside the editor, and nothing is
+# folded into any Rust archive; but the app's bundle stages no package's
+# library yet (`editorShipped`), so this set leaves them out.
+# `mise run install -- --agents` adds both to a user's config, with acp's
+# library built from the checkout into the package's `lib/`, so that
+# config's `:reload` builds with no Cargo.
 # The fixture set (tests/packages/) requires them, so every package step
 # covers them.
 #

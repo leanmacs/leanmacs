@@ -2,10 +2,11 @@
 //!
 //! Lean owns the process and is the editor; this crate is the one place in
 //! the Rust library that knows so. It is linked into the one static library
-//! Lake links into the Lean executables: a crate the package-set build
-//! generates from the set, which depends on this crate and on the crate of
-//! each package of the set that holds Rust (`lean/lakefile.lean`, the facet
-//! `editorRust`; docs/design/packages.md, "Rust in a package"). Every function
+//! Lake links into the Lean executables, every set's editor among them: the
+//! core's archive, a crate the core's build generates that depends on this
+//! crate alone (`lean/lakefile.lean`, the target `rustlib`). A package's
+//! Rust is a library of its own, which the core loads when the editor
+//! starts and never links in. Every function
 //! here is called by Lean, directly or through the C glue in
 //! `lean/ffi/glue.c`. Nothing here calls Lean.
 //!

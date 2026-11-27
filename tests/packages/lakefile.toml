@@ -36,9 +36,9 @@ path = "greeting-api"
 
 # `echo` holds Rust: a crate of its own, built as a library of its own that
 # the core loads when the editor starts, and the glue that loads it and
-# binds it (docs/design/packages.md, "A library loaded when the editor
-# runs, as built"). It is not folded into the Rust archive the package-set
-# build generates from the set.
+# binds it (docs/design/packages.md, "A package's library, staged and
+# loaded, as built"). No package's Rust is folded into any archive: the
+# set's editor links the core's.
 [[require]]
 name = "echo"
 path = "echo"
@@ -52,12 +52,12 @@ path = "../../packages"
 
 # `agents-api` is the interface package of agents (packages/agents-api/), and
 # `acp` its implementation over the Agent Client Protocol's Rust SDK
-# (packages/acp/), whose crate the package-set build links into this set's
-# editor through the one Rust archive it generates from the set, the only
-# crate in it. Both are
-# opt-in first-party packages, which the default set leaves out because
-# `acp`'s crate needs the user's own Cargo (packages/lakefile.toml's
-# header): this set requires them so that every package step covers them.
+# (packages/acp/), which ships its crate as a library of its own, as echo
+# does: the package-set build stages it beside this set's editor, and
+# nothing is folded into the set's Rust archive, the core's. Both are
+# opt-in first-party packages, which the default set leaves out
+# (packages/lakefile.toml's header): this set requires them so that every
+# package step covers them.
 # They come after the default set, so they register after the default
 # packages: `acp` binds ex names, and the default packages' fixtures, which
 # this set's harness runs too, list the ex names in registration order as
