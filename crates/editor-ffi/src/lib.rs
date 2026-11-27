@@ -639,6 +639,7 @@ pub mod main_thread;
 pub mod marker;
 mod menu;
 pub mod motion;
+pub mod package_library;
 pub mod pair;
 pub mod processes;
 pub mod render;

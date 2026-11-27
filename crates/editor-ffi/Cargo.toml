@@ -155,6 +155,16 @@ editor-grep = { path = "../editor-grep" }
 # Through it the static library Lean links holds ignore and grep-searcher,
 # which have no system dependency.
 editor-grep-ripgrep = { path = "../editor-grep-ripgrep" }
+# A package's native library, loaded at run time: the package runtime the
+# core hands it, the load and its refusals (`src/package_library.rs`).
+editor-package-library = { path = "../editor-package-library" }
+# The real loader of package libraries. This is the crate that wires the
+# library together, so it is the one that links the adapter; the root
+# `clippy.toml` refuses its constructor but at the one static of
+# `src/package_library.rs` and the adapter's contract test. Through it the
+# static library Lean links holds libloading, which the syntax adapter
+# already brings.
+editor-package-library-libloading = { path = "../editor-package-library-libloading" }
 # The editor's restart: the exec and CoreFoundation's main bundle
 # (`src/launch.rs`), forwarded to the launcher's own adapters so the editor
 # and the launcher exec the same way; and the `Invocation` the exec takes.
