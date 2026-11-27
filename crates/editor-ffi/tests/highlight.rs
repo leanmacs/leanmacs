@@ -10,7 +10,11 @@
 //! Every test runs on the process's syntax service, as the edit paths reach
 //! it (the module docs of `editor_ffi::syntax`), in parallel: each makes
 //! documents of its own. A wait for a delivery blocks on the session with a
-//! bound, and nothing sleeps.
+//! bound, and nothing sleeps. The service hides its compiled-in grammars,
+//! so every test first registers the six from the native libraries
+//! `editor-syntax-fixture-grammars` builds (`tests/common/grammars.rs`),
+//! and draws with the queries staged beside them, as a package's grammar is
+//! drawn with the queries it brings.
 
 use std::mem::MaybeUninit;
 use std::ops::Range;
@@ -34,9 +38,13 @@ use editor_layout::face::{Color, Face};
 use editor_layout::scene::{Padding, TextSpans, spans_contract};
 use editor_syntax::highlight::{self, Highlighter};
 use editor_syntax::inject::{Injections, Language};
-use editor_syntax::{GrammarName, QueryKind, Syntax};
-use editor_syntax_treesitter::{TreeSitter, TreeSitterQuery};
+use editor_syntax::{GrammarName, Syntax};
+use editor_syntax_fixture_grammars::{ALL, Grammar};
+use editor_syntax_treesitter::TreeSitterQuery;
 use editor_text::{ChangeSet, Origin, Transaction};
+
+#[path = "common/grammars.rs"]
+mod grammars;
 
 /// hang guard: a delivery; only a hang reaches the bound, and the test
 /// then fails as a hang. The longest a test waits for one.
@@ -76,8 +84,25 @@ fn settled(snapshot: &Snapshot) -> bool {
 /// The Rust fixture the highlights are drawn over.
 const ITEMS: &str = include_str!("../../../tests/syntax/rust/items.rs");
 
-/// The source of `grammar`'s shipped highlights, asked through C; or the
-/// status of the refusal.
+/// The fixture grammar `name`.
+fn fixture(name: &str) -> Grammar {
+    ALL.into_iter()
+        .find(|grammar| grammar.name == name)
+        .unwrap_or_else(|| panic!("no fixture grammar {name}"))
+}
+
+/// The highlights query staged beside `grammar`'s library.
+fn highlights(grammar: &str) -> String {
+    fixture(grammar).highlights.to_owned()
+}
+
+/// The injections query staged beside `grammar`'s library, if it has one.
+fn injections_of(grammar: &str) -> Option<String> {
+    fixture(grammar).injections.map(str::to_owned)
+}
+
+/// The source of `grammar`'s shipped query of the kind tagged `kind`, asked
+/// through C; or the status of the refusal.
 fn shipped(grammar: &str, kind: u8) -> Result<String, u64> {
     let mut raw = MaybeUninit::<RawText>::uninit();
     // SAFETY: the grammar's bytes are alive for the call, and `raw` is
@@ -138,10 +163,9 @@ fn highlight_through_c(snapshot: &Snapshot, query: *const SyntaxQuery, faces: &[
 /// The capture names of `source`, compiled for `grammar`, and the face
 /// each is drawn in by the shipped default: `syntax.` and its name.
 fn names_and_faces(grammar: &str, source: &str) -> (Vec<String>, Vec<String>) {
-    let query = TreeSitter::default()
-        .compile(&GrammarName::new(grammar), source)
-        .unwrap();
-    let names = TreeSitter::default().capture_names(&query);
+    let oracle = grammars::adapter();
+    let query = oracle.compile(&GrammarName::new(grammar), source).unwrap();
+    let names = oracle.capture_names(&query);
     let faces = names.iter().map(|name| format!("syntax.{name}")).collect();
     (names, faces)
 }
@@ -170,13 +194,14 @@ fn fresh(
     faces: &[String],
 ) -> Vec<(Range<usize>, String)> {
     let grammar = GrammarName::new(grammar);
-    let query = TreeSitter::default().compile(&grammar, source).unwrap();
-    let count = TreeSitter::default().capture_names(&query).len();
+    let oracle = grammars::adapter();
+    let query = oracle.compile(&grammar, source).unwrap();
+    let count = oracle.capture_names(&query).len();
     let faces = faces.iter().cloned().map(Some).collect();
     let highlighter = Highlighter::new(std::sync::Arc::new(query), count, faces).unwrap();
-    let mut parser = TreeSitter::default().parser(&grammar).unwrap();
+    let mut parser = oracle.parser(&grammar).unwrap();
     highlight::fresh(
-        &TreeSitter::default(),
+        &oracle,
         &highlighter,
         None,
         &mut parser,
@@ -211,13 +236,14 @@ fn apply(document: &Document, changes: &[(Range<usize>, &str)]) {
 }
 
 /// A document of [`ITEMS`], attached to `rust` and highlighted with its
-/// shipped query through C ([`highlighted`]).
+/// highlights through C ([`highlighted`]).
 fn highlighted_items() -> (Document, String, Vec<String>) {
     highlighted("rust", ITEMS)
 }
 
-/// A document of `text`, attached to `grammar` and highlighted with its
-/// shipped query through C, each capture in `syntax.` and its name; and
+/// A document of `text`, attached to `grammar` and highlighted with the
+/// highlights staged beside its library through C, each capture in
+/// `syntax.` and its name; and
 /// that query's source and faces. The query's handle is freed once the
 /// highlighter is set: the highlighter keeps the query.
 fn highlighted(grammar: &str, text: &str) -> (Document, String, Vec<String>) {
@@ -227,7 +253,7 @@ fn highlighted(grammar: &str, text: &str) -> (Document, String, Vec<String>) {
         syntaxes().attach(&snapshot, grammar),
         AttachStatus::Attached
     );
-    let source = shipped(grammar, 0).unwrap();
+    let source = highlights(grammar);
     let (_, faces) = names_and_faces(grammar, &source);
     let query = query_new(grammar, &source);
     assert_eq!(
@@ -241,6 +267,7 @@ fn highlighted(grammar: &str, text: &str) -> (Document, String, Vec<String>) {
 
 #[test]
 fn highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    grammars::registered();
     refresh_at_once();
     let (document, source, faces) = highlighted_items();
     assert!(settled(&Snapshot::of(&document)));
@@ -296,6 +323,7 @@ const MANIFEST: &str = include_str!("../../../tests/syntax/toml/manifest.toml");
 
 #[test]
 fn toml_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    grammars::registered();
     refresh_at_once();
     let (document, source, faces) = highlighted("toml", MANIFEST);
     assert!(settled(&Snapshot::of(&document)));
@@ -355,6 +383,7 @@ const PROGRAMS: &str = include_str!("../../../tests/syntax/lean/Programs.lean");
 
 #[test]
 fn lean_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    grammars::registered();
     refresh_at_once();
     let (document, source, faces) = highlighted("lean", PROGRAMS);
     assert!(settled(&Snapshot::of(&document)));
@@ -407,6 +436,7 @@ fn lean_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
 
 #[test]
 fn the_service_keeps_the_layout_spans_contract() {
+    grammars::registered();
     let (document, _, _) = highlighted_items();
     let snapshot = Snapshot::of(&document);
     assert!(settled(&snapshot));
@@ -426,13 +456,17 @@ fn the_service_keeps_the_layout_spans_contract() {
     );
 }
 
+/// A registered grammar ships no query, so with the compiled-in table
+/// hidden the success encoding of `editor_ffi_syntax_shipped_query` is
+/// untested here until phase 4 of the roadmap `shipped-grammars-package`
+/// removes shipped queries: a named gap.
 #[test]
-fn a_shipped_query_crosses_as_its_source_or_a_status() {
+fn a_shipped_query_of_a_registered_grammar_crosses_as_none_shipped_and_of_an_unknown_one_as_unknown()
+ {
+    grammars::registered();
     assert_eq!(
         shipped("rust", 0),
-        Ok(TreeSitter::default()
-            .shipped_query(&GrammarName::new("rust"), QueryKind::Highlights)
-            .unwrap())
+        Err(ShippedStatus::NoShippedQuery as u64)
     );
     assert_eq!(
         shipped("cobol", 0),
@@ -450,9 +484,10 @@ fn a_shipped_query_crosses_as_its_source_or_a_status() {
 
 #[test]
 fn a_highlight_is_refused_with_its_status() {
+    grammars::registered();
     let document = Document::new("{\"a\": [1, true]}");
     let snapshot = Snapshot::of(&document);
-    let source = shipped("json", 0).unwrap();
+    let source = highlights("json");
     let (_, faces) = names_and_faces("json", &source);
     let json = query_new("json", &source);
     let rust = query_new("rust", "(identifier) @variable");
@@ -497,6 +532,7 @@ fn a_highlight_is_refused_with_its_status() {
 
 #[test]
 fn an_attach_with_the_same_grammar_keeps_the_highlights_and_another_grammar_drops_them() {
+    grammars::registered();
     let (document, source, faces) = highlighted_items();
     let snapshot = Snapshot::of(&document);
     assert!(settled(&snapshot));
@@ -515,6 +551,7 @@ fn an_attach_with_the_same_grammar_keeps_the_highlights_and_another_grammar_drop
 
 #[test]
 fn a_published_scene_draws_the_highlights() {
+    grammars::registered();
     const RED: Color = Color::rgb(0xcc, 0, 0);
     let (document, _, _) = highlighted_items();
     let snapshot = Snapshot::of(&document);
@@ -601,6 +638,7 @@ fn named(
 
 #[test]
 fn an_excerpt_document_over_a_highlighted_source_draws_its_highlights_at_every_excerpt_of_it() {
+    grammars::registered();
     let (document, _, _) = highlighted_items();
     assert!(settled(&Snapshot::of(&document)));
     let excerpts = overlapping_excerpts(&document);
@@ -633,6 +671,7 @@ fn an_excerpt_document_over_a_highlighted_source_draws_its_highlights_at_every_e
 
 #[test]
 fn the_translated_spans_keep_the_layout_spans_contract() {
+    grammars::registered();
     let (document, _, _) = highlighted_items();
     assert!(settled(&Snapshot::of(&document)));
     let excerpts = overlapping_excerpts(&document);
@@ -643,6 +682,7 @@ fn the_translated_spans_keep_the_layout_spans_contract() {
 
 #[test]
 fn a_published_scene_of_an_excerpt_document_paints_a_keyword_in_its_face_in_both_excerpts() {
+    grammars::registered();
     const RED: Color = Color::rgb(0xcc, 0, 0);
     let (document, _, _) = highlighted_items();
     assert!(settled(&Snapshot::of(&document)));
@@ -686,19 +726,16 @@ fn a_published_scene_of_an_excerpt_document_paints_a_keyword_in_its_face_in_both
 /// The Markdown fixture of fences.
 const FENCED: &str = include_str!("../../../tests/syntax/markdown/fenced.md");
 
-/// The languages a Markdown document is given: each with its shipped
-/// highlights, a face for each capture, and its shipped injections.
+/// The languages a Markdown document is given: each with its highlights, a
+/// face for each capture, and its injections, staged beside its library.
 const LANGUAGES: [&str; 3] = ["rust", "json", "markdown_inline"];
 
-/// The kind tag of injections.
-const INJECTIONS: u8 = 1;
-
-/// `grammar`'s shipped highlights as a highlighter, each capture in
-/// `syntax.` and its name.
+/// `grammar`'s highlights as a highlighter, each capture in `syntax.` and
+/// its name.
 fn highlighter_of(grammar: &str) -> Highlighter<TreeSitterQuery> {
-    let source = shipped(grammar, 0).unwrap();
+    let source = highlights(grammar);
     let (names, faces) = names_and_faces(grammar, &source);
-    let query = TreeSitter::default()
+    let query = grammars::adapter()
         .compile(&GrammarName::new(grammar), &source)
         .unwrap();
     let faces = faces.into_iter().map(Some).collect();
@@ -708,27 +745,19 @@ fn highlighter_of(grammar: &str) -> Highlighter<TreeSitterQuery> {
 /// The injections a Markdown document is given, as the core holds them:
 /// what a fresh highlight is drawn with.
 fn markdown_injections() -> Injections<TreeSitterQuery> {
+    let oracle = grammars::adapter();
     let compiled = |grammar: &str, source: String| {
-        std::sync::Arc::new(
-            TreeSitter::default()
-                .compile(&GrammarName::new(grammar), &source)
-                .unwrap(),
-        )
+        std::sync::Arc::new(oracle.compile(&GrammarName::new(grammar), &source).unwrap())
     };
     Injections {
-        query: Some(compiled(
-            "markdown",
-            shipped("markdown", INJECTIONS).unwrap(),
-        )),
+        query: Some(compiled("markdown", injections_of("markdown").unwrap())),
         languages: LANGUAGES
             .iter()
             .map(|grammar| {
                 let language = Language {
                     grammar: GrammarName::new(*grammar),
                     highlighter: std::sync::Arc::new(highlighter_of(grammar)),
-                    injections: shipped(grammar, INJECTIONS)
-                        .ok()
-                        .map(|source| compiled(grammar, source)),
+                    injections: injections_of(grammar).map(|source| compiled(grammar, source)),
                 };
                 ((*grammar).to_owned(), language)
             })
@@ -737,7 +766,7 @@ fn markdown_injections() -> Injections<TreeSitterQuery> {
 }
 
 /// A document of `text`, attached to `markdown`, highlighted with its
-/// shipped query and given its shipped injections and the languages of
+/// highlights and given its injections and the languages of
 /// [`LANGUAGES`], all through C, each capture in `syntax.` and its name.
 fn injected_markdown(text: &str) -> Document {
     let document = Document::new(text);
@@ -746,22 +775,22 @@ fn injected_markdown(text: &str) -> Document {
         syntaxes().attach(&snapshot, "markdown"),
         AttachStatus::Attached
     );
-    let source = shipped("markdown", 0).unwrap();
+    let source = highlights("markdown");
     let (_, faces) = names_and_faces("markdown", &source);
     let query = query_new("markdown", &source);
     assert_eq!(
         highlight_through_c(&snapshot, query, &faces),
         HighlightStatus::Highlighted as u64
     );
-    let injections = query_new("markdown", &shipped("markdown", INJECTIONS).unwrap());
+    let injections = query_new("markdown", &injections_of("markdown").unwrap());
     // SAFETY: both handles are live.
     let injected = unsafe { editor_ffi_syntax_inject(&snapshot, injections) };
     assert_eq!(injected, InjectStatus::Injected as u64);
     for grammar in LANGUAGES {
-        let source = shipped(grammar, 0).unwrap();
+        let source = highlights(grammar);
         let (_, faces) = names_and_faces(grammar, &source);
         let highlights = query_new(grammar, &source);
-        let own = shipped(grammar, INJECTIONS)
+        let own = injections_of(grammar)
             .map(|source| query_new(grammar, &source))
             .unwrap_or(std::ptr::null_mut());
         let words = strings_words(&faces);
@@ -799,7 +828,7 @@ fn injected_markdown(text: &str) -> Document {
     document
 }
 
-/// A fresh highlight of `text` with `grammar`'s shipped highlights, and
+/// A fresh highlight of `text` with `grammar`'s highlights, and
 /// with `injections` when given, each span with its face's name.
 fn fresh_with(
     text: &str,
@@ -808,20 +837,13 @@ fn fresh_with(
 ) -> Vec<(Range<usize>, String)> {
     let highlighter = highlighter_of(grammar);
     let (faces, _) = highlight::face_table(&highlighter, injections);
-    let mut parser = TreeSitter::default()
-        .parser(&GrammarName::new(grammar))
-        .unwrap();
+    let oracle = grammars::adapter();
+    let mut parser = oracle.parser(&GrammarName::new(grammar)).unwrap();
     let snapshot = Document::new(text).snapshot();
-    highlight::fresh(
-        &TreeSitter::default(),
-        &highlighter,
-        injections,
-        &mut parser,
-        &snapshot,
-    )
-    .into_iter()
-    .map(|span| (span.bytes, faces[span.face].clone()))
-    .collect()
+    highlight::fresh(&oracle, &highlighter, injections, &mut parser, &snapshot)
+        .into_iter()
+        .map(|span| (span.bytes, faces[span.face].clone()))
+        .collect()
 }
 
 /// The spans of `spans` within `range`, moved back by its start.
@@ -840,6 +862,7 @@ fn within(spans: &[(Range<usize>, String)], range: &Range<usize>) -> Vec<(Range<
 
 #[test]
 fn a_fenced_rust_block_in_markdown_is_drawn_with_rusts_captures() {
+    grammars::registered();
     let document = injected_markdown(FENCED);
     assert!(settled(&Snapshot::of(&document)));
     let drawn = drawn(&document).unwrap();
@@ -889,6 +912,7 @@ fn a_fenced_rust_block_in_markdown_is_drawn_with_rusts_captures() {
 
 #[test]
 fn injected_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    grammars::registered();
     refresh_at_once();
     let document = injected_markdown(FENCED);
     assert!(settled(&Snapshot::of(&document)));
@@ -918,6 +942,7 @@ fn injected_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
 
 #[test]
 fn markdown_emphasis_and_inline_code_are_drawn_with_the_inline_grammars_captures() {
+    grammars::registered();
     let text = "Some *emphasis* and `code`.\n";
     let document = injected_markdown(text);
     assert!(settled(&Snapshot::of(&document)));
@@ -936,6 +961,7 @@ fn markdown_emphasis_and_inline_code_are_drawn_with_the_inline_grammars_captures
 
 #[test]
 fn the_service_keeps_the_layout_spans_contract_with_layers() {
+    grammars::registered();
     let document = injected_markdown(FENCED);
     let snapshot = Snapshot::of(&document);
     assert!(settled(&snapshot));
@@ -956,6 +982,7 @@ fn the_service_keeps_the_layout_spans_contract_with_layers() {
 
 #[test]
 fn a_published_scene_draws_a_fenced_rust_keyword() {
+    grammars::registered();
     const RED: Color = Color::rgb(0xcc, 0, 0);
     let document = injected_markdown(FENCED);
     let snapshot = Snapshot::of(&document);

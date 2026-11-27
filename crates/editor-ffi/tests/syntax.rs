@@ -7,7 +7,9 @@
 //! (the module docs of `editor_ffi::syntax`), in parallel: each makes
 //! documents of its own, and keys are given out once in the process. A
 //! wait for a delivery blocks on the session with a bound, and nothing
-//! sleeps.
+//! sleeps. The service hides its compiled-in grammars, so every test that
+//! names a grammar first registers the six from the native libraries
+//! `editor-syntax-fixture-grammars` builds (`tests/common/grammars.rs`).
 
 use std::mem::MaybeUninit;
 use std::slice;
@@ -28,8 +30,11 @@ use editor_ffi::syntax::{
 };
 use editor_ffi::text::editor_ffi_text_free;
 use editor_syntax::{GrammarName, QueryErrorKind, Syntax};
-use editor_syntax_treesitter::TreeSitter;
+use editor_syntax_fixture_grammars::ALL;
 use editor_text::{ChangeSet, Origin, Transaction};
+
+#[path = "common/grammars.rs"]
+mod grammars;
 
 /// hang guard: a delivery; only a hang reaches the bound, and the test
 /// then fails as a hang. The longest a test waits for one.
@@ -102,10 +107,9 @@ fn delivered_is_fresh(document: &Document) -> bool {
         return false;
     }
     let text = document.snapshot();
-    let mut parser = TreeSitter::default()
-        .parser(&GrammarName::new("rust"))
-        .unwrap();
-    let fresh = TreeSitter::default().nodes(&TreeSitter::default().parse(&mut parser, &text, None));
+    let oracle = grammars::adapter();
+    let mut parser = oracle.parser(&GrammarName::new("rust")).unwrap();
+    let fresh = oracle.nodes(&oracle.parse(&mut parser, &text, None));
     syntaxes().delivered(document.key()) == Some((text.revision(), fresh))
 }
 
@@ -125,26 +129,30 @@ fn transaction(len: usize, changes: &[(usize, usize, &str)]) -> Transaction {
 }
 
 #[test]
-fn the_grammars_compiled_in_cross_as_a_list_of_strings() {
+fn the_grammars_listed_cross_as_a_list_of_strings() {
+    grammars::registered();
     let mut raw = MaybeUninit::<RawStrings>::uninit();
     // SAFETY: `raw` is writable for one record.
     unsafe { editor_ffi_syntax_grammars(raw.as_mut_ptr()) };
     // SAFETY: the call filled the record.
     let names = strings(unsafe { raw.assume_init() });
 
-    // The adapter's own list, which its crate pins: every name crosses,
-    // in order.
-    let compiled: Vec<String> = TreeSitter::default()
+    // The service's own list, which the adapter's crate pins: every name
+    // crosses, in order, the registered ones among them.
+    let listed: Vec<String> = syntaxes()
         .grammars()
         .into_iter()
         .map(|grammar| grammar.0)
         .collect();
-    assert_eq!(names, compiled);
-    assert!(names.contains(&"rust".to_owned()));
+    assert_eq!(names, listed);
+    for grammar in ALL {
+        assert!(names.contains(&grammar.name.to_owned()), "{}", grammar.name);
+    }
 }
 
 #[test]
 fn edits_made_through_a_document_are_reparsed_to_the_tree_a_fresh_parse_gives() {
+    grammars::registered();
     refresh_at_once();
     let document = Document::new(RUST);
     assert_eq!(
@@ -239,6 +247,7 @@ fn captures(
 )]
 #[test]
 fn a_query_is_answered_only_from_a_tree_of_the_snapshots_revision() {
+    grammars::registered();
     // SAFETY: the text's bytes are alive for the call.
     let document = unsafe { editor_ffi_document_new(RUST.as_ptr(), RUST.len()) };
     // SAFETY: the document is live.
@@ -331,6 +340,7 @@ fn a_query_is_answered_only_from_a_tree_of_the_snapshots_revision() {
 
 #[test]
 fn a_snapshot_no_document_holds_and_an_unknown_grammar_are_refused() {
+    grammars::registered();
     let loaded = Snapshot::loaded(editor_text::Text::from(RUST).snapshot());
     assert_eq!(syntaxes().attach(&loaded, "rust"), AttachStatus::NoDocument);
 
@@ -347,6 +357,7 @@ fn a_snapshot_no_document_holds_and_an_unknown_grammar_are_refused() {
 
 #[test]
 fn a_refused_query_crosses_with_its_kind_and_offset_and_a_made_one_with_its_names() {
+    grammars::registered();
     let refused = query_new("json", "(object) @o\n(no_such_kind) @x");
     assert_eq!(refused.status, QueryStatus::Refused as u64);
     assert_eq!(refused.kind, kind_tag(QueryErrorKind::NodeType));

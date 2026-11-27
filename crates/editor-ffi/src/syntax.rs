@@ -31,6 +31,15 @@
 //! text through the snapshot's [`Source`](crate::snapshot::Source), weakly:
 //! a document gone ends its session.
 //!
+//! **The compiled-in grammars are hidden.** The service's adapter starts
+//! with its compiled-in table hidden (`editor-syntax-treesitter`, "How
+//! grammars are loaded"), and the editor's startup turns it on
+//! (`editor_ffi_syntax_use_compiled_grammars`); no test does. So every test
+//! here registers the grammars it uses from `editor-syntax-fixture-grammars`
+//! first: the unit tests on their own service through its worker's queue,
+//! the wiring tests on the process's service once per test binary
+//! (`tests/common/grammars.rs`).
+//!
 //! **Tests use the process's service.** The edit paths reach the one
 //! process-wide instance, so a test that made a service of its own would
 //! never be told of an edit. The wiring tests (`tests/syntax.rs`) go
@@ -42,7 +51,7 @@
 //!
 //! | Function | What |
 //! |---|---|
-//! | [`editor_ffi_syntax_grammars`] | the grammars compiled in, as a list of strings |
+//! | [`editor_ffi_syntax_grammars`] | the grammars listed, compiled in (once turned on) and registered, as a list of strings |
 //! | [`editor_ffi_syntax_attach`] | parse the snapshot's document with a grammar from now on, in place of any grammar before; a [`AttachStatus`] |
 //! | [`editor_ffi_syntax_detach`] | stop parsing the snapshot's document |
 //! | [`editor_ffi_syntax_query_new`], [`editor_ffi_syntax_query_free`] | a query handle, or the refusal's kind and offset |
@@ -57,6 +66,7 @@
 //! | [`editor_ffi_syntax_kept_captures`] | the captures of the query kept of a kind in a range of the snapshot, as words, with a [`KeptStatus`] |
 //! | [`editor_ffi_syntax_refresh_after`] | parse a text whole once it has gone that many milliseconds unchanged after an edit, from now on |
 //! | [`editor_ffi_syntax_settle`] | for tests: wait, with a bound, for the snapshot's revision to be delivered |
+//! | `editor_ffi_syntax_use_compiled_grammars` | turn the adapter's compiled-in grammars on, for the editor's startup alone; not `pub` |
 //!
 //! **A query is answered from the tree delivered, never parsed for.**
 //! [`editor_ffi_syntax_captures`] answers only when the last tree the
@@ -1345,10 +1355,40 @@ pub extern "C" fn editor_ffi_syntax_refresh_after(milliseconds: u64) {
     syntaxes().refresh_after(Duration::from_millis(milliseconds));
 }
 
+/// Turns the process's syntax service's compiled-in grammars on
+/// (`TreeSitter::use_compiled_grammars`): from then on it lists them and
+/// parses, compiles and ships queries for them as before. The service
+/// starts with them hidden.
+///
+/// Its one caller is Lean's `Editor.Main.run`, through the glue's
+/// `editor_glue_syntax_use_compiled_grammars`, as the first thing the
+/// editor does, so the editor behaves as it did. Nothing else may turn the
+/// table on, so that a passing gate shows no test depends on a compiled-in
+/// grammar: the adapter's method is banned by clippy everywhere but here
+/// and the adapter's table tests, and this is the one mark for it in this
+/// crate. The function calls the adapter itself, with no wrapper a test of
+/// this crate could call. It is not `pub`, so no crate names it; but its
+/// symbol is exported, and a test could declare it again in an `extern "C"`
+/// block of its own, which no structural tool refuses: that is held by
+/// review (`.agents/rules/gates.md`, "Structure rules come from structural
+/// tools or review"). Phase 4 of the roadmap `shipped-grammars-package`
+/// removes it with the table.
+#[unsafe(no_mangle)]
+extern "C" fn editor_ffi_syntax_use_compiled_grammars() {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the editor's startup turns the compiled-in grammars on, its one caller Lean's `Editor.Main.run`, until phase 4 removes the table"
+    )]
+    syntaxes().syntax.use_compiled_grammars();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use editor_syntax::clock::ManualClock;
+
+    use editor_syntax::{GrammarSource, ReparsePolicy};
+    use editor_syntax_fixture_grammars::{self as fixture, JSON, RUST};
 
     use crate::document::Document;
     use crate::events::{EventKind, Queue};
@@ -1357,6 +1397,41 @@ mod tests {
     /// hang guard: a delivery; only a hang reaches the bound, and the test
     /// then fails as a hang. The longest a test waits for one.
     const BOUND: HangGuard = HangGuard::on("a delivery", Duration::from_secs(10));
+
+    /// hang guard: a registration's answer; only a hang reaches the bound,
+    /// and the test then fails as a hang.
+    const REGISTRATION: HangGuard = HangGuard::on("a registration", Duration::from_secs(10));
+
+    /// Registers each of `grammars` on `service` from the native library
+    /// `editor-syntax-fixture-grammars` builds, with its policy, through the
+    /// worker's queue as the process's registrations go, and waits on each
+    /// answer: the compiled-in table is hidden from `service`.
+    fn register(service: &Syntaxes, grammars: &[fixture::Grammar]) {
+        let handle = service.handle().expect("the syntax worker starts");
+        for grammar in grammars {
+            let (sender, answers) = std::sync::mpsc::channel();
+            handle.register(
+                GrammarSource {
+                    library: grammar.library.into(),
+                    symbol: grammar.symbol.to_owned(),
+                    policy: Some(if grammar.incremental {
+                        ReparsePolicy::Incremental
+                    } else {
+                        ReparsePolicy::Whole
+                    }),
+                },
+                Box::new(move |answer| {
+                    let _ = sender.send(answer);
+                }),
+            );
+            assert_eq!(
+                editor_wait::recv(&answers, REGISTRATION),
+                Ok(Some(Ok(GrammarName::new(grammar.name)))),
+                "{}",
+                grammar.name
+            );
+        }
+    }
 
     /// [`Syntaxes::settle`], the readout these tests are of: the one place
     /// they call it.
@@ -1395,6 +1470,7 @@ mod tests {
     fn a_delivery_with_a_highlighter_pushes_one_parsed_event_and_none_without() {
         static NOTICES: Queue = Queue::new();
         let service = Syntaxes::new(&NOTICES);
+        register(&service, &[JSON]);
         let document = Document::new("{\"a\": 1}");
         let snapshot = Snapshot::of(&document);
         assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
@@ -1432,9 +1508,11 @@ mod tests {
         assert_eq!(drained(&NOTICES), [EventKind::Parsed]);
     }
 
-    /// A JSON document attached to `service`, its first round delivered,
-    /// and then highlighted: from now on each delivery is reported.
+    /// A JSON document attached to `service`, on which JSON is registered,
+    /// its first round delivered, and then highlighted: from now on each
+    /// delivery is reported.
     fn highlighted_json(service: &Syntaxes, text: &str) -> Document {
+        register(service, &[JSON]);
         let document = Document::new(text);
         let snapshot = Snapshot::of(&document);
         assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
@@ -1619,6 +1697,7 @@ mod tests {
     fn an_injection_a_language_and_a_keep_are_refused_for_a_text_not_attached_or_a_wrong_grammar() {
         static NOTICES: Queue = Queue::new();
         let service = Syntaxes::new(&NOTICES);
+        register(&service, &[JSON, RUST]);
         let document = Document::new("[1]");
         let snapshot = Snapshot::of(&document);
         let json = query_of(&service, "json", "(number) @n");
@@ -1665,6 +1744,7 @@ mod tests {
     fn an_attach_with_the_same_grammar_keeps_the_kept_queries() {
         static NOTICES: Queue = Queue::new();
         let service = Syntaxes::new(&NOTICES);
+        register(&service, &[JSON]);
         let document = Document::new("[1, 2]");
         let snapshot = Snapshot::of(&document);
         assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
@@ -1698,6 +1778,7 @@ mod tests {
     fn a_detach_drops_the_kept_queries() {
         static NOTICES: Queue = Queue::new();
         let service = Syntaxes::new(&NOTICES);
+        register(&service, &[JSON]);
         let document = Document::new("[1]");
         let snapshot = Snapshot::of(&document);
         assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
