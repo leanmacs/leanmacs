@@ -68,8 +68,15 @@ run = [
 ]
 
 [tasks.deny]
-description = "cargo-deny's bans over the dependency graph (deny.toml); stale `wrappers` are errors"
-run = "cargo deny --locked check -D unused-wrapper bans"
+description = "cargo-deny's bans over the dependency graph (deny.toml), stale `wrappers` errors; and over echo's crate's own graph, which may hold only the crates its deny.toml allows"
+run = [
+  "cargo deny --locked check -D unused-wrapper bans",
+  # echo's library is built from the package wrapper and nothing else of
+  # the editor's: rooted at echo's manifest, the graph is echo's alone, and
+  # its config's `allow` list refuses every crate it does not name
+  # (tests/packages/echo/rust/deny.toml says why the root's cannot).
+  "cargo deny --locked --manifest-path tests/packages/echo/rust/Cargo.toml check --config tests/packages/echo/rust/deny.toml -D unused-wrapper bans",
+]
 
 [tasks.doc]
 description = "Rustdoc over every crate, private items included, with broken intra-doc links denied"

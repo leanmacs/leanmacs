@@ -3737,7 +3737,14 @@ because the contract forces the parked interleavings
 contract's grounds); a test whose child must end without an end scripted
 cancels it, as the job's cancel does.
 
-**echo, ported.** echo's crate depends on `editor-package` alone; its
+**echo, ported.** echo's crate depends on `editor-package` alone, which
+cargo-deny holds twice under `mise run deny`: the root `deny.toml` refuses
+it every crate of the editor's that has an entry but the wrapper, and a
+second run over echo's graph alone, with echo's own
+`tests/packages/echo/rust/deny.toml`, allows only the crates that config
+names (echo, the wrapper and what the wrapper is built from), so an edge to
+`editor-ffi`, which nothing in the root graph depends on, or to another
+package's crate fails too, a dev-dependency's included. Its
 `src/lib.rs` and each of its tests carry `#![deny(unsafe_code)]`, which
 the compiler holds. Its one marked `unsafe` site is its binding of the
 system's zlib (`src/zlib.rs`): a C library of the package's own choosing,
@@ -3800,7 +3807,9 @@ crates are members of the root workspace, so the root `deny.toml` already
 refuses an edge from one to any editor crate it has an entry for, and
 `editor-service`'s entry names the package crates linked into the
 archive (acp's) and leaves out echo's, whose library reaches the core
-through the runtime alone, and `editor-package`'s entry names echo's. But nothing in the root graph depends on
+through the runtime alone, and `editor-package`'s entry names echo's,
+whose own graph a second run holds to an allow list ("echo, ported",
+above). But nothing in the root graph depends on
 `editor-ffi` or on a package crate, and cargo-deny bans a crate with no
 parents under `wrappers = []` and fails a wrapper it never meets under
 `-D unused-wrapper`, so the root cannot say "only the generated crate". The

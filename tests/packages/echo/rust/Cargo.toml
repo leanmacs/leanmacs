@@ -22,10 +22,12 @@ crate-type = ["cdylib", "rlib"]
 # bounds (`editor_package::wait`). The wrapper depends on the runtime's
 # definitions and `editor-wait` alone, which have no static, so the library
 # carries no copy of any of the core's statics, and its own Rust standard
-# library. Nothing else of the editor's, for the library or its tests:
-# `deny.toml` names this crate a wrapper of `editor-package` and of no other
-# crate of the editor's, so an edge to any other, a dev-dependency
-# included, fails `mise run deny`. No dev-dependency.
+# library. Nothing else of the editor's, for the library or its tests, and
+# `mise run deny` holds it twice: the root `deny.toml` names this crate a
+# wrapper of `editor-package` and of no other crate of the editor's, and
+# this crate's own `deny.toml`, over its graph alone, allows the crates it
+# names and refuses every other, so an edge to any other, a dev-dependency
+# included, fails. No dev-dependency.
 [dependencies]
 editor-package = { path = "../../../../crates/editor-package" }
 

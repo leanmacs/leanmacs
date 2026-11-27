@@ -576,10 +576,17 @@
 # 'editor-wait = 0.1.0' is explicitly banned"), and so it does with
 # `editor-package-runtime` there. So echo's crate depends on the wrapper
 # and on nothing else of the editor's that has an entry. The limit above
-# for crates nothing depends on holds for echo too: an edge from it to
-# `editor-ffi`, a `-std` binaries' crate, `editor-package-runtime-header`,
-# `editor-package-check` or another package's crate cannot be refused in
-# this graph, and is held by review.
+# for crates nothing depends on holds for echo too in this graph: an edge
+# from it to `editor-ffi`, a `-std` binaries' crate,
+# `editor-package-runtime-header`, `editor-package-check` or another
+# package's crate cannot be refused here. So `mise run deny` runs
+# cargo-deny a second time, over echo's graph alone, with echo's own
+# config (tests/packages/echo/rust/deny.toml), whose `allow` list names
+# every crate that graph may hold and refuses the rest: with
+# `editor-package-check` added to echo's dev-dependencies, which passes
+# here, it fails there ("crate 'editor-package-check = 0.1.0' is not
+# explicitly allowed"), and so with `editor-ffi` added to its
+# dependencies.
 
 [graph]
 all-features = false

@@ -30,7 +30,8 @@ details:
   under the root `clippy.toml`'s bans, and over `tests/wait-lints/`, whose
   calls of each banned wait must each be refused ("The wait lints", below).
 - **`deny`**: cargo-deny's bans over the workspace's dependency graph
-  (`deny.toml`), stale wrappers errors.
+  (`deny.toml`), stale wrappers errors, and over echo's crate's graph alone
+  ("The Rust bans check").
 - **`doc`**: rustdoc over every crate, private items included, broken
   intra-doc links denied.
 - **`test`**: `cargo test --workspace`: the Rust unit, integration and doc
@@ -107,10 +108,14 @@ linked test runs twice. The stress loop's `linked-wiring` suite is `run
 
 An archive-linked package crate depends on `editor-service` alone, a
 library of its own on `editor-package` alone, and neither on anything else
-of the editor's. The root `deny.toml` holds the second for echo's crate,
-whose every other edge to a crate of the editor's its entries refuse, but
-cannot hold the edges to `editor-ffi` or to another package's crate (its
-header says why), so
+of the editor's. The root `deny.toml` refuses every edge of echo's crate
+to a crate of the editor's that has an entry, but cannot hold the edges to
+`editor-ffi` or to another package's crate (its header says why). So
+`deny` runs cargo-deny's bans a second time, over echo's crate's graph
+alone (`--manifest-path tests/packages/echo/rust/Cargo.toml`), with echo's
+own config (`tests/packages/echo/rust/deny.toml`), whose `allow` list names
+every crate that graph may hold and refuses the rest. For an
+archive-linked crate,
 `ffi-test` runs cargo-deny's bans, offline, over the crate the package-set
 build generates from the fixture set and from the default set (`lake -d
 <set> query :editorRustCrate`), with the `deny.toml` the build writes

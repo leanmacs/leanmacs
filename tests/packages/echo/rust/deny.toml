@@ -1,0 +1,41 @@
+# The crates echo's library may be built from, checked by `mise run deny`
+# (AGENTS.md, "Test behaviour, never text"), which runs cargo-deny's bans
+# over this crate's own graph:
+#
+#   cargo deny --locked --manifest-path tests/packages/echo/rust/Cargo.toml \
+#     check --config tests/packages/echo/rust/deny.toml bans
+#
+# Given the manifest of a workspace member, cargo-deny roots the graph at
+# that crate alone, so the graph is echo's: its dependencies and its
+# dev-dependencies, and theirs. An `allow` list that is not empty refuses
+# every crate it does not name ("crate '…' is not explicitly allowed"), so
+# this list is the whole of what echo's library and its tests may contain:
+# the package wrapper and what the wrapper itself is built from, and no
+# other crate of the editor's (docs/design/packages.md, "The package crate
+# wrapper, as built"). It holds what the root `deny.toml` cannot: there,
+# a crate nothing depends on (`editor-ffi`, a `-std` binaries' crate,
+# `editor-package-runtime-header`, `editor-package-check`, another
+# package's crate) has no parent to name as a wrapper, so an edge from echo
+# to it cannot be refused. The root `deny.toml` still holds that echo
+# reaches the definitions and the typed bounds through the wrapper alone
+# (`editor-package-runtime`'s and `editor-wait`'s wrappers), which an allow
+# list cannot say: a crate named in both `allow` and `deny` is an error.
+#
+# Seen to bite by hand (2026-11-27): with `editor-package-check` added to
+# echo's dev-dependencies, which the root `deny.toml` lets through, it fails
+# ("crate 'editor-package-check = 0.1.0' is not explicitly allowed", and so
+# for `editor-package-library` and `editor-service` behind it); and with
+# `editor-ffi` added to its dependencies, the same way.
+#
+# A crate added to echo's graph, a third party's included, gets its entry
+# here in the commit of its edge. cargo-deny does not report an entry that
+# matches no crate, so one is taken out with the edge that needed it.
+
+[bans]
+multiple-versions = "allow"
+allow = [
+  { crate = "echo-service", reason = "echo's crate itself, the root of the graph" },
+  { crate = "editor-package", reason = "the package wrapper, the one crate of the editor's echo depends on" },
+  { crate = "editor-package-runtime", reason = "the runtime's C definitions, which the wrapper re-exports (`editor_package::raw`); no static" },
+  { crate = "editor-wait", reason = "the typed time bounds, which the wrapper re-exports (`editor_package::wait`); no static" },
+]
