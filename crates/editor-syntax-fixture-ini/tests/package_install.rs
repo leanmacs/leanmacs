@@ -222,9 +222,15 @@ fn an_installed_set_with_a_grammar_package_highlights_its_language() {
         .expect("the package's query"),
         "the install copied the package's highlights query"
     );
-    assert_eq!(
-        fs::read_to_string(install.join("editor.grammars")).expect("editor.grammars"),
-        "ini-grammar\tgrammars/ini-grammar\n"
+    // The record holds a line for each Lake package of the set that ships
+    // grammars: the default set's `languages` ships its own too, whose line
+    // is that package's to pin. This one's is the copy's.
+    let record = fs::read_to_string(install.join("editor.grammars")).expect("editor.grammars");
+    assert!(
+        record
+            .lines()
+            .any(|line| line == "ini-grammar\tgrammars/ini-grammar"),
+        "the install's editor.grammars names the copy's grammars relative to it: {record:?}"
     );
 
     // 4. The installed editor, run headless on a copy of the INI fixture.
