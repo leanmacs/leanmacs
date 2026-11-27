@@ -554,8 +554,12 @@ What the runtime gives the init (`Runtime`):
 What a `Service` does: `complete(request)` posts a request's completion to
 the completion queue, and `post(code, text)` posts an event to the editor.
 
-Before the init has run, `PACKAGE.state()` is none, and every function
-answers its "not loaded" value (false, or none). Whole examples: echo
+Before the init has run, `PACKAGE.state()` is none. The wrapper does not
+guard the table for you: making each function check `PACKAGE.state()` and
+answer its "not loaded" value (false, or none) is your job, as echo's and
+acp's functions do, and you pin it with a test like their
+`tests/not_loaded.rs`. The example above skips that check in `take` for
+brevity; `start` shows it. Whole examples: echo
 (`tests/packages/echo/rust/`) and acp (`packages/acp/rust/`).
 
 #### The library, in C, C++ or Zig, with the header
@@ -823,8 +827,10 @@ own thread, with no `unsafe`:
 - `FakeRuntime::over(source)`, with a `stream::fake::ScriptedSource`, for
   a child your library takes over.
 - `RecordingCompleter` for the service port, in the logic's own tests.
-- `FakeRuntime::sized(bytes)` for an older, smaller runtime, whose init
-  answers 1 (too small), and `later()` for a newer, larger one.
+- `FakeRuntime::new().sized(bytes).leak()` for an older, smaller runtime,
+  whose init answers 1 (too small), and `FakeRuntime::new().later().leak()`
+  for a newer, larger one. `sized` panics when `bytes` is more than the
+  fake holds (the newer core's runtime, `later()`'s size).
 
 Models: acp's `packages/acp/rust/tests/init.rs` and `not_loaded.rs`, and
 echo's `tests/packages/echo/rust/tests/later_runtime.rs`. Echo and acp
