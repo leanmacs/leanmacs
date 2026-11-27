@@ -14,22 +14,20 @@ publish = false
 # crate's own integration test links.
 crate-type = ["cdylib", "rlib"]
 
-# The package runtime's C definitions alone (`editor-package-runtime`):
-# the struct the core hands the library at its init, its handle and
-# records, its tags and `runtime_has!`. That crate has no dependency, no
-# build script and no static, so the library still carries no copy of any
-# of the core's statics, and its own Rust standard library. Nothing else of
-# the editor's, `editor-service` included: `deny.toml`'s entry for
-# `editor-service` leaves this crate out of its wrappers, so it cannot
-# depend on it again, even for its tests.
+# The package wrapper alone (`editor-package`): the runtime the core hands
+# the library at its init, as safe types that mirror `editor-service`'s
+# (`Runtime`, `Service`, `Completer`, `stream`, `frame`), the FFI-safe types
+# of its table (`buffer`), the macro that declares its init and table
+# (`package!`), the runtime's fake its tests run on, and the typed time
+# bounds (`editor_package::wait`). The wrapper depends on the runtime's
+# definitions and `editor-wait` alone, which have no static, so the library
+# carries no copy of any of the core's statics, and its own Rust standard
+# library. Nothing else of the editor's, for the library or its tests:
+# `deny.toml` names this crate a wrapper of `editor-package` and of no other
+# crate of the editor's, so an edge to any other, a dev-dependency
+# included, fails `mise run deny`. No dev-dependency.
 [dependencies]
-editor-package-runtime = { path = "../../../../crates/editor-package-runtime" }
-
-# The typed time bounds its tests' waits take (`HangGuard`, `recv`,
-# `wait_while`), under the root `clippy.toml`'s wait bans. `editor-wait`
-# depends on nothing, and is no part of the library.
-[dev-dependencies]
-editor-wait = { path = "../../../../crates/editor-wait" }
+editor-package = { path = "../../../../crates/editor-package" }
 
 [lints]
 workspace = true

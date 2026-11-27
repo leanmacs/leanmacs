@@ -8,28 +8,35 @@
 //! init: the library, once loaded, stays loaded for the process
 //! (`tests/init.rs` loads it).
 
-use std::mem::MaybeUninit;
+#![deny(unsafe_code)]
 
-use echo_service::ffi::{RawReply, TABLE};
+use echo_service::ffi::{PACKAGE, RawReply};
+use editor_package::buffer::{Bytes, Lent, Out};
 
 #[test]
 fn each_table_function_answers_false_or_none_before_the_library_is_loaded() {
-    let text = "héllo";
-    // SAFETY: the pointer and length are the string's, for the call.
+    let functions = PACKAGE.table().functions();
+    assert!(PACKAGE.state().is_none());
+
     assert!(
-        !unsafe { (TABLE.start)(41, text.as_ptr(), text.len()) },
+        !(functions.start)(41, Bytes::of("héllo".as_bytes())),
         "start"
     );
-    assert!(!(TABLE.cancel)(41), "cancel");
-    (TABLE.flush)(41);
-    let mut reply = MaybeUninit::<RawReply>::uninit();
-    // SAFETY: `reply` is writable; it is never read, since nothing filled
-    // it.
-    assert!(!unsafe { (TABLE.take)(41, reply.as_mut_ptr()) }, "take");
-    assert!(!(TABLE.attach)(42, 7), "attach");
-    // SAFETY: as for `take`.
+    assert!(!(functions.cancel)(41), "cancel");
+    (functions.flush)(41);
+    let mut reply = RawReply {
+        text: Lent::empty(),
+        checksum: 7,
+    };
+    assert!(!(functions.take)(41, Out::of(&mut reply)), "take");
+    assert!(!(functions.attach)(42, 7), "attach");
     assert!(
-        !unsafe { (TABLE.attach_take)(42, reply.as_mut_ptr()) },
+        !(functions.attach_take)(42, Out::of(&mut reply)),
         "attach_take"
+    );
+    assert_eq!(
+        (reply.text.as_bytes(), reply.checksum),
+        (&b""[..], 7),
+        "nothing filled"
     );
 }

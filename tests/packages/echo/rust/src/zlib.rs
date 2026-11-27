@@ -1,11 +1,19 @@
 //! The system's zlib: the CRC-32 of a reply's text, from zlib's `crc32`.
 //!
-//! The adapter of a system library, linked by name (`#[link(name = "z")]`):
-//! rustc prints `-lz` among the archive's system libraries, and the
-//! package-set build passes that line to the editor's link, so the package
-//! links the library with no edit to the core's lakefile
-//! (docs/design/packages.md, "Rust in a package"). On Linux the library is
-//! `zlib1g-dev`'s (`tools/linux/Dockerfile`); macOS ships it.
+//! The adapter of a system library, linked by name (`#[link(name = "z")]`)
+//! into echo's own library. On Linux the library is `zlib1g-dev`'s
+//! (`tools/linux/Dockerfile`); macOS ships it.
+//!
+//! This binding is echo's one marked `unsafe` site: a system C library of
+//! the package's own choosing, no part of the runtime or its C interface,
+//! which the package wrapper wraps. Should a reader want none at all, a
+//! table-driven CRC-32 in Rust gives the same value (the Lean side's
+//! `Echo.Checksum` computes it) and drops zlib.
+
+#![expect(
+    unsafe_code,
+    reason = "a binding of a system C library of the package's own choosing, no part of the runtime or its C interface: its declaration and its call"
+)]
 
 use std::os::raw::{c_uint, c_ulong};
 

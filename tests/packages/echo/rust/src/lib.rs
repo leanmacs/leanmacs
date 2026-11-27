@@ -20,40 +20,45 @@
 //! - **Plain data only.** The reply is taken by the request's id once the
 //!   completion has arrived ([`Echo::take`]).
 //!
-//! The logic is here, over echo's own ports ([`port`]), and tested on
-//! hand-written fakes of them. The crate is a library of its own, loaded
-//! by the core when the editor starts (docs/design/packages.md, "A library
-//! loaded when the editor runs, as built"): its one export is its init,
-//! [`ffi::editor_package_init`], which is handed the core's package runtime
-//! ([`runtime`]), registers the service `echo` through it, and answers the
-//! table of C functions the glue forwards echo's `@[extern]` calls through
-//! ([`ffi::EchoTable`]). `tests/init.rs` runs the init and the table over
-//! a runtime of test functions, and `tests/later_runtime.rs` over one from
-//! a newer core, larger than the one echo was built for.
+//! The logic is here, over the package wrapper's ports
+//! ([`editor_package::Completer`], [`editor_package::stream::ChildStreams`],
+//! which mirror `editor-service`'s), and tested on the wrapper's published
+//! fakes of them ([`editor_package::RecordingCompleter`],
+//! [`editor_package::stream::fake::ScriptedChild`]). The crate is a library
+//! of its own, loaded by the core when the editor starts
+//! (docs/design/packages.md, "A library loaded when the editor runs, as
+//! built"): its one export is its init, [`ffi::editor_package_init`],
+//! declared with the wrapper's macro, which is handed the core's package
+//! runtime, registers the service `echo` through it, and answers the table
+//! of C functions the glue forwards echo's `@[extern]` calls through
+//! ([`ffi::EchoFunctions`]). `tests/init.rs` runs the init and the table on
+//! the wrapper's fake runtime, and `tests/later_runtime.rs` on one from a
+//! newer core, larger than the one echo was built for.
 //!
 //! A request may also read a streaming child the core's process service
 //! opened, taken over through the runtime ([`attach`], [`Echo::attach`]):
 //! its answer is what it read ([`Echo::take_read`]).
 //!
-//! The crate depends on nothing of the editor's but the runtime's C
-//! definitions (`editor-package-runtime`, which has no static): it reaches
-//! the core only through the runtime, so it holds no copy of the core's
-//! statics.
+//! The crate depends on nothing of the editor's but the wrapper
+//! (`editor-package`, over the runtime's definitions, with no static): it
+//! reaches the core only through the runtime, so it holds no copy of the
+//! core's statics. It has no `unsafe` of its own over the runtime, its
+//! init, its table or its buffers, which the compiler holds
+//! (`#![deny(unsafe_code)]`); its one marked site is its binding of the
+//! system's zlib ([`zlib`]).
+
+#![deny(unsafe_code)]
 
 pub mod attach;
-pub mod buffer;
-#[cfg(test)]
-mod fakes;
 pub mod ffi;
-pub mod port;
-pub mod runtime;
 pub mod zlib;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 
-use crate::port::{ChildStreams, Completer};
+use editor_package::Completer;
+use editor_package::stream::ChildStreams;
 
 /// The name echo's service registers under, through the runtime.
 pub const SERVICE_NAME: &str = "echo";
@@ -365,9 +370,10 @@ impl<C: Completer> Shared<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fakes::{RecordingCompleter, ScriptedChild};
-    use crate::port::Ended;
-    use editor_wait::HangGuard;
+    use editor_package::RecordingCompleter;
+    use editor_package::stream::Ended;
+    use editor_package::stream::fake::ScriptedChild;
+    use editor_package::wait::HangGuard;
     use std::time::Duration;
 
     /// hang guard: the reports each wait ends on; only a hang reaches the
@@ -545,7 +551,7 @@ mod tests {
 
     #[test]
     fn a_flush_made_while_a_request_s_report_is_held_is_reported_behind_it() {
-        use editor_wait::recv;
+        use editor_package::wait::recv;
         use std::sync::mpsc::{Receiver, Sender, channel};
 
         /// A recording completer whose first report of `held` is held: it
@@ -618,8 +624,8 @@ mod tests {
     #[test]
     fn an_attached_request_cancelled_while_its_consumer_is_blocked_in_a_pull_gets_no_completion_once_its_child_is_cancelled()
      {
-        use crate::port::{InputClosed, Pulled};
-        use editor_wait::recv;
+        use editor_package::stream::{InputClosed, Pulled};
+        use editor_package::wait::recv;
         use std::sync::mpsc::{Receiver, Sender, channel};
 
         /// The fake's streams, with the consumer's first pull held: it says
@@ -647,10 +653,11 @@ mod tests {
         }
 
         let echo = echo();
-        // A child with nothing scripted: once let go, its pull answers
-        // cancelled, as the process service's does for a child cancelled
-        // while its consumer was blocked in a pull.
-        let streams: Box<dyn ChildStreams> = Box::new(ScriptedChild::new(false));
+        // A child with nothing scripted, a handle of which the test keeps:
+        // its pull parks, as the process service's does, until the job's
+        // cancel ends the child, and then answers cancelled.
+        let child = ScriptedChild::new(false);
+        let streams: Box<dyn ChildStreams> = Box::new(child.clone());
         let (pulling, pulled) = channel();
         let (release, released) = channel();
         let held = Held {
@@ -663,6 +670,7 @@ mod tests {
         recv(&pulled, DEADLINE).expect("the consumer pulls");
         // The job's cancel: its wait withdrawn first, then its child ended.
         assert!(echo.cancel(6));
+        child.cancel();
         release.send(()).expect("the consumer is held in its pull");
         echo.join_workers();
 

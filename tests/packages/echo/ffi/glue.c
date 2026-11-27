@@ -17,7 +17,12 @@
 // It follows the core's conventions (`lean/ffi/glue.c`): a string crosses as
 // a pointer and a byte length, borrowed for the call; a reply comes back as
 // one record filled in one call, its text copied into a Lean string and
-// handed straight back, through the table's `free`.
+// handed straight back, through the table's `free`. The library is written
+// against the package wrapper (`editor-package`), whose types each call
+// crosses as: a text is its `Bytes`, `{ bytes, len }` by value; a reply's
+// text is its `Lent`, `{ bytes, len }`, handed back by value to `free`; a
+// reply's place is its `Out`, a plain pointer; and the table is its
+// `Table`, the size first, then echo's functions.
 
 #include <lean/lean.h>
 #include <stdatomic.h>
@@ -29,23 +34,34 @@
 #error "the lakefile compiles the library's path in as ECHO_LIBRARY"
 #endif
 
+// The wrapper's `Bytes`: bytes lent for the call.
+typedef struct {
+  const uint8_t *bytes;
+  size_t len;
+} echo_bytes;
+
+// The wrapper's `Lent`: a buffer the library lent, handed back to `free`.
+typedef struct {
+  uint8_t *bytes;
+  size_t len;
+} echo_lent;
+
 // The library's `RawReply`.
 typedef struct {
-  uint8_t *text;
-  size_t text_len;
+  echo_lent text;
   uint32_t checksum;
 } echo_raw_reply;
 
-// The library's `EchoTable`, member for member.
+// The wrapper's `Table` of the library's `EchoFunctions`, member for member.
 typedef struct {
   size_t size;
-  bool (*start)(uint64_t id, const uint8_t *text, size_t len);
+  bool (*start)(uint64_t id, echo_bytes text);
   bool (*cancel)(uint64_t id);
   bool (*take)(uint64_t id, echo_raw_reply *out);
   void (*flush)(uint64_t id);
   bool (*attach)(uint64_t request, uint64_t child);
   bool (*attach_take)(uint64_t request, echo_raw_reply *out);
-  void (*free)(uint8_t *text, size_t len);
+  void (*free)(echo_lent text);
 } echo_table;
 
 // The core's loader of a package's library (`editor-ffi`'s
@@ -84,9 +100,10 @@ lean_obj_res echo_glue_load(b_lean_obj_arg path) {
 // `Echo.Real.start : UInt64 → @& String → IO Bool`
 lean_obj_res echo_glue_start(uint64_t id, b_lean_obj_arg text) {
   const echo_table *table = echo_loaded();
-  return lean_io_result_mk_ok(lean_box(
-      table != NULL && table->start(id, (const uint8_t *)lean_string_cstr(text),
-                                    lean_string_size(text) - 1)));
+  echo_bytes bytes = {.bytes = (const uint8_t *)lean_string_cstr(text),
+                      .len = lean_string_size(text) - 1};
+  return lean_io_result_mk_ok(
+      lean_box(table != NULL && table->start(id, bytes)));
 }
 
 // `Echo.Real.cancel : UInt64 → IO Bool`
@@ -108,8 +125,8 @@ lean_obj_res echo_glue_flush(uint64_t id) {
 // copied into a Lean string and handed back through the table's `free`.
 static lean_obj_res echo_reply(const echo_table *table, echo_raw_reply raw) {
   lean_object *text =
-      lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
-  table->free(raw.text, raw.text_len);
+      lean_mk_string_from_bytes((const char *)raw.text.bytes, raw.text.len);
+  table->free(raw.text);
   lean_object *pair = lean_alloc_ctor(0, 2, 0);
   lean_ctor_set(pair, 0, text);
   lean_ctor_set(pair, 1, lean_box_uint32(raw.checksum));
