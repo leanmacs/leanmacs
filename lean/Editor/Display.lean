@@ -27,7 +27,12 @@ unpadded question of the smaller area" (`Display/Contract.lean`).
   left edge and the y of the top of the row that holds it, in pixels from
   the view's top left with its padding included, and that row's height;
   none when the view does not show it. A float anchored at a position is
-  placed against it (`Editor/Floating.lean`).
+  placed against it (`Editor/Floating.lean`);
+- **how wide a run is** in its faces (`Display.measure`, `Display.widthIn`):
+  its width laid out unbroken, in whole points rounded up, which a
+  generator computes a view's align-to stops from (`AlignStop`,
+  `Editor/Columns.lean`). It names no snapshot and no view: the run is a
+  string, and its faces are decorations of it over the default face.
 
 The third is a question of its own, not worked out from the first two,
 for two reasons. The padding is in points, which the display takes off
@@ -95,7 +100,7 @@ binding:
 
 | Addition | Where | Owner |
 |---|---|---|
-| Another question of layout (the position at a point) | A constructor of `DisplayRequest`, its reply in `DisplayRequest.Reply`, its operation here, its answer in the model, the recorder and the real binding, and a property in the contract | The display pipeline adds it when something needs it; `heights` came so, for sizing a view's text area and the minibuffer's place, and `spot` for placing a float beside a position (window management, phase 4) |
+| Another question of layout (the position at a point) | A constructor of `DisplayRequest`, its reply in `DisplayRequest.Reply`, its operation here, its answer in the model, the recorder and the real binding, and a property in the contract | The display pipeline adds it when something needs it; `heights` came so, for sizing a view's text area and the minibuffer's place, `spot` for placing a float beside a position (window management, phase 4), and `measure` for computing align-to stops (rich text display, phase 2) |
 | A field of what is published | A field of `Scene` (`Editor/Scene.lean`) | The command loop |
 | A request a command makes of the display | Nothing new: a command reaches this port through the editor's composite port (`Editor/Command.lean`), which lifts every operation here | The command loop |
 | A new thing to ask of the window | A constructor of `FrameRequest`, its case in the model, the recorder, the real binding, `Ffi.WindowRequest` and `editor-ffi`'s request tags, and a variant of `editor-platform`'s `Request` | The macOS app roadmap added the first three |
@@ -252,6 +257,16 @@ structure Spot where
   height : Nat
   deriving DecidableEq, Repr, Inhabited
 
+/-- How wide a run is (`Display.measure`). -/
+structure MeasureQuery where
+  /-- The run: up to its first line feed, its tabs reaching to the next
+  multiple of eight cells from its start. -/
+  text : String
+  /-- Spans of `text` drawn in a face, its offsets bytes of `text`: the
+  run's faces, over the default face. None by default. -/
+  decorations : Array Decoration := #[]
+  deriving DecidableEq, Repr
+
 end Display
 
 namespace Display
@@ -289,6 +304,8 @@ inductive DisplayRequest where
   /-- How tall a text row, a window's status row and the frame's bottom row
   are. -/
   | heights
+  /-- How wide a run is in its faces, in whole points. -/
+  | measure (query : Display.MeasureQuery)
   /-- Ask the platform's window to do something: it answers nothing. -/
   | frame (request : Display.FrameRequest)
 
@@ -299,6 +316,7 @@ def DisplayRequest.Reply : DisplayRequest → Type
   | .move _ => Except DisplayError Display.Moved
   | .spot _ => Except DisplayError (Option Display.Spot)
   | .heights => Display.Heights
+  | .measure _ => Nat
   | .frame _ => Unit
 
 /-- The display port: `DisplayRequest` and the reply to each request. -/
@@ -360,6 +378,19 @@ that sizes a view's text area as its height less its bottom row asks
 `rowsShown` for exactly the rows the frame shows. -/
 def heights : DisplayM Heights :=
   ExceptT.lift (Program.request (port := displayPort) .heights)
+
+/-- How wide `query.text` is laid out unbroken in `query.decorations`' faces
+over the default face, in whole points rounded up: what a generator
+computes a view's align-to stops from (`Editor/Columns.lean`). The run
+stops at its first line feed. It is in the faces the next frame is laid
+out in, and names no snapshot, so it is refused nothing. -/
+def measure (query : MeasureQuery) : DisplayM Nat :=
+  ExceptT.lift (Program.request (port := displayPort) (.measure query))
+
+/-- How wide `text` is in the face `face` over the default face, in whole
+points (`measure` of one decoration over the whole run). -/
+def widthIn (face : FaceName) (text : String) : DisplayM Nat :=
+  measure { text, decorations := #[{ start := 0, stop := text.utf8ByteSize, face }] }
 
 /-- Asks the platform's window to do what `request` says. It answers
 nothing and changes no answer of layout: whether the window went into

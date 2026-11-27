@@ -73,6 +73,21 @@ when they do not fit with it; and a spot below a block is lower by its
 rows. A block's faces are not looked at: a face that sets another height
 is `editor-layout`'s to pin.
 
+## What the measuring call is held to
+
+Three properties hold every binding's `Display.measure` in cells: an empty
+run measures nothing, a run of `n` one-cell characters measures `n`
+cells, and a view exactly as wide as a run's measure holds the run (a
+text with no space) on one row while one a cell narrower wraps it. So a
+width measured is one the rows query agrees with. What a face does to a
+width, and that the answer is in points at any scale, are
+`editor-layout`'s tests to pin (`tests/measure.rs`).
+
+A view's align-to stops (`View.stops`), like its faces, are not looked at
+by the queries' properties: where a cell goes and where a row breaks
+before a stop are `editor-layout`'s rules, pinned on its fake shaper
+(`crates/editor-layout/src/align.rs`, `tests/align.rs`).
+
 ## What a caller that wants a column of a line relies on
 
 Two properties are for a caller that asks about a line and not about a view
@@ -412,6 +427,26 @@ qr"]
             (← blocked snapshot 4 3 0 two) == #[⟨0, 1⟩] &&
             (← spotBlocked snapshot 4 4 0 2 two) ==
               some { x := 0, y := 3 * cells.lineHeight, height := cells.lineHeight } },
+    { name := "an empty run measures nothing"
+      texts := #[]
+      holds := fun _ => do
+        return (← Display.measure { text := "" }) == 0 },
+    { name := "a run of n one-cell characters measures n cells"
+      texts := #[]
+      holds := fun _ => do
+        return (← Display.measure { text := "abcd" }) == 4 * cells.advance &&
+            (← Display.measure { text := "é😀ab" }) == 4 * cells.advance },
+    { name :=
+        "a view exactly as wide as a run's measure holds it on one row, and one a cell narrower wraps it"
+      texts := #["abcdef"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let width ← Display.measure { text := "abcdef" }
+        let height := 2 * cells.lineHeight
+        let exact ← Display.rowsShown { snapshot, width, height, anchor := 0 }
+        let narrower ←
+          Display.rowsShown { snapshot, width := width - cells.advance, height, anchor := 0 }
+        return exact == #[⟨0, 6⟩] && narrower == #[⟨0, 5⟩, ⟨5, 6⟩] },
     { name := "each height of a row the display answers is at least one pixel"
       texts := #[]
       holds := fun _ => do

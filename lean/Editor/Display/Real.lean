@@ -157,6 +157,17 @@ def markWords (marks : Array GutterMark) : Array UInt64 × String :=
         strings ++ mark.text ++ mark.face.name))
     (#[marks.size.toUInt64], "")
 
+/-- `stops` as they cross to the library in a scene (the layout is
+`crates/editor-ffi/src/display/wire.rs`'s, a view's stops after its marks):
+their count, then for each its offset and its x in whole points, an x no
+`u32` holds sent as the largest one does, which is what the library would
+refuse otherwise. -/
+def stopWords (stops : Array AlignStop) : Array UInt64 :=
+  stops.foldl
+    (fun words aligned =>
+      words.push (RealTexts.word aligned.offset) |>.push (paddingWord aligned.x))
+    #[stops.size.toUInt64]
+
 /-- The rows a view shows: `Display.rowsShown`'s answer. -/
 def rows (real : RealDisplay) (query : Display.RowsQuery) :
     IO (Except DisplayError (Array Display.Row)) := do
@@ -297,8 +308,9 @@ def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encod
       paddingWord view.padding.gutter]
   let (blocks, blockText) := blockWords view.blocks
   let (marks, markText) := markWords view.marks
-  return { encoded with
-      words := encoded.words ++ padding ++ blocks ++ marks
+  return {
+      encoded with
+      words := encoded.words ++ padding ++ blocks ++ marks ++ stopWords view.stops
       strings := encoded.strings ++ blockText ++ markText }
 
 /-- The library's tag of a slant. -/
@@ -449,6 +461,18 @@ def publish (real : RealDisplay) (scene : Scene) : IO Unit := do
   if unsent.isSome then
     real.theme.set none
 
+/-- Defines in the library's layout, by itself, the theme not yet sent, if
+there is one: it stays to be sent with the next publish's scene, which
+layout then takes as no change. So what is asked of layout before that
+publish is in the faces it lays out in (`heights`, `measure`). Words this
+binding wrote that the library cannot read are an error, as for
+`publish`. -/
+def defineUnsent (real : RealDisplay) : IO Unit := do
+  if let some theme← real.theme.get then
+    let defined := encodeDefinitions { words := #[], strings := "", snapshots := #[] } theme
+    unless ← real.display.define defined.words defined.strings do
+      throw (IO.userError "the library could not read a theme's words")
+
 /-- The heights the library's layout answers at its scale, in the faces
 the next publish lays out in: a theme not yet sent is defined in layout
 first, by itself, and stays to be sent with that publish's scene. So a
@@ -457,14 +481,25 @@ answered the heights of that publish's frame, the first after a re-theme
 too. Words this binding wrote that the library cannot read are an error,
 as for `publish`. -/
 def heights (real : RealDisplay) : IO Display.Heights := do
-  if let some theme← real.theme.get then
-    let defined := encodeDefinitions { words := #[], strings := "", snapshots := #[] } theme
-    unless ← real.display.define defined.words defined.strings do
-      throw (IO.userError "the library could not read a theme's words")
+  real.defineUnsent
   let heights ← real.display.heights
   return {
       text := heights.text.toNat, status := heights.status.toNat
       message := heights.message.toNat }
+
+/-- How wide a run is: `Display.measure`'s answer, from the library's
+layout, in the faces the next publish lays out in: a theme not yet sent is
+defined first, as for `heights`. The run crosses as one block before
+offset 0 (`blockWords`). Words this binding wrote that the library cannot
+read are an error, as for `publish`. -/
+def measure (real : RealDisplay) (query : Display.MeasureQuery) : IO Nat := do
+  real.defineUnsent
+  let (words, strings) :=
+    blockWords #[{ before := 0, text := query.text, decorations := query.decorations }]
+  let some width ←
+    real.display.measure words
+        strings | throw (IO.userError "the library could not read a run's words")
+  return width.toNat
 
 /-- Answers `request` from the library. -/
 def handle (real : RealDisplay) : (request : DisplayRequest) → IO request.Reply
@@ -473,6 +508,7 @@ def handle (real : RealDisplay) : (request : DisplayRequest) → IO request.Repl
   | .move query => real.move query
   | .spot query => real.spot query
   | .heights => real.heights
+  | .measure query => real.measure query
   | .frame request => do
     if let some platform := real.platform then
       Ffi.windowRequest platform (library request)

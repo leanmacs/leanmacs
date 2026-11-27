@@ -63,6 +63,16 @@ the last scene published, on its own thread, so painting never waits on Lean
   beside the lines their ranges cover; which ones is the command loop's
   (`Gutter.marksOf`). Layout draws them and every query takes the column off
   the text's width (`crates/editor-layout/src/frame.rs`, "The gutter").
+- **A stop is a place, not a face.** A view's align-to stops
+  (`View.stops`) each name the first character of a cell of a row and how
+  far right of the start of the text row it starts, in whole points:
+  layout places the cell there, whatever the widths of the cells before
+  it, which no count of spaces can do on a proportional font, and breaks
+  the row before a stop past the view's width
+  (`crates/editor-layout/src/align.rs`). Which ones is the buffer's owner's
+  (`Buffer.stops`, set by `BufferId.setStops`), computed from widths the
+  display measures (`Display.measure`, `Editor/Columns.lean`); the command
+  loop copies them to every view of the buffer (`Loop.stopsOf`).
 - Sizes and rectangles are in the frame's physical pixels. Paddings (a
   view's `padding`, the scene's `echoPadding`, a status field's `padding`)
   are in whole points, as a face's lengths are: layout multiplies them by
@@ -154,6 +164,20 @@ structure GutterMark where
   text : String
   /-- The face it takes. -/
   face : FaceName
+  deriving DecidableEq, Repr
+
+/-- An align-to stop: where a cell of a row of a view's text starts. Like a
+decoration it is the view's, and it holds no position: layout places the
+cell at it and breaks the row before it when it is past the view's width
+(`crates/editor-layout/src/align.rs`). -/
+structure AlignStop where
+  /-- A byte offset of the view's snapshot: the first character of the
+  cell. -/
+  offset : Nat
+  /-- How far right of the start of the text row (after the view's padding
+  and gutter) the cell starts, in whole points: layout multiplies it by the
+  window's scale, as it does a padding. -/
+  x : Nat
   deriving DecidableEq, Repr
 
 /-- Which end of a view's status row a field is drawn from: the left fields
@@ -262,6 +286,9 @@ structure View where
   added, removed and changed lines of a tracked file
   (`packages/version-control/VersionControl/Gutter.lean`). None by default. -/
   marks : Array GutterMark := #[]
+  /-- Its align-to stops, its buffer's (`Buffer.stops`) in the range its
+  decorations are read over (`Loop.stopsOf`). None by default. -/
+  stops : Array AlignStop := #[]
   deriving DecidableEq, Repr
 
 /-- A divider: a strip of the frame between two tiled views, filled in the

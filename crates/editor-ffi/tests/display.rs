@@ -19,10 +19,10 @@ use editor_ffi::display::{
     DisplayStatus, RawPicture, WireBlock, WireFace, WireField, WireMark, WireScene, WireView,
     editor_ffi_display_define, editor_ffi_display_frame_rows, editor_ffi_display_frame_text,
     editor_ffi_display_free, editor_ffi_display_heights, editor_ffi_display_live,
-    editor_ffi_display_move, editor_ffi_display_new_cells, editor_ffi_display_new_font,
-    editor_ffi_display_picture, editor_ffi_display_publish, editor_ffi_display_rows,
-    editor_ffi_display_scene, editor_ffi_display_spot, editor_ffi_picture_from_png,
-    editor_ffi_picture_to_png, encode_blocks, encode_definitions,
+    editor_ffi_display_measure, editor_ffi_display_move, editor_ffi_display_new_cells,
+    editor_ffi_display_new_font, editor_ffi_display_picture, editor_ffi_display_publish,
+    editor_ffi_display_rows, editor_ffi_display_scene, editor_ffi_display_spot,
+    editor_ffi_picture_from_png, editor_ffi_picture_to_png, encode_blocks, encode_definitions,
 };
 use editor_ffi::document::{
     Document, RawText, ReplaceStatus, editor_ffi_document_free, editor_ffi_document_new,
@@ -37,8 +37,8 @@ use editor_ffi::text::editor_ffi_text_free;
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
-    Block, Cursor, CursorShape, Decoration, Padding, Rect, Scene, Size, StatusField, TextKey,
-    TextRef, View, ViewId,
+    AlignStop, Block, Cursor, CursorShape, Decoration, Padding, Rect, Scene, Size, StatusField,
+    TextKey, TextRef, View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -842,6 +842,7 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
             padding: Padding::default(),
             blocks: vec![],
             marks: vec![],
+            stops: vec![],
         }],
         echo_padding: 0,
         faces: None,
@@ -1362,6 +1363,7 @@ fn published_scene() -> (
             padding: Padding::default(),
             blocks: vec![],
             marks: vec![],
+            stops: vec![],
         }],
         ..WireScene::default()
     };
@@ -1744,4 +1746,156 @@ unsafe fn take_bytes(raw: RawWords) -> (u64, Vec<u8>) {
     // SAFETY: handed back once.
     unsafe { editor_ffi_text_free(raw.words, raw.len) };
     (raw.status, bytes)
+}
+
+/// How wide the run `run` spells is, through C; or the status of its
+/// refusal.
+fn measured(
+    display: *const editor_ffi::display::Display,
+    run: &(Vec<u8>, String),
+) -> Result<u64, u64> {
+    let mut raw = MaybeUninit::<RawWords>::uninit();
+    // SAFETY: the handle is live, the run's buffers are alive for the
+    // call, and `raw` is writable.
+    let (status, words) = unsafe {
+        editor_ffi_display_measure(
+            display,
+            run.0.as_ptr(),
+            run.0.len(),
+            run.1.as_ptr(),
+            run.1.len(),
+            raw.as_mut_ptr(),
+        );
+        take(raw.assume_init())
+    };
+    if status != DisplayStatus::Done as u64 {
+        return Err(status);
+    }
+    assert_eq!(words.len(), 1);
+    Ok(words[0])
+}
+
+/// The run `text`, its bytes `wide` in the face `wide`, as one block
+/// before offset 0.
+fn run(text: &str, wide: std::ops::Range<u64>) -> WireBlock {
+    WireBlock {
+        before: 0,
+        text: text.to_owned(),
+        decorations: vec![(wide.start, wide.end, "wide".to_owned())],
+    }
+}
+
+#[test]
+fn a_run_measured_through_c_is_what_layout_measures() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    // `wide` twice the base size, defined ahead of any scene, as for the
+    // heights.
+    let wide = WireFace {
+        name: "wide".to_owned(),
+        face: Face {
+            size: Some(Length::pixels(32)),
+            ..Face::default()
+        },
+    };
+    let (words, strings) = encode_definitions(std::slice::from_ref(&wide));
+    // SAFETY: the handle is live and the buffers alive for the call.
+    assert!(unsafe {
+        editor_ffi_display_define(
+            display,
+            words.as_ptr(),
+            words.len(),
+            strings.as_ptr(),
+            strings.len(),
+        )
+    });
+    let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
+    layout.define(&[FaceDef {
+        name: wide.name.clone(),
+        face: wide.face.clone(),
+    }]);
+    let decoration = |start, stop| Decoration {
+        start,
+        stop,
+        face: "wide".to_owned(),
+    };
+    for (text, bytes) in [("", 0..0), ("abc", 0..0), ("abc", 1..3), ("a\tb\ncd", 0..1)] {
+        let direct = layout.measure(text, &[decoration(bytes.start, bytes.end)]);
+        let block = run(text, bytes.start as u64..bytes.end as u64);
+        assert_eq!(
+            measured(display, &encode_blocks(&[block])),
+            Ok(u64::from(direct)),
+            "{text:?}"
+        );
+    }
+    // Words that spell no block, two blocks, or one before another
+    // offset, are refused.
+    let refused = Err(DisplayStatus::BadPosition as u64);
+    assert_eq!(measured(display, &(vec![9; 3], String::new())), refused);
+    assert_eq!(measured(display, &encode_blocks(&[])), refused);
+    let two = [run("ab", 0..0), run("cd", 0..0)];
+    assert_eq!(measured(display, &encode_blocks(&two)), refused);
+    let later = WireBlock {
+        before: 3,
+        ..run("ab", 0..0)
+    };
+    assert_eq!(measured(display, &encode_blocks(&[later])), refused);
+    // SAFETY: the handle is live and freed once.
+    unsafe { editor_ffi_display_free(display) };
+}
+
+#[test]
+fn a_published_views_stops_place_its_cells_as_layout_places_them() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    let text = "ab cd\nabcdef gh";
+    let document = document_new(text);
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let stops = [(3, 60), (13, 60)];
+    let wire = WireScene {
+        size: [96, 64],
+        views: vec![WireView {
+            id: 3,
+            rect: [0, 0, 96, 64],
+            snapshot: Some(0),
+            stops: stops.to_vec(),
+            ..WireView::default()
+        }],
+        ..WireScene::default()
+    };
+    let (words, strings) = wire.encode();
+    assert!(publish(display, &words, &strings, &[snapshot]));
+    let direct = Layout::new(CellShaper::new(8.0, 16.0)).frame(&Scene {
+        size: Size {
+            width: 96,
+            height: 64,
+        },
+        views: vec![View {
+            id: ViewId(3),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                width: 96,
+                height: 64,
+            },
+            text: Some(TextRef::fixed(TextKey(0), Text::from(text).snapshot())),
+            stops: stops
+                .iter()
+                .map(|&(offset, x)| AlignStop {
+                    offset: offset as usize,
+                    x,
+                })
+                .collect(),
+            ..View::default()
+        }],
+        ..Scene::default()
+    });
+    assert_eq!(frame_text(display), direct.describe());
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
 }

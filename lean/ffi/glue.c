@@ -2173,6 +2173,10 @@ void editor_ffi_display_spot(const editor_ffi_display *display,
                              const uint8_t *block_words, size_t block_words_len,
                              const uint8_t *block_text, size_t block_text_len,
                              editor_ffi_raw_words *out);
+void editor_ffi_display_measure(const editor_ffi_display *display,
+                                const uint8_t *run_words, size_t run_words_len,
+                                const uint8_t *run_text, size_t run_text_len,
+                                editor_ffi_raw_words *out);
 bool editor_ffi_display_publish(const editor_ffi_display *display,
                                 const uint8_t *words, size_t words_len,
                                 const uint8_t *strings, size_t strings_len,
@@ -2273,6 +2277,20 @@ lean_obj_res editor_glue_display_spot(
       height, across, down, top, gutter, anchor, position,
       byte_array_bytes(block_words), byte_array_len(block_words),
       string_bytes(block_text), string_len(block_text), &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.Display.measureRaw : @& Display → @& ByteArray → @& String →
+// IO RawWords`. The run crosses as one block's words and text, borrowed for
+// the call.
+lean_obj_res editor_glue_display_measure(b_lean_obj_arg display,
+                                         b_lean_obj_arg run_words,
+                                         b_lean_obj_arg run_text) {
+  editor_ffi_raw_words raw;
+  editor_ffi_display_measure(lean_get_external_data(display),
+                             byte_array_bytes(run_words),
+                             byte_array_len(run_words), string_bytes(run_text),
+                             string_len(run_text), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 

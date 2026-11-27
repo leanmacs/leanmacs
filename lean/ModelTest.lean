@@ -16,6 +16,7 @@ import ModelTest.Editor.Appearance
 import ModelTest.Editor.Bound
 import ModelTest.Editor.Clipboard.Contract
 import ModelTest.Editor.Clipboard.Model
+import ModelTest.Editor.Columns
 import ModelTest.Editor.Command
 import ModelTest.Editor.Command.Append
 import ModelTest.Editor.Command.Call
@@ -1363,6 +1364,11 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   base contracts on the model rigs, a base whose program is probed among
   them, and the contracts fail a package that
   registers nothing and a source that ignores its output;
+- `columnsChecks`: the column arithmetic of align-to stops
+  (`Editor/Columns.lean`), pure and on the display model, and a generated
+  buffer's stops and spans reaching its view; `stopChecks`, beside the
+  decoration checks, a buffer's stops reaching every view of it in its
+  range and none the minibuffer's;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1712,6 +1718,8 @@ def checks : List Check :=
     appearanceChecks ++
     faceVocabularyChecks ++
     searchDecorationChecks ++
+    stopChecks ++
+    columnsChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++

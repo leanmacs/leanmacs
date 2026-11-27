@@ -809,6 +809,12 @@ candidate list with no typed text (`EditorState.keyHints`, a
   are for a buffer its owner alone writes, such as a compilation buffer,
   which is read-only and whose spans the compile mode resets with its text
   (`packages/compile/Compile.lean`, "Locations").
+- A buffer may have **align-to stops** (`Buffer.stops`, set by
+  `setStops`, which refuses `noSuchBuffer`): byte offsets of its text, each
+  with an x in whole points, where every view of it starts a cell of a row
+  (`AlignStop`, `Editor/Scene.lean`). Like spans they are its owner's and
+  nothing moves them on an edit: a generated buffer's owner writes its
+  text, spans and stops together (`Editor/Columns.lean`).
 - A buffer may have a **gutter** (`Buffer.gutter`, set by `setGutter`,
   which refuses `noSuchBuffer`): marks, each a byte range of its text at
   the gutter's revision with a short text and a face, which every window
@@ -1322,6 +1328,9 @@ structure Buffer where
   /-- Byte ranges of its text, each with a face, set by its owner and drawn
   under the last search's matches ("Buffers", in the module docs). -/
   spans : Array Decoration := #[]
+  /-- Its align-to stops, set by its owner: where every view of it starts a
+  cell of a row ("Buffers", in the module docs). -/
+  stops : Array AlignStop := #[]
   /-- For an excerpt buffer, what its edits reached ("Excerpt buffers", in
   the module docs); `none` for any other buffer. -/
   excerpts : Option Buffer.Excerpts := none
@@ -3590,6 +3599,13 @@ def markRestored (id : BufferId) (state : EditorState) : Except BufferRefusal Un
 def setSpans (id : BufferId) (spans : Array Decoration) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with spans })) state
+
+/-- Sets the align-to stops of the buffer `id` to `stops`, in place of those
+it had ("Buffers", in the module docs). Refused, with the state unchanged,
+with `noSuchBuffer` for a buffer there is none of. -/
+def setStops (id : BufferId) (stops : Array AlignStop) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with stops })) state
 
 /-- The state once `change` is told ("The version-control gutter",
 `packages/version-control/VersionControl/Gutter.lean`): a head that arrived for the latest

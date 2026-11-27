@@ -11,7 +11,7 @@ question of layout. The recorder answers both, in `IO`
 
 - **a publish** is kept: the recorder holds the last scene published and how
   many have been, which the host's `scene` directive prints;
-- **a query** is answered with the display model's rule
+- **a query**, and a measure, is answered with the display model's rule
   (`Editor/Display/Model.lean`) over the text of the one snapshot it names,
   read from the library through the read half of the real binding's table
   of snapshots (`SnapshotReader`). A snapshot the table no longer holds,
@@ -69,6 +69,7 @@ def handle (recorder : DisplayRecorder) : DisplayHandler
   | .spot query => do
     return (← recorder.modelOf query.snapshot).spot query
   | .heights => return recorder.cells.heights
+  | .measure query => return DisplayModel.measure recorder.cells query
   -- There is no window to ask.
   | .frame _ => return ()
 

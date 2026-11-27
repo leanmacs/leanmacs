@@ -1096,6 +1096,14 @@ def BufferId.setSpans (id : BufferId) (spans : Array Decoration) :
     EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.setSpans id spans)
 
+/-- Sets the align-to stops of the buffer `id`, byte offsets of its text each
+with an x in whole points, where every view of it starts a cell of a row
+(`Editor/State.lean`, "Buffers"; `Editor/Columns.lean` computes them).
+Refused with `noSuchBuffer` for a buffer there is none of. -/
+def BufferId.setStops (id : BufferId) (stops : Array AlignStop) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setStops id stops)
+
 /-- Sets the gutter of the buffer `id`, marks at a revision of its text that
 every window of it draws in a column before its text, carried through the
 edits made since; or takes it away, and the column with it, with `none`

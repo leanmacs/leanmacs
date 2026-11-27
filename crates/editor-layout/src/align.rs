@@ -1,7 +1,7 @@
 //! The column arithmetic of align-to stops: where the cells of a row cut
 //! at its stops are placed, and where the row breaks.
 //!
-//! A row with align-to stops ([`AlignStop`](crate::scene::AlignStop)) is
+//! A row with align-to stops ([`AlignStop`]) is
 //! cut at each stop's column into **cells**: cell 0 is the text before the
 //! first stop, possibly empty, and each later cell starts at its stop's
 //! first character and runs to the next stop or the segment's end. Each

@@ -212,6 +212,31 @@ def Display.spot (display : Display) (snapshot : Snapshot) (width height : UInt6
   | _ =>
     throw (IO.userError "the library's words do not spell a spot")
 
+/-- `Display.measure` as it crosses: the run as one block's words and
+string, and the answer as words, and its status. -/
+@[extern "editor_glue_display_measure"]
+private opaque Display.measureRaw (display : @& Display) (runWords : @& ByteArray)
+    (runText : @& String) : IO RawWords
+
+/-- How wide a run is laid out in its faces over the default face, unbroken,
+in whole points rounded up: the width a generator computes align-to stops
+from. The run is the one block `runWords` and `runText` spell, in the
+layout a view's blocks take in a scene after its padding
+(`crates/editor-ffi/src/display/wire.rs`), drawn before offset 0: its text
+is the run and its decorations the run's faces. `none` when the words
+spell no block, more than one, or one drawn before another offset. Words
+that do not spell a width are an error. -/
+def Display.measure (display : Display) (runWords : Array UInt64) (runText : String) :
+    IO (Option UInt64) := do
+  let raw ← display.measureRaw (runWords.foldl pushWord ByteArray.empty) runText
+  if raw.status != 0 then
+    return none
+  match wordsOf? raw.words with
+  | some #[width] =>
+    return some width
+  | _ =>
+    throw (IO.userError "the library's words do not spell a width")
+
 /-- `Display.publish` as it crosses: the words as bytes, the string, and the
 snapshot handles, which the glue passes as a C array. -/
 @[extern "editor_glue_display_publish"]

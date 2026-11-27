@@ -45,6 +45,10 @@ command loop fills from the text model when it runs both ports together.
   and one `height` tall with the padding `down` and `top` as one
   `height - 2 * down - top` tall, each at 0 at least. A spot's x has
   `across + gutter` added back.
+- A run measures the cells of its first line, placed as a line's are (a
+  tab to the next tab stop, a wide character two cells), times `advance`:
+  its faces are not looked at, since every face is one cell here, and it
+  is in points, which at scale 1 are pixels.
 - A position at a wrap is the start of the later row. Only a line's last row
   holds the position at the line's end, before its break.
 - The x of a position is its character's first cell in its row times
@@ -339,6 +343,12 @@ def spot (model : DisplayModel) (query : Display.SpotQuery) :
         y := query.padding.down + query.padding.top + rowsDown * model.cells.lineHeight
         height := model.cells.lineHeight }
 
+/-- How wide a run is ("The layout rule"): the cells of its first line
+times `advance`. -/
+def measure (cells : Display.Cells) (query : Display.MeasureQuery) : Nat :=
+  let first := (splitLines query.text.toList 0 0 #[] #[])[0]?.map (·.1) |>.getD #[]
+  ((first.back?.map fun last => last.cell + last.span).getD 0) * cells.advance
+
 /-- Answers `request`: a scene is recorded, a request of the window is
 recorded and answers nothing, and a query is answered from the model as it
 is. -/
@@ -348,6 +358,7 @@ def handle : (request : DisplayRequest) → DisplayModel → request.Reply × Di
   | .move query, model => (model.move query, model)
   | .spot query, model => (model.spot query, model)
   | .heights, model => (model.cells.heights, model)
+  | .measure query, model => (measure model.cells query, model)
   | .frame request, model => ((), { model with asked := model.asked.push request })
 
 end DisplayModel

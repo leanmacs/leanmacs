@@ -1177,6 +1177,14 @@ its decorations (`Gutter.marksOf`, `Editor/Gutter.lean`), and its window's
 padding has the gutter's column (`EditorState.paddingOf`), so the follow
 asks the display with it.
 
+A view of a buffer with align-to stops (`Buffer.stops`) has those whose
+offset is in the same range as its decorations (`View.stops`, `stopsOf`),
+as they are: like spans, nothing moves them. The minibuffer's view has
+none. Layout places the cells of the rows they fall on at them
+(`crates/editor-layout/src/align.rs`); the queries the follow asks lay a
+row out under the stops of the last frame that showed the text at its
+revision, so they need none of their own.
+
 - **Every view but the minibuffer's** covers the range from the start of
   its scroll anchor's row to the start of the row `rows + 1` text rows
   below, or the text's end, where `rows` is the view's height over the
@@ -1974,12 +1982,29 @@ def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration)
   catch _ =>
     return #[]
 
-/-- `views` with their decorations (`decorationsOf`) and their gutter marks
-(`marksOf`), each read with its scroll anchor where the follow left it. -/
+/-- The align-to stops of `view` in `state` ("Decorations", in the module
+docs): its buffer's stops whose offset is in its range, in order; none for
+the minibuffer's view, and for a text that refuses. -/
+def stopsOf (state : EditorState) (view : View) : TextM (Array AlignStop) := do
+  if state.prompt.map (·.view) == some view.id then
+    return #[]
+  let some target := state.target? view.id | return #[]
+  if target.buffer.stops.isEmpty then
+    return #[]
+  try
+    let some (start, stop) ← rangeOf state view | return #[]
+    return target.buffer.stops.filter fun aligned => start ≤ aligned.offset && aligned.offset < stop
+  catch _ =>
+    return #[]
+
+/-- `views` with their decorations (`decorationsOf`), their gutter marks
+(`marksOf`) and their align-to stops (`stopsOf`), each read with its scroll
+anchor where the follow left it. -/
 def decorated (state : EditorState) (views : Array View) : TextM (Array View) :=
   views.mapM fun view =>
     return { view with
-        decorations := ← decorationsOf state view, marks := ← marksOf state view }
+        decorations := ← decorationsOf state view, marks := ← marksOf state view
+        stops := ← stopsOf state view }
 
 /-- The face the dividers between tiled windows are drawn in, Emacs's
 `window-divider`: the divider is filled in its foreground. -/

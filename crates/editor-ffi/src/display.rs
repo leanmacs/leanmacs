@@ -60,7 +60,14 @@
 //!   goal to pass to the next move, in whole pixels;
 //! - where a position is drawn in a view ([`editor_ffi_display_spot`]):
 //!   whether the view shows it, then its x, its y and its row's height,
-//!   in whole pixels.
+//!   in whole pixels;
+//! - how wide a run is in its faces ([`editor_ffi_display_measure`]): one
+//!   word, its width in whole points rounded up ([`Layout::measure`]),
+//!   which is what Lean computes a view's align-to stops from. The run
+//!   crosses as one block's words and string ([`decode_blocks`]), its
+//!   text and its decorations together, drawn before offset 0; it takes no
+//!   snapshot, and is in the faces layout has, so faces about to be
+//!   published are defined first, as for the heights.
 //!
 //! Each question carries the view's padding in whole points (across, down
 //! and top for the rows and a spot, across for a move), because it is the view's and
@@ -103,7 +110,9 @@ use editor_layout::Layout;
 use editor_layout::face::FaceDef;
 use editor_layout::frame::{Frame, Heights};
 use editor_layout::query::{Moved, QueryError, RowRange, Spot};
-use editor_layout::scene::{Block, Changes, Padding, Scene, TextKey, TextRef, TextSpans};
+use editor_layout::scene::{
+    Block, Changes, Decoration, Padding, Scene, TextKey, TextRef, TextSpans,
+};
 use editor_layout::shaper::Shaper;
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::translated::{Piece, TranslatedSpans};
@@ -253,6 +262,8 @@ trait Lays: Send {
     fn set_scale(&mut self, scale: f32);
     /// [`Layout::scale`].
     fn scale(&self) -> f32;
+    /// [`Layout::measure`].
+    fn measure(&mut self, text: &str, decorations: &[Decoration]) -> u32;
 }
 
 impl<S: Shaper> Lays for Layout<S>
@@ -314,6 +325,10 @@ where
 
     fn scale(&self) -> f32 {
         Layout::scale(self)
+    }
+
+    fn measure(&mut self, text: &str, decorations: &[Decoration]) -> u32 {
+        Layout::measure(self, text, decorations)
     }
 }
 
@@ -570,6 +585,13 @@ impl Display {
             position,
             blocks,
         )
+    }
+
+    /// How wide `block`'s text is in its decorations' faces over the
+    /// default face, in whole points ([`Layout::measure`]), at the scale
+    /// the display lays out at. Its `before` is not looked at.
+    pub fn measure(&self, block: &Block) -> u32 {
+        self.layout().measure(&block.text, &block.decorations)
     }
 }
 
@@ -1044,6 +1066,44 @@ pub unsafe extern "C" fn editor_ffi_display_spot(
                 }
             }
         },
+    );
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+}
+
+/// Fills `out` with how wide the run that `run_words` and `run_text`
+/// spell is, in whole points ([`Display::measure`]): the words and the
+/// string of one block drawn before offset 0 ([`decode_blocks`]), its
+/// text the run and its decorations the run's faces. One word, with
+/// [`DisplayStatus::Done`]; or [`DisplayStatus::BadPosition`] with none,
+/// for words that spell no block, more than one, or one drawn before
+/// another offset.
+///
+/// # Safety
+///
+/// `display` is a display handle this library handed out and has not taken
+/// back, `run_words` points to `run_words_len` readable bytes and
+/// `run_text` to `run_text_len`, each alive for the call, and `out` points
+/// to a writable [`RawWords`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_measure(
+    display: *const Display,
+    run_words: *const u8,
+    run_words_len: usize,
+    run_text: *const u8,
+    run_text_len: usize,
+    out: *mut RawWords,
+) {
+    // SAFETY: the caller guarantees the handle.
+    let display = unsafe { &*display };
+    // SAFETY: the caller guarantees the run's buffers.
+    let blocks = unsafe { blocks_of(run_words, run_words_len, run_text, run_text_len) };
+    let raw = answered(
+        blocks.and_then(|blocks| match blocks.as_slice() {
+            [block] if block.before == 0 => Ok(display.measure(block)),
+            _ => Err(QueryError::BadPosition),
+        }),
+        |width, writer| writer.word(u64::from(width)),
     );
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { out.write(raw) };

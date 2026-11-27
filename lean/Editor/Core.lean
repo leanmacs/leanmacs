@@ -1,6 +1,7 @@
 import Editor.Api.Cases
 import Editor.Api.Theorems
 import Editor.Clipboard.Contract
+import Editor.Columns
 import Editor.Completion.AtPointContract
 import Editor.Completion.DisplayContract
 import Editor.Completion.Fake

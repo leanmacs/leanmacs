@@ -303,6 +303,8 @@ inductive StateRequest where
   | setReadOnly (id : BufferId) (on : Bool)
   /-- Set the spans of the buffer `id`, in place of those it had. -/
   | setSpans (id : BufferId) (spans : Array Decoration)
+  /-- Set the align-to stops of the buffer `id`, in place of those it had. -/
+  | setStops (id : BufferId) (stops : Array AlignStop)
   /-- Set the gutter of the buffer `id`, or take it away. -/
   | setGutter (id : BufferId) (gutter : Option Buffer.Gutter)
   /-- Tell the version-control gutter's state what arrived. -/
@@ -470,6 +472,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .tellChanged _ => Except BufferRefusal Unit
   | .setReadOnly .. => Except BufferRefusal Unit
   | .setSpans .. => Except BufferRefusal Unit
+  | .setStops .. => Except BufferRefusal Unit
   | .setGutter .. => Except BufferRefusal Unit
   | .gutter _ => Unit
   | .setRestore _ => Unit
@@ -579,6 +582,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .tellChanged id, state => state.tellChanged id
   | .setReadOnly id on, state => state.setReadOnly id on
   | .setSpans id spans, state => state.setSpans id spans
+  | .setStops id stops, state => state.setStops id stops
   | .setGutter id gutter, state => state.setGutter id gutter
   | .gutter change, state => ((), state.changeGutter change)
   | .setRestore kept, state => ((), { state with restore := kept })

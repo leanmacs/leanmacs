@@ -145,19 +145,20 @@ def sceneChecks (_ : Unit) : List Check :=
             0, 0, 0, 3]
         -- No snapshot; its scroll marker; no selection; a block cursor; no
         -- status field and no status face; padded 8 across, 4 down and 28
-        -- at the top, with no gutter; no block and no mark.
+        -- at the top, with no gutter; no block, no mark and no stop.
         let first : Array UInt64 :=
-          #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4, 28, 0, 0, 0]
+          #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4, 28, 0, 0, 0, 0]
         -- The first handle; its scroll marker and its selection; a bar
         -- cursor; a decoration; a left status field with no padding and a
-        -- right one padded 4; a status face; and no block and no mark.
+        -- right one padded 4; a status face; and no block, no mark and no
+        -- stop.
         let second : Array UInt64 :=
           #[2, 0, 48, 32, 48, 1, 0, 1, anchor, 1, selection, 1, 2, 1, 0, 2, 2, 2, 6, 4, 0, 0, 3, 3,
-            1, 4, 1, 3, 0, 0, 0, 0, 0, 0]
+            1, 4, 1, 3, 0, 0, 0, 0, 0, 0, 0]
         -- The second handle; no scroll marker and no selection; an
-        -- underline cursor; no block and no mark.
+        -- underline cursor; no block, no mark and no stop.
         let third : Array UInt64 :=
-          #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+          #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- One divider: its rectangle and its face's length.
         let dividers : Array UInt64 := #[1, 0, 46, 32, 2, 4]
         -- No faces: as last published.
@@ -190,9 +191,10 @@ def sceneChecks (_ : Unit) : List Check :=
           real.rows { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0, blocks }
         let wordsBlocks : Array UInt64 := #[1, 3, 3, 1, 0, 3, 1]
         let held ← fixture.document.read
-        -- The blocks, then no mark, the divider and no faces, end the words.
-        let tail := encoded.words.extract (encoded.words.size - 15) encoded.words.size
-        return tail == wordsBlocks ++ #[0, 1, 0, 46, 32, 2, 4, 0] &&
+        -- The blocks, then no mark, no stop, the divider and no faces, end
+        -- the words.
+        let tail := encoded.words.extract (encoded.words.size - 16) encoded.words.size
+        return tail == wordsBlocks ++ #[0, 0, 1, 0, 46, 32, 2, 4, 0] &&
             encoded.strings.endsWith "héhrule" &&
             back.map (·.1) == some ((← real.encode scene (some #[])).words) &&
             (frame.splitOn "  block 0 row").length == 2 &&
@@ -223,15 +225,49 @@ def sceneChecks (_ : Unit) : List Check :=
           real.rows
               { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0
                 padding := { gutter := 8 } }
-        -- The marks, then the divider and no faces, end the words.
-        let tail := encoded.words.extract (encoded.words.size - 16) encoded.words.size
+        -- The marks, then no stop, the divider and no faces, end the words.
+        let tail := encoded.words.extract (encoded.words.size - 17) encoded.words.size
         let wordsMarks : Array UInt64 := #[2, 0, 3, 1, 10, 6, 6, 1, 12]
-        return tail == wordsMarks ++ #[1, 0, 46, 32, 2, 4, 0] &&
+        return tail == wordsMarks ++ #[0, 1, 0, 46, 32, 2, 4, 0] &&
             encoded.strings.endsWith "+diff.added-diff.removedrule" &&
             back.map (·.1) == some ((← real.encode scene (some #[])).words) &&
             (frame.splitOn "  mark ").length == 3 &&
             shown == asked.toOption.map (·.map fun row => (row.start, row.stop)) &&
             shown.isSome },
+    { name :=
+        "a view's align-to stops cross after its marks, each its offset and its x in points, an x no u32 holds as the largest, come back as sent, and the library lays the view's rows out under them"
+      run := do
+        let fixture ← sceneFixture
+        let real := fixture.real
+        -- `cd` starts at 3: at a stop 24 points in, it is drawn right of
+        -- where it is drawn with none.
+        let stops : Array Editor.AlignStop := #[{ offset := 3, x := 24 }]
+        let scene := fixture.mixed
+        let stopped (stops : Array Editor.AlignStop) : Editor.Scene :=
+          { scene with
+            views :=
+              scene.views.modify 2 fun view =>
+                { view with
+                  scroll := SceneFixture.own fixture.top, stops } }
+        let encoded ← real.encode (stopped stops) none
+        let past ← real.encode (stopped #[{ offset := 3, x := 2 ^ 40 }]) none
+        real.publish (stopped #[])
+        let bare ← real.display.frameText
+        real.publish (stopped stops)
+        let back ← real.display.scene
+        let frame ← real.display.frameText
+        let held ← fixture.document.read
+        -- The stops, then the divider and no faces, end the words.
+        let tail := encoded.words.extract (encoded.words.size - 10) encoded.words.size
+        let pastTail := past.words.extract (past.words.size - 10) past.words.size
+        return tail == #[1, 3, 24, 1, 0, 46, 32, 2, 4, 0] &&
+            pastTail == #[1, 3, (2 ^ 32 - 1 : Nat).toUInt64, 1, 0, 46, 32, 2, 4, 0] &&
+            back.map (·.1) == some ((← real.encode (stopped stops) (some #[])).words) &&
+            frame != bare &&
+            held ==
+              "ab
+cd
+ef" },
     { name :=
         "published, that scene comes back as sent; the view of the unknown snapshot shows nothing, the view after it shows its text from its anchor, and the view whose markers are of two texts shows its text from the start with no selection"
       run := do

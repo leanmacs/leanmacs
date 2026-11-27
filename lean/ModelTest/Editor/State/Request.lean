@@ -40,8 +40,9 @@ def stateRequests : List StateRequest :=
     .removeBuffer ⟨2⟩, .removeBuffer ⟨1⟩, .removeBuffer ⟨9⟩, .setHistory ⟨0⟩ (UndoTree.new ⟨0⟩ 4),
     .setHistory ⟨0⟩ (UndoTree.new ⟨1⟩ 0), .setValue ⟨0⟩ "count" (.nat 1),
     .setValue ⟨9⟩ "count" .null, .setSpans ⟨0⟩ #[{ start := 0, stop := 1, face := ⟨"a"⟩ }],
-    .setSpans ⟨9⟩ #[], .setMajorMode ⟨0⟩ "listing", .setMajorMode ⟨9⟩ "listing",
-    .addMinorMode ⟨1⟩ "one", .removeMinorMode ⟨1⟩ "one", .split ⟨0⟩ (marker 0 8) (marker 0 9),
+    .setSpans ⟨9⟩ #[], .setStops ⟨0⟩ #[{ offset := 1, x := 40 }], .setStops ⟨9⟩ #[],
+    .setMajorMode ⟨0⟩ "listing", .setMajorMode ⟨9⟩ "listing", .addMinorMode ⟨1⟩ "one",
+    .removeMinorMode ⟨1⟩ "one", .split ⟨0⟩ (marker 0 8) (marker 0 9),
     .split ⟨1⟩ (marker 1 8) (marker 1 9), .split ⟨0⟩ (marker 1 8) (marker 0 9),
     .split ⟨9⟩ (marker 0 8) (marker 0 9), .removeWindow ⟨1⟩, .removeWindow ⟨9⟩, .focus ⟨1⟩,
     .focus ⟨9⟩, .show ⟨0⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .show ⟨0⟩ ⟨9⟩ (marker 2 0) (marker 2 1),
@@ -333,6 +334,23 @@ def stateRequestChecks : List Check :=
               (one.buffer? ⟨1⟩).map (·.spans) == some spans &&
               (one.buffer? ⟨0⟩).map (·.spans) == some #[] &&
               (two.buffer? ⟨1⟩).map (·.spans) == some #[] &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state },
+    { name :=
+        "a buffer's stops are set, replacing those it had, and other buffers keep theirs; a buffer there is none of is refused with noSuchBuffer"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let stops : Array AlignStop := #[{ offset := 1, x := 40 }]
+            let (set, one) := state.handle (.setStops ⟨1⟩ stops)
+            let (_, two) := one.handle (.setStops ⟨1⟩ #[])
+            let (absent, same) := state.handle (.setStops ⟨9⟩ stops)
+            replied set == .inr () && (state.buffer? ⟨1⟩).map (·.stops) == some #[] &&
+              (one.buffer? ⟨1⟩).map (·.stops) == some stops &&
+              (one.buffer? ⟨0⟩).map (·.stops) == some #[] &&
+              (two.buffer? ⟨1⟩).map (·.stops) == some #[] &&
               replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
               same == state },
     { name :=

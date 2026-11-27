@@ -952,6 +952,7 @@ def over (answer : DisplayHandler) (setTheme : Theme → BaseIO Unit := fun _ =>
     | .move query => answer (.move query)
     | .spot query => answer (.spot query)
     | .heights => answer .heights
+    | .measure query => answer (.measure query)
     | .frame request => answer (.frame request)
   let setNamed (name : String) (theme : Theme) : BaseIO Unit := do
     named.set name

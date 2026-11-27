@@ -5894,6 +5894,66 @@ def searchDecorationChecks : List Check :=
                 some true
           | _, _ => false }]
 
+/-- The align-to stops of the view `view` in the last scene `driver`
+published. -/
+def stopsOfScene (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option (Array AlignStop) :=
+  driver.model.display.scenes.back?.bind fun scene =>
+    (scene.views.find? (·.id == view)).map (·.stops)
+
+/-- The checks of a view's align-to stops (`Editor/Loop.lean`,
+"Decorations"): a buffer's stops reach every view of it, in the range its
+decorations are read over, on the loop's driver over the editor's models
+and the display recorder, as the decoration checks run. -/
+def stopChecks : List Check :=
+  let stop (offset x : Nat) : AlignStop := { offset, x }
+  -- Offset 600 is in row 86 of `decoratedText`, far below the rows the
+  -- view covers from the text's start.
+  let stops := #[stop 0 40, stop 5 40, stop 600 40]
+  let stopped (state : EditorState) : EditorState :=
+    { state with buffers := state.buffers.map (·.map ({ · with stops })) }
+  let start (second : Option Nat) : TextM EditorState := do
+    match second with
+    | some second =>
+      return stopped (← twoViewState decoratedText second)
+    | none =>
+      return stopped (← decorationState decoratedText)
+  [{  name :=
+        "a buffer's stops reach its view as they are, those in the rows it covers, and those outside them are not sent"
+      run :=
+        pure <|
+          match
+            (decorationDriver decoratedText (some (start none))).map (keysFed · "<ArrowRight>") with
+          | none => false
+          | some driver => stopsOfScene driver == some #[stop 0 40, stop 5 40] },
+    { name := "a second view of the buffer has the stops of its own rows by the same rule"
+      run :=
+        pure <|
+          match
+            (decorationDriver decoratedText (some (start (some 560)))).map
+              (keysFed · "<ArrowRight>") with
+          | none => false
+          | some driver =>
+            stopsOfScene driver == some #[stop 0 40, stop 5 40] &&
+              stopsOfScene driver ⟨1⟩ == some #[stop 600 40] },
+    { name := "the minibuffer's view has no stops, though its buffer has some, and a window's has"
+      run :=
+        pure <|
+          match (decorationDriver decoratedText).map (keysFed · "C-s f C-s a f o o") with
+          | none => false
+          | some asking =>
+            let state := stopped asking.loop.state
+            let views := (asking.model.display.scenes.back?.map (·.views)).getD #[]
+            let stopsOf (id : Option ViewId) : Option (Array AlignStop) := do
+              let view ← views.find? (some ·.id == id)
+              match (Loop.stopsOf state view).runModel asking.model.texts with
+              | (.ok found, _) =>
+                some found
+              | _ =>
+                none
+            let minibuffer := state.prompt.map (·.view)
+            minibuffer.isSome && stopsOf minibuffer == some #[] &&
+              stopsOf (some ⟨0⟩) == some #[stop 0 40, stop 5 40] }]
+
 /-- A driver of the view checks over `viewState`, under the test scheme,
 each step handed the kit's editing keys and commands
 (`Editor/Test/Editing.lean`) and then `commands`, on `model`; `none` if
