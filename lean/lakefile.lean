@@ -670,13 +670,14 @@ def repositoryRoot : FetchM FilePath := do
 
 /-- Why the crate `name` of the package `owner`, whose manifest is at
 `manifest`, is refused, with `root` the repository, all paths with their
-links resolved: a manifest outside the repository is, with the rule; none
-for one inside it. -/
+links resolved: a manifest outside the repository is, pointing at the way
+that works, a library of its own (`editorLibrary`); none for one inside
+it. -/
 def outsideCrateRefusal? (owner name root manifest : String) : Option String :=
   if manifest.startsWith (root ++ "/") then none
   else
     some
-      s!"{owner}'s Rust crate {name} is outside the editor's Cargo workspace ({root}): building a third party's Rust is not supported yet; see docs/design/packages.md, 'Who can build it'"
+      s!"{owner}'s Rust crate {name} is outside the editor's Cargo workspace ({root}): a package outside the repository ships its native code as a library of its own, declared with an `editorLibrary` target (docs/packages/writing-a-package.md, 'A native library')"
 
 /-- The Rust crates of the set `set`, in the order their packages register
 (`setPackages`): a package declares its crate with a target named
@@ -684,9 +685,13 @@ def outsideCrateRefusal? (owner name root manifest : String) : Option String :=
 target's value is read through its own declaration (its fetch function and
 its query format), so this names no type of the package's, and no list is
 kept by hand. A crate whose manifest is outside the repository is refused
-with its reason: its dependencies are not in the core's lock, and
-`editor-service` has no published name for it to depend on
-(`docs/design/packages.md`, "Who can build it"). -/
+with its reason (its dependencies are not in the core's lock, and
+`editor-service` has no published name for it to depend on;
+`docs/design/packages.md`, "Who can build it"), pointing at the way that
+works: a library of its own, declared with an `editorLibrary` target,
+which adds no crate here (`setLibraries`). Until phase 5 of
+`package-native-libraries` this stays for the crates in the repository,
+acp's. -/
 def setRustCrates (set : Package) : FetchM (Array RustCrate) := do
   let ws ← getWorkspace
   let mut crates : Array RustCrate := #[]
@@ -783,7 +788,7 @@ not. -/
 #guard
   outsideCrateRefusal? "far" "far-service" "/r" "/elsewhere/far/Cargo.toml" ==
     some
-      "far's Rust crate far-service is outside the editor's Cargo workspace (/r): building a third party's Rust is not supported yet; see docs/design/packages.md, 'Who can build it'"
+      "far's Rust crate far-service is outside the editor's Cargo workspace (/r): a package outside the repository ships its native code as a library of its own, declared with an `editorLibrary` target (docs/packages/writing-a-package.md, 'A native library')"
 
 /-- The core's archive in the repository `root` and the file of the system
 libraries it needs, as Cargo builds them for the core (`rustlib`):

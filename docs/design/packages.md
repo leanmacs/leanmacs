@@ -4016,11 +4016,23 @@ as `acp`'s, whose dependencies the core's `Cargo.lock` pins. A
 crate whose manifest is outside the repository is refused by
 `setRustCrates`, so `:editorRustCrates` and the build stop early with:
 "`<package>`'s Rust crate `<crate>` is outside the editor's Cargo workspace
-(`<repo>`): building a third party's Rust is not supported yet; see
-docs/design/packages.md, 'Who can build it'". Two pieces are missing for
-such a crate: its dependencies are not in the core's lock (the build is
-`cargo fetch --locked` then `--offline`), and `editor-service` has no
-published name for it to depend on.
+(`<repo>`): a package outside the repository ships its native code as a
+library of its own, declared with an `editorLibrary` target
+(docs/packages/writing-a-package.md, 'A native library')" (until phase 4
+of `package-native-libraries` it said building a third party's Rust was
+not supported yet). Two pieces are missing for such a crate in the
+archive: its dependencies are not in the core's lock (the build is `cargo
+fetch --locked` then `--offline`), and `editor-service` has no published
+name for it to depend on.
+
+**A package's library needs no Cargo.** A package whose native code is a
+library of its own declares it with an `editorLibrary` target and no
+`editorRustCrate`, so it adds nothing to `setRustCrates`: a user's set
+stays `prebuilt` (`rustSource`), and no Cargo runs at `:reload`. An
+already-built library runs no tool at all; one the target builds needs the
+user's own tool, and its absence is said naming the package and the tool
+("A package's library, staged and loaded, as built"). Phase 6 rewrites
+this section.
 
 The refusal is `outsideCrateRefusal?` in `lean/lakefile.lean`, pinned by
 the `#guard`s beside it, and what a failed build says of missing tooling
