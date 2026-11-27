@@ -1,7 +1,7 @@
 [package]
 name = "editor-package-library-fixture"
 version = "0.1.0"
-description = "A test fixture: two small package libraries whose inits refuse the core's package runtime, for the tests of a package library's load through C; never linked into the editor"
+description = "A test fixture: small package libraries written in C, two whose inits refuse the core's package runtime and two that run on it, built against an older runtime and against the generated header, for the tests of a package library's load through C; never linked into the editor"
 edition.workspace = true
 license.workspace = true
 publish = false

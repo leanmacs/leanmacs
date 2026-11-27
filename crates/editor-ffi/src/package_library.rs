@@ -17,8 +17,10 @@
 //! real adapter is made here and nowhere else (the root `clippy.toml`).
 //!
 //! Tests: `tests/package_load.rs`, each refusal through C on real files;
-//! a library that loads is the fixture package echo's, whose linked test
-//! loads it through its glue (`EchoTest.Linked.echoLoadChecks`).
+//! `tests/package_runtime.rs`, libraries compiled from C against an older
+//! runtime and against the generated header, loaded and run on the
+//! process's runtime; and the fixture package echo's library, whose linked
+//! test loads it through its glue (`EchoTest.Linked.echoLoadChecks`).
 
 use std::ffi::c_void;
 use std::path::Path;
