@@ -2,11 +2,11 @@ import Echo.Real
 import EchoTest.Check
 import Editor.PackageLibrary
 import Editor.PackageSet.Build
-import Editor.PackageSet.Running
 import Editor.RealHost
 import Editor.Restore.Restart
 import Editor.Test.Linked.Services
 import Editor.Test.Linked.Trees
+import Editor.Test.Linked.UserSet
 
 /-!
 # Linked tests: a user's set with echo builds with no Cargo, and its editor loads echo's library from the set's build
@@ -60,7 +60,9 @@ still runs in it. Each run's completion is waited for on the run itself,
 the bound a hang guard.
 
 The linked test runs in the package's directory (`tools/package-set.sh`),
-so echo's source and the repository are found from there.
+so echo's source and the repository are found from there. The helpers a
+build of a user's set needs are the linked test kit's
+(`Editor.Test.Linked.UserSet`), which acp's installed-set check shares.
 -/
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
@@ -71,133 +73,24 @@ def wiringSet.EchoTest.Linked.Echo.Real.UserSet : Editor.WiringSet :=
 
 namespace EchoTest.Linked
 
-open Editor
-
-/-- The `PATH` the builds run with: the system's directories alone, which
-hold no `cargo` on a developer's Mac or on the CI runner. -/
-def userSetPath : String :=
-  "/usr/bin:/bin"
-
-/-- The directories a `PATH` names, in order. -/
-def pathEntries (path : String) : List String :=
-  (path.splitOn ":").filter (!·.isEmpty)
-
-/-- How long a build of a user's set may take before the check fails as a
-hang, never a result: the set's root and the copy of echo are compiled and
-the editor linked, about 8 s on a developer's Mac (2026-11-27, Apple M5
-Max) with the default set and the core built, and a cold build of the copy
-under the stress loop's load several times that; ten minutes. -/
-def userSetBuildGuard : HangGuard :=
-  .on "lake's build of a user's set" 600000
-
-/-- The most bytes of a run's output kept. -/
-def userSetOutputLimit : Nat :=
-  16777216
+open Editor Editor.Test.Linked
 
 /-- The library file a build of echo makes on this platform. -/
 def echoLibraryFile : String :=
   s!"libecho_service.{if System.Platform.isOSX then "dylib" else "so"}"
 
-/-- Copies the directory `source` into `copy`, each file's bytes, links
-followed, leaving out Lake's and the formatter's own directories. -/
-partial def copyPackage (source copy : System.FilePath) : IO Unit := do
-  IO.FS.createDirAll copy
-  for entry in ← source.readDir do
-    if entry.fileName == ".lake" || entry.fileName == ".lean-fmt-cache" then
-      continue
-    if ← entry.path.isDir then
-      copyPackage entry.path (copy / entry.fileName)
-    else
-      IO.FS.writeBinFile (copy / entry.fileName) (← IO.FS.readBinFile entry.path)
-
-/-- The line echo's lakefile requires the core by, relative to the package
-in the repository. -/
-def echoCoreRequire : String :=
-  "require «editor-core» from \"..\" / \"..\" / \"..\" / \"lean\""
-
 /-- Copies echo, from the working directory, into `copy`, its core required
-from `core`, absolute, in its lakefile and its manifest; with `library`,
-that library at `lib/` of the copy. Throws when the lakefile holds no line
-to replace. -/
+from `core`, absolute, in its lakefile and its manifest
+(`Editor.Test.Linked.repointRequires`, which throws when either holds no
+line to replace); with `library`, that library at `lib/` of the copy. -/
 def copyEcho (copy core : System.FilePath) (library : Option String) : IO Unit := do
-  copyPackage "." copy
-  let lakefile ← IO.FS.readFile (copy / "lakefile.lean")
-  unless (lakefile.splitOn echoCoreRequire).length == 2 do
-    throw (IO.userError s!"echo's lakefile has no line {echoCoreRequire} to point at {core}")
-  IO.FS.writeFile (copy / "lakefile.lean")
-      (lakefile.replace echoCoreRequire s!"require «editor-core» from \"{core}\"")
-  let manifest ← IO.FS.readFile (copy / "lake-manifest.json")
-  IO.FS.writeFile (copy / "lake-manifest.json")
-      (manifest.replace "\"../../../lean\"" s!"\"{core}\"")
+  Editor.Test.Linked.copyPackage "." copy
+  Editor.Test.Linked.repointRequires copy
+      [{ line := "require «editor-core» from \"..\" / \"..\" / \"..\" / \"lean\"",
+         relative := "../../../lean", directory := core }]
   if let some library := library then
     IO.FS.createDirAll (copy / "lib")
     IO.FS.writeBinFile (copy / "lib" / echoLibraryFile) (← IO.FS.readBinFile library)
-
-/-- The `lakefile.toml` of a user's set named `name` requiring `required`,
-each a name and a directory, in order. -/
-def userSetLakefile (name : String) (required : List (String × System.FilePath)) : String :=
-  required.foldl
-    (fun text (package, directory) =>
-      text ++ s!"\n[[require]]\nname = \"{package}\"\npath = \"{directory}\"\n")
-    s!"name = \"{name}\"\n"
-
-/-- The environment the builds run with, over the test's own: the build
-job's shape, with the fixture set's build record `record`, the system's
-`PATH` and the home `home`. -/
-def userSetEnvironment (record : String) (home : System.FilePath) : Process.Environment :=
-  { unset := PackageSet.clearedVariables
-    set := PackageSet.buildIn record ++ #[("PATH", userSetPath), ("HOME", home.toString)] }
-
-/-- Runs `command` through `services`' real process port to its end, waited
-for on its completion within `userSetBuildGuard`: what it wrote and how it
-ended, or how it failed. -/
-def runToEnd (services : Editor.Test.Linked.Services) (command : Process.Command) :
-    IO (Except String Process.Ran) := do
-  let request := ProcessRequest.run command userSetOutputLimit
-  let (id, wait) ← services.completions.register
-  services.jobs.processes.start id request
-  -- Waited for on the run's own completion; the bound is a hang guard.
-  let ended ← Job.awaitWithin userSetBuildGuard wait.result?
-  unless ended == some (some .completed) do
-    return .error s!"the run of {command.program} did not complete: {repr ended}"
-  match ← services.jobs.processes.take id request with
-  | .ok ran =>
-    return .ok ran
-  | .error error =>
-    return .error error.describe
-
-/-- The lines a run wrote, standard output's then standard error's. -/
-def ranLines (ran : Process.Ran) : List String :=
-  ((String.fromUTF8! ran.stdout).splitOn "\n") ++ (String.fromUTF8! ran.stderr).splitOn "\n"
-
-/-- The last `count` lines a run wrote, for a failure's message. -/
-def ranTail (ran : Process.Ran) (count : Nat := 30) : String :=
-  let lines := (ranLines ran).filter (!·.isEmpty)
-  "\n".intercalate (lines.drop (lines.length - count))
-
-/-- Runs `lake` at `lake` with `arguments` in `directory`, with
-`environment`, and passes when it exits 0. -/
-def lakeSucceeds (services : Editor.Test.Linked.Services) (lake : String)
-    (environment : Process.Environment) (directory : System.FilePath) (arguments : Array String) :
-    IO (Except String Unit) := do
-  match ← runToEnd services { program := lake, arguments, environment, directory } with
-  | .error how =>
-    return .error how
-  | .ok { exit := .code 0, .. } =>
-    return .ok ()
-  | .ok ran =>
-    return .error
-        s!"lake {" ".intercalate arguments.toList} in {directory} ended {repr ran.exit}:\n{ranTail ran}"
-
-/-- Why this machine cannot show the property: a `cargo` in a directory of
-`userSetPath`; none when there is none. -/
-def cargoOnUserPath? : IO (Option String) := do
-  for directory in pathEntries userSetPath do
-    let cargo : System.FilePath := directory / "cargo"
-    if ← cargo.pathExists then
-      return some
-          s!"{cargo} is on the PATH the check builds with ({userSetPath}), so this machine cannot show a build with no Cargo"
-  return none
 
 /-- The checks of a user's set holding echo, built with the toolchain's
 `lake` under `sysroot` through `services`' real process port, each in a

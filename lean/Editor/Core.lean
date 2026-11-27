@@ -37,6 +37,7 @@ import Editor.Test.Linked.Lines
 import Editor.Test.Linked.Rig
 import Editor.Test.Linked.Shipped
 import Editor.Test.Linked.Trees
+import Editor.Test.Linked.UserSet
 import Editor.Test.Listings
 import Editor.Test.Modes
 import Editor.Test.PackageSet
