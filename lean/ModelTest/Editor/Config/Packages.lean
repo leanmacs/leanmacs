@@ -376,6 +376,50 @@ def packageChecks : List Check :=
             state.packages == #["after"] &&
             state.registry.grammars.isEmpty) },
     { name :=
+        "a package whose grammar, resolved under its staged directory, has a problem is refused with the package and that problem named, and the packages after it register: a per-platform list that is empty, one that lists a platform twice, and a symbol that registers another grammar"
+      run :=
+        let empty := shippingIni "empty" []
+        let twice :=
+          shippingIni "twice"
+            [("darwin-aarch64", "darwin-aarch64/a.dylib"),
+              ("darwin-aarch64", "darwin-aarch64/b.dylib")]
+        let other :=
+          { shippingIni "other" with
+            grammars :=
+              #[Language.Grammar.declarePerPlatform "ini" iniLibraries "queries" (symbol :=
+                  some "tree_sitter_toml")] }
+        let (state, refused) :=
+          (Config.State.ofPackages #[empty, twice, other, commanding "after" [("a", "a")]]
+              [("ini-grammar", iniStaged)] :
+            ModelState × Array String)
+        pure
+          (refused ==
+              #["the package `empty` is refused: the grammar `ini` declares a library for no platform",
+                "the package `twice` is refused: the grammar `ini` declares a library for the platform `darwin-aarch64` twice",
+                "the package `other` is refused: the grammar `ini`'s symbol `tree_sitter_toml` registers the grammar `toml`: a grammar is declared under the name its symbol registers"] &&
+            state.packages == #["after"] &&
+            state.registry.grammars.isEmpty) },
+    { name :=
+        "a package of the Lake package ini-grammar declaring the grammar ini with one library for every platform, relative to its grammars directory, and the default query directory, registers ini with that library and queries/ under the staged directory, its source on any platform that library"
+      run :=
+        let single :=
+          { shippingIni "single" with
+            grammars := #[Language.Grammar.declare "ini" "libtree-sitter-ini.so"] }
+        let (state, refused) :=
+          (Config.State.ofPackages #[single] [("ini-grammar", iniStaged)] :
+            ModelState × Array String)
+        let table := state.registry.grammarTable
+        let library := "/s/.lake/build/grammars/ini-grammar/libtree-sitter-ini.so"
+        pure
+          (refused.isEmpty &&
+            state.registry.grammars.map (fun entry => (entry.owner.name, entry.grammar.name)) ==
+              #[("single", "ini")] &&
+            table ==
+              [Language.Grammar.declare "ini" library (queries :=
+                  some "/s/.lake/build/grammars/ini-grammar/queries")] &&
+            ["darwin-aarch64", "linux-x86_64"].all fun platform =>
+              (table.head?.bind (·.sourceOn platform)).map (·.library) == some library) },
+    { name :=
         "a package that declares grammars with no staged directory of its Lake package, or with no Lake package tagged, is refused with a message naming it and the keyword"
       run :=
         let untagged := { shippingIni "untagged" with lakePackage := none }
