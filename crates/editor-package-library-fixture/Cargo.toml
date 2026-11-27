@@ -1,0 +1,18 @@
+[package]
+name = "editor-package-library-fixture"
+version = "0.1.0"
+description = "A test fixture: two small package libraries whose inits refuse the core's package runtime, for the tests of a package library's load through C; never linked into the editor"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[build-dependencies]
+# The C compiler, found as the fixture grammar library's build finds it
+# (`editor-syntax-fixture-ini`): the build script asks `cc` for the compiler
+# and its flags for this target and links each fixture as a shared library.
+# Pinned to the version already locked (1.11.1, 2026-11-26), so it adds
+# nothing to the graph. MIT or Apache-2.0, used unmodified.
+cc = { version = "=1.11.1" }
+
+[lints]
+workspace = true

@@ -189,6 +189,11 @@ rustix = { version = "=1.1.6", default-features = false, features = ["std", "pro
 # grammar registration (`tests/grammars.rs`) registers it through the C
 # functions, over the process's syntax service and the real adapter.
 editor-syntax-fixture-ini = { path = "../editor-syntax-fixture-ini" }
+# The fixture package libraries, built for tests alone: the package-load
+# test (`tests/package_load.rs`) loads each through the C function, and
+# each init refuses the process's real runtime, as too small or with a
+# failed init.
+editor-package-library-fixture = { path = "../editor-package-library-fixture" }
 
 # The window that draws is an example, run on demand. What it makes of
 # what it saw is tested in the gate all the same: `cargo test` runs the

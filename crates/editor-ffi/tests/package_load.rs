@@ -2,8 +2,12 @@
 //! (`editor_ffi_package_load`), on real files, through the real adapter:
 //! each refusal crosses as its tag and leaves the table unwritten. A path
 //! nothing is at answers 1 (missing), a file that is no library 2 (not a
-//! library), and a library without a package's init, the fixture grammar
-//! library (`editor-syntax-fixture-ini`), 3 (no init). What a load decides
+//! library), a library without a package's init, the fixture grammar
+//! library (`editor-syntax-fixture-ini`), 3 (no init), and the fixture
+//! package libraries (`editor-package-library-fixture`) 4 (runtime too
+//! small: an init that requires a larger runtime than the core's) and 5
+//! (init failed: an init that answers a status no library answers), each
+//! init called with the process's real runtime. What a load decides
 //! is `editor-package-library`'s, pinned there on the port's fake, and the
 //! adapter's answers by its contract on the same fixture; a library that
 //! loads is the fixture package echo's, whose linked test loads it through
@@ -16,6 +20,7 @@ use std::path::Path;
 use std::ptr;
 
 use editor_ffi::package_library::editor_ffi_package_load;
+use editor_package_library_fixture as package;
 use editor_syntax_fixture_ini as fixture;
 
 /// The status of a load of `path` through the C function, and whether it
@@ -37,4 +42,10 @@ fn each_refusal_of_a_load_through_c_crosses_as_its_tag_with_no_table() {
     assert_eq!(load("relative/libecho.so"), (1, false), "not absolute");
     assert_eq!(load(fixture::NOT_A_LIBRARY), (2, false), "not a library");
     assert_eq!(load(fixture::LIBRARY), (3, false), "no init");
+    assert_eq!(
+        load(package::RUNTIME_TOO_SMALL),
+        (4, false),
+        "runtime too small"
+    );
+    assert_eq!(load(package::INIT_FAILED), (5, false), "init failed");
 }

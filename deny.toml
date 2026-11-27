@@ -423,7 +423,10 @@
 # `editor-package-library-libloading`, has `editor-ffi` alone. The adapter
 # joined the wrappers of `libloading`, which it opens a package's library
 # with, and of `editor-syntax-fixture-ini`, which its contract test opens,
-# by a dev-dependency.
+# by a dev-dependency. A third entry came with the fixture package
+# libraries whose inits refuse the runtime, `editor-package-library-fixture`,
+# built for tests alone: its one wrapper is `editor-ffi`, whose package-load
+# test loads them by a dev-dependency, so the editor never links it.
 #
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
@@ -600,6 +603,7 @@ deny = [
   { crate = "editor-syntax-fixture-ini", wrappers = ["editor-syntax-treesitter", "editor-ffi", "editor-release-std", "editor-package-library-libloading"], reason = "the fixture grammar library is built for tests alone: the adapter's contract and registration tests and editor-ffi's grammar wiring test and package-load test load it, stage-bundle's wiring test stages it as a package's grammar, and the library port's adapter's contract test opens it as a library, each by a dev-dependency; the editor never links it" },
   { crate = "editor-service", wrappers = ["editor-ffi", "editor-process", "editor-process-std", "editor-package-library", "acp-service"], reason = "the conventions every service keeps are shared by the crates linked into the editor's one Rust archive: the crate that wires the library together, the process service and its adapter's tests, the package runtime, whose members are the core's over it, and a package's crate still linked into that archive (acp's); echo's crate ships as a library of its own and reaches the core through the package runtime alone, so it carries no copy of these statics, and cargo-deny counts its dev-dependencies too, so not even its tests may take it back" },
   { crate = "editor-package-library", wrappers = ["editor-ffi", "editor-package-library-libloading"], reason = "the package runtime, the library port and the load have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C function a package's glue calls to load its library over the adapter; a package's crate reaches none of it, only the runtime it is handed at its init; a third is a decision, so it is made here" },
+  { crate = "editor-package-library-fixture", wrappers = ["editor-ffi"], reason = "the fixture package libraries are built for tests alone: editor-ffi's package-load test loads each through the C function, a runtime too small and a failed init, by a dev-dependency; the editor never links it" },
   { crate = "editor-package-library-libloading", wrappers = ["editor-ffi"], reason = "the library port's real adapter is linked only by the crate that wires the library together, for the process's one loader of package libraries; everything else reaches a library through the port, and editor-package-library's tests through its fake" },
   { crate = "streaming-iterator", wrappers = ["tree-sitter"], reason = "tree-sitter's query cursor iterates with it, and the adapter names it only through tree-sitter's re-export: no crate of the workspace depends on it" },
   { crate = "regex", wrappers = ["tree-sitter"], reason = "regular expressions are tree-sitter's, for a query's `#match?` predicates, behind the Syntax port: no crate of the workspace depends on it" },
