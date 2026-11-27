@@ -22,3 +22,6 @@
 /dist
 # macOS Finder metadata, in any directory.
 .DS_Store
+# acp's library, built from the checkout by `mise run install -- --agents`
+# and placed in the package for a user's config (tools/install-app.sh).
+/packages/acp/lib/

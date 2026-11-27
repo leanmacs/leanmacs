@@ -3,6 +3,7 @@ import AcpTest.Check
 import AcpTest.Linked.Acp.Conversation
 import AcpTest.Linked.Acp.Permissions
 import AcpTest.Linked.Acp.Real.Contract
+import AcpTest.Linked.Acp.Real.InstalledSet
 import AcpTest.Linked.Acp.Real.Load
 import AcpTest.Linked.Acp.Real.Session
 import AcpTest.Linked.Acp.Table
@@ -60,12 +61,19 @@ pump, one pump a process, which only the wired groups use, and runs:
   (`Editor.Headless.packageServices Acp.packages`, named here as only this
   root may import the headless host; `AcpTest.Linked.sessionChecks`,
   `AcpTest/Linked/Acp/Real/Session.lean`);
+- a config laid out as `install --agents` leaves it, with acp's library
+  already built in its `lib/`, built with the toolchain's `lake` under the
+  sysroot it is handed, through the real process port, with no `cargo` on
+  the child's `PATH`, and its editor's probe, which passes only once acp's
+  library loaded from the config's build
+  (`AcpTest.Linked.acpInstalledSetChecks`,
+  `AcpTest/Linked/Acp/Real/InstalledSet.lean`);
 
 and says so. Its checks are a check set (`AcpTest.Linked.checks`,
 `Editor.CheckGroup`, `docs/dev-practices/real-thread-checks.md`, "How the
 set runs"): the conversation's, the permissions', the table's and the
-load's checks in a plain group each, then two groups,
-of its two modules of the wiring set, which the build's `linter.wiringSet`
+load's checks in a plain group each, then three groups,
+of its three modules of the wiring set, which the build's `linter.wiringSet`
 holds true and complete. With `--wiring` after
 the two directories it runs those groups alone, the stress loop's
 `linked-wiring` suite (`tools/package-set.sh run --wiring`), and
@@ -87,7 +95,9 @@ permissions' and the table's checks over `Acp.packages` and the load's checks in
 group each, the contract's one check in the group
 of `AcpTest/Linked/Acp/Real/Contract.lean`, and AC4 in the group of
 `AcpTest/Linked/Acp/Real/Session.lean`, over the package services the edge
-builds from acp's packages. -/
+builds from acp's packages, and the installed config's build in the group
+of `AcpTest/Linked/Acp/Real/InstalledSet.lean`, over the sysroot the
+context was made with. -/
 def AcpTest.Linked.checks : List (Editor.CheckGroup AcpTest.Linked.Context AcpTest.Check) :=
   [.plain fun (context, _) => AcpTest.Linked.conversationChecks context Acp.packages,
     .plain fun (context, _) => AcpTest.Linked.permissionChecks context Acp.packages,
@@ -97,7 +107,9 @@ def AcpTest.Linked.checks : List (Editor.CheckGroup AcpTest.Linked.Context AcpTe
       fun (_, services) => AcpTest.Linked.contractChecks services,
     .wired "AcpTest.Linked.Acp.Real.Session" wiringSet.AcpTest.Linked.Acp.Real.Session
       fun (_, services) =>
-      AcpTest.Linked.sessionChecks services (Editor.Headless.packageServices Acp.packages)]
+      AcpTest.Linked.sessionChecks services (Editor.Headless.packageServices Acp.packages),
+    .wired "AcpTest.Linked.Acp.Real.InstalledSet" wiringSet.AcpTest.Linked.Acp.Real.InstalledSet
+      fun (context, services) => AcpTest.Linked.acpInstalledSetChecks context.sysroot services]
 
 /-- Runs the checks `mode` selects from the check set
 (`Editor.CheckGroup.select`) with the hosts' context, made with

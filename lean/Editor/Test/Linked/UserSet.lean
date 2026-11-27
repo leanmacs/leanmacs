@@ -1,4 +1,6 @@
+import Editor.Config.LakePackage
 import Editor.PackageSet.Build
+import Editor.PackageSet.Edit
 import Editor.PackageSet.Running
 import Editor.Process
 import Editor.Test.Linked.Services
@@ -17,7 +19,12 @@ no `cargo` is on it (`cargoOnUserPath?`); a copy of a package's source
 build job's environment over the fixture set's build record
 (`userSetEnvironment`); and a run to its end on the real process port,
 waited for on its completion under a hang guard (`runToEnd`,
-`lakeSucceeds`), with the lines it wrote (`ranLines`, `ranTail`).
+`lakeSucceeds`), with the lines it wrote (`ranLines`, `ranTail`). And a
+config's lakefile as `install --agents` leaves one that had none
+(`installedConfigLakefile`), made by the editor's own generator and
+`:package-install`'s core-last edit, with the names of its requires
+(`requireNames`, `lastRequireName?`), so no package module imports the
+config session.
 
 Moved from echo's user-set check (`EchoTest/Linked/Echo/Real/UserSet.lean`)
 in phase 5 of `package-native-libraries`, so acp's installed-set check is
@@ -179,5 +186,54 @@ def cargoOnUserPath? : IO (Option String) := do
       return some
           s!"{cargo} is on the PATH the check builds with ({userSetPath}), so this machine cannot show a build with no Cargo"
   return none
+
+/-- The lakefile of the config directory `config` as `install --agents`
+leaves one that had none: the editor's generated lakefile for the set at
+`set` and the core at `core` (`Config.LakePackage.lakefile`), then each
+package of `added`, a name and a directory, required by path through the
+edit `:package-install` makes (`PackageSet.withCoreEdit` over
+`PackageSet.install`), which takes the core's table out, adds the package
+after the last remaining require, and puts the core back last. So each
+lands ahead of `editor-core`, as the install script's edit leaves it. The
+requires handed to each edit are the lakefile's, in its order (the set,
+those added so far, the core last), as Lake would read them. The edit's
+refusal, if any, in its words. -/
+def installedConfigLakefile (config set core : System.FilePath)
+    (added : List (String × System.FilePath)) : Except String String := do
+  let start :=
+    Config.LakePackage.lakefile
+      { name := "default-set", directory := set.toString, core := core.toString }
+  let own : PackageSet.Require := { name := "editor-core", source := .path core.toString }
+  let (text, _) ←
+    added.foldlM
+        (fun (text, others) (name, directory) => do
+          let require : PackageSet.Require := { name, source := .path directory.toString }
+          let edited ←
+            PackageSet.withCoreEdit config.toString (some core.toString) text (others.push own)
+                fun text required => PackageSet.install text required require
+          return (edited, others.push require))
+        (start, #[{ name := "default-set", source := .path set.toString }])
+  return text
+
+/-- The `name` of each `[[require]]` table of a lakefile's text, in order:
+the first `name = "<n>"` line after each `[[require]]` line. -/
+def requireNames (text : String) : List String :=
+  let step (state : Bool × Array String) (line : String) : Bool × Array String :=
+    let (inTable, names) := state
+    let trimmed := line.trimAscii.toString
+    if trimmed == "[[require]]" then (true, names)
+    else
+      if trimmed.startsWith "[" then (false, names)
+      else
+        if inTable && trimmed.startsWith "name" then
+          match trimmed.splitOn "\"" with
+          | _ :: name :: _ => (false, names.push name)
+          | _ => (inTable, names)
+        else (inTable, names)
+  ((text.splitOn "\n").foldl step (false, #[])).2.toList
+
+/-- The `name` of the last `[[require]]` table of a lakefile's text. -/
+def lastRequireName? (text : String) : Option String :=
+  (requireNames text).getLast?
 
 end Editor.Test.Linked

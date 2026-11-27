@@ -295,8 +295,15 @@ dir = "lean"
 # toolchain's lake, tests/packages/echo/EchoTest/Linked/Echo/Real/UserSet.lean),
 # the whole task took 126 s and echo's wiring groups alone 12.6 s, the
 # user-set check about 10 s of that, on the same machine; the limit is
-# raised by more than that check's share under load.
-timeout = "360s"
+# raised by more than that check's share under load. On 2026-11-27, with
+# acp's installed-set wiring check (a config laid out as `install --agents`
+# leaves it, built with the toolchain's lake and no cargo,
+# packages/acp/AcpTest/Linked/Acp/Real/InstalledSet.lean), the task alone
+# took 86 s on an idle machine and acp's wiring groups 9.2 s, the check
+# about 9 s of that (a fresh copy of acp's Lean compiled and a set's editor
+# linked), on the same machine; the limit is raised by 60 s, over six
+# times that check's share, for a loaded runner.
+timeout = "420s"
 run = [
   # The core's archive, the one Rust archive every set's editor links, is
   # built from `editor-ffi` alone and holds no `editor-release-std`, held by

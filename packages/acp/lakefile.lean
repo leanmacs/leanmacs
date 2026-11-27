@@ -23,9 +23,12 @@ Its lakefile is Lean and not TOML, as echo's is: a TOML lakefile cannot
 declare a target that compiles C, a library's `moreLinkObjs`, or the target
 that builds the library.
 
-- `editorLibrary` is the package's library: the crate's `cdylib`, built by
-  Cargo. The core's package-set build stages it beside every editor it
-  links, and writes where in `<executable>.libraries`.
+- `editorLibrary` is the package's library: for a user's set, the one
+  already built in its `lib/`, which `install --agents` places there; for
+  the repository's own sets, or with no `lib/`, the crate's `cdylib` built
+  by Cargo (`acpLibraryForm`, `acpInRepository`). The core's package-set
+  build stages it beside every editor it links, and writes where in
+  `<executable>.libraries`.
 - `acpGlue.o` is the package's glue, `ffi/glue.c`, compiled against the
   toolchain's `lean.h`, with no path compiled in: `Acp.Real`'s initialiser
   reads the library's staged path from the record beside the running
@@ -82,17 +85,86 @@ test driver load (the core's `lintPlugin`). -/
 def lintPlugin : TargetArray Dynlib :=
   #[`@«editor-core»/lintShared]
 
+/-- Which form of acp's library a set builds with (`acpLibraryForm`). -/
+inductive AcpLibraryForm where
+  /-- The library already built in the package's `lib/`: no process runs. -/
+  | prebuilt
+  /-- The crate's `cdylib`, built by Cargo from the repository. -/
+  | cargo
+  deriving DecidableEq, Repr
+
+/-- The form of acp's library for a set, given whether it is inside the
+repository (`acpInRepository`) and whether the package holds its library
+already built in `lib/`: the prebuilt one only for a set outside the
+repository, a user's, that has it; Cargo for a set in the repository even
+with `lib/` present, so the checkout's own sets always build the library
+from its source, and for a user's set with no `lib/`. -/
+def acpLibraryForm (inRepository prebuiltPresent : Bool) : AcpLibraryForm :=
+  if !inRepository && prebuiltPresent then .prebuilt else .cargo
+
+/- Guards: the prebuilt form only outside the repository with `lib/`
+present; Cargo inside it whatever `lib/` holds, and outside it with no
+`lib/`. -/
+#guard acpLibraryForm false true == .prebuilt
+
+#guard acpLibraryForm true true == .cargo
+
+#guard acpLibraryForm true false == .cargo
+
+#guard acpLibraryForm false false == .cargo
+
+/-- Whether the directory `dir` is the directory `root` or under it, both
+as paths with their links resolved. -/
+def acpIsUnder (root dir : String) : Bool :=
+  dir == root || dir.startsWith (root ++ "/")
+
+/-- Whether a set is inside the repository, for acp's library: the
+directory two above the package, `repo`, holds a `Cargo.toml`
+(`hasManifest`), and the workspace's root package, the set being built,
+is in `repo` or under it (`workspaceRoot`); all paths resolved. A config
+that requires acp from the checkout's own `packages/acp`, as
+`install --agents` leaves it, has a `Cargo.toml` two above acp, so only the
+workspace's root, outside the checkout, says it is a user's set. -/
+def acpInRepository (hasManifest : Bool) (repo workspaceRoot : String) : Bool :=
+  hasManifest && acpIsUnder repo workspaceRoot
+
+/- Guards: a set of the repository's own (the fixture set, acp's own
+workspace) is inside it; a user's config is not, though the repository two
+above acp holds its `Cargo.toml`; a directory that only starts with the
+repository's name is not under it; and with no `Cargo.toml` above acp no
+set is inside a repository. -/
+#guard acpInRepository true "/r" "/r/tests/packages"
+
+#guard acpInRepository true "/r" "/r/packages/acp"
+
+#guard !acpInRepository true "/r" "/home/u/.config/leanmacs"
+
+#guard !acpInRepository true "/r" "/r-other/set"
+
+#guard !acpInRepository false "/r" "/r/tests/packages"
+
 /-- The package's library (`docs/packages/writing-a-package.md`, "A native
 library"), the target the package-set build stages beside every editor it
 links (`editorLibrary`, found by name by the core's `setLibraries`): its
-value is the library's absolute path, the crate's `cdylib` built by Cargo
-through Lake's `proc` with its own up-to-date check (`cargo build --release
---locked --lib -p acp-service`) over the repository's manifest, into its
-target directory, which the core's Rust builds share. `cargo` is the bare
-command name, as the core's `buildRust` keeps it, so a missing Cargo fails
-with Lake's own spawn line, which the core's staging reports naming acp and
-cargo. Only the package-set build reaches this target, never the package's
-test driver, so `mise run lean-test`'s failing `cargo` never runs it.
+value is the library's absolute path, `libacp_service.dylib` (`.so` off
+macOS), in one of two forms (`acpLibraryForm`):
+
+- **Already built**, for a set outside the repository, a user's
+  (`acpInRepository`), when the package holds `lib/libacp_service.dylib`:
+  that is the library, and no process runs. `mise run install -- --agents`
+  builds it from the checkout and places it there, so the installed app's
+  `:reload` of the config it leaves runs no Cargo.
+- **Built with Cargo** otherwise, the checkout's own sets among them even
+  when `lib/` is present, so a developer who edits acp's Rust after an
+  install never has the gate load a stale library: the crate's `cdylib`,
+  built through Lake's `proc` with its own up-to-date check (`cargo build
+  --release --locked --lib -p acp-service`) over the repository's manifest,
+  into its target directory, which the core's Rust builds share; the same
+  command as `tools/install-app.sh` runs. `cargo` is the bare command name,
+  as the core's `buildRust` keeps it, so a missing Cargo fails with Lake's
+  own spawn line, which the core's staging reports naming acp and cargo.
+  Only the package-set build reaches this target, never the package's test
+  driver, so `mise run lean-test`'s failing `cargo` never runs it.
 
 Its content is the trace. -/
 target editorLibrary pkg : FilePath :=
@@ -100,15 +172,25 @@ target editorLibrary pkg : FilePath :=
     let extension := if Platform.isOSX then "dylib" else "so"
     let name := s!"libacp_service.{extension}"
     let repo ← IO.FS.realPath (pkg.dir / ".." / "..")
-    let targetDir := repo / "target"
-    proc (quiet := true)
-        { cmd := "cargo"
-          args :=
-            #["build", "--release", "--locked", "--lib", "-p", "acp-service", "--manifest-path",
-              (repo / "Cargo.toml").toString, "--target-dir", targetDir.toString] }
-    let library := targetDir / "release" / name
-    setTrace (← computeTrace library)
-    return library
+    let workspaceRoot ← IO.FS.realPath (← getWorkspace).root.dir
+    let inRepository :=
+      acpInRepository (← (repo / "Cargo.toml").pathExists) repo.toString workspaceRoot.toString
+    let prebuilt := pkg.dir / "lib" / name
+    match acpLibraryForm inRepository (← prebuilt.pathExists) with
+    | .prebuilt =>
+      let library ← IO.FS.realPath prebuilt
+      setTrace (← computeTrace library)
+      return library
+    | .cargo =>
+      let targetDir := repo / "target"
+      proc (quiet := true)
+          { cmd := "cargo"
+            args :=
+              #["build", "--release", "--locked", "--lib", "-p", "acp-service", "--manifest-path",
+                (repo / "Cargo.toml").toString, "--target-dir", targetDir.toString] }
+      let library := targetDir / "release" / name
+      setTrace (← computeTrace library)
+      return library
 
 /-- The package's glue (`ffi/glue.c`), compiled against the toolchain's own
 `lean.h`. No path is compiled in: the library is the one the package-set
