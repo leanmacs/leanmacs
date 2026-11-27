@@ -13,15 +13,17 @@
 //! [`PACKAGE`], and answers false, or none, before the library is loaded.
 //!
 //! Plain data only, in the wrapper's FFI-safe types, so no function here
-//! has `unsafe` of its own: a text crosses as [`Bytes`], borrowed for the
-//! call; a reply as one [`RawReply`] written through an [`Out`] in a single
-//! call, whose text is a [`Lent`] the glue hands back through the table's
+//! has `unsafe` of its own: each is declared with the wrapper's
+//! `functions!`, whose body sees what the caller lent borrowed for the call
+//! alone. A text crosses as [`Bytes`], read as its `&[u8]`; a reply as one
+//! [`RawReply`] written through an [`Out`], entered as a `Place`, in a
+//! single call, whose text is a [`Lent`] the glue hands back through the table's
 //! `free` ([`editor_package::buffer::free`]), so this library's allocator
 //! frees what it made. The table is a static of the library, valid for the
 //! life of the process, since the core never unloads the library.
 
 use editor_package::buffer::{Bytes, Lent, Out};
-use editor_package::{Package, Runtime, Service, package};
+use editor_package::{Package, Runtime, Service, functions, package};
 
 use crate::attach::{attach, attach_take};
 use crate::{Echo, SERVICE_NAME};
@@ -101,38 +103,40 @@ package! {
     );
 }
 
-/// Starts the request `id` of the text `text` ([`Echo::start`]), and
-/// returns whether it started.
-///
-/// Text that is not UTF-8 is read with U+FFFD in place of each invalid
-/// sequence; a Lean string is UTF-8.
-extern "C" fn start(id: u64, text: Bytes<'_>) -> bool {
-    loaded().is_some_and(|loaded| loaded.echo.start(id, &text.to_string_lossy()))
-}
-
-/// Cancels the request `id` ([`Echo::cancel`]), and returns whether it was
-/// in use.
-extern "C" fn cancel(id: u64) -> bool {
-    loaded().is_some_and(|loaded| loaded.echo.cancel(id))
-}
-
-/// Asks for `id` to be completed once every echo request started before
-/// has been ([`Echo::flush`]).
-extern "C" fn flush(id: u64) {
-    if let Some(loaded) = loaded() {
-        loaded.echo.flush(id);
+functions! {
+    /// Starts the request `id` of the text `text` ([`Echo::start`]), and
+    /// returns whether it started.
+    ///
+    /// Text that is not UTF-8 is read with U+FFFD in place of each invalid
+    /// sequence; a Lean string is UTF-8.
+    extern "C" fn start(id: u64, text: Bytes<'_>) -> bool {
+        loaded().is_some_and(|loaded| loaded.echo.start(id, &String::from_utf8_lossy(text)))
     }
-}
 
-/// Takes the reply to the request `id` ([`Echo::take`]): returns whether
-/// there was one, and if so writes it to `out`.
-extern "C" fn take(id: u64, out: Out<'_, RawReply>) -> bool {
-    let Some(reply) = loaded().and_then(|loaded| loaded.echo.take(id)) else {
-        return false;
-    };
-    out.put(RawReply {
-        text: Lent::of(reply.text.into_bytes()),
-        checksum: reply.checksum,
-    });
-    true
+    /// Cancels the request `id` ([`Echo::cancel`]), and returns whether it was
+    /// in use.
+    extern "C" fn cancel(id: u64) -> bool {
+        loaded().is_some_and(|loaded| loaded.echo.cancel(id))
+    }
+
+    /// Asks for `id` to be completed once every echo request started before
+    /// has been ([`Echo::flush`]).
+    extern "C" fn flush(id: u64) {
+        if let Some(loaded) = loaded() {
+            loaded.echo.flush(id);
+        }
+    }
+
+    /// Takes the reply to the request `id` ([`Echo::take`]): returns whether
+    /// there was one, and if so writes it to `out`.
+    extern "C" fn take(id: u64, out: Out<'_, RawReply>) -> bool {
+        let Some(reply) = loaded().and_then(|loaded| loaded.echo.take(id)) else {
+            return false;
+        };
+        out.put(RawReply {
+            text: Lent::of(reply.text.into_bytes()),
+            checksum: reply.checksum,
+        });
+        true
+    }
 }

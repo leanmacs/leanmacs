@@ -3650,8 +3650,9 @@ later is called only after `runtime_has!` in the wrapper's method that
 calls it, which answers that method's absent outcome on an older runtime:
 Emacs's per-member `size` check. It is a declarative macro, not a
 procedural attribute: the table's functions are ordinary `extern "C" fn`s
-over the FFI-safe types below, so nothing per parameter is generated, and
-a procedural macro would compile `syn` and `quote` into every package's
+over the FFI-safe types below, declared with a second declarative macro,
+`functions!`, whose per-parameter code is one line each (below), and a
+procedural macro would compile `syn` and `quote` into every package's
 build. rustc's `unsafe_code` lint does not fire on an external macro's
 expansion, so the export's `unsafe` is written once, in the wrapper, and a
 package keeps `#![deny(unsafe_code)]`.
@@ -3660,11 +3661,28 @@ package keeps `#![deny(unsafe_code)]`.
 type's fields are private, made in Rust only soundly; its C shape is what
 the glue declares.
 
+What a C caller lends, a `Bytes`'s bytes and an `Out`'s place, lives only
+for the call, but the lifetime in a package's `extern "C" fn` signature is
+the package's to write: `Bytes<'static>` is a type like any other, and a
+value of it can be kept in a thread-local or leaked, so no lifetime on the
+type can stop it outliving the call. So neither reads or writes in safe
+code. A package declares its table functions with `functions!`, written
+with the signatures its table names, and the expansion *enters* each
+parameter (`buffer::Param::enter`, `unsafe`) from a local of the function
+before the body runs: a `Bytes` as the `&[u8]` it lends, an `Out` as a
+`Place`, written once, each borrowed from that local, so whatever the
+signature names, nothing the body sees outlives the call; a plain value
+(an integer, a float, a `bool`) as itself. Outside the macro, entering is
+`unsafe`, which a package's `#![deny(unsafe_code)]` refuses. The buffer
+module's docs hold three `compile_fail` examples: a `Bytes<'static>` has
+no reader, entering one needs `unsafe`, and a declared function whose
+signature names `'static` cannot keep its slice.
+
 | Type | What | C shape |
 |---|---|---|
-| `Bytes<'a>` | Bytes borrowed for a call: `Bytes::of`, `as_slice` (no bytes, whatever the pointer, at length 0), `to_string_lossy` | `{ const uint8_t *bytes; size_t len; }`, by value |
+| `Bytes<'a>` | Bytes lent for a call: `Bytes::of`; inside a declared function, the `&[u8]` it lends (no bytes, whatever the pointer, at length 0) | `{ const uint8_t *bytes; size_t len; }`, by value |
 | `Lent` | A buffer the library lends and owns: `Lent::of`, `Lent::empty`, `as_bytes`; freed by the library's allocator when dropped, neither `Copy` nor `Clone`; `buffer::free(lent)` is the `free` a table names | `{ uint8_t *bytes; size_t len; }`, handed back by value |
-| `Out<'a, T>` | A place for one result: `Out::of(&mut T)`, `put` writes once without dropping what was there, and nothing to a null place | `T *` |
+| `Out<'a, T>` | A place for one result: `Out::of(&mut T)`; inside a declared function, a `Place` whose `put` writes once without dropping what was there, and nothing to a null place | `T *` |
 | `CoreBuffer` | A buffer the core lent (a pull's words and bytes, a refused write's words, `Runtime::lend`'s): `as_bytes`; handed back through `buffer_free` exactly once, when dropped | the runtime's own |
 
 So a package's table functions need no `unsafe`, and its tests call them as
@@ -3759,10 +3777,11 @@ built with the macro, is what its glue loads through
 
 **Where the `unsafe` lives.** In the wrapper, each site marked with its
 reason: `runtime` (`Runtime::from_raw`, the one `Calls` impl through which
-every member is called), `buffer` (`Bytes::as_slice`, `Lent`'s parts, its
-drop, `Send` and `Sync`, `Out::put`, `CoreBuffer::as_bytes`), `stream`
-(`Child`'s `Send` and `Sync`), `package` (`Package::export` and the
-macro's expansion) and `fake` (its C members, its ledger's free and its
+every member is called), `buffer` (`Param::enter`, declared and
+implemented for `Bytes` and `Out`, `Place::put`, `Lent`'s parts, its
+drop, `Send` and `Sync`, `CoreBuffer::as_bytes`, and `functions!`'
+expansion), `stream` (`Child`'s `Send` and `Sync`), `package`
+(`Package::export` and the macro's expansion) and `fake` (its C members, its ledger's free and its
 `init`).
 
 **Left to later phases.** Phase 4: a library's declared size and interface

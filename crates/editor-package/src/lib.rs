@@ -33,13 +33,15 @@
 //!
 //! A package writes its state, its init (`fn(Runtime) -> S`) and a
 //! `#[repr(C)]` struct of its table's functions, each an `extern "C" fn`
-//! over this crate's FFI-safe types ([`buffer`]), with no `unsafe` of its
-//! own; [`package!`] declares it and exports its init, `editor_package_init`:
+//! over this crate's FFI-safe types ([`buffer`]), declared with
+//! [`functions!`], whose body sees what the caller lends borrowed for the
+//! call alone, with no `unsafe` of its own; [`package!`] declares the
+//! package and exports its init, `editor_package_init`:
 //!
 //! ```
 //! # #![deny(unsafe_code)]
 //! use editor_package::buffer::{Bytes, Lent, Out};
-//! use editor_package::{Package, Runtime, Service, package};
+//! use editor_package::{Package, Runtime, Service, functions, package};
 //!
 //! /// The library's state, made once by its init.
 //! pub struct Loaded {
@@ -67,13 +69,18 @@
 //!     pub free: extern "C" fn(text: Lent),
 //! }
 //!
-//! extern "C" fn start(id: u64, _text: Bytes<'_>) -> bool {
-//!     PACKAGE.state().is_some_and(|loaded| loaded.service.complete(id))
-//! }
+//! functions! {
+//!     /// `text` is the `&[u8]` the caller lent, for the call alone.
+//!     extern "C" fn start(id: u64, text: Bytes<'_>) -> bool {
+//!         !text.is_empty()
+//!             && PACKAGE.state().is_some_and(|loaded| loaded.service.complete(id))
+//!     }
 //!
-//! extern "C" fn take(_id: u64, out: Out<'_, Reply>) -> bool {
-//!     out.put(Reply { text: Lent::of(b"echoed".to_vec()) });
-//!     true
+//!     /// `out` is a `Place`, written once.
+//!     extern "C" fn take(_id: u64, out: Out<'_, Reply>) -> bool {
+//!         out.put(Reply { text: Lent::of(b"echoed".to_vec()) });
+//!         true
+//!     }
 //! }
 //!
 //! package! {
@@ -106,7 +113,9 @@
 //! - [`frame`]: the frames a pull delivers, plain data.
 //! - [`wire`]: how a pull crosses the runtime.
 //! - [`buffer`]: what crosses a package's table and the runtime: [`Bytes`],
-//!   [`Lent`], [`Out`], [`CoreBuffer`].
+//!   [`Lent`], [`Out`], [`CoreBuffer`]; and the macro [`functions!`], which
+//!   declares a table's functions and hands each body what it was lent
+//!   borrowed for the call alone ([`buffer::Param`], [`buffer::Place`]).
 //! - [`fake`]: [`fake::FakeRuntime`], the runtime's fake.
 //!
 //! The names, variants and fields of [`frame`], [`stream`] and [`service`]
@@ -127,10 +136,13 @@
 //! - [`runtime`]: `Runtime::from_raw`, which takes the runtime the core
 //!   hands an init once its size is checked, and the one `Calls` impl
 //!   through which every member of a runtime is called.
-//! - [`buffer`]: [`Bytes::as_slice`](buffer::Bytes::as_slice); a
-//!   [`Lent`]'s parts, its drop, its `Send` and `Sync`;
-//!   [`Out::put`](buffer::Out::put); and
-//!   [`CoreBuffer::as_bytes`](buffer::CoreBuffer::as_bytes).
+//! - [`buffer`]: [`Param::enter`](buffer::Param::enter), declared and
+//!   implemented, which reads a [`Bytes`] and enters an [`Out`] for the
+//!   call; [`Place::put`](buffer::Place::put); a [`Lent`]'s parts, its
+//!   drop, its `Send` and `Sync`; and
+//!   [`CoreBuffer::as_bytes`](buffer::CoreBuffer::as_bytes). And
+//!   [`functions!`]' expansion, which enters each parameter, which rustc's
+//!   `unsafe_code` lint does not reach in a package's crate.
 //! - [`stream`]: [`stream::Child`]'s `Send` and `Sync`.
 //! - [`package`](mod@package): [`Package::export`] and the macro's expansion, which
 //!   rustc's `unsafe_code` lint does not reach in a package's crate.
@@ -142,7 +154,7 @@
 //! | Addition | Where | Pinned by |
 //! |---|---|---|
 //! | A new runtime member (a trailing member of `editor-package-runtime`, with phase 2's steps there and in `editor-package-library`) | A method on the type it concerns ([`Runtime`], [`Service`], [`stream::Child`]), which calls the member through `Calls` only after `runtime_has!` and answers its absent outcome on an older runtime; the same member in [`fake::FakeRuntime`]; its words in [`wire`] if it carries any | The method's unit test over [`fake::FakeRuntime`], and over [`fake::FakeRuntime::sized`] ending before it (the absent outcome); the fake's run of the runtime's contract, which gains the member's property (`editor-package-check/tests/contract.rs`) |
-//! | A new wrapper type for what crosses a package's table | [`buffer`], with its C shape in its docs | Its unit tests; and, when it crosses the runtime, `editor-package-check/tests/load.rs` over the real runtime |
+//! | A new wrapper type for what crosses a package's table | [`buffer`], with its C shape in its docs, and its [`buffer::Param`] impl, which hands a declared function's body what it lends borrowed for the call alone, never a safe reader of its own | Its unit tests; `tests/functions.rs`, a function declared with [`functions!`] that takes it; and, when it crosses the runtime, `editor-package-check/tests/load.rs` over the real runtime |
 //! | A new type mirrored from `editor-service` | The module of the same name ([`frame`], [`stream`], [`service`]), the same name, variants and fields | Its unit tests here; `editor-package-check`'s conversion, which matches every variant |
 //! | Another way a child ends, or frames | A variant of [`stream::Ended`] or [`frame::Frames`], its words in [`wire::encode`] and [`wire::decode`] (both match every variant) | [`wire`]'s round trip, which lists every variant; `editor-package-check/tests/wire.rs`, both directions with the core |
 //! | A rule of the init or the table | [`package`](mod@package) ([`Package::export`], [`Package::load`], [`Table`]) | [`package`](mod@package)'s unit tests and `tests/declare.rs` |

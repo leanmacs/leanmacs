@@ -21,6 +21,7 @@
 
 use editor_package::buffer::{Lent, Out};
 use editor_package::frame::Frames;
+use editor_package::functions;
 use editor_package::stream::{ChildStreams, Ended, Pulled};
 
 use crate::ffi::{RawReply, loaded};
@@ -83,35 +84,37 @@ pub fn consume(streams: &dyn ChildStreams) -> Read {
     Read { lines, pulls }
 }
 
-/// Takes the streaming child `child` over through the runtime and reads it
-/// as the request `request` of the process's service
-/// ([`Echo::attach`](crate::Echo::attach)), which completes it once the
-/// child has ended or was cancelled. False when the library is not loaded,
-/// the take-over is refused, or the request is in use.
-pub extern "C" fn attach(request: u64, child: u64) -> bool {
-    let Some(loaded) = loaded() else {
-        return false;
-    };
-    match loaded.runtime.take_over(child) {
-        Ok(streams) => loaded.echo.attach(request, Box::new(streams)),
-        Err(_) => false,
+functions! {
+    /// Takes the streaming child `child` over through the runtime and reads it
+    /// as the request `request` of the process's service
+    /// ([`Echo::attach`](crate::Echo::attach)), which completes it once the
+    /// child has ended or was cancelled. False when the library is not loaded,
+    /// the take-over is refused, or the request is in use.
+    pub extern "C" fn attach(request: u64, child: u64) -> bool {
+        let Some(loaded) = loaded() else {
+            return false;
+        };
+        match loaded.runtime.take_over(child) {
+            Ok(streams) => loaded.echo.attach(request, Box::new(streams)),
+            Err(_) => false,
+        }
     }
-}
 
-/// Takes what the request `request` read
-/// ([`Echo::take_read`](crate::Echo::take_read)): returns whether there
-/// was something, and if so writes to `out` its lines joined by line feeds
-/// in `text` and its pulls in `checksum`. False when the library is not
-/// loaded.
-pub extern "C" fn attach_take(request: u64, out: Out<'_, RawReply>) -> bool {
-    let Some(read) = loaded().and_then(|loaded| loaded.echo.take_read(request)) else {
-        return false;
-    };
-    out.put(RawReply {
-        text: Lent::of(read.text().into_bytes()),
-        checksum: read.pulls,
-    });
-    true
+    /// Takes what the request `request` read
+    /// ([`Echo::take_read`](crate::Echo::take_read)): returns whether there
+    /// was something, and if so writes to `out` its lines joined by line feeds
+    /// in `text` and its pulls in `checksum`. False when the library is not
+    /// loaded.
+    pub extern "C" fn attach_take(request: u64, out: Out<'_, RawReply>) -> bool {
+        let Some(read) = loaded().and_then(|loaded| loaded.echo.take_read(request)) else {
+            return false;
+        };
+        out.put(RawReply {
+            text: Lent::of(read.text().into_bytes()),
+            checksum: read.pulls,
+        });
+        true
+    }
 }
 
 #[cfg(test)]

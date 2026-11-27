@@ -26,8 +26,9 @@
 //!
 //! Why a declarative macro and not a procedural attribute: a table's
 //! functions are ordinary `extern "C" fn`s over the wrapper's FFI-safe
-//! types ([`crate::buffer`]), so no per-parameter code is generated, and a
-//! procedural macro would compile `syn` and `quote` into every package's
+//! types ([`crate::buffer`]), declared with the declarative
+//! [`crate::functions!`], whose per-parameter code is one line each, and
+//! a procedural macro would compile `syn` and `quote` into every package's
 //! build for no gain. The export's `unsafe` is written once, here, with
 //! its reason; rustc's `unsafe_code` lint does not fire on an external
 //! macro's expansion, so a package keeps `#![deny(unsafe_code)]`.
