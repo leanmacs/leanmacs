@@ -1201,8 +1201,10 @@ grammars (`keywords = ["editor-grammars"]`): their files are under its
 `grammars/` directory, and its entry module's packages declare them
 relative to it (`docs/design/packages.md`, "A package's grammars"). Lake is
 asked for the keyword, so the build learns which packages ship grammars
-without reading any source: the `editor` facet stages each such package's
-`grammars/` (`stageGrammars`), the install copies it (`editorInstall`) and
+without reading any source: the `editorGrammars` facet stages each such
+package's `grammars/`, with the libraries it compiles from the package's
+grammar source when it declares one (`grammarSourcesTargetName`), the
+`editor` facet records where, the install copies it (`editorInstall`) and
 the bundle lists it (`editorShipped`). A package that declares it with no
 entry module, or with no `grammars/` directory, fails the set's build with
 a message naming it (`setEntries`). -/
@@ -1476,20 +1478,296 @@ def stagedGrammars (pkg : Package) : FetchM (Array (Package × String × FilePat
         some (dep, lake, buildDir / stagedGrammarsPlace lake)
       else none
 
-/-- Stages the `grammars/` directory of each Lake package of the set `pkg`
-that ships grammars (`stagedGrammars`) under the set's build directory, a
-fresh copy each build (`copyTree`), and writes beside `executable` the record
-`<executable>.grammars` naming each staged directory, absolute
-(`grammarsRecordText`; `Editor/ModuleLookup.lean`, "The grammars"), only
-when its text would change: an empty record for a set that ships none. -/
-def stageGrammars (pkg : Package) (executable : FilePath) : FetchM Unit := do
+/-- The name of the input file a Lake package that ships grammars from
+source declares (`docs/design/packages.md`, "A package's grammars", "From
+source"): a Lake `input_file` whose path is the `Cargo.toml` of the
+package's grammar-source crate, whose build script compiles each grammar
+with `editor-grammar-build` and whose binary prints one line a grammar
+(`grammarSourceLinesOf`). A TOML lakefile declares it as `[[input_file]]
+name = "editorGrammarSources"`. A package that declares it, but not as an
+input file, fails the set's build naming the package
+(`grammarSourcesManifest?`). -/
+def grammarSourcesTargetName : Name :=
+  `editorGrammarSources
+
+/-- The platform of Lean's target triple `target`, `<os>-<arch>`, as a
+grammar declaration names it: a copy of `Language.Grammar.platformOf`
+(`Editor/Language/Grammar.lean`), since a lakefile cannot import the
+editor's modules; the guards below pin it to the four names the core's own
+guards pin (`ModelTest.grammarDeclarationChecks`). -/
+def grammarPlatformOf (triple : String) : String :=
+  let parts := triple.splitOn "-"
+  let arch : Option String :=
+    match parts.head? with
+    | some "arm64" | some "aarch64" => some "aarch64"
+    | some "x86_64" => some "x86_64"
+    | _ => none
+  let os : Option String :=
+    if parts.any (·.startsWith "darwin") then some "darwin"
+    else if parts.contains "linux" then some "linux" else none
+  match os, arch with
+  | some os, some arch => s!"{os}-{arch}"
+  | _, _ => triple
+
+/- Guards: the platform of a target triple (`grammarPlatformOf`), the four
+names a grammar declaration lists. -/
+#guard grammarPlatformOf "arm64-apple-darwin23.5.0" == "darwin-aarch64"
+
+#guard grammarPlatformOf "x86_64-apple-darwin" == "darwin-x86_64"
+
+#guard grammarPlatformOf "aarch64-unknown-linux-gnu" == "linux-aarch64"
+
+#guard grammarPlatformOf "x86_64-unknown-linux-gnu" == "linux-x86_64"
+
+/-- Where a compiled library of the grammar `name` goes under a grammars
+directory, on the platform `platform`, `isOSX` saying whether it is macOS:
+`<platform>/libtree-sitter-<name>.dylib`, or `.so` off macOS, the layout a
+prebuilt package ships. -/
+def stagedGrammarLibraryPlace (platform name : String) (isOSX : Bool) : FilePath :=
+  platform / s!"libtree-sitter-{name}.{if isOSX then "dylib" else "so"}"
+
+/-- Where the set's build keeps a library of the grammar `name` it compiled
+from a package's source, under that package's build directory, so a set
+outside the repository can take it without Cargo (`GrammarSourceForm.built`):
+`grammars/<platform>/libtree-sitter-<name>.<ext>`. -/
+def builtGrammarsPlace (platform name : String) (isOSX : Bool) : FilePath :=
+  "grammars" / stagedGrammarLibraryPlace platform name isOSX
+
+/- Guards: the staged and built places of a compiled grammar library
+(`stagedGrammarLibraryPlace`, `builtGrammarsPlace`), a `.dylib` on macOS and
+a `.so` off it. -/
+#guard
+  stagedGrammarLibraryPlace "darwin-aarch64" "yaml" true ==
+    ("darwin-aarch64/libtree-sitter-yaml.dylib" : FilePath)
+
+#guard
+  stagedGrammarLibraryPlace "linux-x86_64" "yaml" false ==
+    ("linux-x86_64/libtree-sitter-yaml.so" : FilePath)
+
+#guard
+  builtGrammarsPlace "darwin-aarch64" "yaml" true ==
+    ("grammars/darwin-aarch64/libtree-sitter-yaml.dylib" : FilePath)
+
+/-- Where a Lake package's grammar libraries come from, in a set's build
+(`grammarSourceForm`). -/
+inductive GrammarSourceForm where
+  /-- The package's own `grammars/` holds them, or it declares no source:
+  the staged copy is all there is, and no Cargo runs. -/
+  | shipped
+  /-- Compiled from the package's source by its grammar-source crate, run
+  with Cargo. -/
+  | cargo
+  /-- Taken from the package's build directory, where a build in the
+  repository left them: no Cargo runs. -/
+  | built
+  deriving DecidableEq, Repr
+
+/-- Where a package's grammar libraries come from (`docs/design/packages.md`,
+"A package's grammars", "From source"), given whether it declares a
+grammar source (`grammarSourcesTargetName`), whether its own `grammars/`
+holds this platform's directory, whether the set is in the repository
+(`isInRepository`, as `coreArchive` decides), and whether its build
+directory holds this platform's built libraries (`builtGrammarsPlace`):
+shipped when it declares no source or ships this platform's directory;
+otherwise Cargo for a set in the repository, so the checkout's own build is
+never stale; the built ones for a set outside it that has them, the
+counterpart of `prebuiltRust`, so a user's set over the checkout's default
+set runs no Cargo; and Cargo for one outside it with none. -/
+def grammarSourceForm (declares shippedHere inRepository builtHere : Bool) : GrammarSourceForm :=
+  if !declares || shippedHere then .shipped
+  else if inRepository then .cargo else if builtHere then .built else .cargo
+
+/- Guards: the forms (`grammarSourceForm`). No source, or this platform's
+directory in the package, is shipped whatever else holds; in the repository
+it is Cargo, built or not; outside it, the built libraries when there are
+some, else Cargo. -/
+#guard grammarSourceForm false false false false == .shipped
+
+#guard grammarSourceForm false false true true == .shipped
+
+#guard grammarSourceForm true true true false == .shipped
+
+#guard grammarSourceForm true true false true == .shipped
+
+#guard grammarSourceForm true false true false == .cargo
+
+#guard grammarSourceForm true false true true == .cargo
+
+#guard grammarSourceForm true false false true == .built
+
+#guard grammarSourceForm true false false false == .cargo
+
+/-- One line a package's grammar-source crate prints
+(`grammarSourceLinesOf`). -/
+inductive GrammarSourceLine where
+  /-- The grammar `name` compiled into `library`. -/
+  | built (name : String) (library : FilePath)
+  /-- The grammar `name` did not compile, for `reason`. -/
+  | failed (name : String) (reason : String)
+  deriving BEq, Repr
+
+/-- Whether `name` can be a grammar's name: lowercase ASCII letters, digits
+and underscores, at least one, since its symbol is `tree_sitter_<name>`. -/
+def isGrammarName (name : String) : Bool :=
+  !name.isEmpty && name.all fun c => ('a' ≤ c && c ≤ 'z') || c.isDigit || c == '_'
+
+/-- The lines a package's grammar-source crate prints, read: one a grammar,
+`built<TAB><name><TAB><library>` or `failed<TAB><name><TAB><reason>`; a
+blank line is skipped, and any other line, or a name a grammar cannot have
+(`isGrammarName`), is refused, naming the line. -/
+def grammarSourceLinesOf (text : String) : Except String (Array GrammarSourceLine) :=
+  (text.splitOn "\n").foldlM
+    (fun lines line => do
+      if line.trimAscii.isEmpty then
+        return lines
+      match line.splitOn "\t" with
+      | [kind, name, value] =>
+        unless isGrammarName name do
+          throw
+              s!"the grammar sources named the grammar {repr name}, which no grammar can be named: {repr line}"
+        match kind with
+        | "built" =>
+          return lines.push (.built name value)
+        | "failed" =>
+          return lines.push (.failed name value)
+        | _ =>
+          throw s!"the grammar sources printed a line that is no grammar's: {repr line}"
+      | _ =>
+        throw s!"the grammar sources printed a line that is no grammar's: {repr line}")
+    #[]
+
+/- Guards: the crate's lines read (`grammarSourceLinesOf`): a built line and
+a failed line, a blank trailing line skipped; a line of another shape
+refused; and a name outside `[a-z0-9_]` refused. -/
+#guard
+  (grammarSourceLinesOf
+        "built\tyaml\t/t/libtree-sitter-yaml.dylib\nfailed\tbroken\tthe C compiler failed: x\n").toOption ==
+    some
+      #[.built "yaml" "/t/libtree-sitter-yaml.dylib", .failed "broken" "the C compiler failed: x"]
+
+#guard (grammarSourceLinesOf "").toOption == some #[]
+
+#guard
+  grammarSourceLinesOf "warning: something\n" matches
+    .error "the grammar sources printed a line that is no grammar's: \"warning: something\""
+
+#guard
+  grammarSourceLinesOf "built\tc-sharp\t/t/l.so\n" matches
+    .error
+      "the grammar sources named the grammar \"c-sharp\", which no grammar can be named: \"built\\tc-sharp\\t/t/l.so\""
+
+/-- What the set's build fails with when the grammar `grammar` of the Lake
+package `lake` did not compile from its source, for `reason`. -/
+def grammarDidNotCompile (lake grammar reason : String) : String :=
+  s!"the package `{lake}`'s grammar `{grammar}` did not compile from its source: {reason}"
+
+/-- What the set's build fails with when the Cargo run of the Lake package
+`lake`'s grammar-source crate, whose manifest is `manifest`, did not end
+well, after Cargo's own log. -/
+def grammarSourcesDidNotBuild (lake : String) (manifest : FilePath) : String :=
+  s!"the package `{lake}`'s grammar sources (its `editorGrammarSources` target, `{manifest}`) did not build"
+
+/- Guards: the two sentences, whole (`grammarDidNotCompile`,
+`grammarSourcesDidNotBuild`). -/
+#guard
+  grammarDidNotCompile "broken-grammar" "broken" "the C compiler failed: x" ==
+    "the package `broken-grammar`'s grammar `broken` did not compile from its source: the C compiler failed: x"
+
+#guard
+  grammarSourcesDidNotBuild "languages" "/r/packages/languages/rust/Cargo.toml" ==
+    "the package `languages`'s grammar sources (its `editorGrammarSources` target, `/r/packages/languages/rust/Cargo.toml`) did not build"
+
+/-- The manifest of the grammar-source crate the Lake package `dep`
+declares (`grammarSourcesTargetName`): the declared input file's path, under
+the package's directory unless it is absolute; none when it declares none.
+One declared as anything but an input file fails, naming the package. -/
+def grammarSourcesManifest? (dep : Package) : FetchM (Option FilePath) := do
+  let some decl := dep.findTargetDecl? grammarSourcesTargetName | return none
+  let some config := decl.config? InputFile.configKind
+    |
+    error
+        s!"the package {dep.baseName.toString (escape := false)} declares `editorGrammarSources`, but not as an input file"
+  return some (dep.dir / config.path)
+
+/-- The libraries of the Lake package `lake` that its grammar-source crate
+`manifest` builds, run with Cargo (`cargo run --release --locked --quiet`,
+`cargo` the bare name, as `buildRust` runs it): each grammar's name and
+library, read from the lines its binary prints (`grammarSourceLinesOf`). A
+Cargo that does not end well fails with `grammarSourcesDidNotBuild` after
+Cargo's log; a line that says a grammar did not compile fails with
+`grammarDidNotCompile`, after the compiler's output, which the binary
+writes on standard error. -/
+def grammarSourceLibraries (lake : String) (manifest : FilePath) :
+    JobM (Array (String × FilePath)) := do
+  let out ←
+    rawProc (quiet := true)
+        { cmd := "cargo"
+          args :=
+            #["run", "--release", "--locked", "--quiet", "--manifest-path", manifest.toString] }
+  if out.exitCode != 0 then
+    logOutput out logInfo
+    error (grammarSourcesDidNotBuild lake manifest)
+  match grammarSourceLinesOf out.stdout with
+  | .error reason =>
+    logOutput out logInfo
+    error s!"{grammarSourcesDidNotBuild lake manifest}: {reason}"
+  | .ok lines =>
+    let mut libraries : Array (String × FilePath) := #[]
+    for line in lines do
+      match line with
+      | .built name library =>
+        libraries := libraries.push (name, library)
+      | .failed name reason =>
+        unless out.stderr.isEmpty do
+          logInfo s!"stderr:\n{out.stderr.trimAscii}"
+        error (grammarDidNotCompile lake name reason)
+    return libraries
+
+/-- The grammars directories of the set `pkg`, staged (`lake -d <set dir>
+query :editorGrammars`; `docs/design/packages.md`, "A package's grammars"):
+one line `<lake><TAB><staged directory>` for each Lake package that ships
+grammars (`stagedGrammars`), in the order the packages register, the
+directory absolute. For each, it copies the package's `grammars/` to its
+staged place, a fresh copy each build (`copyTree`), then stages its
+libraries at `stagedGrammarLibraryPlace` from where `grammarSourceForm`
+says: nothing more when shipped; compiled with Cargo
+(`grammarSourceLibraries`), each library also written under the package's
+build directory (`builtGrammarsPlace`); or copied from that directory when
+built. Each library is written beside its place and renamed over it
+(`stageLibrary`). The editor writes the lines as its record
+`<executable>.grammars` (`editor`), the install copies each directory
+(`editorInstall`) and the bundle lists each as its package's `grammars/`
+(`editorShipped`). -/
+package_facet editorGrammars pkg : Array String := do
   let staged ← stagedGrammars pkg
-  for (dep, _, directory) in staged do
-    if ← directory.pathExists then
-      IO.FS.removeDirAll directory
-    copyTree (dep.dir / "grammars") directory
-  writeIfChanged (executable.toString ++ ".grammars")
-      (grammarsRecordText (staged.map fun (_, lake, directory) => (lake, directory.toString)))
+  let inRepository ← isInRepository (← repositoryRoot) pkg
+  let mut planned : Array (Package × String × FilePath × Option FilePath) := #[]
+  for (dep, lake, directory) in staged do
+    planned := planned.push (dep, lake, directory, ← grammarSourcesManifest? dep)
+  Job.async do
+      let platform := grammarPlatformOf System.Platform.target
+      let mut lines : Array String := #[]
+      for (dep, lake, directory, manifest?) in planned do
+        if ← directory.pathExists then
+          IO.FS.removeDirAll directory
+        copyTree (dep.dir / "grammars") directory
+        let built := dep.buildDir / "grammars" / platform
+        let form :=
+          grammarSourceForm manifest?.isSome (← (dep.dir / "grammars" / platform).isDir)
+            inRepository (← built.isDir)
+        match form, manifest? with
+        | .cargo, some manifest =>
+          for (name, library) in ← grammarSourceLibraries lake manifest do
+            stageLibrary library (dep.buildDir / builtGrammarsPlace platform name Platform.isOSX)
+            stageLibrary library
+                (directory / stagedGrammarLibraryPlace platform name Platform.isOSX)
+        | .built, _ =>
+          for entry in ← built.readDir do
+            stageLibrary entry.path (directory / platform / entry.fileName)
+        | _, _ =>
+          pure ()
+        lines := lines.push s!"{lake}\t{directory}"
+      return lines
 
 /-- The variables a rebuild of a set must run with as the link did, and
 which the record `<executable>.build` holds (`buildRecordText`): the C
@@ -1605,9 +1883,10 @@ linked (`linkAsEditor`). Beside the executable it records where the
 the set itself is (`writeSetRecord`) and where the core it links is
 (`writeCoreDirRecord`), which an editor run directly reads; it stages the
 `grammars/` directory of each package that ships grammars under the set's
-build directory and records where in `<executable>.grammars`
-(`stageGrammars`), which the editor resolves those packages' grammar
-declarations against; it stages the library of each package that declares
+build directory, with the libraries it compiles from a package's grammar
+source, and records where in `<executable>.grammars` (`editorGrammars`),
+which the editor resolves those packages' grammar declarations against; it
+stages the library of each package that declares
 one (an `editorLibrary` target) under `libraries/<lake>/` there and records
 where in `<executable>.libraries` (`editorLibraries`, through
 `linkAsEditor`), which each package's initialiser loads its library from;
@@ -1627,12 +1906,16 @@ package_facet editor pkg : FilePath := do
   writeModuleRecord pkg executable
   writeSetRecord pkg executable
   writeCoreDirRecord executable
-  stageGrammars pkg executable
   writeIfChanged (executable.toString ++ ".build") (← buildRecordText)
+  let grammars ←
+    (← (pkg.facet `editorGrammars).fetch).mapM fun lines =>
+        writeIfChanged (executable.toString ++ ".grammars")
+          (grammarsRecordText
+            ((stagedLibrariesOf lines).map fun (lake, directory) => (lake, directory.toString)))
   let identity ←
     (← coreIdentity pkg).mapM fun identity =>
         writeIfChanged (executable.toString ++ ".core") s!"{identity}\n"
-  return (← linkAsEditor pkg (← setRoot pkg) executable).add identity
+  return ((← linkAsEditor pkg (← setRoot pkg) executable).add identity).add grammars
 
 /-- The variable `editorInstall` takes the directory it installs into from. -/
 def installDirVar : String :=
@@ -1680,7 +1963,8 @@ the set's editor (`editor`), then fills `<dir>`, which must not exist yet:
   (`Editor/ModuleLookup.lean`, "The record"), so `<dir>` can be renamed
   into place afterwards;
 - `grammars/<lake>/`, a copy of each grammars directory the set's build
-  staged (`stagedGrammars`), and `editor.grammars`, one relative line for
+  staged (`editorGrammars`), compiled libraries included, and
+  `editor.grammars`, one relative line for
   each (`installGrammarsRecord`; `Editor/ModuleLookup.lean`, "The
   grammars"), so the installed editor finds its packages' grammars beside
   it, for the reason the `.olean` files are copied;
@@ -1699,10 +1983,12 @@ package_facet editorInstall pkg : FilePath := do
   let exeJob ← fetch <| pkg.facet `editor
   let root ← setRoot pkg
   let importsJob ← root.transImports.fetch
-  let grammars ← stagedGrammars pkg
+  let grammarsJob ← (pkg.facet `editorGrammars).fetch
   let librariesJob ← (pkg.facet `editorLibraries).fetch
-  ((exeJob.zipWith Prod.mk importsJob).zipWith Prod.mk librariesJob).mapM
-      fun ((exe, imports), libraryLines) => do
+  (((exeJob.zipWith Prod.mk importsJob).zipWith Prod.mk librariesJob).zipWith Prod.mk
+          grammarsJob).mapM
+      fun (((exe, imports), libraryLines), grammarLines) => do
+      let grammars := stagedLibrariesOf grammarLines
       let named ← IO.getEnv installDirVar
       let present ←
         match named with
@@ -1731,10 +2017,9 @@ package_facet editorInstall pkg : FilePath := do
               IO.FS.createDirAll parent
             IO.FS.writeBinFile copy (← IO.FS.readBinFile source)
       IO.FS.writeFile (dir / "editor.oleans") installOleansRecord
-      for (_, lake, staged) in grammars do
+      for (lake, staged) in grammars do
         copyTree staged (dir / "grammars" / lake)
-      IO.FS.writeFile (dir / "editor.grammars")
-          (installGrammarsRecord (grammars.map fun (_, lake, _) => lake))
+      IO.FS.writeFile (dir / "editor.grammars") (installGrammarsRecord (grammars.map (·.1)))
       let mut installed : Array (String × String) := #[]
       for (lake, staged) in stagedLibrariesOf libraryLines do
         let some file := staged.fileName
@@ -2113,20 +2398,23 @@ def shippedOleansLines (directories : Array FilePath)
     return s!"oleans\tlean/{place}/{relative}"
 
 /-- The lines `editorShipped` lists for the grammars directory of the Lake
-package `lake` whose directory is `dir`, at `place`: the directory, copied
-whole, to `<place>/grammars`, and the line
-`grammars<TAB><lake><TAB><place>/grammars`, which the `stage-bundle`
-binary writes into the bundle's record `editor.grammars`
+package `lake`, which the set's build staged at `staged` (`editorGrammars`),
+for its place `place`: the staged directory, compiled libraries included,
+copied whole to `<place>/grammars`, so the bundled package ships them as a
+prebuilt one does and a user's set built from the bundle compiles nothing;
+and the line `grammars<TAB><lake><TAB><place>/grammars`, which the
+`stage-bundle` binary writes into the bundle's record `editor.grammars`
 (`Editor/ModuleLookup.lean`, "The grammars"). -/
-def shippedGrammarsLines (lake : String) (dir : FilePath) (place : String) : Array String :=
-  #[s!"file\t{dir / "grammars"}\t{place}/grammars", s!"grammars\t{lake}\t{place}/grammars"]
+def shippedGrammarsLines (lake : String) (staged : FilePath) (place : String) : Array String :=
+  #[s!"file\t{staged}\t{place}/grammars", s!"grammars\t{lake}\t{place}/grammars"]
 
-/- Guards: the grammars lines (`shippedGrammarsLines`): the package's own
-`grammars/` copied to its place's `grammars`, and the record's line naming
-the Lake package and that place. -/
+/- Guards: the grammars lines (`shippedGrammarsLines`): the set's staged copy
+of the package's grammars directory copied to its place's `grammars`, and
+the record's line naming the Lake package and that place. -/
 #guard
-  shippedGrammarsLines "ini-grammar" "/r/tests/grammar-set/ini-grammar" "set/ini-grammar" ==
-    #["file\t/r/tests/grammar-set/ini-grammar/grammars\tset/ini-grammar/grammars",
+  shippedGrammarsLines "ini-grammar" "/r/tests/grammar-set/.lake/build/grammars/ini-grammar"
+      "set/ini-grammar" ==
+    #["file\t/r/tests/grammar-set/.lake/build/grammars/ini-grammar\tset/ini-grammar/grammars",
       "grammars\tini-grammar\tset/ini-grammar/grammars"]
 
 /- Guards: the lines `editorShipped` lists. A package's file goes to its
@@ -2168,9 +2456,10 @@ bundle's `Contents/Resources/lean`, and one line `oleans<TAB><place>` for
 each `.olean` directory of the set (`moduleDirectories`), in order, its
 place relative to `Contents/Resources`, which the bundle's record
 `editor.oleans` holds (`Editor/ModuleLookup.lean`, "The bundle's record").
-For each package that ships grammars (`grammarsKeyword`), its `grammars/`
-directory, copied whole to its place's `grammars`, and one line
-`grammars<TAB><lake><TAB><place>` (`shippedGrammarsLines`), which the
+For each package that ships grammars (`grammarsKeyword`), the directory the
+set's build staged its `grammars/` in (`editorGrammars`, which it fetches),
+compiled libraries included, copied whole to its place's `grammars`, and one
+line `grammars<TAB><lake><TAB><place>` (`shippedGrammarsLines`), which the
 bundle's record `editor.grammars` holds (`Editor/ModuleLookup.lean`, "The
 grammars").
 
@@ -2229,8 +2518,10 @@ package_facet editorShipped pkg : Array String := do
         let jobs ← modules.mapM (·.oExport.fetch)
         return (Job.collectArray jobs).map fun _ => modules
   let pluginsJob := Job.collectArray plugins
-  ((builtJob.zipWith Prod.mk glueJob).zipWith Prod.mk pluginsJob).mapM
-      fun ((modules, _), dynlibs) => do
+  let grammarsJob ← (pkg.facet `editorGrammars).fetch
+  (((builtJob.zipWith Prod.mk glueJob).zipWith Prod.mk pluginsJob).zipWith Prod.mk grammarsJob).mapM
+      fun (((modules, _), dynlibs), grammarLines) => do
+      let stagedGrammarsOf := stagedLibrariesOf grammarLines
       let placeOf (dep : Package) : Option String :=
         (placed.find? (·.1.keyName == dep.keyName)).map (·.2)
       let mut lines : Array String := #[]
@@ -2247,10 +2538,10 @@ package_facet editorShipped pkg : Array String := do
               | error s!"{file} is not under its package's directory {dep.dir}"
             lines := lines.push listed
         if dep.keywords.contains grammarsKeyword then
-          lines :=
-            lines ++
-              shippedGrammarsLines (dep.baseName.toString (escape := false))
-                (← IO.FS.realPath dep.dir) place
+          let lake := dep.baseName.toString (escape := false)
+          let some (_, staged) := stagedGrammarsOf.find? (·.1 == lake)
+            | error s!"the set's build staged no grammars directory for {lake}"
+          lines := lines ++ shippedGrammarsLines lake staged place
       let gluePlace := placeOf core
       for file in
         [core.dir / "ffi" / "glue.c", core.buildDir / "ffi" / "glue.o",

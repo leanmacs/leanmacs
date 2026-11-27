@@ -12,6 +12,7 @@ import Editor.Language
 import Editor.Language.Grammar
 import Editor.Language.Grammar.Answer
 import Editor.Language.Grammar.Register
+import Editor.ModuleLookup
 import Editor.RealHost
 import Editor.Scene
 import Editor.SyntaxTree
@@ -42,6 +43,12 @@ package's check of the grammar it ships, which may not import the raw
 bindings or contract-test's support (`docs/design/packages.md`, "What a
 package may import").
 
+`stagedGrammarsDirectory` reads where a set's build staged a Lake package's
+grammars directory, from the record beside the set's editor, with the real
+file read (`ModuleLookup.grammarDirectories`), so a package's linked test
+reads the record without importing `Editor.ModuleLookup`, which is
+internal. What it reads is pinned by `ModelTest.moduleLookupChecks`.
+
 Published for a package's linked tests, in the namespace
 `Editor.Test.Linked`, as the rest of the linked kit is. It holds no checks
 of its own.
@@ -50,6 +57,20 @@ of its own.
 namespace Editor.Test.Linked
 
 open Editor
+
+/-- The directory the set's build staged the grammars directory of the Lake
+package `lake` in, as the record beside the set's editor `editor` names it
+(`ModuleLookup.grammarDirectories`, over the real file read); none when the
+record is missing or cannot be read, or names none for `lake`. -/
+def stagedGrammarsDirectory (editor : System.FilePath) (lake : String) :
+    IO (Option System.FilePath) := do
+  let read (path : System.FilePath) : IO (Option String) := do
+    try
+      return some (← IO.FS.readFile path)
+    catch _ =>
+      return none
+  let directories ← ModuleLookup.grammarDirectories editor.toString read
+  return (directories.find? (·.1 == lake)).map (·.2)
 
 /-- The command the registration's job finishes with, given what the job
 brought back: the answers read as the core's command reads them
