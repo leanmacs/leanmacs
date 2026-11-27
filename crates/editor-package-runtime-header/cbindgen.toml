@@ -3,8 +3,12 @@
 # namespaced for C, where there are no modules: each type gains `Editor`,
 # and each constant `EDITOR_PACKAGE_`. The definitions export no function,
 # so every type is listed in `[export] include` to be written at all. The
-# C twin of `runtime_has!` goes after the includes, inside the include
-# guard (a trailer would land after it).
+# C twin of `runtime_has!`, and the C way to export a library's
+# declaration, go after the includes, inside the include guard (a trailer
+# would land after it). `DECLARATION_SYMBOL` and `DECLARATION_REQUIRED` are
+# not written: cbindgen writes no `&str` constant and evaluates no
+# `offset_of!`, and a C library needs neither, since the macro names the
+# symbol and fills every member.
 language = "C"
 cpp_compat = true
 include_guard = "EDITOR_PACKAGE_RUNTIME_H"
@@ -26,10 +30,30 @@ after_includes = """
  * twin is `editor_package_runtime::runtime_has!`. */
 #define EDITOR_PACKAGE_RUNTIME_HAS(runtime, member)                           \\
   ((runtime)->size >= offsetof(EditorPackageRuntime, member) +                \\
-                          sizeof(((const EditorPackageRuntime *)0)->member))"""
+                          sizeof(((const EditorPackageRuntime *)0)->member))
+
+/* Exports the library's declaration, `editor_package_declaration`, beside
+ * its init: the package's interface version `interface_version`, and the
+ * runtime it needs, the end of `last_member`, the last member of the
+ * runtime it calls without asking EDITOR_PACKAGE_RUNTIME_HAS first. Written
+ * once, at file scope, in the file that defines `editor_package_init`. The
+ * Rust twin is `editor_package::package!`'s `interface N;`. */
+#ifdef __cplusplus
+#define EDITOR_PACKAGE_DECLARATION_LINKAGE extern "C"
+#else
+#define EDITOR_PACKAGE_DECLARATION_LINKAGE
+#endif
+#define EDITOR_PACKAGE_DECLARE(interface_version, last_member)                \\
+  EDITOR_PACKAGE_DECLARATION_LINKAGE                                          \\
+  __attribute__((visibility("default"))) const EditorPackageDeclaration       \\
+      editor_package_declaration = {                                          \\
+          sizeof(EditorPackageDeclaration),                                   \\
+          offsetof(EditorPackageRuntime, last_member) +                       \\
+              sizeof(((const EditorPackageRuntime *)0)->last_member),         \\
+          (interface_version)}"""
 
 [export]
-include = ["PackageRuntime", "PackageRuntimePrivate", "PackageChild", "RawPull", "RawBuffer", "PackageInit"]
+include = ["PackageRuntime", "PackageRuntimePrivate", "PackageChild", "RawPull", "RawBuffer", "PackageInit", "PackageDeclaration"]
 
 [export.rename]
 "PackageRuntime" = "EditorPackageRuntime"
@@ -38,6 +62,7 @@ include = ["PackageRuntime", "PackageRuntimePrivate", "PackageChild", "RawPull",
 "RawPull" = "EditorRawPull"
 "RawBuffer" = "EditorRawBuffer"
 "PackageInit" = "EditorPackageInit"
+"PackageDeclaration" = "EditorPackageDeclaration"
 "INIT_LOADED" = "EDITOR_PACKAGE_INIT_LOADED"
 "INIT_RUNTIME_TOO_SMALL" = "EDITOR_PACKAGE_INIT_RUNTIME_TOO_SMALL"
 "TAKE_OVER_NO_SERVICE" = "EDITOR_PACKAGE_TAKE_OVER_NO_SERVICE"

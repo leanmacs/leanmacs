@@ -46,6 +46,24 @@
 //! in review, and `editor-package-library`'s contract runs a library built
 //! for an older prefix on the current runtime.
 //!
+//! # The declaration
+//!
+//! Beside its init, a library exports a static [`PackageDeclaration`] as
+//! `editor_package_declaration` ([`DECLARATION_SYMBOL`]): its own size,
+//! the size of runtime it needs, and the package's interface version, the
+//! shape of the package's own table, which only its glue and its library
+//! share. The core reads it before it calls anything of the library, and
+//! refuses a library that declares nothing, one whose declaration ends
+//! before `interface` ([`DECLARATION_REQUIRED`]), one of another interface
+//! than the glue's, and one that needs more runtime than the core's; a
+//! refused library runs none of its code. The declaration is append-only
+//! like the runtime: a member is added at its end, and the core reads only
+//! the members its `size` covers.
+//!
+//! A Rust library declares it with `editor_package::package!`'s
+//! `interface N;`, and a C, C++ or Zig one with the header's
+//! `EDITOR_PACKAGE_DECLARE(interface, last_member)`.
+//!
 //! # Who owns what
 //!
 //! - **The runtime** is the core's, for the life of the process. A library
@@ -254,6 +272,32 @@ pub const INIT_LOADED: u32 = 0;
 /// table unwritten.
 pub const INIT_RUNTIME_TOO_SMALL: u32 = 1;
 
+/// What a package's library declares of itself, exported as the static
+/// `editor_package_declaration` ([`DECLARATION_SYMBOL`]) beside its init
+/// (the crate docs, "The declaration"): read by the core before it calls
+/// anything of the library, and only ever appended to, as the runtime is.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PackageDeclaration {
+    /// The declaration's own size in bytes: its version. The core reads
+    /// only the members it covers.
+    pub size: usize,
+    /// The size of runtime the library needs: the end of the last member
+    /// it calls without asking `runtime_has!` first.
+    pub runtime: usize,
+    /// The package's own interface version: the shape of its table, which
+    /// its glue mirrors and passes to the load.
+    pub interface: u32,
+}
+
+/// The symbol a package's library exports its [`PackageDeclaration`] as.
+pub const DECLARATION_SYMBOL: &str = "editor_package_declaration";
+
+/// The least a declaration's `size` may be: the end of `interface`. A
+/// declaration that ends before it is none.
+pub const DECLARATION_REQUIRED: usize =
+    std::mem::offset_of!(PackageDeclaration, interface) + std::mem::size_of::<u32>();
+
 /// A take-over refused: no process service has been provided.
 pub const TAKE_OVER_NO_SERVICE: u32 = 1;
 /// A take-over refused: no live streaming child of that number.
@@ -387,6 +431,40 @@ mod tests {
         assert!(!has!(size_of::<PackageRuntime>() - 1, buffer_free));
         assert!(has!(size_of::<PackageRuntime>() + 8, buffer_free));
         assert!(!has!(0, size), "not even its size");
+    }
+
+    /// The rows of [`DECLARATION_LAYOUT`]: each member's name and offset,
+    /// in the order given.
+    macro_rules! declaration_layout {
+        ($($member:ident),* $(,)?) => {
+            [$((stringify!($member), offset_of!(PackageDeclaration, $member))),*]
+        };
+    }
+
+    /// The declaration's members in order, one row each, its slot the
+    /// row's index, a `usize` wide: the last, `interface`, is a `u32` in a
+    /// slot of its own. Rows are only ever appended, as the runtime's are.
+    const DECLARATION_LAYOUT: [(&str, usize); 3] = declaration_layout![size, runtime, interface];
+
+    #[test]
+    fn each_declaration_member_sits_in_its_slot_and_the_declaration_is_its_rows_long() {
+        for (slot, (member, offset)) in DECLARATION_LAYOUT.iter().enumerate() {
+            assert_eq!(*offset, slot * size_of::<usize>(), "{member}");
+        }
+        assert_eq!(
+            size_of::<PackageDeclaration>(),
+            DECLARATION_LAYOUT.len() * size_of::<usize>()
+        );
+    }
+
+    #[test]
+    fn the_declaration_required_ends_at_its_interface() {
+        assert_eq!(
+            DECLARATION_REQUIRED,
+            offset_of!(PackageDeclaration, interface) + size_of::<u32>()
+        );
+        assert_eq!(DECLARATION_REQUIRED, 2 * size_of::<usize>() + 4);
+        assert_eq!(DECLARATION_SYMBOL, "editor_package_declaration");
     }
 
     #[test]

@@ -60,6 +60,10 @@ FIXTURE_EXPORT uint32_t editor_package_init(const EditorPackageRuntime *runtime,
   return EDITOR_PACKAGE_INIT_LOADED;
 }
 
+// The library's declaration: interface 1, and the runtime through
+// `buffer_free`, the last member it calls.
+EDITOR_PACKAGE_DECLARE(1, buffer_free);
+
 // The init has the type the header gives it.
 __attribute__((unused)) static const EditorPackageInit init_type_checked =
     editor_package_init;

@@ -19,6 +19,26 @@
   ((runtime)->size >= offsetof(EditorPackageRuntime, member) +                \
                           sizeof(((const EditorPackageRuntime *)0)->member))
 
+/* Exports the library's declaration, `editor_package_declaration`, beside
+ * its init: the package's interface version `interface_version`, and the
+ * runtime it needs, the end of `last_member`, the last member of the
+ * runtime it calls without asking EDITOR_PACKAGE_RUNTIME_HAS first. Written
+ * once, at file scope, in the file that defines `editor_package_init`. The
+ * Rust twin is `editor_package::package!`'s `interface N;`. */
+#ifdef __cplusplus
+#define EDITOR_PACKAGE_DECLARATION_LINKAGE extern "C"
+#else
+#define EDITOR_PACKAGE_DECLARATION_LINKAGE
+#endif
+#define EDITOR_PACKAGE_DECLARE(interface_version, last_member)                \
+  EDITOR_PACKAGE_DECLARATION_LINKAGE                                          \
+  __attribute__((visibility("default"))) const EditorPackageDeclaration       \
+      editor_package_declaration = {                                          \
+          sizeof(EditorPackageDeclaration),                                   \
+          offsetof(EditorPackageRuntime, last_member) +                       \
+              sizeof(((const EditorPackageRuntime *)0)->last_member),         \
+          (interface_version)}
+
 /**
  * An init's status: loaded, its table written.
  */
@@ -267,5 +287,29 @@ typedef struct EditorPackageRuntime {
  * own, opaque to the core.
  */
 typedef uint32_t (*EditorPackageInit)(const struct EditorPackageRuntime *runtime, const void **table);
+
+/**
+ * What a package's library declares of itself, exported as the static
+ * `editor_package_declaration` ([`DECLARATION_SYMBOL`]) beside its init
+ * (the crate docs, "The declaration"): read by the core before it calls
+ * anything of the library, and only ever appended to, as the runtime is.
+ */
+typedef struct EditorPackageDeclaration {
+  /**
+   * The declaration's own size in bytes: its version. The core reads
+   * only the members it covers.
+   */
+  size_t size;
+  /**
+   * The size of runtime the library needs: the end of the last member
+   * it calls without asking `runtime_has!` first.
+   */
+  size_t runtime;
+  /**
+   * The package's own interface version: the shape of its table, which
+   * its glue mirrors and passes to the load.
+   */
+  uint32_t interface;
+} EditorPackageDeclaration;
 
 #endif  /* EDITOR_PACKAGE_RUNTIME_H */
