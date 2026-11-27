@@ -49,6 +49,13 @@ const CURRENT: PackageDeclaration = PackageDeclaration {
     interface: 1,
 };
 
+/// [`CURRENT`] as an older library might write it, every member set but
+/// its `size` ending before `interface`.
+const SHORT: PackageDeclaration = PackageDeclaration {
+    size: DECLARATION_REQUIRED - size_of::<u32>(),
+    ..CURRENT
+};
+
 /// A fake with one library at `/l/lib.so` exporting `init` as the init
 /// symbol and [`CURRENT`] as its declaration, a library at `/l/other.so`
 /// exporting another symbol, and a file that is no library at
@@ -314,6 +321,9 @@ fn the_fake_the_load_is_tested_on_keeps_the_library_contract() {
         not_exported: INIT_SYMBOL.to_owned(),
         declaring: "/l/lib.so".into(),
         declaration: CURRENT,
+        short_declaring: "/l/short.so".into(),
+        short_declaration: SHORT,
     };
-    assert_eq!(contract::check(&fake(too_small), &corpus), [""; 0]);
+    let libraries = fake(too_small).declaring("/l/short.so", SHORT);
+    assert_eq!(contract::check(&libraries, &corpus), [""; 0]);
 }

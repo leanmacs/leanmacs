@@ -3968,13 +3968,16 @@ of its own ("Who can build it").
 
 - The declaration's layout: `editor-package-runtime`'s tests; the header,
   its drift test; the macro, `editor-package`'s `tests/declare.rs`.
-- The port: `contract::check`'s `DECLARED` and `UNDECLARED`, on the fake
-  and, in the adapter's `tests/contract.rs`, on a fixture package library
-  and the fixture grammar library.
+- The port: `contract::check`'s `DECLARED`, `UNDECLARED` and `SHORT` (a
+  declaration's members past its size read as 0, though the library wrote
+  them), on the fake and, in the adapter's `tests/contract.rs`, on the
+  fixture package libraries (`current_runtime.c`, and
+  `short_declaration.c`, whose `size` ends before its `interface`) and the
+  fixture grammar library.
 - The order and the values: `editor-package-library`'s `src/load/tests.rs`
   on the fake; each tag through C on real files, `editor-ffi`'s
-  `tests/package_load.rs` (`no_declaration.c`, `newer_runtime.c`, and
-  `current_runtime.c` loaded for interface 2).
+  `tests/package_load.rs` (`no_declaration.c`, `short_declaration.c`,
+  `newer_runtime.c`, and `current_runtime.c` loaded for interface 2).
 - The reading and the sentences, the probe's failure line among them, and
   where a staged library is found: `ModelTest.packageLibraryChecks`,
   `ModelTest.packageLibraryStagedChecks`, `ModelTest.moduleLookupChecks`.

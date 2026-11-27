@@ -8,7 +8,8 @@
 //! libraries (`editor-package-library-fixture`) 4 (runtime too small: an
 //! init that requires a larger runtime than the core's), 5 (init failed:
 //! an init that answers a status no library answers), each init called
-//! with the process's real runtime, 6 (no declaration), 7 (a declaration
+//! with the process's real runtime, 6 (no declaration, or one whose `size`
+//! ends before its `interface`), 7 (a declaration
 //! needing a newer runtime, with what it needs and the editor's size) and
 //! 8 (a library loaded for another interface than its declaration's, with
 //! both versions). What a load decides is `editor-package-library`'s,
@@ -93,4 +94,9 @@ fn a_library_loaded_for_another_interface_crosses_as_8_with_both_versions() {
 #[test]
 fn a_library_declaring_nothing_crosses_as_6() {
     assert_eq!(load(package::NO_DECLARATION), (6, false));
+}
+
+#[test]
+fn a_library_whose_declaration_ends_before_its_interface_crosses_as_6() {
+    assert_eq!(load(package::SHORT_DECLARATION), (6, false));
 }

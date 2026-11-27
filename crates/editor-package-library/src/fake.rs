@@ -10,6 +10,7 @@
 //! [`crate::contract::check`], in that module's tests.
 
 use std::collections::HashMap;
+use std::mem::offset_of;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
@@ -68,8 +69,9 @@ impl FakeLibraries {
     /// This fake, with the library at `path` also exporting `declaration`
     /// as `editor_package_declaration`: a library exporting no init when
     /// none was canned there. A declaration whose `size` ends before a
-    /// member is handed back as written, as the real adapter hands back
-    /// what a short declaration covers.
+    /// member reads that member as 0, whatever was written there, as the
+    /// real adapter reads a short declaration by the members its size
+    /// covers (the contract's `SHORT`).
     #[must_use]
     pub fn declaring(mut self, path: impl Into<PathBuf>, declaration: PackageDeclaration) -> Self {
         let path = path.into();
@@ -124,6 +126,20 @@ impl Library for FakeLibrary {
     }
 
     fn declaration(&self, symbol: &str) -> Option<PackageDeclaration> {
-        self.declaration.filter(|_| symbol == DECLARATION_SYMBOL)
+        let written = self.declaration.filter(|_| symbol == DECLARATION_SYMBOL)?;
+        let covers = |offset: usize, width: usize| written.size >= offset + width;
+        Some(PackageDeclaration {
+            size: written.size,
+            runtime: if covers(offset_of!(PackageDeclaration, runtime), size_of::<usize>()) {
+                written.runtime
+            } else {
+                0
+            },
+            interface: if covers(offset_of!(PackageDeclaration, interface), size_of::<u32>()) {
+                written.interface
+            } else {
+                0
+            },
+        })
     }
 }

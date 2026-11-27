@@ -57,6 +57,11 @@ fn main() {
             "package-newer-runtime",
             "EDITOR_PACKAGE_LIBRARY_FIXTURE_NEWER_RUNTIME",
         ),
+        (
+            "fixture/short_declaration.c",
+            "package-short-declaration",
+            "EDITOR_PACKAGE_LIBRARY_FIXTURE_SHORT_DECLARATION",
+        ),
     ] {
         println!("cargo:rerun-if-changed={source}");
         let library = out.join(format!("lib{name}.{extension}"));

@@ -6,11 +6,15 @@
 //! fixture package library built against the generated header
 //! (`editor-package-library-fixture`'s `CURRENT_RUNTIME`) has the
 //! declaration `EDITOR_PACKAGE_DECLARE(1, buffer_free)` writes, read
-//! whole.
+//! whole; and the fixture whose declaration's `size` ends before its
+//! `interface` (`SHORT_DECLARATION`) is read by the members its size
+//! covers, its `runtime` as written and its `interface` as 0, not the 1
+//! written past the size.
 //!
 //! The check is the port's own, the one the fake keeps
 //! (`editor_package_library::contract::check`). No file is created.
 
+use std::mem::offset_of;
 use std::path::{Path, PathBuf};
 
 use editor_package_library::contract::{Corpus, check};
@@ -43,6 +47,12 @@ fn the_adapter_keeps_the_library_contract_on_the_fixture_libraries() {
         declaration: PackageDeclaration {
             size: size_of::<PackageDeclaration>(),
             runtime: size_of::<PackageRuntime>(),
+            interface: 1,
+        },
+        short_declaring: package::SHORT_DECLARATION.into(),
+        short_declaration: PackageDeclaration {
+            size: offset_of!(PackageDeclaration, interface),
+            runtime: 88,
             interface: 1,
         },
     };

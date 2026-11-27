@@ -1,4 +1,4 @@
-//! A test fixture: six small package libraries written in C, each
+//! A test fixture: seven small package libraries written in C, each
 //! exporting `editor_package_init` (docs/design/packages.md, "A library
 //! loaded when the editor runs, as built", "The package runtime, as
 //! built", and "A package's library, staged and loaded, as built"). Every
@@ -11,9 +11,12 @@
 //! a package's glue calls, so the init is handed the process's real
 //! runtime, with no size of the runtime made smaller for a test.
 //!
-//! Two are refused by their declaration, before the init: one that
-//! declares nothing, and one that declares a runtime one member longer than
-//! today's. `tests/package_load.rs` loads both too.
+//! Three are refused by their declaration, before the init: one that
+//! declares nothing, one that declares a runtime one member longer than
+//! today's, and one whose declaration's `size` ends before its
+//! `interface`. `tests/package_load.rs` loads all three too, and the
+//! library port's adapter reads the third's declaration in its contract
+//! test, by the members its size covers.
 //!
 //! Two load and run on it: one built against its own copy of the runtime
 //! as it ended at `complete`, smaller than today's, and one built against
@@ -68,3 +71,11 @@ pub const NO_DECLARATION: &str = env!("EDITOR_PACKAGE_LIBRARY_FIXTURE_NO_DECLARA
 /// answer 0 (`fixture/newer_runtime.c`). The built library's absolute
 /// path.
 pub const NEWER_RUNTIME: &str = env!("EDITOR_PACKAGE_LIBRARY_FIXTURE_NEWER_RUNTIME");
+
+/// A library whose declaration, written whole with runtime 88 and
+/// interface 1, has a `size` that ends at the end of `runtime`, before
+/// `interface`: read by the members its size covers, its interface is 0,
+/// and it is refused as declaring nothing before its init, which would
+/// write a table and answer 0 (`fixture/short_declaration.c`). The built
+/// library's absolute path.
+pub const SHORT_DECLARATION: &str = env!("EDITOR_PACKAGE_LIBRARY_FIXTURE_SHORT_DECLARATION");
