@@ -2398,24 +2398,60 @@ def shippedOleansLines (directories : Array FilePath)
     return s!"oleans\tlean/{place}/{relative}"
 
 /-- The lines `editorShipped` lists for the grammars directory of the Lake
-package `lake`, which the set's build staged at `staged` (`editorGrammars`),
-for its place `place`: the staged directory, compiled libraries included,
-copied whole to `<place>/grammars`, so the bundled package ships them as a
-prebuilt one does and a user's set built from the bundle compiles nothing;
-and the line `grammars<TAB><lake><TAB><place>/grammars`, which the
-`stage-bundle` binary writes into the bundle's record `editor.grammars`
-(`Editor/ModuleLookup.lean`, "The grammars"). -/
-def shippedGrammarsLines (lake : String) (staged : FilePath) (place : String) : Array String :=
-  #[s!"file\t{staged}\t{place}/grammars", s!"grammars\t{lake}\t{place}/grammars"]
+package `lake` whose directory is `dir`, which the set's build staged at
+`staged` (`editorGrammars`), for its place `place`: the package's own
+`grammars/`, copied whole to `<place>/grammars`; then each file of the
+staged directory the package's own does not hold, `compiled`, each a path
+relative to the staged directory (the libraries the set's build compiled
+from source), copied to the same path under `<place>/grammars`, so the
+bundled package ships them as a prebuilt one does and a user's set built
+from the bundle compiles nothing; and the line
+`grammars<TAB><lake><TAB><place>/grammars`, which the `stage-bundle`
+binary writes into the bundle's record `editor.grammars`
+(`Editor/ModuleLookup.lean`, "The grammars"). Each `file` line keeps its
+source's name, which `stage-bundle` requires: so the staged directory,
+named after its Lake package, is not listed whole. -/
+def shippedGrammarsLines (lake : String) (dir staged : FilePath) (compiled : Array String)
+    (place : String) : Array String :=
+  #[s!"file\t{dir / "grammars"}\t{place}/grammars"] ++
+    compiled.map
+      (fun (relative : String) => s!"file\t{staged / relative}\t{place}/grammars/{relative}") ++
+    #[s!"grammars\t{lake}\t{place}/grammars"]
 
-/- Guards: the grammars lines (`shippedGrammarsLines`): the set's staged copy
-of the package's grammars directory copied to its place's `grammars`, and
-the record's line naming the Lake package and that place. -/
+/- Guards: the grammars lines (`shippedGrammarsLines`): a prebuilt package's
+own `grammars/` copied to its place's `grammars`, and the record's line
+naming the Lake package and that place; and a package whose grammar the
+set's build compiled, its library listed from the staged directory to the
+same path under its place's `grammars`, between the two. -/
 #guard
-  shippedGrammarsLines "ini-grammar" "/r/tests/grammar-set/.lake/build/grammars/ini-grammar"
-      "set/ini-grammar" ==
-    #["file\t/r/tests/grammar-set/.lake/build/grammars/ini-grammar\tset/ini-grammar/grammars",
+  shippedGrammarsLines "ini-grammar" "/r/tests/grammar-set/ini-grammar"
+      "/r/tests/grammar-set/.lake/build/grammars/ini-grammar" #[] "set/ini-grammar" ==
+    #["file\t/r/tests/grammar-set/ini-grammar/grammars\tset/ini-grammar/grammars",
       "grammars\tini-grammar\tset/ini-grammar/grammars"]
+
+#guard
+  shippedGrammarsLines "languages" "/r/packages/languages"
+      "/r/packages/.lake/build/grammars/languages" #["darwin-aarch64/libtree-sitter-yaml.dylib"]
+      "set/languages" ==
+    #["file\t/r/packages/languages/grammars\tset/languages/grammars",
+      "file\t/r/packages/.lake/build/grammars/languages/darwin-aarch64/libtree-sitter-yaml.dylib\tset/languages/grammars/darwin-aarch64/libtree-sitter-yaml.dylib",
+      "grammars\tlanguages\tset/languages/grammars"]
+
+/-- The files under the directory `staged`, each as a path relative to it
+with `/` between its parts, that the directory `own` does not hold at the
+same path: what a set's build added to a staged grammars directory over
+the package's own (`shippedGrammarsLines`), in the order the directories
+list them. -/
+partial def filesNotIn (staged own : FilePath) (under : String := "") : IO (Array String) := do
+  let mut found : Array String := #[]
+  for entry in ← (if under.isEmpty then staged else staged / under).readDir do
+    let relative := if under.isEmpty then entry.fileName else s!"{under}/{entry.fileName}"
+    if ← entry.path.isDir then
+      found := found ++ (← filesNotIn staged own relative)
+    else
+      unless ← (own / relative).pathExists do
+        found := found.push relative
+  return found
 
 /- Guards: the lines `editorShipped` lists. A package's file goes to its
 place under the package's (`shippedFileLine`), its `lean-toolchain` among
@@ -2456,10 +2492,11 @@ bundle's `Contents/Resources/lean`, and one line `oleans<TAB><place>` for
 each `.olean` directory of the set (`moduleDirectories`), in order, its
 place relative to `Contents/Resources`, which the bundle's record
 `editor.oleans` holds (`Editor/ModuleLookup.lean`, "The bundle's record").
-For each package that ships grammars (`grammarsKeyword`), the directory the
-set's build staged its `grammars/` in (`editorGrammars`, which it fetches),
-compiled libraries included, copied whole to its place's `grammars`, and one
-line `grammars<TAB><lake><TAB><place>` (`shippedGrammarsLines`), which the
+For each package that ships grammars (`grammarsKeyword`), its `grammars/`
+directory, copied whole to its place's `grammars`, with each library the
+set's build compiled into its staged directory (`editorGrammars`, which it
+fetches; `filesNotIn`) copied beside, and one line
+`grammars<TAB><lake><TAB><place>` (`shippedGrammarsLines`), which the
 bundle's record `editor.grammars` holds (`Editor/ModuleLookup.lean`, "The
 grammars").
 
@@ -2541,7 +2578,10 @@ package_facet editorShipped pkg : Array String := do
           let lake := dep.baseName.toString (escape := false)
           let some (_, staged) := stagedGrammarsOf.find? (·.1 == lake)
             | error s!"the set's build staged no grammars directory for {lake}"
-          lines := lines ++ shippedGrammarsLines lake staged place
+          let own ← IO.FS.realPath dep.dir
+          lines :=
+            lines ++
+              shippedGrammarsLines lake own staged (← filesNotIn staged (own / "grammars")) place
       let gluePlace := placeOf core
       for file in
         [core.dir / "ffi" / "glue.c", core.buildDir / "ffi" / "glue.o",

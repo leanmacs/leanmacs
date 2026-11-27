@@ -434,10 +434,14 @@ record, the install's copy and the bundle are unchanged in shape. A
 `<name>` did not compile from its source: <reason>`` (`grammarDidNotCompile`),
 and a Cargo that exits non-zero with ``the package `<lake>`'s grammar
 sources (its `editorGrammarSources` target, `<manifest>`) did not build``
-(`grammarSourcesDidNotBuild`), after Cargo's own log. The bundle lists the
-set's staged directory as each package's `grammars/`, so the bundled
-`languages` holds its compiled libraries and a user's set built from the
-bundle takes the shipped branch, with no crate to build.
+(`grammarSourcesDidNotBuild`), after Cargo's own log. The bundle lists each
+package's own `grammars/` and, beside it, each library the set's build
+compiled into the staged directory (`shippedGrammarsLines`, `filesNotIn`;
+`stage-bundle` refuses a `file` line that renames its source, so the
+staged directory, named after its Lake package, is not listed whole). So
+the bundled `languages` holds its compiled libraries under
+`grammars/<platform>/`, and a user's set built from the bundle takes the
+shipped branch, with no crate to build.
 
 A user's set outside the repository can go stale: the built branch takes
 what the checkout last compiled, as `prebuiltRust` takes the last-built
@@ -465,7 +469,7 @@ read like `editor.oleans`: `Editor/ModuleLookup.lean`, "The grammars"):
 |---|---|---|
 | A set's build (`lake -d <set> build :editor`) | `<set>/.lake/build/grammars/<lake>/`, a fresh copy each build of the package's `grammars/`, with the libraries compiled from source, or taken from the package's build directory, staged under `<platform>/` (`editorGrammars`) | `<set>/.lake/build/bin/editor.grammars`, absolute lines |
 | A per-user install (`:editorInstall`) | `<install>/grammars/<lake>/`, copied from the set's staged copy | `<install>/editor.grammars`, relative lines `<lake><TAB>grammars/<lake>`, so the directory still renames into place |
-| The app bundle | `Contents/Resources/lean/set/<rel>/grammars/`, the set's staged copy, compiled libraries included, as the package's `grammars/` in the bundle's staged set (`editorShipped`'s `file` line), so a user's set built from the bundle stages and installs it in turn, with no Cargo | `Contents/Resources/editor.grammars`, `<lake><TAB>lean/set/<rel>/grammars` (`editorShipped`'s `grammars` line, which `stage-bundle` writes) |
+| The app bundle | `Contents/Resources/lean/set/<rel>/grammars/`, the package's own copy in the bundle's staged set, with the libraries the set's build compiled beside it (`editorShipped`'s `file` lines), so a user's set built from the bundle stages and installs it in turn, with no Cargo | `Contents/Resources/editor.grammars`, `<lake><TAB>lean/set/<rel>/grammars` (`editorShipped`'s `grammars` line, which `stage-bundle` writes) |
 
 The install copies rather than references for the reason it copies the
 `.olean` files: a later build of the set must not change what an installed
