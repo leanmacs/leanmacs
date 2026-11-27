@@ -214,6 +214,72 @@ fn the_binary_stages_a_packages_grammar_library_and_queries() {
 #[test]
 #[expect(
     clippy::disallowed_methods,
+    reason = "the binary's test: it lays a package's grammars, a set's staged directory and the fixture library out in the test's own directory and reads back the bundle the real `stage-bundle` wrote there"
+)]
+fn the_binary_stages_a_grammar_library_compiled_into_a_sets_staged_directory_beside_the_packages_own()
+ {
+    // The lines a set's build lists for a package whose grammar it compiled
+    // from source (`shippedGrammarsLines` in `lean/lakefile.lean`): the
+    // package's own `grammars/`, holding no library; then the library, from
+    // the set's staged directory, which is named after its Lake package and
+    // so cannot be listed whole, to the same path under the package's
+    // `grammars`; then the record's line.
+    let dir = TempDir::new().expect("a temporary directory");
+    let root = dir.path();
+    let sysroot = root.join("toolchain");
+    write(&sysroot.join("lib/lean/Init.olean"), "init\n");
+    let editor = root.join("build/editor");
+    std::fs::create_dir_all(editor.parent().expect("build")).expect("build");
+    std::fs::copy(env!("CARGO_BIN_EXE_link-stubs"), &editor).expect("an executable");
+    let package: PathBuf = [
+        env!("CARGO_MANIFEST_DIR"),
+        "../../tests/grammar-set/ini-grammar",
+    ]
+    .iter()
+    .collect();
+    let grammars = root.join("ini-grammar/grammars");
+    copy_tree(&package.join("grammars"), &grammars);
+    let (platform, name) = platform_library();
+    let staged = root.join("set/.lake/build/grammars/ini-grammar");
+    let compiled = format!("{platform}/{name}");
+    let library = staged.join(&compiled);
+    std::fs::create_dir_all(library.parent().expect("the platform's directory"))
+        .expect("the platform's directory");
+    std::fs::copy(editor_syntax_fixture_ini::LIBRARY, &library).expect("the fixture library");
+    write(&root.join("src/Mod.olean"), "module\n");
+    let list = root.join("shipped");
+    write(
+        &list,
+        &format!(
+            "file\t{}\tset/lib/Mod.olean\nfile\t{}\tset/ini-grammar/grammars\nfile\t{}\tset/ini-grammar/grammars/{compiled}\ngrammars\tini-grammar\tset/ini-grammar/grammars\noleans\tset/lib\n",
+            root.join("src/Mod.olean").display(),
+            grammars.display(),
+            library.display()
+        ),
+    );
+    let app = root.join("Leanmacs.app");
+    stage_bundle(&[&app, &editor, &sysroot, &list]);
+
+    let resources = app.join("Contents/Resources");
+    let bundled = resources.join("lean/set/ini-grammar/grammars");
+    assert_eq!(
+        std::fs::read(bundled.join(&platform).join(name)).expect("the bundled library"),
+        std::fs::read(editor_syntax_fixture_ini::LIBRARY).expect("the fixture library")
+    );
+    assert_eq!(
+        std::fs::read(bundled.join("queries/highlights.scm")).expect("the bundled query"),
+        std::fs::read(package.join("grammars/queries/highlights.scm"))
+            .expect("the package's query")
+    );
+    assert_eq!(
+        std::fs::read_to_string(resources.join("editor.grammars")).expect("editor.grammars"),
+        "ini-grammar\tlean/set/ini-grammar/grammars\n"
+    );
+}
+
+#[test]
+#[expect(
+    clippy::disallowed_methods,
     reason = "the binary's test: it lays module files out in the test's own directory and reads back what the real `stage-bundle` staged there"
 )]
 fn the_binary_stages_a_closure() {

@@ -2476,21 +2476,72 @@ same path under its place's `grammars`, between the two. -/
       "file\t/r/packages/.lake/build/grammars/languages/darwin-aarch64/libtree-sitter-yaml.dylib\tset/languages/grammars/darwin-aarch64/libtree-sitter-yaml.dylib",
       "grammars\tlanguages\tset/languages/grammars"]
 
-/-- The files under the directory `staged`, each as a path relative to it
-with `/` between its parts, that the directory `own` does not hold at the
-same path: what a set's build added to a staged grammars directory over
-the package's own (`shippedGrammarsLines`), in the order the directories
-list them. -/
-partial def filesNotIn (staged own : FilePath) (under : String := "") : IO (Array String) := do
-  let mut found : Array String := #[]
-  for entry in ← (if under.isEmpty then staged else staged / under).readDir do
-    let relative := if under.isEmpty then entry.fileName else s!"{under}/{entry.fileName}"
-    if ← entry.path.isDir then
-      found := found ++ (← filesNotIn staged own relative)
-    else
-      unless ← (own / relative).pathExists do
-        found := found.push relative
-  return found
+/-- The files of a staged grammars directory, each as a path relative to it
+with `/` between its parts, that the package's own `grammars/` does not hold
+at the same path: what a set's build added over the package's own
+(`shippedGrammarsLines`), in the order the directories list them. `entries`
+lists a directory, relative (`""` the staged directory itself), as each
+entry's name and whether it is a directory; `owns` says whether the
+package's own holds a relative file. It goes `depth` directories down at
+most, far more than a grammars directory's `<platform>/` or
+`queries/<name>/` needs. -/
+def filesNotInWith {m : Type → Type} [Monad m] (entries : String → m (Array (String × Bool)))
+    (owns : String → m Bool) (under : String := "") (depth : Nat := 16) : m (Array String) := do
+  match depth with
+  | 0 =>
+    return #[]
+  | depth + 1 =>
+    let mut found : Array String := #[]
+    for (name, isDirectory) in ← entries under do
+      let relative := if under.isEmpty then name else s!"{under}/{name}"
+      if isDirectory then
+        found := found ++ (← filesNotInWith entries owns relative depth)
+      else
+        unless ← owns relative do
+          found := found.push relative
+    return found
+
+/-- `filesNotInWith` over the disk: the staged directory `staged` and the
+package's own grammars directory `own`. -/
+def filesNotIn (staged own : FilePath) : IO (Array String) :=
+  filesNotInWith
+    (fun under => do
+      let directory := if under.isEmpty then staged else staged / under
+      (← directory.readDir).mapM fun entry => return (entry.fileName, ← entry.path.isDir))
+    fun relative => (own / relative).pathExists
+
+/-- A staged grammars directory as `filesNotInWith`'s guards list it: each
+directory, relative, with its entries, each a name and whether it is a
+directory. -/
+def grammarTreeEntries (tree : List (String × Array (String × Bool))) (directory : String) :
+    Id (Array (String × Bool)) :=
+  ((tree.find? (·.1 == directory)).map (·.2)).getD #[]
+
+/- Guards: the walk (`filesNotInWith`) over a staged grammars directory
+listed in the guard, the package's own holding the queries and the licence:
+it goes into each directory, the platform's among them, and answers the
+compiled library alone, leaving out every file the package's own already
+holds; with none held, every file, in the order the directories list them;
+and an empty directory gives nothing. -/
+#guard
+  let staged :=
+    [("", #[("queries", true), ("licenses", true), ("darwin-aarch64", true)]),
+      ("queries", #[("yaml", true)]), ("queries/yaml", #[("highlights.scm", false)]),
+      ("licenses", #[("tree-sitter-yaml", false)]),
+      ("darwin-aarch64", #[("libtree-sitter-yaml.dylib", false)])]
+  let own := ["queries/yaml/highlights.scm", "licenses/tree-sitter-yaml"]
+  Id.run (filesNotInWith (grammarTreeEntries staged) (fun file => pure (own.contains file))) ==
+    #["darwin-aarch64/libtree-sitter-yaml.dylib"]
+
+#guard
+  let staged :=
+    [("", #[("queries", true), ("darwin-aarch64", true)]),
+      ("queries", #[("highlights.scm", false)]),
+      ("darwin-aarch64", #[("libtree-sitter-ini.dylib", false)])]
+  Id.run (filesNotInWith (grammarTreeEntries staged) (fun _ => pure false)) ==
+    #["queries/highlights.scm", "darwin-aarch64/libtree-sitter-ini.dylib"]
+
+#guard Id.run (filesNotInWith (grammarTreeEntries []) (fun _ => pure false)) == #[]
 
 /- Guards: the lines `editorShipped` lists. A package's file goes to its
 place under the package's (`shippedFileLine`), its `lean-toolchain` among
