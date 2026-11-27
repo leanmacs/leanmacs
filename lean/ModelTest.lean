@@ -1294,6 +1294,13 @@ names a scheme's key:
   highlights: injections, a language for the model's grammar, and the text
   objects and indents queries kept, each refusal said and stopping its own
   step alone.
+- `highlightInjectedChecks`: the languages a Markdown buffer's injections
+  are given for grammars registered at run time, driven from a config's
+  install through the `register-grammars` job's command: a config-declared
+  grammar's highlights read from its query directory, a package grammar's
+  from the package's, a declaration overriding the compiled-in `lean`
+  drawn with the declared query, and a language entry's own highlights
+  winning over the grammar's file.
 - `indentRuleChecks`: the indent rule (`Editor/Indent.lean`), pure, over
   hand-built rows: begins on one row count once, a branch takes a level
   away only as a row's first non-blank, the level never below 0, the rows
@@ -1664,6 +1671,7 @@ def checks : List Check :=
     dispatchRegistryChecks ++
     highlightFaceChecks ++
     highlightEnterChecks ++
+    highlightInjectedChecks ++
     indentRuleChecks ++
     indentOpeningChecks ++
     indentEditChecks ++

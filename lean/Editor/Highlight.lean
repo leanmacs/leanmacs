@@ -70,11 +70,21 @@ the mode's own or the grammar's shipped one:
 6. **Injections.** The injections query (`noShippedQuery` skips steps 6
    and 7): compiled, `inject`ed, released.
 7. **Languages.** For each grammar the library has (`grammars`), an
-   `injectLanguage` of its name: its highlights query (the mode's own for
-   the mode's grammar, its shipped one for any other), in the faces of the
+   `injectLanguage` of its name: its highlights query, in the faces of the
    mode's mapping over its capture names (`faces`), so config's capture
-   faces reach embedded code too, and its injections query, if it has one
-   (the mode's own for the mode's grammar); both released after. Names are
+   faces reach embedded code too, and its injections query, if it has one;
+   both released after. For the mode's grammar both are the mode's own.
+   For any other they are those of the tree `injected` gives for the
+   grammar's name, each the grammar's shipped one where the tree gives
+   none. The dispatch passes the resolved tree of the language entry
+   naming the grammar (`Language.Grammar.injectedTreeOf`,
+   `Editor/Language/Grammar.lean`): declared queries filled in, the
+   entry's own winning, so a declared or package-shipped grammar's fences
+   are drawn with the queries read from its directory, and a compiled-in
+   grammar's entry that gives its own highlights uses them here too. A
+   grammar for which `injected` gives none (declared and awaiting its
+   answer, or refused and no longer listed) gives no language. With no
+   `injected`, each grammar's bare tree: its shipped queries. Names are
    grammar names: an alias (`rs`) names nothing.
 8. **Text objects.** The text objects query: compiled, kept
    (`keep .textObjects`), released.
@@ -99,9 +109,11 @@ replaced. Detaching a text that is not attached does nothing.
 one with a syntax tree. A mode that says nothing of a syntax tree, set over
 one that said nothing either, asks the port nothing.
 
-Pinned by `ModelTest.highlightFaceChecks` (the rule, pure) and
+Pinned by `ModelTest.highlightFaceChecks` (the rule, pure),
 `ModelTest.highlightEnterChecks` (on the editor's models, through the
-loop's dispatch).
+loop's dispatch) and `ModelTest.highlightInjectedChecks` (step 7's
+languages of grammars registered at run time, driven from a config's
+install through the `register-grammars` job's command).
 -/
 
 namespace Editor.Highlight
@@ -179,23 +191,22 @@ def withQuery {α : Type} (grammar source : String) (run : QueryId → SyntaxTre
     throw refusal
 
 /-- Steps 6 and 7 of the module docs: the text's injections, and a language
-for each grammar the library has. -/
-def injections (snapshot : SnapshotId) (syntaxTree : Mode.SyntaxTree) : SyntaxTreeM Unit := do
+for each grammar the library has, of the tree `injected` gives for its
+name. -/
+def injections (snapshot : SnapshotId) (syntaxTree : Mode.SyntaxTree)
+    (injected : String → Option Mode.SyntaxTree := fun grammar => some { grammar }) :
+    SyntaxTreeM Unit := do
   let some source ← sourceOf syntaxTree syntaxTree.injections .injections | return
   withQuery syntaxTree.grammar source fun query => SyntaxTree.inject snapshot query
   for grammar in ← SyntaxTree.grammars do
     let own := grammar == syntaxTree.grammar
-    let highlights ←
-      if own then
-        sourceOf syntaxTree syntaxTree.highlights .highlights
-      else
-        sourceOf { grammar } none .highlights
-    let some highlights := highlights | continue
+    let some tree := if own then some syntaxTree else injected grammar | continue
+    let some highlights ← sourceOf tree tree.highlights .highlights | continue
     let injections ←
       if own then
         pure (some source)
       else
-        sourceOf { grammar } none .injections
+        sourceOf tree tree.injections .injections
     withQuery grammar highlights fun query => do
         let names ← SyntaxTree.captureNames query
         let languageFaces := faces syntaxTree.captures names
@@ -215,11 +226,13 @@ def keep (snapshot : SnapshotId) (syntaxTree : Mode.SyntaxTree) (own : Option St
 
 /-- Steps 6 to 9 of the module docs, after highlights that succeeded, each
 refusal said in the echo area under the mode's name `mode` and stopping its
-own step alone. -/
-def structural (mode : String) (snapshot : SnapshotId) (syntaxTree : Mode.SyntaxTree) :
+own step alone; the injected languages' trees by grammar name from
+`injected`. -/
+def structural (mode : String) (snapshot : SnapshotId) (syntaxTree : Mode.SyntaxTree)
+    (injected : String → Option Mode.SyntaxTree := fun grammar => some { grammar }) :
     EditorM Unit := do
   let steps : List (String × SyntaxTreeM Unit) :=
-    [("injections", injections snapshot syntaxTree),
+    [("injections", injections snapshot syntaxTree injected),
       ("text objects", keep snapshot syntaxTree syntaxTree.textObjects .textObjects),
       ("indents", keep snapshot syntaxTree syntaxTree.indents .indents)]
   for (what, step) in steps do
@@ -230,8 +243,12 @@ def structural (mode : String) (snapshot : SnapshotId) (syntaxTree : Mode.Syntax
 for its text `text` (the steps of the module docs): attached with the
 grammar, and highlighted with the query in the faces `faces` gives; or,
 refused, detached, so nothing of the mode before is drawn, and said in the
-echo area under the mode's name `mode`. Never refused itself. -/
-def enter (mode : String) (text : TextId) (syntaxTree : Mode.SyntaxTree) : EditorM Unit := do
+echo area under the mode's name `mode`. Each injected language takes the
+tree `injected` gives for its grammar's name (step 7); by default, the bare
+tree of the grammar, so its shipped queries. Never refused itself. -/
+def enter (mode : String) (text : TextId) (syntaxTree : Mode.SyntaxTree)
+    (injected : String → Option Mode.SyntaxTree := fun grammar => some { grammar }) :
+    EditorM Unit := do
   let delay := (← refreshDelay).getD defaultRefreshDelay
   discard (SyntaxTree.lift (SyntaxTree.refreshAfter delay))
   text.withSnapshot fun snapshot => do
@@ -253,7 +270,7 @@ def enter (mode : String) (text : TextId) (syntaxTree : Mode.SyntaxTree) : Edito
         SyntaxTree.release query
       match ← SyntaxTree.lift steps with
       | .ok () =>
-        structural mode snapshot syntaxTree
+        structural mode snapshot syntaxTree injected
       | .error refusal =>
         discard (SyntaxTree.lift (SyntaxTree.detach snapshot))
         say s!"highlights: `{mode}`: {refusal.describe}"

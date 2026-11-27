@@ -155,7 +155,9 @@ from the next command.
   When it says nothing and the old major mode's lineage did, the text is
   detached (`Highlight.leave`). When neither says, the syntax tree port is
   asked nothing. It runs inside the command as an on-enter action does, so
-  its requests are guarded.
+  its requests are guarded. The injected languages of its step 7 are
+  resolved by the same rule as the buffer's language, by grammar name
+  (`Loop.Registered.injectedTreeOf`, below).
 - **The buffer's language is the `code` mode's tree.** Both lineages, the
   old and the new, are read with the tree of the buffer's language
   (`Buffer.language`, looked up by name in `Loop.Registered.languages`),
@@ -169,6 +171,10 @@ from the next command.
   `Editor/Language/Grammar.lean`): a declared grammar with no answer of
   this generation, or one refused that the library does not list, gives
   none, and a registered one fills in the queries read from its directory.
+  Each injected language's tree is resolved by the same rule, by grammar
+  name, from the first language entry naming the grammar
+  (`Loop.Registered.injectedTreeOf`, `Language.Grammar.injectedTreeOf`),
+  read from the state before the mode is set, as the language's tree is.
 - **Highlighting again** (`StateRequest.rehighlight`, made by the core's
   `register-grammars` job's command) needs no window and runs no on-enter
   action. For each open buffer, in the state's order, whose language's
@@ -644,6 +650,16 @@ def Loop.Registered.treeOfLanguage (registered : Loop.Registered) (state : Edito
     Language.Grammar.treeOf registered.grammars state.grammars registered.generation
       language.syntaxTree
 
+/-- The tree an injected language of each grammar, by name, gets in a
+buffer's highlighting (`Highlight.enter`, step 7), by `registered` and the
+answers `state` recorded: the tree of the first of `registered`'s language
+entries naming the grammar, resolved as `treeOfLanguage` resolves a
+buffer's (`Language.Grammar.injectedTreeOf`). -/
+def Loop.Registered.injectedTreeOf (registered : Loop.Registered) (state : EditorState) :
+    String → Option Mode.SyntaxTree :=
+  Language.Grammar.injectedTreeOf registered.grammars state.grammars registered.generation
+    registered.languages
+
 /-- The tree `buffer`'s text is parsed and drawn with, by `registered` and
 the answers `state` recorded: what its major mode's lineage says
 (`Mode.syntaxTreeOf`) over its language's tree (`treeOfLanguage`); `none`
@@ -679,21 +695,21 @@ def rehighlighting (registered : Loop.Registered) (state : EditorState) (grammar
   for (buffer, major, _) in registered.rehighlighted state grammars do
     Highlight.leave buffer.text
     if let some tree := registered.treeOfBuffer state buffer then
-      Highlight.enter major buffer.text tree
+      Highlight.enter major buffer.text tree (registered.injectedTreeOf state)
 
 /-- What runs when the mode `name`, of `lineage` (root first), has become
 the major mode of a buffer over `text` whose old major mode said
 `before` of how its text is parsed: the text highlighted with the new
 lineage's syntax tree, the buffer's `language`'s for a mode that reads its
-language's (`Mode.syntaxTreeOf`), or detached when only the old said one,
-then the lineage's on-enter actions, root first, once with each of
-`views`. -/
+language's (`Mode.syntaxTreeOf`), its injected languages' trees by grammar
+name from `injected`, or detached when only the old said one, then the
+lineage's on-enter actions, root first, once with each of `views`. -/
 def enteringMode (name : String) (text : TextId) (lineage : List Mode)
-    (language : Option Mode.SyntaxTree) (before : Option Mode.SyntaxTree) (views : List ViewId) :
-    EditorM Unit := do
+    (language : Option Mode.SyntaxTree) (injected : String → Option Mode.SyntaxTree)
+    (before : Option Mode.SyntaxTree) (views : List ViewId) : EditorM Unit := do
   match Mode.syntaxTreeOf lineage language, before with
   | some syntaxTree, _ =>
-    Highlight.enter name text syntaxTree
+    Highlight.enter name text syntaxTree injected
   | none, some _ =>
     Highlight.leave text
   | none, none =>
@@ -732,11 +748,15 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
     | some target, some lineage =>
       let language := registered.treeOfLanguage state target.buffer.language
+      let injected := registered.injectedTreeOf state
       let before := registered.treeOfBuffer state target.buffer
       match state.handle (.setMajorMode view name) with
       | (.ok true, state) =>
         dispatched registered state do
-          match ← (enteringMode name target.buffer.text lineage language before [view]).run with
+          match
+            ←
+              (enteringMode name target.buffer.text lineage language injected before
+                    [view]).run with
           | .ok () =>
             next (.ok true)
           | .error error =>
@@ -748,12 +768,13 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
     | some buffer, some lineage =>
       let language := registered.treeOfLanguage state buffer.language
+      let injected := registered.injectedTreeOf state
       let before := registered.treeOfBuffer state buffer
       let views := (state.windows.filter (·.buffer == id)).toList.map (·.id)
       match state.handle (.setBufferMajorMode id name) with
       | (.ok true, state) =>
         dispatched registered state do
-          match ← (enteringMode name buffer.text lineage language before views).run with
+          match ← (enteringMode name buffer.text lineage language injected before views).run with
           | .ok () =>
             next (.ok true)
           | .error error =>

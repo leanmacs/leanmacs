@@ -21,13 +21,14 @@ import Editor.Test.Models
 import Editor.Test.States
 import Editor.Text
 import ModelTest.Check
+import ModelTest.Support.Grammars
 import ModelTest.Support.Modes
 
 /-!
 # Model tests: `Editor/Highlight.lean`
 
-The model tests of `Editor/Highlight.lean`: `highlightFaceChecks` and
-`highlightEnterChecks`. The root module `ModelTest` runs them; its module doc
+The model tests of `Editor/Highlight.lean`: `highlightFaceChecks`,
+`highlightEnterChecks` and `highlightInjectedChecks`. The root module `ModelTest` runs them; its module doc
 says what each shows.
 -/
 
@@ -324,6 +325,95 @@ def highlightEnterChecks : List Check :=
               (language := some "json") with
           | some (_, major, model) =>
             major == some "listing" && model.attached.isEmpty && model.highlighted.isEmpty
+          | none => false }]
+
+/-- The `setup` fragment that defines the language `markdown` of `*.md`
+with an injections query of its own: the syntax tree model parses every
+text as JSON and only records injections, so this stands in for Markdown's
+fence injections. -/
+def markdownWithFences : SetupM Unit :=
+  defineLanguage
+    { name := "markdown", patterns := [.extension "md"]
+      syntaxTree :=
+        { grammar := "markdown", injections := some "(pair value: (string) @injection.content)" } }
+
+/-- The injected languages the driver's syntax tree model records, each as
+its grammar's name and the names of the faces its highlights are drawn
+in, in order. -/
+def injectedFaces (driver : TestDriver) : Array (String × Array String) :=
+  driver.model.syntaxTree.languages.map fun (_, name, _, faces, _) => (name, faceNames faces)
+
+/-- The injected languages of a Markdown buffer `/w/a.md` opened after the
+command of the `register-grammars` job of a config whose `setup` is
+`markdownWithFences` and then `setup` (`installedWith`, with `markdown`
+compiled in beside `json` and `lean`); `none` when the install asked for
+no registration. -/
+def injectedAfter (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
+    (files : Array (String × String)) (packages : Array Package := #[])
+    (grammarDirectories : List (String × System.FilePath) := []) :
+    Option (Array (String × Array String)) := do
+  let driver ←
+    installedWith (markdownWithFences *> setup) libraries files (packages := packages)
+        (grammarDirectories := grammarDirectories) (compiled := #["json", "lean", "markdown"])
+  let (answered, _) := driver.finish 1
+  return injectedFaces (openedIn answered "/w/a.md")
+
+/-- The checks of the languages a buffer's injections are given for
+grammars registered at run time (`Editor/Highlight.lean`, step 7), driven
+from a config's install through the `register-grammars` job's command on
+the loop's driver: each takes the tree its grammar resolves to
+(`Language.Grammar.injectedTreeOf`). -/
+def highlightInjectedChecks : List Check :=
+  let iniLibrary : Array (String × GrammarRegistry.Library) :=
+    #[("/g/libtree-sitter-ini.so", .exports #[("tree_sitter_ini", .grammar)])]
+  let shippedJson : Array String :=
+    #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
+  [{  name :=
+        "a Markdown buffer opened after the job's command gives its fences a language for the grammar config declared, its highlights read from the grammar's query directory"
+      run :=
+        pure <|
+          match
+            injectedAfter declaresIni iniLibrary
+              #[("/g/queries/highlights.scm", declaredHighlights)] with
+          | some languages =>
+            languages.filter (·.1 == "ini") == #[("ini", #["syntax.number"])] &&
+              languages.filter (·.1 == "json") == #[("json", shippedJson)]
+          | none => false },
+    { name :=
+        "a Markdown buffer opened after the job's command gives its fences a language for the grammar a package ships, drawn with the package's highlights query"
+      run :=
+        pure <|
+          match
+            injectedAfter (pure ())
+              #[("/s/grammars/ini-grammar/darwin-aarch64/libtree-sitter-ini.so",
+                  .exports #[("tree_sitter_ini", .grammar)])]
+              #[("/s/grammars/ini-grammar/queries/highlights.scm", packageHighlights)] (packages :=
+              #[iniPackage]) (grammarDirectories := iniStagedAt) with
+          | some languages => languages.filter (·.1 == "ini") == #[("ini", #["syntax.string"])]
+          | none => false },
+    { name :=
+        "a Markdown buffer opened after the job's command: a declaration overriding the compiled-in lean keeps a lean fence highlighted with the declared query"
+      run :=
+        pure <|
+          let library := "/g/libtree-sitter-lean.so"
+          match
+            injectedAfter (defineGrammar "lean" library)
+              #[(library, .exports #[("tree_sitter_lean", .grammar)])]
+              #[("/g/queries/highlights.scm", declaredHighlights)] with
+          | some languages => languages.filter (·.1 == "lean") == #[("lean", #["syntax.number"])]
+          | none => false },
+    { name :=
+        "a Markdown buffer opened after the job's command: the ini language entry's own highlights query wins over the grammar's highlights.scm for the injected ini"
+      run :=
+        pure <|
+          let setup : SetupM Unit := do
+            defineGrammar "ini" "/g/libtree-sitter-ini.so"
+            defineLanguage
+                { name := "ini", patterns := [.extension "ini"],
+                  syntaxTree := { grammar := "ini", highlights := some "(string) @string" } }
+          match
+            injectedAfter setup iniLibrary #[("/g/queries/highlights.scm", declaredHighlights)] with
+          | some languages => languages.filter (·.1 == "ini") == #[("ini", #["syntax.string"])]
           | none => false }]
 
 end ModelTest

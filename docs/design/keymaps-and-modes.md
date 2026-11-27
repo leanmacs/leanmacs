@@ -3729,6 +3729,19 @@ otherwise be a cycle).
     language's tree where the entry gives no source of its own: the
     entry's own override wins over a file. A missing file ships no query of
     its kind, as a compiled-in grammar that ships none.
+  - *Injected languages.* The declared queries also fill an injected
+    language's tree, by grammar name (`Language.Grammar.injectedTreeOf`):
+    the tree of the first language entry naming the grammar, or the bare
+    grammar when none does, resolved as a buffer's is, the entry's own
+    source winning over a file. So a Markdown fence of a config-declared
+    or package-shipped grammar, or of a compiled-in one a declaration
+    overrides, is drawn with the queries read from its directory; one of a
+    grammar still awaiting its answer, or refused and no longer listed,
+    gives no language. A compiled-in language whose entry gives its own
+    highlights uses them for its injections too. A Markdown buffer
+    highlighted before the answers arrive is not highlighted again for
+    them: its fences of a newly registered grammar stay plain until its
+    mode is set again.
   - *The order.* Each install whose grammar table is not empty starts the
     core's job `register-grammars` for its config generation, owned by
     `config`, after cancelling the old config's jobs
@@ -3756,9 +3769,8 @@ otherwise be a cycle).
   - *Limits.* A declaration a later reload drops stays registered in the
     library until the editor restarts (the library has no unregister); its
     languages fall back as `treeOf` says. The declared queries fill only
-    the language's tree, not a mode's own tree that names the grammar,
-    and are not used for an injected language: the injections step asks
-    each grammar's shipped highlights, and a registered grammar ships none.
+    the language's tree and an injected language's, not a mode's own tree
+    that names the grammar.
 - **The indent unit is read by `=` and by the commands that open a
   line** (`Target.indentUnit`): the unit of the buffer's language's entry,
   which a command asks the loop for by name (`indentUnitOf`, answered from
