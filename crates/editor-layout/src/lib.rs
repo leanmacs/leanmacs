@@ -73,6 +73,9 @@
 //!   rebuilt when none can be had (`tests/patches.rs`), and the bound on a
 //!   very long row (`tests/long_line.rs`);
 //! - the round trip of a position through the layers (`tests/layers.rs`);
+//! - measuring a run: its width in its faces over the default face, in
+//!   whole points rounded up, at any scale, its tabs expanded and nothing
+//!   after a line feed ([`Layout::measure`], `tests/measure.rs`);
 //! - blocks: where a view's blocks are drawn, that each of their lines
 //!   counts among the lines that fit, the first-row rule, that the rows
 //!   query and the spot count them as the frame draws them and a move
@@ -123,12 +126,17 @@ use std::ops::Range;
 
 use crate::blocks::{BlockLayout, Blocks, ViewBlocks};
 use crate::cache::{Counters, StatusKept, Texts, state};
-use crate::decoration::{DecorationSource, Styles, TextSpansSource, fonts_of};
+use editor_text::Text;
+
+use crate::decoration::{
+    DecorationSource, FaceSpanSource, Span, Styles, TextSpansSource, fonts_of,
+};
 use crate::face::{FaceDef, SELECTION_FACE};
+use crate::line::font_runs;
 use crate::query::{Moved, QueryError, RowRange, Shown, Spot, Walker, relative_stops};
-use crate::scene::{Block, Padding, TextKey, TextRef, ViewId};
-use crate::shaper::{FontId, Shaper};
-use crate::tabs::{DEFAULT_TAB_WIDTH, row_content, segment_count};
+use crate::scene::{Block, Decoration, Padding, TextKey, TextRef, ViewId};
+use crate::shaper::{FontId, ShapeInput, ShapedLine, Shaper};
+use crate::tabs::{DEFAULT_TAB_WIDTH, boundary_at_or_before, expand, row_content, segment_count};
 use crate::wrap::Outcome;
 
 /// `points` in pixels at `scale`: the points times the scale, unrounded.
@@ -416,6 +424,59 @@ impl<S: Shaper> Layout<S> {
                     height: spot.height,
                 }))
         })
+    }
+
+    /// How wide `text` is, laid out in `decorations` (bytes of `text`,
+    /// each a face) over the default face, unbroken: in whole points, so a
+    /// caller that computes align-to stops from it never handles a scale
+    /// ([`scene`], "Align-to stops").
+    ///
+    /// The run is `text` up to its first line feed, without a carriage
+    /// return before it, its tabs expanded from column 0 by the tab
+    /// layer's rule ([`tabs`]). Its faces are resolved as a block's are,
+    /// in the faces as last defined and at the scale last set, so it
+    /// measures what a row of the same text in the same faces draws.
+    /// The width is in pixels divided by the scale, rounded to the
+    /// nearest 64th and then up to a whole point. Nothing is kept, and no
+    /// counter counts it.
+    pub fn measure(&mut self, text: &str, decorations: &[Decoration]) -> u32 {
+        let run = text.split('\n').next().unwrap_or_default();
+        let run = if run.len() < text.len() {
+            run.strip_suffix('\r').unwrap_or(run)
+        } else {
+            run
+        };
+        let snapshot = Text::from(run).snapshot();
+        let spans: Vec<Span> = decorations
+            .iter()
+            .map(|decoration| {
+                let start = boundary_at_or_before(&snapshot, decoration.start);
+                Span {
+                    bytes: start..boundary_at_or_before(&snapshot, decoration.stop).max(start),
+                    face: self.styles.intern(&decoration.face),
+                }
+            })
+            .collect();
+        let source = FaceSpanSource::new(spans);
+        let sources: [&dyn DecorationSource; 1] = [&source];
+        let fonts = fonts_of(
+            &sources,
+            &snapshot,
+            0..run.len(),
+            &self.styles,
+            &self.shaper,
+            self.base,
+        );
+        let expanded = expand(run, self.tab_width);
+        let runs = font_runs(&expanded, run.len(), &fonts, self.base);
+        let shaped = self.shaper.shape(&ShapeInput {
+            text: expanded.text().to_owned(),
+            runs,
+        });
+        let width: f32 = shaped.break_lines(None).iter().map(|line| line.width).sum();
+        let sixty_fourths = (f64::from(width) / f64::from(self.scale()) * 64.0).round();
+        // A float cast to a whole number stops at the number's ends.
+        (sixty_fourths / 64.0).ceil() as u32
     }
 
     /// `extent` less `points` of padding at each end, in pixels at the
