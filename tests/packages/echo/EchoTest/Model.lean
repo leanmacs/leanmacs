@@ -1,5 +1,6 @@
 import EchoTest.Echo.Checksum
 import EchoTest.Echo.Job
+import EchoTest.Echo.Library
 import EchoTest.Echo.Model
 
 /-!
@@ -17,7 +18,8 @@ and runs their checks.
 one did. -/
 def main : IO UInt32 := do
   let checks :=
-    EchoTest.echoChecksumChecks ++ (← EchoTest.echoModelChecks) ++ EchoTest.echoJobChecks
+    EchoTest.echoChecksumChecks ++ (← EchoTest.echoModelChecks) ++ EchoTest.echoJobChecks ++
+      EchoTest.echoLibraryChecks
   let failed := checks.filter fun check => !check.2
   for check in failed do
     IO.eprintln s!"FAILED: {check.1}"

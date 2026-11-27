@@ -1,23 +1,33 @@
 [package]
 name = "echo-service"
 version = "0.1.0"
-description = "The fixture package echo's service: it answers each request with its text, on a thread of its own, and completes it on the completion queue"
+description = "The fixture package echo's service: it answers each request with its text, on a thread of its own, and completes it through the package runtime the core hands its library"
 edition.workspace = true
 license.workspace = true
 publish = false
 
 [lib]
-# The package-set build links it into the one archive it generates from
-# the set (lean/lakefile.lean, `editorRust`); `rlib` is what that crate
-# depends on, and what the tests link.
-crate-type = ["rlib"]
+# A library of its own, loaded by the core when the editor starts
+# (docs/design/packages.md, "A library loaded when the editor runs, as
+# built"): the package's lakefile builds the `cdylib` and compiles its path
+# into the glue, which asks the core to load it. `rlib` is what this
+# crate's own integration test links.
+crate-type = ["cdylib", "rlib"]
 
-# The conventions every service keeps, and nothing else of the editor's: a
-# package's crate depends on `editor-service` alone (docs/design/packages.md,
-# "Rust in a package"), which the generated crate's cargo-deny bans hold
-# (`ffi-test`; docs/dev-practices/the-gate.md, "The Rust bans check").
+# No dependency of the editor's, `editor-service` included: the library
+# reaches the core only through the package runtime it is handed at its
+# init, through a hand-written mirror of the runtime (`src/runtime.rs`).
+# It carries its own Rust standard library, and no copy of any of the
+# core's statics. `deny.toml`'s entry for `editor-service` leaves this
+# crate out of its wrappers, so it cannot depend on it again, even for its
+# tests.
 [dependencies]
-editor-service = { path = "../../../../crates/editor-service" }
+
+# The typed time bounds its tests' waits take (`HangGuard`, `recv`,
+# `wait_while`), under the root `clippy.toml`'s wait bans. `editor-wait`
+# depends on nothing, and is no part of the library.
+[dev-dependencies]
+editor-wait = { path = "../../../../crates/editor-wait" }
 
 [lints]
 workspace = true

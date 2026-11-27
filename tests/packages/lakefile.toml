@@ -34,10 +34,11 @@ path = "greeting-loud"
 name = "greeting-api"
 path = "greeting-api"
 
-# `echo` holds Rust: a crate of its own and the glue that binds it, which
-# the package-set build links into this set's editor through the one Rust
-# archive it generates from the set (docs/design/packages.md, "Rust in a
-# package").
+# `echo` holds Rust: a crate of its own, built as a library of its own that
+# the core loads when the editor starts, and the glue that loads it and
+# binds it (docs/design/packages.md, "A library loaded when the editor
+# runs, as built"). It is not folded into the Rust archive the package-set
+# build generates from the set.
 [[require]]
 name = "echo"
 path = "echo"
@@ -52,7 +53,8 @@ path = "../../packages"
 # `agents-api` is the interface package of agents (packages/agents-api/), and
 # `acp` its implementation over the Agent Client Protocol's Rust SDK
 # (packages/acp/), whose crate the package-set build links into this set's
-# editor through the one Rust archive it generates from the set. Both are
+# editor through the one Rust archive it generates from the set, the only
+# crate in it. Both are
 # opt-in first-party packages, which the default set leaves out because
 # `acp`'s crate needs the user's own Cargo (packages/lakefile.toml's
 # header): this set requires them so that every package step covers them.

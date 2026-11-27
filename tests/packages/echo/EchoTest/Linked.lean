@@ -5,6 +5,8 @@ import EchoTest.Linked.Echo.Packages
 import EchoTest.Linked.Echo.Real
 import EchoTest.Linked.Echo.Real.Attach
 import EchoTest.Linked.Echo.Real.Job
+import EchoTest.Linked.Echo.Real.Load
+import EchoTest.Linked.Echo.Real.Probe
 import Editor
 import Editor.Headless
 import Editor.RealHost
@@ -16,8 +18,9 @@ import Editor.Test.Linked.Services
 
 The root of an executable linked as the editor is linked (the core's
 `editorLinked` facet, `lake build +EchoTest.Linked:editorLinked`), with the
-core's glue, the package's glue and the Rust archive generated from the
-package's own workspace, which holds the package's crate. The gate builds
+core's glue, the package's glue and the core's Rust archive; the package's
+crate is a library of its own, which `Echo.Real`'s initialiser loads before
+`main`. The gate builds
 it in `mise run lean` and runs it in `mise run ffi-test`
 (`tools/package-set.sh`), in the package's directory, with the toolchain's
 directory and the core's `.olean` directory as its arguments.
@@ -41,6 +44,13 @@ test kit's services and pump, and runs:
   packages (`Editor.Headless.packageServices Echo.packages`, named here as
   only this root may import the headless host;
   `EchoTest.Linked.echoJobChecks`, `EchoTest/Linked/Echo/Real/Job.lean`);
+- the load of echo's library through its glue and the core's loader, each
+  status read back as the Lean side reads it, and the initialiser's body
+  handed a missing library (`EchoTest.Linked.echoLoadChecks`,
+  `EchoTest/Linked/Echo/Real/Load.lean`, a plain group);
+- the fixture set's editor, run with `--probe` through the real process
+  port, which passes only once echo's initialiser loaded the library
+  (`EchoTest.Linked.echoProbeChecks`, `EchoTest/Linked/Echo/Real/Probe.lean`);
 
 and says so, counting the contract's properties.
 
@@ -64,21 +74,26 @@ abbrev EchoTest.Linked.Context :=
   Editor.Test.Linked.HostContext × Editor.Test.Linked.Services
 
 /-- Every check of the linked test: its check set (`Editor.CheckGroup`), the
-package's checks through the stepped host in a plain group, the contract's
-one check in the group of `EchoTest/Linked/Echo/Real.lean`, the take-over's
-checks in the group of `EchoTest/Linked/Echo/Real/Attach.lean`, and the
-running jobs' checks in the group of `EchoTest/Linked/Echo/Real/Job.lean`,
-over the package services the edge builds from echo's packages, the last
-three of the wiring set. -/
+package's checks through the stepped host and the load's checks, each in a
+plain group, the contract's one check in the group of
+`EchoTest/Linked/Echo/Real.lean`, the take-over's checks in the group of
+`EchoTest/Linked/Echo/Real/Attach.lean`, the running jobs' checks in the
+group of `EchoTest/Linked/Echo/Real/Job.lean`, over the package services
+the edge builds from echo's packages, and the probe of the fixture set's
+editor in the group of `EchoTest/Linked/Echo/Real/Probe.lean`, the last four
+of the wiring set. -/
 def EchoTest.Linked.checks : List (Editor.CheckGroup EchoTest.Linked.Context EchoTest.Check) :=
   [.plain fun (context, _) => EchoTest.Linked.echoPackageChecks context,
+    .plain fun _ => EchoTest.Linked.echoLoadChecks,
     .wired "EchoTest.Linked.Echo.Real" wiringSet.EchoTest.Linked.Echo.Real fun (_, services) =>
       EchoTest.Linked.echoRealChecks services.completions,
     .wired "EchoTest.Linked.Echo.Real.Attach" wiringSet.EchoTest.Linked.Echo.Real.Attach
       fun (_, services) => EchoTest.Linked.attachChecks services,
     .wired "EchoTest.Linked.Echo.Real.Job" wiringSet.EchoTest.Linked.Echo.Real.Job
       fun (_, services) =>
-      EchoTest.Linked.echoJobChecks services (Editor.Headless.packageServices Echo.packages)]
+      EchoTest.Linked.echoJobChecks services (Editor.Headless.packageServices Echo.packages),
+    .wired "EchoTest.Linked.Echo.Real.Probe" wiringSet.EchoTest.Linked.Echo.Real.Probe
+      fun (_, services) => EchoTest.Linked.echoProbeChecks services]
 
 /-- Runs the checks `mode` selects from the check set
 (`Editor.CheckGroup.select`) with the hosts' context, made with

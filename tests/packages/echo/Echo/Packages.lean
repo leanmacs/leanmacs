@@ -29,8 +29,9 @@ itself, the Rust-backed binding as the runner's package service
 
 The module imports the Rust-backed binding, `Echo.Real`, so that the editor
 of a set that holds this package, whose root imports the entry module and
-so this module, links the binding, the package's glue and the crate, and
-its link fails if the Rust archive does not hold the crate.
+so this module, links the binding and the package's glue, and loads the
+package's library when it starts (`Echo.Real`'s initialiser): an editor
+whose load is refused exits 1 before its `main`, saying why.
 -/
 
 namespace Echo

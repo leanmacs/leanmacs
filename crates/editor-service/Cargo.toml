@@ -12,7 +12,11 @@ publish = false
 # typed time bounds, which itself depends on nothing and which it
 # re-exports (`editor_service::wait`) so that a package's crate bounds its
 # waits with them and still depends on this crate alone. `deny.toml` gives
-# neither crate an entry: any crate may depend on them. No dev-dependency.
+# this crate an entry naming the crates linked into the editor's one Rust
+# archive that use it; a package whose crate ships as a library of its own
+# (the fixture echo's) is left out, and reaches the core through the
+# package runtime (`editor-package-library`) instead. `editor-wait` has no
+# entry: any crate may depend on it. No dev-dependency.
 [dependencies]
 editor-wait = { path = "../editor-wait" }
 

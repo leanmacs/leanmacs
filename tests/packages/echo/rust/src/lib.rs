@@ -20,29 +20,40 @@
 //! - **Plain data only.** The reply is taken by the request's id once the
 //!   completion has arrived ([`Echo::take`]).
 //!
-//! The logic is here, over the port, and tested on `editor-service`'s
-//! fake, [`editor_service::RecordingCompleter`]. The process's instance,
-//! over the real completer, the service [`SERVICE`], and the C functions
-//! Lean's glue calls are in [`ffi`], and `tests/wiring.rs` runs them over
-//! the process's completion queue.
+//! The logic is here, over echo's own ports ([`port`]), and tested on
+//! hand-written fakes of them. The crate is a library of its own, loaded
+//! by the core when the editor starts (docs/design/packages.md, "A library
+//! loaded when the editor runs, as built"): its one export is its init,
+//! [`ffi::editor_package_init`], which is handed the core's package runtime
+//! ([`runtime`]), registers the service `echo` through it, and answers the
+//! table of C functions the glue forwards echo's `@[extern]` calls through
+//! ([`ffi::EchoTable`]). `tests/init.rs` runs the init and the table over
+//! a runtime of test functions.
 //!
 //! A request may also read a streaming child the core's process service
-//! opened, taken over through `editor-service` alone ([`attach`],
-//! [`Echo::attach`]): its answer is what it read ([`Echo::take_read`]).
+//! opened, taken over through the runtime ([`attach`], [`Echo::attach`]):
+//! its answer is what it read ([`Echo::take_read`]).
+//!
+//! The crate depends on nothing of the editor's: it reaches the core only
+//! through the runtime, so it holds no copy of the core's statics.
 
 pub mod attach;
+pub mod buffer;
+#[cfg(test)]
+mod fakes;
 pub mod ffi;
+pub mod port;
+pub mod runtime;
 pub mod zlib;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 
-use editor_service::stream::ChildStreams;
-use editor_service::{Completer, Service};
+use crate::port::{ChildStreams, Completer};
 
-/// The service, as the completion queue names it.
-pub static SERVICE: Service = Service::named("echo");
+/// The name echo's service registers under, through the runtime.
+pub const SERVICE_NAME: &str = "echo";
 
 /// What a request answers: its text, back, and the text's checksum.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -351,8 +362,9 @@ impl<C: Completer> Shared<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor_service::RecordingCompleter;
-    use editor_service::wait::HangGuard;
+    use crate::fakes::{RecordingCompleter, ScriptedChild};
+    use crate::port::Ended;
+    use editor_wait::HangGuard;
     use std::time::Duration;
 
     /// hang guard: the reports each wait ends on; only a hang reaches the
@@ -466,17 +478,10 @@ mod tests {
 
     #[test]
     fn an_attached_request_reads_its_child_on_a_worker_and_is_taken_once_as_a_read() {
-        use editor_service::frame::Framing;
-        use editor_service::stream::StreamSource;
-        use editor_service::stream::fake::FakeSource;
-
         let echo = echo();
-        let fake = FakeSource::new();
-        let child = fake.child(Framing::Lines, Framing::Lines, 64, false);
-        child.out(b"one\n").exit(0);
-        let streams = fake.take_over(child.id()).expect("taken over");
+        let child = ScriptedChild::new(false).delivers(&["one"], Some(Ended::Exited { code: 0 }));
 
-        assert!(echo.attach(6, streams));
+        assert!(echo.attach(6, Box::new(child)));
         assert_eq!(reported(&echo, &[6]), [6]);
 
         assert_eq!(echo.take(6), None, "not a reply");
@@ -537,7 +542,7 @@ mod tests {
 
     #[test]
     fn a_flush_made_while_a_request_s_report_is_held_is_reported_behind_it() {
-        use editor_service::wait::recv;
+        use editor_wait::recv;
         use std::sync::mpsc::{Receiver, Sender, channel};
 
         /// A recording completer whose first report of `held` is held: it
@@ -610,10 +615,8 @@ mod tests {
     #[test]
     fn an_attached_request_cancelled_while_its_consumer_is_blocked_in_a_pull_gets_no_completion_once_its_child_is_cancelled()
      {
-        use editor_service::frame::Framing;
-        use editor_service::stream::fake::FakeSource;
-        use editor_service::stream::{InputClosed, Pulled, StreamSource};
-        use editor_service::wait::recv;
+        use crate::port::{InputClosed, Pulled};
+        use editor_wait::recv;
         use std::sync::mpsc::{Receiver, Sender, channel};
 
         /// The fake's streams, with the consumer's first pull held: it says
@@ -641,9 +644,10 @@ mod tests {
         }
 
         let echo = echo();
-        let fake = FakeSource::new();
-        let child = fake.child(Framing::Lines, Framing::Lines, 64, false);
-        let streams = fake.take_over(child.id()).expect("taken over");
+        // A child with nothing scripted: once let go, its pull answers
+        // cancelled, as the process service's does for a child cancelled
+        // while its consumer was blocked in a pull.
+        let streams: Box<dyn ChildStreams> = Box::new(ScriptedChild::new(false));
         let (pulling, pulled) = channel();
         let (release, released) = channel();
         let held = Held {
@@ -656,7 +660,6 @@ mod tests {
         recv(&pulled, DEADLINE).expect("the consumer pulls");
         // The job's cancel: its wait withdrawn first, then its child ended.
         assert!(echo.cancel(6));
-        child.cancel();
         release.send(()).expect("the consumer is held in its pull");
         echo.join_workers();
 

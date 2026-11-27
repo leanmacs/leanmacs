@@ -5,18 +5,19 @@ import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Services
 
 /-!
-# Linked tests: a child taken over by the echo crate
+# Linked tests: a child taken over by echo's library
 
 A streaming child opened through the linked test kit's real process service
 (`services.jobs.processes`, the port a job's `Process.start` reaches) is
 handed by its number to the binding `Echo.Real.attach`, and the package's
-crate takes it over through `editor-service`'s stream source alone
-(`editor_service::stream::take_over`), which `editor-ffi` provided when the
-library started. The crate reads the child's lines, writes `pong` back when
-it reads `ping-me`, sees its exit, and completes a request of its own
-service, which the kit's pump ends and Lean takes (`Echo.Real.attachTakeRaw`).
-So one Rust archive holds one copy of `editor-service`'s static, and the
-source the library provided is the one the package's crate finds.
+library, loaded when the program started, takes it over through the package
+runtime alone (its `take_over`, over the stream source `editor-ffi` provided
+when the core's library started). The library reads the child's lines
+through the runtime, writes `pong` back when it reads `ping-me`, sees its
+exit, and completes a request of its own service through the runtime, which
+the kit's pump ends and Lean takes (`Echo.Real.attachTakeRaw`). So a
+library that carries no copy of `editor-service`'s statics reaches the
+core's one process service and completion queue.
 
 The child's bound is the opener's choice, in megabytes, as an agent's would
 be. Each wait is on the completion itself (`Job.awaitWithin`), the kit's
@@ -31,8 +32,7 @@ port's rules by its contract, on the fake and on real processes.
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
 def wiringSet.EchoTest.Linked.Echo.Real.Attach : Editor.WiringSet :=
-  .wiring
-    "the library's process service, taken over by the echo crate through editor-service's stream source"
+  .wiring "the library's process service, taken over by echo's library through the package runtime"
     "the subject is a child the real process port opened; no fake opens a child the crate can take"
 
 namespace EchoTest.Linked

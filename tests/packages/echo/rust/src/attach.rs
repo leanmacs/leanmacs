@@ -2,25 +2,24 @@
 //! process service, and reading it in Rust: what a package's crate that
 //! speaks to a child (an agent's, a language server's) does, as a fixture.
 //!
-//! It reaches the core's one process service through `editor-service`
-//! alone ([`editor_service::stream::take_over`]): this crate depends on
-//! nothing else of the editor's, and `rust/Cargo.toml` says so.
+//! It reaches the core's one process service through the package runtime
+//! alone ([`RuntimeChild::take_over`], over the runtime's `take_over`,
+//! `child_pull`, `child_write` and `child_release`): this crate depends on
+//! nothing of the editor's, and `rust/Cargo.toml` says so.
 //!
 //! [`consume`] is the logic: it pulls the child's lines, writes `pong` back
 //! when it reads `ping-me`, and stops at the child's end or a cancel. It is
-//! tested on `editor-service`'s fake source,
-//! [`editor_service::stream::fake::FakeSource`], stepped before each pull.
+//! tested on a scripted child of echo's own port (`crate::fakes`).
 //! [`Echo::attach`](crate::Echo::attach) runs it as a request of the
 //! package's service, on a worker the service owns, and completes the
-//! request once it has read to the end; [`echo_ffi_attach`] takes the child
-//! over and hands it to the process's service, and [`echo_ffi_attach_take`]
-//! takes what it read.
+//! request once it has read to the end; [`attach`] takes the child over
+//! and hands it to the process's service, and [`attach_take`] takes what
+//! it read: the table's `attach` and `attach_take` ([`crate::ffi::EchoTable`]).
 
-use editor_service::buffer;
-use editor_service::frame::Frames;
-use editor_service::stream::{self, ChildStreams, Ended, Pulled};
-
-use crate::ffi::{ECHO, RawReply};
+use crate::buffer;
+use crate::ffi::{RawReply, loaded};
+use crate::port::{ChildStreams, Ended, Frames, Pulled};
+use crate::runtime::RuntimeChild;
 
 /// What [`consume`] read of a child: each line, and a last line that says
 /// how it ended or that it was cancelled; and how many pulls it took.
@@ -45,8 +44,8 @@ fn said(ended: &Ended) -> String {
     match ended {
         Ended::Exited { code } => format!("<exited {code}>"),
         Ended::Signalled { signal } => format!("<signalled {signal}>"),
-        Ended::LineTooLong { .. } => "<line too long>".to_owned(),
-        Ended::MessageTooLong { .. } => "<message too long>".to_owned(),
+        Ended::LineTooLong => "<line too long>".to_owned(),
+        Ended::MessageTooLong => "<message too long>".to_owned(),
         Ended::Failed(words) => format!("<failed: {words}>"),
     }
 }
@@ -80,29 +79,32 @@ pub fn consume(streams: &dyn ChildStreams) -> Read {
     Read { lines, pulls }
 }
 
-/// Takes the streaming child `child` over and reads it as the request
-/// `request` of the process's service ([`Echo::attach`](crate::Echo::attach)),
-/// which completes it once the child has ended or was cancelled. False
-/// when the take-over is refused, or the request is in use.
-#[unsafe(no_mangle)]
-pub extern "C" fn echo_ffi_attach(request: u64, child: u64) -> bool {
-    match stream::take_over(child) {
-        Ok(streams) => ECHO.attach(request, streams),
-        Err(_) => false,
+/// Takes the streaming child `child` over through the runtime and reads it
+/// as the request `request` of the process's service
+/// ([`Echo::attach`](crate::Echo::attach)), which completes it once the
+/// child has ended or was cancelled. False when the library is not loaded,
+/// the take-over is refused, or the request is in use.
+pub extern "C" fn attach(request: u64, child: u64) -> bool {
+    let Some(loaded) = loaded() else {
+        return false;
+    };
+    match RuntimeChild::take_over(loaded.runtime, child) {
+        Some(streams) => loaded.echo.attach(request, Box::new(streams)),
+        None => false,
     }
 }
 
 /// Takes what the request `request` read
 /// ([`Echo::take_read`](crate::Echo::take_read)): returns whether there
 /// was something, and if so fills `out` with its lines joined by line
-/// feeds in `text` and its pulls in `checksum`.
+/// feeds in `text` and its pulls in `checksum`. False when the library is
+/// not loaded.
 ///
 /// # Safety
 ///
 /// `out` points to a writable [`RawReply`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn echo_ffi_attach_take(request: u64, out: *mut RawReply) -> bool {
-    let Some(read) = ECHO.take_read(request) else {
+pub unsafe extern "C" fn attach_take(request: u64, out: *mut RawReply) -> bool {
+    let Some(read) = loaded().and_then(|loaded| loaded.echo.take_read(request)) else {
         return false;
     };
     let (text, text_len) = buffer::lend(read.text().into_bytes());
@@ -120,40 +122,27 @@ pub unsafe extern "C" fn echo_ffi_attach_take(request: u64, out: *mut RawReply) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor_service::frame::Framing;
-    use editor_service::stream::StreamSource;
-    use editor_service::stream::fake::FakeSource;
+    use crate::fakes::{CLOSED, ScriptedChild};
 
     #[test]
     fn a_child_is_read_to_its_end_and_answered_pong_for_ping_me() {
-        let fake = FakeSource::new();
-        let child = fake.child(Framing::Lines, Framing::Lines, 1 << 20, true);
-        child
-            .out(b"one\nping-me\n")
-            .on_line(b"pong\n", b"got pong\nthree\n")
-            .exit(2);
-        let streams = fake.take_over(child.id()).expect("taken over");
+        let child = ScriptedChild::new(true)
+            .delivers(&["one", "ping-me"], None)
+            .delivers(&["got pong", "three"], Some(Ended::Exited { code: 2 }));
 
-        let read = consume(&*streams);
+        let read = consume(&child);
 
-        assert_eq!(
-            read.text(),
-            "one\nping-me\ngot pong\nthree\n<exited 2>",
-            "the reply came once `pong` was written"
-        );
+        assert_eq!(read.text(), "one\nping-me\ngot pong\nthree\n<exited 2>",);
         assert_eq!(read.pulls, 2);
-        assert_eq!(fake.record().written, [(child.id(), b"pong\n".to_vec())]);
+        assert_eq!(child.written(), [b"pong\n".to_vec()]);
     }
 
     #[test]
     fn a_cancelled_child_reads_as_cancelled() {
-        let fake = FakeSource::new();
-        let child = fake.child(Framing::Lines, Framing::Lines, 64, true);
-        let streams = fake.take_over(child.id()).expect("taken over");
-        child.cancel();
+        let child = ScriptedChild::new(true);
 
         assert_eq!(
-            consume(&*streams),
+            consume(&child),
             Read {
                 lines: vec!["<cancelled>".to_owned()],
                 pulls: 0
@@ -163,21 +152,16 @@ mod tests {
 
     #[test]
     fn a_child_that_ends_otherwise_says_how() {
-        let fake = FakeSource::new();
-        let long = fake.child(Framing::Lines, Framing::Lines, 4, false);
-        long.out(b"abcdef\n");
-        let signalled = fake.child(Framing::Lines, Framing::Lines, 64, true);
-        signalled.out(b"ping-me\n").signal(15);
+        let long = ScriptedChild::new(false).delivers(&[], Some(Ended::LineTooLong));
+        let signalled =
+            ScriptedChild::new(false).delivers(&["ping-me"], Some(Ended::Signalled { signal: 15 }));
+        let failed = ScriptedChild::new(false).delivers(&[], Some(Ended::Failed("bad".to_owned())));
 
-        let long = consume(&*fake.take_over(long.id()).expect("taken over"));
-        let signalled = consume(&*fake.take_over(signalled.id()).expect("taken over"));
-
-        assert_eq!(long.text(), "<line too long>");
-        assert!(
-            signalled.text().starts_with("<write refused:"),
-            "{}",
-            signalled.text()
+        assert_eq!(consume(&long).text(), "<line too long>");
+        assert_eq!(
+            consume(&signalled).text(),
+            format!("<write refused: {CLOSED}>\nping-me\n<signalled 15>")
         );
-        assert!(signalled.text().ends_with("ping-me\n<signalled 15>"));
+        assert_eq!(consume(&failed).text(), "<failed: bad>");
     }
 }
