@@ -42,6 +42,14 @@ built"):
   the build job's reading of its lines (`PackageSet.missingTooling?`)
   answers the core's sentence for echo and cargo, so Lake's real line and
   the reader are held to each other.
+- **A package that still declares an `editorRustCrate` target is
+  refused, naming it and pointing at package libraries.** A third copy of
+  echo, its library prebuilt in `lib/` so no Cargo is needed, with an
+  `editorRustCrate` target appended to its lakefile, in a set requiring
+  only it and the core: `lake build :editorLibraries` exits non-zero, and
+  the build job's reading of its lines (`PackageSet.failureReason?`)
+  answers the core's refusal for echo (`rustCrateRefusal` in
+  `lean/lakefile.lean`).
 
 **The child's environment** is the build job's shape
 (`PackageSet.Order.environmentOf`): the user's Lean, Lake and compiler
@@ -78,6 +86,12 @@ open Editor Editor.Test.Linked
 /-- The library file a build of echo makes on this platform. -/
 def echoLibraryFile : String :=
   s!"libecho_service.{if System.Platform.isOSX then "dylib" else "so"}"
+
+/-- The sentence the core refuses echo with when it declares an
+`editorRustCrate` target (`rustCrateRefusal "echo"` in
+`lean/lakefile.lean`, whose `#guard` pins the whole text). -/
+def echoRustCrateRefusal : String :=
+  "echo declares an `editorRustCrate` target, but the editor no longer compiles a package's Rust into its own archive: ship it as a package library of its own, declared with an `editorLibrary` target and written against `editor-package` (docs/packages/writing-a-package.md, 'A native library')"
 
 /-- Copies echo, from the working directory, into `copy`, its core required
 from `core`, absolute, in its lakefile and its manifest
@@ -174,6 +188,43 @@ def echoUserSetChecks (sysroot : String) (services : Editor.Test.Linked.Services
             let said := (ranLines ran).findSome? PackageSet.missingTooling?
             let expected := "cargo is required to build echo's library, and none works here ("
             saw (ran.exit != .code 0 && (said.map (·.startsWith expected)) == some true)
+                s!"the build ended {repr ran.exit} and said {repr said}:\n{ranTail ran}" },
+    { name :=
+        "a user's set whose package still declares an editorRustCrate target stops, naming the package and pointing at package libraries"
+      run :=
+        Editor.Test.Linked.withFlushedBase services.jobs fun tmp => do
+          if let some reason← cargoOnUserPath? then
+            return ← saw false reason
+          let repo ← IO.FS.realPath (".." / ".." / "..")
+          let record ←
+            IO.FS.readFile
+                (repo / "tests" / "packages" / ".lake" / "build" / "bin" / "editor.build")
+          let home := tmp / "home"
+          IO.FS.createDirAll home
+          let environment := userSetEnvironment record home
+          let echo := tmp / "echo"
+          copyEcho echo (repo / "lean") (some (← Editor.PackageLibrary.staged "echo" "echo"))
+          let lakefile ← IO.FS.readFile (echo / "lakefile.lean")
+          IO.FS.writeFile (echo / "lakefile.lean")
+              (lakefile ++
+                "\ntarget editorRustCrate pkg : FilePath :=\n  return Job.pure (pkg.dir / \"rust\" / \"Cargo.toml\")\n")
+          let set := tmp / "set"
+          IO.FS.createDirAll set
+          IO.FS.writeFile (set / "lakefile.toml")
+              (userSetLakefile "user-set" [("echo", echo), ("editor-core", repo / "lean")])
+          if let .error how←
+              lakeSucceeds services lake environment set #["update", "--keep-toolchain"] then
+            return ← saw false how
+          match
+            ←
+              runToEnd services
+                  { program := lake, arguments := #["build", ":editorLibraries"], environment,
+                    directory := set } with
+          | .error how =>
+            saw false how
+          | .ok ran =>
+            let said := (ranLines ran).findSome? PackageSet.failureReason?
+            saw (ran.exit != .code 0 && said == some echoRustCrateRefusal)
                 s!"the build ended {repr ran.exit} and said {repr said}:\n{ranTail ran}" }]
 
 end EchoTest.Linked

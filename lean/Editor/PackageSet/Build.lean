@@ -69,7 +69,11 @@ core directory.
    its tool missing stops the build with the core's sentence, `<tool> is
    required to build <package>'s library, and none works here (<how>): …`,
    which `missingTooling?` reads off Lake's `error:` line, so the failure
-   line is `lake build exited with status 1: <sentence>`.
+   line is `lake build exited with status 1: <sentence>`. A package that
+   still declares an `editorRustCrate` target stops it the same way, with
+   the core's refusal, `<package> declares an `editorRustCrate` target, but
+   the editor no longer compiles a package's Rust into its own archive: …`
+   (`rustCrateRefused?`).
 4. **Record**: the new editor's `editor.core` is read, and
    `editor.packages` written beside it: the requires, the pins of the
    manifest the core check read after the resolve, and the set's name.
@@ -419,6 +423,31 @@ answered as that sentence. -/
 def missingTooling? (line : String) : Option String :=
   (libraryToolRequired? line).orElse fun _ => missingSystemTooling? line
 
+/-- The sentence a line of a failed build's output carries when a package of
+the set still declares an `editorRustCrate` target: the line Lake prints
+for the core's walk of the set's libraries, `error: <package> declares an
+`editorRustCrate` target, but the editor no longer compiles a package's Rust
+into its own archive: …` (`rustCrateRefusal` in `lean/lakefile.lean`), from
+the package on; none for any other line. -/
+def rustCrateRefused? (line : String) : Option String :=
+  match line.splitOn "error: " with
+  | _ :: rest@(_ :: _) =>
+    let sentence := ("error: ".intercalate rest).trimAscii.toString
+    if
+        (sentence.splitOn
+              " declares an `editorRustCrate` target, but the editor no longer compiles a package's Rust into its own archive").length >
+          1 then
+      some sentence
+    else none
+  | _ => none
+
+/-- What a line of a failed build's output says of why it failed, beyond
+its status: a package still declaring an `editorRustCrate` target
+(`rustCrateRefused?`), or what is missing of a package's native tooling
+(`missingTooling?`); none for any other line. -/
+def failureReason? (line : String) : Option String :=
+  (rustCrateRefused? line).orElse fun _ => missingTooling? line
+
 /-- The app bundle the toolchain's `lake` at `lake` is in, when it is a
 bundle's: `<bundle>/Contents/Resources/lean/toolchain/bin/lake`. -/
 def bundleOfLake? (lake : String) : Option String :=
@@ -575,8 +604,9 @@ def toolFailure (order : Order) (program : String) : JobM (Option String) := do
 /-- Runs `command` as a streaming child, posting its lines to the buffer
 as they come: none when it exits 0, else how it failed (`LakeFailure.of`):
 for a bundle's `lake` that macOS refused to run, that; else how it ended,
-followed by what its output said is missing of a package's native tooling
-(`missingTooling?`). -/
+followed by what its output said of why (`failureReason?`): a package still
+declaring an `editorRustCrate` target, or what is missing of a package's
+native tooling. -/
 def streamed (command : Process.Command) : JobM (Option LakeFailure) := do
   match
     ←
@@ -585,8 +615,8 @@ def streamed (command : Process.Command) : JobM (Option LakeFailure) := do
   | .error error =>
     return some (LakeFailure.of command.program error.describe)
   | .ok child =>
-    -- What the output said is missing of a package's native tooling, at
-    -- its first line that says so.
+    -- What the output said of why it failed, at its first line that says
+    -- so.
     let mut missing : Option String := none
     for _ in [0:1000000000] do
       match ← Process.read child with
@@ -597,7 +627,7 @@ def streamed (command : Process.Command) : JobM (Option LakeFailure) := do
         unless lines.isEmpty do
           post { command := outputName, arguments := lines.toList.map .str }
         if missing.isNone then
-          missing := lines.findSome? missingTooling?
+          missing := lines.findSome? failureReason?
         match delivery.ended with
         | some (.exited (.code 0)) =>
           return none

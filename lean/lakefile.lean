@@ -890,6 +890,21 @@ fails with (`libraryToolRequired`), cargo's naming rustup. -/
   libraryToolRequired "far" "zig" "no such file or directory (error code: 2)" ==
     "zig is required to build far's library, and none works here (no such file or directory (error code: 2)): install it, or use the package's prebuilt library, as its documentation says, then :reload"
 
+/-- What is said when the package `owner` still declares an `editorRustCrate`
+target, the way a package shipped its Rust until phase 5 of
+`package-native-libraries`, compiled into the editor's archive: the editor
+no longer does that, and the sentence points at the way that works, a
+library of its own (`setLibraries` refuses with it; the build job reports
+it as is, `Editor.PackageSet.rustCrateRefused?`). -/
+def rustCrateRefusal (owner : String) : String :=
+  s!"{owner} declares an `editorRustCrate` target, but the editor no longer compiles a package's Rust into its own archive: ship it as a package library of its own, declared with an `editorLibrary` target and written against `editor-package` (docs/packages/writing-a-package.md, 'A native library')"
+
+/- Guard: the refusal of a package that still declares an `editorRustCrate`
+target, whole, naming the package and pointing at package libraries. -/
+#guard
+  rustCrateRefusal "acp" ==
+    "acp declares an `editorRustCrate` target, but the editor no longer compiles a package's Rust into its own archive: ship it as a package library of its own, declared with an `editorLibrary` target and written against `editor-package` (docs/packages/writing-a-package.md, 'A native library')"
+
 /-- A library target of a set (`setLibraries`): the Lake package that
 declares it, the target's job, its value read as the library's path, and
 the job as the build monitor holds it, when the target registered one.
@@ -911,13 +926,20 @@ path, fetched through the build's store, so it runs once a build, and read
 through its own declaration's query format; so this names no type of the
 package's, and no list is
 kept by hand. Each job is unawaited, so a failed one's log can be read
-(`stageLibraries`). -/
+(`stageLibraries`).
+
+A package that still declares an `editorRustCrate` target is refused first,
+with `rustCrateRefusal`: the editor no longer compiles a package's Rust into
+its archive. So every link (`linkAsEditor` fetches `editorLibraries`), every
+install and `lake build :editorLibraries` stop on it. -/
 def setLibraries (set : Package) : FetchM (Array LibraryTarget) := do
   let ws ← getWorkspace
   let mut libraries : Array LibraryTarget := #[]
   for dep in setPackages ws set do
-    let some decl := dep.findTargetDecl? libraryTargetName | continue
     let owner := dep.baseName.toString (escape := false)
+    if (dep.findTargetDecl? `editorRustCrate).isSome then
+      error (rustCrateRefusal owner)
+    let some decl := dep.findTargetDecl? libraryTargetName | continue
     let some config := decl.targetConfig?
       | error s!"the package {owner} declares `editorLibrary`, but not as a target"
     let job : Job (CustomData dep.keyName libraryTargetName) ←

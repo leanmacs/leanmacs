@@ -444,6 +444,37 @@ def packageSetBuildChecks : List Check :=
                 !(startedRuns done).any (·.1 == "/bin/mv") &&
                 missingTooling? "error: external command 'cargo' exited with code 255" == none) },
     { name :=
+        "a package still declaring an editorRustCrate target fails the build with lake build's status and the sentence naming the package and pointing at package libraries, its staging directory removed and nothing published; an unrelated line is no such refusal"
+      run :=
+        let facts := lakefileWith #[hello]
+        match orderFor facts with
+        | none => pure false
+        | some order =>
+          let resolve :=
+            streaming
+              (lakeCommand order
+                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
+              #[]
+          -- The line Lake prints for the staging's refusal (the core's
+          -- `setLibraries`, `rustCrateRefusal "acp"` in lean/lakefile.lean).
+          let sentence :=
+            "acp declares an `editorRustCrate` target, but the editor no longer compiles a package's Rust into its own archive: ship it as a package library of its own, declared with an `editorLibrary` target and written against `editor-package` (docs/packages/writing-a-package.md, 'A native library')"
+          let failing :=
+            streaming (install order) #["✖ [2/9] Running editorLibraries", s!"error: {sentence}"] 1
+          match buildDriver (runningWith facts) (succeeding order).1 #[resolve, failing] with
+          | none => pure false
+          | some driver =>
+            let done := built driver order
+            pure
+              (failedWith done s!"lake build exited with status 1: {sentence}" &&
+                done.loop.state.echo ==
+                  s!"packages: lake build exited with status 1: {sentence}; this editor keeps running" &&
+                (startedRuns done).contains ("/bin/rm", #["-rf", staging]) &&
+                !(startedRuns done).any (·.1 == "/bin/mv") &&
+                rustCrateRefused? s!"error: {sentence}" == some sentence &&
+                rustCrateRefused? "error: external command 'cargo' exited with code 255" == none &&
+                rustCrateRefused? "✖ [2/9] Running editorLibraries" == none) },
+    { name :=
         "a bundle's lake killed at its start, or refused, as macOS refuses a quarantined tool, ends the build saying macOS refused the bundled toolchain and how to remove the flag; a lake outside a bundle, or another failure, says what it said before"
       run :=
         let facts := lakefileWith #[hello]

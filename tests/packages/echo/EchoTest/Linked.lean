@@ -56,7 +56,8 @@ test kit's services and pump, and runs:
   under the sysroot it is handed, through the real process port, with no
   `cargo` on the child's `PATH`: with the library already built it builds
   and its editor loads the library from the set's build once the copy is
-  gone; with the library to build, it stops naming echo and cargo
+  gone; with the library to build, it stops naming echo and cargo; and
+  with an `editorRustCrate` target, it is refused naming echo
   (`EchoTest.Linked.echoUserSetChecks`,
   `EchoTest/Linked/Echo/Real/UserSet.lean`);
 
