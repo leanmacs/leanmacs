@@ -41,6 +41,7 @@ import Editor.Key.Notation
 import Editor.Keymap
 import Editor.Language
 import Editor.Layout
+import Editor.Link
 import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Menu
@@ -5893,6 +5894,65 @@ def searchDecorationChecks : List Check :=
               (found.map fun all => !all.isEmpty && all.all (·.face == Loop.searchMatchFace)) ==
                 some true
           | _, _ => false }]
+
+/-- The checks of a view's links (`Editor/Loop.lean`, "Decorations"): a
+buffer's links are drawn as decorations in the link face, under its own
+spans, in the range its decorations are read over, on the loop's driver
+over the editor's models and the display recorder, as the decoration checks
+run. That the link face is underlined in the built-in theme is
+`ModelTest.faceChecks`'s. -/
+def linkDecorationChecks : List Check :=
+  let spanFace : FaceName := ⟨"compilation.error"⟩
+  -- Offset 600 is in row 86 of `decoratedText`, far below the rows the view
+  -- covers from the text's start; the second link runs past them.
+  let links : Array Link :=
+    #[{ start := 0, stop := 3, target := .command { command := "say" } },
+      { start := 5, stop := 650, target := .url "https://example.com" },
+      { start := 600, stop := 604, target := .reference "test" "x" }]
+  let spans : Array Decoration := #[{ start := 1, stop := 3, face := spanFace }]
+  let linked (state : EditorState) : EditorState :=
+    { state with
+      buffers :=
+        state.buffers.map
+          (·.map
+            ({ · with
+              links, spans })) }
+  let start : TextM EditorState := do
+    return linked (← decorationState decoratedText)
+  [{  name :=
+        "a buffer's links in the rows its view covers are drawn in text.link, clipped to them, before its spans, and one outside them is not drawn"
+      run :=
+        pure <|
+          match (decorationDriver decoratedText (some start)).map (keysFed · "<ArrowRight>") with
+          | none => false
+          | some driver =>
+            match decorationsOfScene driver with
+            | some #[first, second, span] =>
+              first == { start := 0, stop := 3, face := Link.face } && second.start == 5 &&
+                second.face == Link.face &&
+                8 < second.stop &&
+                second.stop < 600 &&
+                span == { start := 1, stop := 3, face := spanFace }
+            | _ => false },
+    { name := "the minibuffer's view draws no link, though its buffer has some, and a window's does"
+      run :=
+        pure <|
+          match (decorationDriver decoratedText).map (keysFed · "C-s f C-s a f o o") with
+          | none => false
+          | some asking =>
+            let state := linked asking.loop.state
+            let views := (asking.model.display.scenes.back?.map (·.views)).getD #[]
+            let decorationsOf (id : Option ViewId) : Option (Array Decoration) := do
+              let view ← views.find? (some ·.id == id)
+              match (Loop.decorationsOf state view).runModel asking.model.texts with
+              | (.ok found, _) =>
+                some found
+              | _ =>
+                none
+            let minibuffer := state.prompt.map (·.view)
+            minibuffer.isSome && decorationsOf minibuffer == some #[] &&
+              ((decorationsOf (some ⟨0⟩)).map fun all => all.any (·.face == Link.face)) ==
+                some true }]
 
 /-- The align-to stops of the view `view` in the last scene `driver`
 published. -/

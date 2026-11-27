@@ -10,6 +10,7 @@ import Editor.Invocation
 import Editor.JumpList
 import Editor.Language.Grammar.Answer
 import Editor.Layout
+import Editor.Link
 import Editor.Marks
 import Editor.PackageSet.Running
 import Editor.Restore.Kept
@@ -815,6 +816,12 @@ candidate list with no typed text (`EditorState.keyHints`, a
   (`AlignStop`, `Editor/Scene.lean`). Like spans they are its owner's and
   nothing moves them on an edit: a generated buffer's owner writes its
   text, spans and stops together (`Editor/Columns.lean`).
+- A buffer may have **links** (`Buffer.links`, set by `setLinks`, which
+  refuses `noSuchBuffer`): byte ranges of its text, each naming a target to
+  follow (`Link`, `Editor/Link.lean`). Every view of it draws them in the
+  link face under its spans, and the links mode follows and moves between
+  them (`Editor/Links.lean`). Like spans and stops they are its owner's and
+  nothing moves them on an edit.
 - A buffer may have a **gutter** (`Buffer.gutter`, set by `setGutter`,
   which refuses `noSuchBuffer`): marks, each a byte range of its text at
   the gutter's revision with a short text and a face, which every window
@@ -1331,6 +1338,9 @@ structure Buffer where
   /-- Its align-to stops, set by its owner: where every view of it starts a
   cell of a row ("Buffers", in the module docs). -/
   stops : Array AlignStop := #[]
+  /-- Its links, set by its owner: byte ranges of its text each naming a
+  target to follow ("Buffers", in the module docs). -/
+  links : Array Link := #[]
   /-- For an excerpt buffer, what its edits reached ("Excerpt buffers", in
   the module docs); `none` for any other buffer. -/
   excerpts : Option Buffer.Excerpts := none
@@ -3606,6 +3616,13 @@ with `noSuchBuffer` for a buffer there is none of. -/
 def setStops (id : BufferId) (stops : Array AlignStop) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with stops })) state
+
+/-- Sets the links of the buffer `id` to `links`, in place of those it had
+("Buffers", in the module docs). Refused, with the state unchanged, with
+`noSuchBuffer` for a buffer there is none of. -/
+def setLinks (id : BufferId) (links : Array Link) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with links })) state
 
 /-- The state once `change` is told ("The version-control gutter",
 `packages/version-control/VersionControl/Gutter.lean`): a head that arrived for the latest

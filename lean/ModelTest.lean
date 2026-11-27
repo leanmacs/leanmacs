@@ -95,6 +95,7 @@ import ModelTest.Editor.Language.Grammar
 import ModelTest.Editor.Language.Grammar.Answer
 import ModelTest.Editor.Language.Grammar.Register
 import ModelTest.Editor.Layout
+import ModelTest.Editor.Link
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Marks
@@ -1364,11 +1365,16 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   base contracts on the model rigs, a base whose program is probed among
   them, and the contracts fail a package that
   registers nothing and a source that ignores its output;
+- `linkChecks`: the lookups over a buffer's links (`Editor/Link.lean`),
+  which link holds an offset and the next and previous from one, and the
+  check a URL passes before it is handed to the system opener;
 - `columnsChecks`: the column arithmetic of align-to stops
   (`Editor/Columns.lean`), pure and on the display model, and a generated
   buffer's stops and spans reaching its view; `stopChecks`, beside the
   decoration checks, a buffer's stops reaching every view of it in its
-  range and none the minibuffer's;
+  range and none the minibuffer's; `linkDecorationChecks`, beside them, a
+  buffer's links drawn in `text.link` under its spans in the same range,
+  and none in the minibuffer's view;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1719,7 +1725,9 @@ def checks : List Check :=
     faceVocabularyChecks ++
     searchDecorationChecks ++
     stopChecks ++
+    linkDecorationChecks ++
     columnsChecks ++
+    linkChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++

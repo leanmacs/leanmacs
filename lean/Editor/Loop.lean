@@ -1194,6 +1194,12 @@ revision, so they need none of their own.
   fold are drawn too.
 - **The spans** that meet the range are kept, each clipped to it, in order,
   and one left empty is dropped (`spansIn`), with or without a last search.
+- **The links** (`Buffer.links`, `Editor/Link.lean`) are drawn by the same
+  rule, each a decoration in `Link.face` (`text.link`), before the
+  buffer's spans: a span over a link's bytes is drawn over the link face
+  attribute by attribute, so a compile-coloured location keeps its colour
+  and the link's underline still shows. Only the range crosses into the
+  scene; the target stays Lean data.
 - **The matches** are what its snapshot answers for the pattern in the
   range (`SnapshotId.matches`).
 - **It is read after the follow** (step 3 of "After each event"), so the
@@ -1953,8 +1959,8 @@ def marksOf (state : EditorState) (view : View) : TextM (Array GutterMark) := do
 /-- The decorations of `view` in `state` ("Decorations", in the module docs),
 for a view that is not the minibuffer's, over the range from the row of the
 view's scroll anchor through `rect.height / heights.text + 1` rows below:
-for an excerpt buffer, its sources' spans, then its buffer's spans in that
-range (`spansIn`), then what is not examined of its tracked excerpts
+for an excerpt buffer, its sources' spans, then its buffer's links in that
+range in `Link.face`, then its buffer's spans there (`spansIn`), then what is not examined of its tracked excerpts
 (`ExcerptView.unexaminedOf`), then, when there is a last search, each match
 of its pattern there that is not empty, in `searchMatchFace`, in order. A pattern the syntax refuses draws no match,
 and a text that refuses draws nothing. -/
@@ -1970,7 +1976,14 @@ def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration)
     -- What no scene has shown of a tracked excerpt, read before this
     -- scene marks what its rows show.
     let unexamined := spansIn (← ExcerptView.unexaminedOf target.buffer snapshot) start stop
-    let spans := sources ++ spansIn target.buffer.spans start stop ++ unexamined
+    -- Its links, in the link face, under its own spans, which are drawn
+    -- over them attribute by attribute.
+    let links :=
+      spansIn
+        (target.buffer.links.map fun link =>
+          { start := link.start, stop := link.stop, face := Link.face })
+        start stop
+    let spans := sources ++ links ++ spansIn target.buffer.spans start stop ++ unexamined
     let some search := state.lastSearch | return spans
     match ← snapshot.matches search.pattern start stop with
     | .ranges all =>

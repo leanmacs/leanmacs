@@ -4541,6 +4541,7 @@ and the core's Lake package registers no `Package`.
 | The setup port, packages, extension points and stores: `Editor.Extension`, `Editor.Json`, `Editor.Package`, `Editor.Setup`, `Editor.Store`, `Editor.Store.Codec`, `Editor.Value` | 7 | core | yes |
 | The state, what a search of a workspace's files covers, and the names of the jobs the loop's reconcilers run: `Editor.DisplayRules`, `Editor.Event`, `Editor.ExcerptView`, `Editor.FileJobs`, `Editor.Floating`, `Editor.GeneratedView`, `Editor.Gutter`, `Editor.Gutter.Track`, `Editor.Layout`, `Editor.SearchRoot`, `Editor.State`, `Editor.State.Request`, `Editor.Workspace` | 13 | core | yes |
 | Places, jump lists and marks, and going to a place: `Editor.JumpList`, `Editor.Jumps`, `Editor.Jumps.Go`, `Editor.Marks`, `Editor.Marks.Follow` | 5 | core | yes |
+| A buffer's links, the targets its owner names on its text: `Editor.Link` | 1 | core | yes |
 | The scene and display types: `Editor.Appearance`, `Editor.Columns`, `Editor.Face`, `Editor.Face.Vocabulary`, `Editor.Highlight`, `Editor.Menu`, `Editor.ModeLine`, `Editor.Scene`, `Editor.Scroll`, `Editor.TabBar` | 10 | core | yes |
 | Keys and modes: `Editor.InputScheme`, `Editor.Invocation`, `Editor.Key.Notation`, `Editor.Keymap`, `Editor.Mode`, `Editor.Role`, `Editor.Vocabulary` | 7 | core | yes |
 | Completion: `Editor.Completion`, `Editor.Completion.AtPoint`, `Editor.Completion.Candidate`, `Editor.Completion.Display`, `Editor.Completion.Filtering`, `Editor.Completion.Keys`, `Editor.Completion.Later`, `Editor.Completion.Style` | 8 | core | yes |
