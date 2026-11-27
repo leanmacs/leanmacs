@@ -11,11 +11,12 @@ numbers beside it read back through the core's
 `Editor.PackageLibrary.LoadRefusal.of?`, which pins that the Lean side's
 reading and the core's tags agree over the real glue and loader:
 
-- the library the lakefile built (`Echo.Real.library`), which the module's
-  initialiser loaded before `main`, loads again for the glue's interface
+- the library the build staged beside this executable
+  (`Echo.Real.stagedLibrary`, from `EchoTest-Linked.libraries`), which the
+  module's initialiser loaded before `main`, loads again for the glue's interface
   (`Echo.Real.interface`): the core finds `editor_package_init` and the
   declaration `package! { interface 1; … }` exported in the built
-  `cdylib`, and its init answers 0;
+  library, and its init answers 0;
 - the same library, loaded for another interface than its glue's
   (`Echo.Real.loadExpecting`), is refused with both versions, and the
   initialiser's body throws the sentence naming echo, the library's
@@ -71,15 +72,15 @@ private def thrownBy (path : String) : IO (Option String) :=
 /-- The checks of the load of echo's library through its glue. -/
 def echoLoadChecks : List Check :=
   [{  name :=
-        "the library the lakefile built loads through the glue: the core finds its editor_package_init and its init answers 0"
+        "the library the build staged beside this executable loads through the glue: the core finds its editor_package_init and its declaration, and its init answers 0"
       run := do
-        let library ← Echo.Real.library
+        let library ← Echo.Real.stagedLibrary
         let refusal ← refusalOf library
         saw (refusal == none) s!"{repr refusal} for {library}" },
     { name :=
-        "echo's library, loaded for another interface than its glue's, is refused naming echo, its version and the glue's, and the initialiser's body throws that sentence"
+        "echo's staged library, loaded for another interface than its glue's, is refused naming echo, its version and the glue's, and the initialiser's body throws that sentence"
       run := do
-        let library ← Echo.Real.library
+        let library ← Echo.Real.stagedLibrary
         let glue ← Echo.Real.interface
         let other := glue + 1
         let thrown ← thrownOf (Echo.Real.loadExpecting library other)
@@ -87,7 +88,7 @@ def echoLoadChecks : List Check :=
         saw (thrown == some (refusal.describe "echo" library)) s!"{repr thrown}" },
     { name := "a path beside the library that is never made is refused as missing"
       run := do
-        let absent := absentBeside (← Echo.Real.library)
+        let absent := absentBeside (← Echo.Real.stagedLibrary)
         let refusal ← refusalOf absent
         saw (refusal == some .missing) s!"{repr refusal} for {absent}" },
     { name := "the package's ffi/glue.c, absolute, is refused as not a library"
@@ -98,7 +99,7 @@ def echoLoadChecks : List Check :=
     { name :=
         "the initialiser's load, handed a missing library, throws the refusal's sentence naming the path"
       run := do
-        let absent := absentBeside (← Echo.Real.library)
+        let absent := absentBeside (← Echo.Real.stagedLibrary)
         let thrown ← thrownBy absent
         saw (thrown == some (Editor.PackageLibrary.LoadRefusal.missing.describe "echo" absent))
             s!"{repr thrown}" },

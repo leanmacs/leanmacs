@@ -6,13 +6,18 @@
 // every warning an error, and links it beside the core's glue in every
 // executable that imports `Echo.Real` (the library `EchoReal`'s
 // `moreLinkObjs`). Echo's crate is not linked: it is a library of its own,
-// which the glue asks the core to load (`editor_ffi_package_load`, in the
-// core's Rust archive) from the path the lakefile compiled in
-// (`ECHO_LIBRARY`), when `Echo.Real`'s initialiser runs, before Lean's
-// `main`. The core opens it, calls its init with the package runtime and
-// hands back its table (`echo_table`), through which every `echo_glue_*`
-// function forwards (docs/design/packages.md, "A library loaded when the
-// editor runs, as built"). Before a load, each answers false or `none`.
+// which the package-set build stages beside every editor it links and
+// records in `<executable>.libraries`. No path is compiled in here:
+// `Echo.Real`'s initialiser reads the staged path from that record when it
+// runs, before Lean's `main`, and hands it to `echo_glue_load` with the
+// interface version this glue was compiled for (`ECHO_INTERFACE`), which
+// asks the core to load it (`editor_ffi_package_load`, in the core's Rust
+// archive). The core reads the library's declaration, refuses one of
+// another interface or a newer runtime, calls its init with the package
+// runtime and hands back its table (`echo_table`), through which every
+// `echo_glue_*` function forwards (docs/design/packages.md, "A package's
+// library, staged and loaded, as built"). Before a load, each answers false
+// or `none`.
 //
 // It follows the core's conventions (`lean/ffi/glue.c`): a string crosses as
 // a pointer and a byte length, borrowed for the call; a reply comes back as
@@ -29,10 +34,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-
-#ifndef ECHO_LIBRARY
-#error "the lakefile compiles the library's path in as ECHO_LIBRARY"
-#endif
 
 // The wrapper's `Bytes`: bytes lent for the call.
 typedef struct {
@@ -85,11 +86,6 @@ static _Atomic(const echo_table *) loaded = NULL;
 // The table, if the library was loaded.
 static const echo_table *echo_loaded(void) {
   return atomic_load_explicit(&loaded, memory_order_acquire);
-}
-
-// `Echo.Real.library : IO String`: the path the lakefile compiled in.
-lean_obj_res echo_glue_library(void) {
-  return lean_io_result_mk_ok(lean_mk_string(ECHO_LIBRARY));
 }
 
 // `Echo.Real.interface : IO UInt32`: the version this glue was compiled

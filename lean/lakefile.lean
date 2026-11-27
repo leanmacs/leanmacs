@@ -913,6 +913,140 @@ def linksFromStubs (isOSX customCc : Bool) : Bool :=
 
 #guard !linksFromStubs false false
 
+/-- The name of the target a package declares its native library with
+(`docs/design/packages.md`, "A package's library, staged and loaded, as
+built"): a Lake `target` whose value is the library's absolute path, either
+a library already in the package (built ahead, or checked in) or one the
+target builds with the user's own tooling, run through Lake's `proc`. -/
+def libraryTargetName : Name :=
+  `editorLibrary
+
+/-- Where a set's build stages the library file `file` of its Lake package
+`lake`, under the set's build directory, and where an install copies it,
+under its own directory: `libraries/<lake>/<file>`. -/
+def stagedLibraryPlace (lake file : String) : FilePath :=
+  "libraries" / lake / file
+
+/-- The text of the record `<executable>.libraries` for `entries`, each a
+Lake package's name and where its library is staged: one line
+`<lake><TAB><library>` each, in order (`Editor/ModuleLookup.lean`, "The
+libraries"); nothing for none. -/
+def librariesRecordText (entries : Array (String × String)) : String :=
+  entries.foldl (fun text (lake, library) => text ++ s!"{lake}\t{library}\n") ""
+
+/-- The libraries record of an install (`editorInstall`) of a set whose Lake
+packages' libraries are `entries`, each a Lake package's name and its
+library's file name: one relative line `<lake><TAB>libraries/<lake>/<file>`
+each (`stagedLibraryPlace`), in order, so the install's directory can be
+renamed into place. -/
+def installLibrariesRecord (entries : Array (String × String)) : String :=
+  librariesRecordText
+    (entries.map fun (lake, file) => (lake, (stagedLibraryPlace lake file).toString))
+
+/-- The lines `editorLibraries` answers, read back: each line's Lake package
+and staged library, split at its first tab; a line with none is skipped. -/
+def stagedLibrariesOf (lines : Array String) : Array (String × FilePath) :=
+  lines.filterMap fun line =>
+    match line.splitOn "\t" with
+    | lake :: library :: rest => some (lake, "\t".intercalate (library :: rest))
+    | _ => none
+
+/- Guards: the libraries' places and records (`stagedLibraryPlace`,
+`librariesRecordText`, `installLibrariesRecord`, `stagedLibrariesOf`): the
+staged place under `libraries/` named after the Lake package; a line per
+Lake package that declares a library, its name, a tab and its library;
+none for none; an install's lines relative, under its own `libraries/`; and
+the facet's lines read back. -/
+#guard
+  stagedLibraryPlace "echo" "libecho_service.dylib" ==
+    ("libraries/echo/libecho_service.dylib" : FilePath)
+
+#guard
+  librariesRecordText #[("echo", "/s/.lake/build/libraries/echo/libecho_service.dylib")] ==
+    "echo\t/s/.lake/build/libraries/echo/libecho_service.dylib\n"
+
+#guard librariesRecordText #[] == ""
+
+#guard
+  installLibrariesRecord #[("echo", "libecho_service.dylib")] ==
+    "echo\tlibraries/echo/libecho_service.dylib\n"
+
+#guard
+  stagedLibrariesOf #["echo\t/s/libraries/echo/libecho_service.so", "no tab"] ==
+    #[("echo", ("/s/libraries/echo/libecho_service.so" : FilePath))]
+
+/-- The library targets of the set `set`, in the order its packages
+register (`setPackages`), each with the name of its Lake package: a package
+declares its library with a target named `editorLibrary`
+(`libraryTargetName`) whose value is the library's path, fetched through
+the build's store, so it runs once a build, and read through its own
+declaration's query format, as `setRustCrates` reads a crate's manifest;
+so this names no type of the package's, and no list is kept by hand. Each
+job is the target's own, unawaited, so a failed one's log can be read
+(`stageLibraries`). -/
+def setLibraries (set : Package) : FetchM (Array (String × Job String)) := do
+  let ws ← getWorkspace
+  let mut libraries : Array (String × Job String) := #[]
+  for dep in setPackages ws set do
+    let some decl := dep.findTargetDecl? libraryTargetName | continue
+    let owner := dep.baseName.toString (escape := false)
+    let some config := decl.targetConfig?
+      | error s!"the package {owner} declares `editorLibrary`, but not as a target"
+    let job : Job (CustomData dep.keyName libraryTargetName) ←
+      fetch (BuildInfo.target dep libraryTargetName)
+    libraries := libraries.push (owner, job.map (config.format .text))
+  return libraries
+
+/-- Copies the library at `source` to `place`, its bytes only, when the
+bytes at `place` differ: written beside it and renamed over it, so the file
+at `place` is a new one, and an editor that has the old library mapped
+keeps running (on macOS, a signed library rewritten in place kills the
+process that maps it). A quarantine attribute is not carried; the
+library's signature, in its bytes, is. -/
+def stageLibrary (source place : FilePath) : IO Unit := do
+  let bytes ← IO.FS.readBinFile source
+  if ← place.pathExists then
+    if (← IO.FS.readBinFile place).data == bytes.data then
+      return
+  if let some dir := place.parent then
+    IO.FS.createDirAll dir
+  let beside := place.addExtension "staging"
+  IO.FS.writeBinFile beside bytes
+  IO.FS.rename beside place
+
+/-- Stages the library of each Lake package of the set `set` that declares
+one (`setLibraries`), in register order, under the set's build directory at
+`stagedLibraryPlace` (`stageLibrary`), and answers its lines, the Lake
+package and the staged library, absolute, separated by a tab. A target
+that failed fails the staging with its own log and a line naming the
+package. -/
+def stageLibraries (set : Package) : FetchM (Job (Array String)) := do
+  let libraries ← setLibraries set
+  IO.FS.createDirAll set.buildDir
+  let buildDir ← IO.FS.realPath set.buildDir
+  let jobs := libraries.map (·.2)
+  let staged : Job (Array String) := Job.collectArray jobs
+  staged.mapM fun paths => do
+      let mut lines : Array String := #[]
+      for ((lake, _), library) in libraries.zip paths do
+        let source : FilePath := library
+        let some file := source.fileName
+          | error s!"the package {lake}'s library (its `editorLibrary` target) names no file: {library}"
+        let place := buildDir / stagedLibraryPlace lake file
+        stageLibrary source place
+        lines := lines.push s!"{lake}\t{place}"
+      return lines
+
+/-- The libraries of a package set, staged (`lake -d <set dir> query
+:editorLibraries`; `stageLibraries`): one line a Lake package that declares
+a library (an `editorLibrary` target), in the order the packages register,
+its name and its staged library, `<set>/.lake/build/libraries/<lake>/<file>`,
+separated by a tab. Empty for a set with none. Each executable linked as
+the editor writes them beside itself (`linkAsEditor`), and an install copies
+them (`editorInstall`). -/
+package_facet editorLibraries pkg : Array String := do
+  stageLibraries pkg
+
 /-- Links an executable at `file`, rooted at the module `root`, as the
 editor is linked: `root`'s object and those of every module it imports,
 with their symbols exported, so interpreted config can find compiled
@@ -930,8 +1064,21 @@ set links from the app alone (`docs/design/lean-runtime.md`, "The app
 ships the toolchain"). With no stubs there that link fails, saying so.
 `root` may be a module of any package of the
 workspace: the core's glue is this package's target, built in its build
-directory. -/
+directory.
+
+Beside `file` it writes `<file>.libraries`, the libraries of the set's
+packages as `editorLibraries` staged them (`librariesRecordText`, absolute
+lines; an empty record for a set with none), which a package's initialiser
+reads to find its library (`Editor/ModuleLookup.lean`, "The libraries").
+The staging is part of the link's job, so the link fails when a library
+fails, and a library that changes is restaged without a relink. -/
 def linkAsEditor (set : Package) (root : Module) (file : FilePath) : FetchM (Job FilePath) := do
+  let librariesJob ← (set.facet `editorLibraries).fetch
+  let recordJob ←
+    librariesJob.mapM fun lines => do
+        writeIfChanged (file.toString ++ ".libraries")
+            (librariesRecordText
+              ((stagedLibrariesOf lines).map fun (lake, library) => (lake, library.toString)))
   let infoJob ← root.linkInfoExport.fetch
   let glueJob ← glue.o.fetch
   let rustJob ← (set.facet `editorRust).fetch
@@ -939,24 +1086,26 @@ def linkAsEditor (set : Package) (root : Module) (file : FilePath) : FetchM (Job
   let entry ← editorLinkArgs
   let fromStubs := linksFromStubs Platform.isOSX (← getLeanInstall).customCc
   let stubs := linkStubsDir (← repositoryRoot)
-  ((infoJob.zipWith Prod.mk glueJob).zipWith Prod.mk rustJob).mapM fun ((info, glue), rust) => do
-      let system ←
-        if fromStubs then
-          unless ← stubs.isDir do
-            error
-                s!"linking with the toolchain's own clang needs link stubs at {stubs} (the link-stubs binary, crates/editor-release-std), and there are none: set LEAN_CC to a compiler that links against the macOS SDK, or build from an app bundle, which ships them"
-          let names := (← stubs.readDir).map (·.fileName)
-          match stubLinkArgs stubs names (← IO.FS.readFile (stubs / "platform-version")) with
-          | .ok args =>
-            pure args
-          | .error message =>
-            error message
-        else
-          systemLibraryArgs libraries
-      addPureTrace entry "linkArgs"
-      addPureTrace system "native-static-libs"
-      buildLeanExeSync file ((info.objs.push glue).push rust) info.libs
-          (#["-rdynamic"] ++ info.args ++ entry ++ system)
+  let linked ←
+    ((infoJob.zipWith Prod.mk glueJob).zipWith Prod.mk rustJob).mapM fun ((info, glue), rust) => do
+        let system ←
+          if fromStubs then
+            unless ← stubs.isDir do
+              error
+                  s!"linking with the toolchain's own clang needs link stubs at {stubs} (the link-stubs binary, crates/editor-release-std), and there are none: set LEAN_CC to a compiler that links against the macOS SDK, or build from an app bundle, which ships them"
+            let names := (← stubs.readDir).map (·.fileName)
+            match stubLinkArgs stubs names (← IO.FS.readFile (stubs / "platform-version")) with
+            | .ok args =>
+              pure args
+            | .error message =>
+              error message
+          else
+            systemLibraryArgs libraries
+        addPureTrace entry "linkArgs"
+        addPureTrace system "native-static-libs"
+        buildLeanExeSync file ((info.objs.push glue).push rust) info.libs
+            (#["-rdynamic"] ++ info.args ++ entry ++ system)
+  return linked.add recordJob
 
 /-- Whether `part` occurs in `text`, for the guards of generated text. -/
 def holdsText (text part : String) : Bool :=
@@ -1481,7 +1630,10 @@ the set itself is (`writeSetRecord`) and where the core it links is
 `grammars/` directory of each package that ships grammars under the set's
 build directory and records where in `<executable>.grammars`
 (`stageGrammars`), which the editor resolves those packages' grammar
-declarations against;
+declarations against; it stages the library of each package that declares
+one (an `editorLibrary` target) under `libraries/<lake>/` there and records
+where in `<executable>.libraries` (`editorLibraries`, through
+`linkAsEditor`), which each package's initialiser loads its library from;
 and two records a user's set build reads (`docs/design/packages.md`, "User
 package sets"): `<executable>.core`, the core's identity (`coreIdentity`),
 one line, and `<executable>.build`, the environment the link ran with
@@ -1554,7 +1706,13 @@ the set's editor (`editor`), then fills `<dir>`, which must not exist yet:
   staged (`stagedGrammars`), and `editor.grammars`, one relative line for
   each (`installGrammarsRecord`; `Editor/ModuleLookup.lean`, "The
   grammars"), so the installed editor finds its packages' grammars beside
-  it, for the reason the `.olean` files are copied.
+  it, for the reason the `.olean` files are copied;
+- `libraries/<lake>/<file>`, a copy of each library the set's build staged
+  (`editorLibraries`), and `editor.libraries`, one relative line for each
+  (`installLibrariesRecord`; `Editor/ModuleLookup.lean`, "The
+  libraries"), so the installed editor's packages load their libraries
+  from beside it, after the packages' source directories and the set's
+  build are gone.
 
 The modules are copied, not referenced, so a later build that rewrites a
 package's `.olean` files leaves this editor's modules matching its linked
@@ -1565,7 +1723,9 @@ package_facet editorInstall pkg : FilePath := do
   let root ← setRoot pkg
   let importsJob ← root.transImports.fetch
   let grammars ← stagedGrammars pkg
-  (exeJob.zipWith Prod.mk importsJob).mapM fun (exe, imports) => do
+  let librariesJob ← (pkg.facet `editorLibraries).fetch
+  ((exeJob.zipWith Prod.mk importsJob).zipWith Prod.mk librariesJob).mapM
+      fun ((exe, imports), libraryLines) => do
       let named ← IO.getEnv installDirVar
       let present ←
         match named with
@@ -1598,6 +1758,16 @@ package_facet editorInstall pkg : FilePath := do
         copyTree staged (dir / "grammars" / lake)
       IO.FS.writeFile (dir / "editor.grammars")
           (installGrammarsRecord (grammars.map fun (_, lake, _) => lake))
+      let mut installed : Array (String × String) := #[]
+      for (lake, staged) in stagedLibrariesOf libraryLines do
+        let some file := staged.fileName
+          | error s!"the staged library of {lake} names no file: {staged}"
+        let copy := dir / stagedLibraryPlace lake file
+        if let some parent := copy.parent then
+          IO.FS.createDirAll parent
+        IO.FS.writeBinFile copy (← IO.FS.readBinFile staged)
+        installed := installed.push (lake, file)
+      IO.FS.writeFile (dir / "editor.libraries") (installLibrariesRecord installed)
       if let some (cmd, args) := installSigning Platform.isOSX (dir / "editor") then
         proc (quiet := true) { cmd, args }
       return dir

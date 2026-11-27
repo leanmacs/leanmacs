@@ -412,7 +412,77 @@ it"](../design/packages.md#who-can-build-it)).
   or which prebuilt binary it fetches.
 - **Rust**: a Rust crate inside this repository builds with the user's own
   Cargo, installed with rustup, from a checkout only. A crate from outside
-  the repository is refused for now, with the reason.
+  the repository is refused, with the reason: ship it as a native library
+  of its own instead (below).
+
+### A native library
+
+A package may ship its native code as a dynamic library of its own, with a
+C interface, which the editor loads when it starts, in the shape of an
+Emacs dynamic module. The package declares it with **one lakefile target,
+`editorLibrary`**, whose value is the library's absolute path. The
+package-set build finds that target by name in every package of the set,
+copies the library it names beside the editor (`.lake/build/libraries/<lake
+package>/` beside a set's editor, `libraries/<lake package>/` in an
+install), and records where in `<editor>.libraries`. The package's glue
+loads it from there when the editor starts, never from the package's
+source directory, so an installed editor keeps working after the package's
+directory is gone ([packages.md](../design/packages.md), ["A package's
+library, staged and loaded, as
+built"](../design/packages.md#a-packages-library-staged-and-loaded-as-built)).
+
+The target's body is yours, in one of two forms, or both:
+
+- **Already built** (built ahead by you, or checked in): answer a path
+  inside the package, with its content as the trace. No process runs, so a
+  user's set builds with no compiler of the user's, from the app alone.
+- **Built with the user's tooling** (Cargo, zig, cc): run the tool through
+  Lake's `proc` and answer what it built. Run it through `proc`, not
+  `IO.Process`: when the tool is missing, Lake's spawn failure is what the
+  build reads to say `cargo is required to build <package>'s library`. Say
+  in the package's documentation which tool it needs.
+
+The fixture package [`echo`](../../tests/packages/echo/lakefile.lean) does
+both: it answers `lib/libecho_service.dylib` when that file is in the
+package, and builds its crate with Cargo otherwise.
+
+```lean
+target editorLibrary pkg : FilePath :=
+  Job.async do
+    let name := s!"libecho_service.{if Platform.isOSX then "dylib" else "so"}"
+    let prebuilt := pkg.dir / "lib" / name
+    if ← prebuilt.pathExists then
+      let library ← IO.FS.realPath prebuilt
+      setTrace (← computeTrace library)
+      return library
+    -- … otherwise `proc { cmd := "cargo", args := #["build", …] }`, and
+    -- answer the library Cargo built.
+```
+
+**The library's declaration.** Beside its init, `editor_package_init`, the
+library exports a declaration, `editor_package_declaration`: the size of
+the package runtime it needs, and the package's **interface version**, a
+number you choose for the shape of your library's function table, which
+your glue mirrors. Your glue passes the version it was compiled for to the
+core's load (`editor_ffi_package_load`), and the editor refuses, before it
+calls anything of the library, one that declares nothing, another
+interface version, or a newer runtime than the editor's, with a message
+naming your package and both versions. Change the interface version, in
+the library and the glue together, whenever the table's shape changes.
+
+- In Rust, with the package wrapper (`editor-package`), the macro writes
+  both: `package! { interface 1; pub static PACKAGE: Package<…> = …; }`.
+- In C, C++ or Zig, against the generated header
+  (`crates/editor-package-runtime/include/editor_package_runtime.h`):
+  `EDITOR_PACKAGE_DECLARE(1, buffer_free);` at file scope, its second
+  argument the last member of the runtime your library calls without
+  asking `EDITOR_PACKAGE_RUNTIME_HAS` first.
+
+The glue finds the staged library with
+`Editor.PackageLibrary.staged (← IO.appPath).toString readFile
+"<package>" "<lake package>"` in its `builtin_initialize`, and reads a
+refused load back with `Editor.PackageLibrary.LoadRefusal.of?`, as echo's
+`Echo/Real.lean` does.
 
 ## Shipping a grammar
 
