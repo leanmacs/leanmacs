@@ -20,7 +20,7 @@ import Editor.Job.Protocol.Theorems
 import Editor.Job.ProtocolContract
 import Editor.Job.PumpContract
 import Editor.Job.SchedulerContract
-import Editor.Jumps.Go
+import Editor.Links
 import Editor.Main
 import Editor.PackageLibrary
 import Editor.SearchRoot

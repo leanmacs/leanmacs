@@ -96,6 +96,7 @@ import ModelTest.Editor.Language.Grammar.Answer
 import ModelTest.Editor.Language.Grammar.Register
 import ModelTest.Editor.Layout
 import ModelTest.Editor.Link
+import ModelTest.Editor.Links
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Marks
@@ -1373,6 +1374,12 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
 - `linkChecks`: the lookups over a buffer's links (`Editor/Link.lean`),
   which link holds an offset and the next and previous from one, and the
   check a URL passes before it is handed to the system opener;
+  `linkFollowChecks` and `linkMoveChecks`, following and moving between a
+  buffer's links (`Editor/Links.lean`) on a hosted driver over the core's
+  `Links.setup`: each kind of target followed by `activate`'s key, the
+  links mode's precedence over a mode's own `activate` and the mode's
+  handler off a link, a location's jump and `C-o` back, each refusal, and
+  the link roles' keys stepping across links and stopping at either end;
 - `columnsChecks`: the column arithmetic of align-to stops
   (`Editor/Columns.lean`), pure and on the display model, and a generated
   buffer's stops and spans reaching its view; `stopChecks`, beside the
@@ -1734,6 +1741,8 @@ def checks : List Check :=
     linkDecorationChecks ++
     columnsChecks ++
     linkChecks ++
+    linkFollowChecks ++
+    linkMoveChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++
