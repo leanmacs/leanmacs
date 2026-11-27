@@ -67,14 +67,15 @@ def manifestRead (manifest : String := ownManifest) : Process.Script :=
 
 /-- The scripts of a whole build of `order` that succeeds: the manifest's
 read (answering `manifest`), the query (listing `crates`), Cargo when
-there are crates, the install, the record's read, the probe, the move and
-the prune. -/
+there are crates, the install, the record's read, the probe (exiting
+`probeCode` with `probe` and `probeStderr`), the move and the prune. -/
 def succeeding (order : Order) (crates : String := "") (probe : String := "probe: ok\n")
-    (manifest : String := ownManifest) : Array Process.Script × Array Process.StreamScript :=
+    (manifest : String := ownManifest) (probeCode : Nat := 0) (probeStderr : String := "") :
+    Array Process.Script × Array Process.StreamScript :=
   (#[manifestRead manifest, replied (lakeCommand order #["query", ":editorRustCrates"]) 0 crates,
       replied (tool order "cargo") 0 "cargo 1.98.1",
       replied (rootCommand "/bin/cat" #[staging ++ "/editor.core"]) 0 "c0\n",
-      replied (rootCommand (staging ++ "/editor") #["--probe"]) 0 probe,
+      replied (rootCommand (staging ++ "/editor") #["--probe"]) probeCode probe probeStderr,
       replied (rootCommand "/bin/mv" #[staging, "/d/editors/c0/1"]),
       replied (rootCommand "/bin/rm" #["-rf", staging]),
       RestartTest.passing "/d/editors/c0/1/editor"],
@@ -573,6 +574,33 @@ def packageSetBuildChecks : List Check :=
             let done := built driver order
             pure
               (failedWith done "the new editor did not start" &&
+                (startedRuns done).contains ("/bin/rm", #["-rf", staging]) &&
+                !(startedRuns done).any (·.1 == "/bin/mv")) },
+    { name :=
+        "a probe whose package initialiser threw a refused load ends the build failed with the refusal's text, removes the staging directory and publishes nothing"
+      run :=
+        let facts := lakefileWith #[hello]
+        match orderFor facts with
+        | none => pure false
+        | some order =>
+          let resolve :=
+            streaming
+              (lakeCommand order
+                #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
+              #[]
+          -- Lean's generated `main` prints an initialiser's uncaught error
+          -- and exits 1, before the editor's `main` prints anything.
+          let refusal :=
+            "uncaught exception: echo: its library /x is missing; build the package echo (lake build EchoReal)"
+          let (scripts, streams) :=
+            succeeding order (probe := "") (probeCode := 1) (probeStderr := refusal ++ "\n")
+          match buildDriver (runningWith facts) scripts (streams.push resolve) with
+          | none => pure false
+          | some driver =>
+            let done := built driver order
+            pure
+              (failedWith done
+                  s!"the new editor did not start: it exited with status 1; {refusal} after" &&
                 (startedRuns done).contains ("/bin/rm", #["-rf", staging]) &&
                 !(startedRuns done).any (·.1 == "/bin/mv")) },
     { name :=

@@ -116,9 +116,10 @@ def hello : Require :=
 def gitPackage : Require :=
   { name := "g", source := .git "https://example.invalid/g" (some "v1") none }
 
-/-- A run replying status `code` with `stdout`. -/
-def replied (command : Process.Command) (code : Nat := 0) (stdout : String := "") :
-    Process.Script :=
-  { command, reply := .ok { exit := .code code, stdout := stdout.toUTF8, stderr := .empty } }
+/-- A run replying status `code` with `stdout`, and `stderr` on standard
+error. -/
+def replied (command : Process.Command) (code : Nat := 0) (stdout : String := "")
+    (stderr : String := "") : Process.Script :=
+  { command, reply := .ok { exit := .code code, stdout := stdout.toUTF8, stderr := stderr.toUTF8 } }
 
 end Editor.Test.PackageSet

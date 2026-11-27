@@ -1121,7 +1121,8 @@ The config session's decisions are tested here too, with no elaborator:
   failing build shown, its staging directory removed and nothing
   published; macOS refusing a bundle's lake at lake update, lake query
   and lake build, decided in one place (`LakeFailure.of`); a failing
-  probe; the core check, a relative entry resolved against the config
+  probe, and one whose package initialiser threw a refused library load,
+  its text carried to the build's failure line; the core check, a relative entry resolved against the config
   directory; a success that writes the record, publishes version 1 and
   restarts into it; and what is pruned, never the running
   editor's version;
