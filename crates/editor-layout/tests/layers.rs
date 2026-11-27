@@ -123,21 +123,51 @@ fn a_column_inside_a_tabs_spaces_goes_back_to_the_tab() {
     });
 }
 
+/// Align-to stops for a segment whose text is `segment`: one at every
+/// `every`th character from the second, each at `step` pixels times its
+/// count, so that some fall past a width and some before the text they
+/// follow ends. None when `every` is 0.
+fn stops_of(segment: &str, every: usize, step: f32) -> Vec<(usize, f32)> {
+    if every == 0 {
+        return Vec::new();
+    }
+    segment
+        .char_indices()
+        .skip(1)
+        .step_by(every)
+        .enumerate()
+        .map(|(index, (offset, _))| (offset, step * (index + 1) as f32))
+        .collect()
+}
+
 #[test]
 fn a_position_converted_through_tabs_and_wrap_and_back_is_the_position() {
     let widths = select(vec![None, Some(1.0), Some(30.0), Some(55.0), Some(400.0)]);
+    // No stop, or stops at every few characters: the round trip holds
+    // with a row's cells placed at stops as without.
+    let stops = (select(vec![0usize, 1, 3, 5]), select(vec![15.0f32, 40.0]));
     check(
-        64,
-        (texts(), 1usize..9, widths),
-        |(text, tab_width, width)| {
+        96,
+        (texts(), 1usize..9, widths, stops),
+        |(text, tab_width, width, (every, step))| {
             let shaper = CellShaper::new(10.0, 16.0);
             let snapshot = Text::from(text.as_str()).snapshot();
             let tabs = TabLayer::new(snapshot.clone(), tab_width);
             let mut wrap = WrapLayer::new(tabs.snapshot().clone(), width);
             for offset in positions(&snapshot) {
                 let tab = tabs.to_layer(offset, Bias::Before).unwrap();
-                wrap.entry(&shaper, tab.row, tab.segment, &[], FontId::default())
-                    .unwrap();
+                let (bytes, _) = tabs.snapshot().segment(tab.row, tab.segment).unwrap();
+                let source = snapshot.slice_to_string(bytes).unwrap();
+                let stops = stops_of(&source, every, step);
+                wrap.entry(
+                    &shaper,
+                    tab.row,
+                    tab.segment,
+                    &[],
+                    FontId::default(),
+                    &stops,
+                )
+                .unwrap();
                 let point = wrap
                     .to_layer(tab, Bias::Before)
                     .ok_or_else(|| TestCaseError::fail(format!("no wrap point at {offset}")))?;

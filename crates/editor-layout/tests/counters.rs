@@ -14,8 +14,8 @@ use editor_layout::cache::Counters;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::frame::Frame;
 use editor_layout::scene::{
-    Block, Changes, Cursor, Decoration, Padding, Rect, Scene, StatusField, TextKey, TextRef, View,
-    ViewId,
+    AlignStop, Block, Changes, Cursor, Decoration, Padding, Rect, Scene, StatusField, TextKey,
+    TextRef, View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -84,6 +84,7 @@ fn scene_rows(text: &TextRef, width: u32, cursor: usize, rows: u32) -> Scene {
             padding: Padding::default(),
             blocks: vec![],
             marks: vec![],
+            stops: vec![],
         }],
         ..Scene::default()
     }
@@ -133,6 +134,57 @@ fn a_width_change_breaks_every_row_again_and_shapes_none() {
         layout.frame(&scene(&text, 500, 0));
     });
     assert_eq!(wider, count(0, 20, 0));
+}
+
+/// [`scene`] of twenty words with a stop at the second character of
+/// every row, `x` points in, but row 7's at its `third`rd character when
+/// it is set.
+fn with_stops(text: &TextRef, x: u32, third: bool) -> Scene {
+    let mut scene = scene(text, 400, 0);
+    scene.views[0].stops = (0..20)
+        .map(|row| {
+            let start = text.snapshot.row_range(row).unwrap().start;
+            let at = if third && row == 7 { 2 } else { 1 };
+            AlignStop {
+                offset: start + at,
+                x,
+            }
+        })
+        .collect();
+    scene
+}
+
+#[test]
+fn a_frame_with_the_same_stops_again_shapes_nothing() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_stops(&text, 40, false));
+    let again = counted(&mut layout, |layout| {
+        layout.frame(&with_stops(&text, 40, false));
+    });
+    assert_eq!(again, count(0, 0, 20));
+}
+
+#[test]
+fn a_stops_x_changed_alone_breaks_the_rows_and_shapes_none() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_stops(&text, 40, false));
+    let moved = counted(&mut layout, |layout| {
+        layout.frame(&with_stops(&text, 60, false));
+    });
+    assert_eq!(moved, count(0, 20, 0));
+}
+
+#[test]
+fn a_stop_moved_to_another_offset_shapes_that_row_only() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_stops(&text, 40, false));
+    let moved = counted(&mut layout, |layout| {
+        layout.frame(&with_stops(&text, 40, true));
+    });
+    assert_eq!(moved, count(1, 1, 19));
 }
 
 #[test]

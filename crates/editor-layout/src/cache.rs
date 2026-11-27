@@ -28,7 +28,10 @@
 //!
 //! **What a kept row is of.** An entry is the layout of one segment in
 //! the font runs it was shaped with, under the shaper's generation, at a
-//! width, and is used again only when all three are what is asked now. A
+//! width, and is used again only when all three are what is asked now.
+//! A segment laid out under align-to stops is also of the columns it was
+//! cut at, which a change shapes again, and of each stop's x, which a
+//! change breaks again without shaping, as a width does. A
 //! font's id is the shaper's for a spec in physical pixels, which is the
 //! faces' spec at the scale layout was last told
 //! ([`Layout::set_scale`](crate::Layout::set_scale)). So the scale is in
@@ -99,17 +102,33 @@ impl Counters {
     }
 }
 
+/// What a query lays a text out under of the last frame that showed it.
+pub(crate) struct LastFrame {
+    /// The frame's selections.
+    pub selections: SelectionSource,
+    /// The frame's decorations.
+    pub decorations: FaceSpanSource,
+    /// The frame's align-to stops, resolved for the snapshot: each at a
+    /// character boundary, in the order of their offsets, none twice at
+    /// one offset, and each x in whole **points**, so that a query after
+    /// a change of scale turns them into pixels at the new scale
+    /// ([`Layout::padding_pixels`](crate::Layout::padding_pixels)).
+    pub stops: Vec<(usize, u32)>,
+}
+
 /// What layout keeps of one text.
 pub(crate) struct TextState<L> {
     /// Its wrap layer.
     pub wrap: WrapLayer<L>,
-    /// The selections and decorations of the last frame that showed it,
-    /// so that a query shapes a row in the fonts the frame did. Read only
-    /// while the text is at the revision they were laid out at. The text's
-    /// own spans are not kept here: a query resolves them for the snapshot
-    /// it is asked about ([`TextRef::spans`](crate::scene::TextRef::spans)),
-    /// which an edit makes newer than the last frame's.
-    pub sources: Option<(SelectionSource, FaceSpanSource)>,
+    /// The selections, decorations and align-to stops of the last frame
+    /// that showed it, so that a query shapes a row in the fonts the frame
+    /// did and lays it out under the same stops. Read only while the text
+    /// is at the revision they were laid out at: an edit drops them all,
+    /// by the same rule. The text's own spans are not kept here: a query
+    /// resolves them for the snapshot it is asked about
+    /// ([`TextRef::spans`](crate::scene::TextRef::spans)), which an edit
+    /// makes newer than the last frame's.
+    pub sources: Option<LastFrame>,
 }
 
 /// What layout keeps, by text.

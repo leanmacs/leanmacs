@@ -129,6 +129,7 @@ impl<S: Shaper> BlockLayout<'_, S> {
                 wrap: &mut state.wrap,
                 base,
                 fonts: &fonts,
+                stops: &|_| Vec::new(),
                 outcome: &mut |row, segment, outcome| {
                     seen.entry((row, segment)).or_insert(outcome);
                 },

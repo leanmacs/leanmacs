@@ -84,6 +84,17 @@
 //!   spot and move queries taking the column off as the frame does, and
 //!   mark rows kept apart from text rows ([`frame`], "The gutter";
 //!   `tests/gutter.rs`);
+//! - align-to stops: a row cut at its stops into cells, each shaped on its
+//!   own and placed at its stop or after the cell before it, a stop at or
+//!   past the width breaking the row before its cell, which starts the
+//!   next visual line at x 0, a long cell hanging under its stop, and the
+//!   gap before a stop belonging to the character before it (`align`);
+//!   a view's stops in points, at the scale, the rows, spot and move
+//!   queries laying a row out under the last frame's stops, and cells of
+//!   one column lining up whatever the widths before them
+//!   (`tests/align.rs`); what a change of a stop shapes and breaks
+//!   (`tests/counters.rs`), and the round trip of a position through a
+//!   row with stops (`tests/layers.rs`);
 //! - translated spans: a text made of pieces of other texts draws each
 //!   source's own spans at every piece of it, cut at the pieces' edges,
 //!   each source resolved once, and keeps the contract of
@@ -92,6 +103,7 @@
 //! The adapter-neutral rules of shaping are [`shaper::contract`]'s, which
 //! every real adapter runs. No crate downstream pins the fake's geometry.
 
+mod align;
 mod blocks;
 pub mod cache;
 pub mod decoration;
@@ -107,16 +119,24 @@ pub mod translated;
 pub mod wrap;
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use crate::blocks::{BlockLayout, Blocks, ViewBlocks};
 use crate::cache::{Counters, StatusKept, Texts, state};
 use crate::decoration::{DecorationSource, Styles, TextSpansSource, fonts_of};
 use crate::face::{FaceDef, SELECTION_FACE};
-use crate::query::{Moved, QueryError, RowRange, Shown, Spot, Walker};
+use crate::query::{Moved, QueryError, RowRange, Shown, Spot, Walker, relative_stops};
 use crate::scene::{Block, Padding, TextKey, TextRef, ViewId};
 use crate::shaper::{FontId, Shaper};
 use crate::tabs::{DEFAULT_TAB_WIDTH, row_content, segment_count};
 use crate::wrap::Outcome;
+
+/// `points` in pixels at `scale`: the points times the scale, unrounded.
+/// The one rule [`Layout::padding_pixels`] and the stops a query lays a
+/// row out under both follow.
+fn pixels(points: u32, scale: f32) -> f32 {
+    points as f32 * scale
+}
 
 /// Layout: a shaper and what is laid out with it.
 pub struct Layout<S: Shaper> {
@@ -251,7 +271,7 @@ impl<S: Shaper> Layout<S> {
     /// off through this, so the two cannot disagree ([`frame`], "The
     /// padding").
     pub fn padding_pixels(&self, points: u32) -> f32 {
-        points as f32 * self.scale()
+        pixels(points, self.scale())
     }
 
     /// The rows of `text` a view `width` pixels wide and `height` tall,
@@ -446,6 +466,7 @@ impl<S: Shaper> Layout<S> {
     ) -> T {
         let own = TextSpansSource::of(&mut self.styles, text);
         let mut view_blocks = ViewBlocks::new(blocks, &text.snapshot, &mut self.styles);
+        let scale = self.scale();
         let mut state = state(&mut self.texts, text, self.tab_width, Some(width));
         let state = &mut *state;
         // Lowest layer first: the text's own spans, the decorations, then
@@ -454,10 +475,18 @@ impl<S: Shaper> Layout<S> {
         if let Some(own) = &own {
             sources.push(own);
         }
-        if let Some((selections, decorations)) = &state.sources {
-            sources.push(decorations);
-            sources.push(selections);
+        // The last frame's stops, in pixels at the scale as it is now.
+        let mut stops: Vec<(usize, f32)> = Vec::new();
+        if let Some(last) = &state.sources {
+            sources.push(&last.decorations);
+            sources.push(&last.selections);
+            stops.extend(
+                last.stops
+                    .iter()
+                    .map(|(offset, x)| (*offset, pixels(*x, scale))),
+            );
         }
+        let stops_of = |bytes: Range<usize>| relative_stops(&stops, &bytes);
         let (styles, shaper, base) = (&self.styles, &self.shaper, self.base);
         let snapshot = &text.snapshot;
         let fonts = |bytes| fonts_of(&sources, snapshot, bytes, styles, shaper, base);
@@ -478,6 +507,7 @@ impl<S: Shaper> Layout<S> {
                 wrap: &mut state.wrap,
                 base,
                 fonts: &fonts,
+                stops: &stops_of,
                 outcome: &mut |row, segment, outcome| {
                     seen.entry((row, segment)).or_insert(outcome);
                 },

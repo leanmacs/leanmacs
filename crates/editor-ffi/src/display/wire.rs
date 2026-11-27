@@ -903,6 +903,7 @@ impl WireScene {
                             face: mark.face.clone(),
                         })
                         .collect(),
+                    stops: Vec::new(),
                 }
             })
             .collect();

@@ -177,6 +177,11 @@ pub(crate) struct Walker<'a, S: Shaper> {
     /// base, by absolute bytes, later over earlier; asked only for the
     /// segments the walker lays out.
     pub fonts: &'a dyn Fn(Range<usize>) -> Vec<(Range<usize>, FontId)>,
+    /// The align-to stops of a segment's bytes (absolute), each as an
+    /// offset relative to the segment's start and an x in pixels, in
+    /// order ([`relative_stops`]); asked only for the segments the walker
+    /// lays out.
+    pub stops: &'a dyn Fn(Range<usize>) -> Vec<(usize, f32)>,
     /// Told how each segment was got, by row and segment.
     pub outcome: &'a mut dyn FnMut(usize, usize, Outcome),
 }
@@ -189,16 +194,16 @@ impl<S: Shaper> Walker<'_, S> {
 
     /// `row`'s `segment`, laid out.
     pub fn entry(&mut self, row: usize, segment: usize) -> Option<Arc<LineEntry<S::Shaped>>> {
-        let fonts = {
+        let (fonts, stops) = {
             let snapshot = self.wrap.tabs().buffer();
             let content = row_content(snapshot, row)?;
             let bytes = segment_range(snapshot, &content, segment)?;
             let spans = (self.fonts)(bytes.clone());
-            relative_spans(&spans, &bytes)
+            (relative_spans(&spans, &bytes), (self.stops)(bytes))
         };
-        let (entry, outcome) = self
-            .wrap
-            .entry(self.shaper, row, segment, &fonts, self.base)?;
+        let (entry, outcome) =
+            self.wrap
+                .entry(self.shaper, row, segment, &fonts, self.base, &stops)?;
         (self.outcome)(row, segment, outcome);
         Some(entry)
     }
@@ -409,6 +414,19 @@ impl<S: Shaper> Walker<'_, S> {
             goal,
         })
     }
+}
+
+/// The stops of `stops` (absolute byte offsets, in order, with their xs)
+/// in `bytes`, a segment, made relative to its start: each with a
+/// character of the segment after it. A stop at the segment's end is the
+/// next segment's, or does nothing.
+pub(crate) fn relative_stops(stops: &[(usize, f32)], bytes: &Range<usize>) -> Vec<(usize, f32)> {
+    let first = stops.partition_point(|(offset, _)| *offset < bytes.start);
+    stops[first..]
+        .iter()
+        .take_while(|(offset, _)| *offset < bytes.end)
+        .map(|(offset, x)| (offset - bytes.start, *x))
+        .collect()
 }
 
 /// The spans of `fonts` (absolute bytes) that touch `bytes`, clipped to it

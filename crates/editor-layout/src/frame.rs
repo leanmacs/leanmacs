@@ -251,7 +251,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::blocks::{BlockKey, BlockLayout, ViewBlocks, ViewMarks, mark_block};
 
-use crate::cache::{FieldKept, StatusKept, state};
+use crate::align::resolved;
+use crate::cache::{FieldKept, LastFrame, StatusKept, state};
 use crate::decoration::{
     DecorationSource, FaceSpanSource, SelectionSource, Span, Styles, TextSpansSource, fonts_of,
     merge,
@@ -260,7 +261,7 @@ use crate::face::{
     Color, ECHO_AREA_FACE, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle,
 };
 use crate::line::LineEntry;
-use crate::query::{Shown, Visual, Walker};
+use crate::query::{Shown, Visual, Walker, relative_stops};
 use crate::scene::{CursorShape, Rect, Scene, Side, Size, StatusField, TextKey, View, ViewId};
 use crate::shaper::{
     FontId, FontRun, Glyph, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper,
@@ -1165,6 +1166,14 @@ impl<S: Shaper> Layout<S> {
         let selection_source = SelectionSource::new(snapshot, &selections, selection_face);
         let face_source = FaceSpanSource::new(decorations);
         let own = TextSpansSource::of(&mut self.styles, text);
+        // The stops, resolved for the snapshot, in points to keep and in
+        // pixels to lay out at.
+        let stops = resolved(snapshot, &view.stops);
+        let stop_pixels: Vec<(usize, f32)> = stops
+            .iter()
+            .map(|(offset, x)| (*offset, self.padding_pixels(*x)))
+            .collect();
+        let stops_of = |bytes: Range<usize>| relative_stops(&stop_pixels, &bytes);
         // Every source, lowest layer first: the text's own spans, `extra`,
         // the decorations and the selections.
         let mut sources: Vec<&dyn DecorationSource> = Vec::new();
@@ -1184,6 +1193,7 @@ impl<S: Shaper> Layout<S> {
             wrap: &mut state.wrap,
             base,
             fonts: &fonts,
+            stops: &stops_of,
             outcome: &mut |row, segment, outcome| {
                 seen.entry((row, segment)).or_insert(outcome);
             },
@@ -1341,7 +1351,11 @@ impl<S: Shaper> Layout<S> {
                 paint: cursor_paint,
             });
         }
-        state.sources = Some((selection_source.clone(), face_source.clone()));
+        state.sources = Some(LastFrame {
+            selections: selection_source.clone(),
+            decorations: face_source.clone(),
+            stops,
+        });
         self.counters.add(&seen);
         frame
     }
@@ -1610,6 +1624,7 @@ mod tests {
             padding: Padding::default(),
             blocks: vec![],
             marks: vec![],
+            stops: vec![],
         }
     }
 

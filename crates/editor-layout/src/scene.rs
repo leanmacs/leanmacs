@@ -54,6 +54,24 @@
 //! back to a character boundary, and past the text's end to the end, as a
 //! block's are. Marks beside rows the view does not show draw nothing.
 //!
+//! # Align-to stops
+//!
+//! A view's [`AlignStop`]s place the cells of its text's rows at pixel
+//! columns: a stop names the first character of a cell (a byte offset of
+//! the view's snapshot) and how far right of the start of the text row,
+//! after the padding and the gutter, the cell starts, in whole points.
+//! Layout turns a point into pixels as it does a padding, so a stop stays
+//! right at another scale. Lean computes stops from the widths it
+//! measures ([`Layout::measure`](crate::Layout::measure)), so the cells
+//! of one column line up whatever the widths of the cells before them,
+//! which no count of spaces can do on a proportional font. Like a
+//! decoration a stop is the view's, Lean chooses it, and it holds no
+//! position of its own. Where cells go and where a row breaks are
+//! `align`'s rules. The rows, spot and move queries
+//! lay a row out under the stops of the last frame that showed the text
+//! at its revision, by the rule they read the decorations by
+//! ([`cache`](crate::cache)).
+//!
 //! # Where an addition goes
 //!
 //! A new field of Lean's scene is a field here, decoded by the binding.
@@ -139,6 +157,19 @@ pub struct Decoration {
     pub stop: usize,
     /// The name of the face it takes.
     pub face: String,
+}
+
+/// An align-to stop: where a cell of a row of a view's text starts
+/// (module docs, "Align-to stops").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct AlignStop {
+    /// A byte offset of the view's snapshot: the first character of the
+    /// cell.
+    pub offset: usize,
+    /// How far right of the start of the text row the cell starts, in
+    /// whole points, which layout multiplies by its scale as it does a
+    /// padding ([`Layout::padding_pixels`](crate::Layout::padding_pixels)).
+    pub x: u32,
 }
 
 /// A block: rows of text of its own, drawn between two rows of a view
@@ -569,6 +600,9 @@ pub struct View {
     /// Its gutter marks, drawn in its gutter column (module docs, "Gutter
     /// marks"); none by default.
     pub marks: Vec<GutterMark>,
+    /// Its align-to stops (module docs, "Align-to stops"); none by
+    /// default.
+    pub stops: Vec<AlignStop>,
 }
 
 /// A divider: a strip of the frame between two tiled views, filled in the
