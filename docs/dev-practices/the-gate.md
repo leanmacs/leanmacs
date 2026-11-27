@@ -56,7 +56,7 @@ details:
   ("The structure check").
 - **`lean-fmt`**: lean-fmt's format and lint checks over the core, each
   package of the fixture set ("Formatting") and the grammar set's package.
-- **`ffi-test`**: cargo-deny over each set's generated crate ("The Rust
+- **`ffi-test`**: cargo-deny over the core's generated crate ("The Rust
   bans check"); `ffi-test`'s checks of the Lean/Rust boundary;
   `contract-test`, the ports' contracts against their real bindings;
   `config-test`, the config session against the real elaborator; the

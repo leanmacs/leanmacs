@@ -379,7 +379,7 @@ A failure for want of a tool says which tool and how to get it:
 - **The tool a package's native library is built with** (Cargo, zig, a C
   compiler), for a package whose library is not already built: the build
   stops with `<tool> is required to build <package>'s library, and none
-  works here (…)`. Install the tool (Cargo from <https://rustup.rs>), or
+  works here (<how>): …`. Install the tool (Cargo from <https://rustup.rs>), or
   use the package's prebuilt library, as its documentation says. A package
   whose library is already built needs no tool of yours at all.
 - **A package that still declares an `editorRustCrate` target** is refused:
@@ -390,6 +390,13 @@ A failure for want of a tool says which tool and how to get it:
 A new editor that is built but does not start, because its link is bad or a
 package's `initialize` throws, is caught before the restart: nothing is
 published and the running editor keeps running.
+
+A package's library that the new editor refuses to load is caught the same
+way. The failure line reads `the new editor did not start: it exited with
+status 1; uncaught exception: <package>: …`, naming the package and its
+library, and the author's guide lists each message and what to do
+([writing-a-package.md](writing-a-package.md), "A native library", "When a
+library is refused").
 
 **A set that would build another core** is refused before anything is
 linked. If the lakefile does not require `editor-core` last, by the running
@@ -421,11 +428,13 @@ errors in `*package-build*`.
 - **The system `git` for git and Reservoir packages**: `xcode-select
   --install` on macOS, or <https://git-scm.com>.
 - **For a package with native code, what its documentation says.** The app
-  ships no macOS SDK, no C headers and no Cargo. A package with C that
-  includes only `lean/lean.h` builds from the app; one with other C needs
-  the Xcode command line tools, or a prebuilt binary its lakefile fetches. A
-  package's Rust is a library of its own: one already built needs nothing
-  of yours, and one its lakefile builds needs your own Cargo.
+  ships no macOS SDK, no C headers and no Cargo. A package's native code is
+  a library loaded when the editor starts. One the package ships already
+  built needs no Cargo or other compiler of yours at `:reload`. A package
+  whose library its lakefile builds runs your own tooling (Cargo, zig, a C
+  compiler) at `:reload`, which is the fallback, and its documentation
+  says which. A package's C glue that includes only `lean/lean.h` builds
+  from the app; other C needs the Xcode command line tools.
 - **The agents packages** (`agents-api` and `acp`) are opt-in and come from
   a checkout of the editor: `mise run install -- --agents` builds acp's
   library with your Cargo, there, and adds both to your config, whose

@@ -366,6 +366,8 @@ Rust still never calls Lean: the crate reports through its own service's
 completions, which Lean pulls.
 
 **The pieces.** A package's crate may depend only on `editor-service`
+(until `package-native-libraries` phase 5; since then a package's library
+reaches this port through the package runtime's `take_over`)
 ([packages.md](packages.md), "The service conventions as a crate of their
 own"), so the hand-off is a port there, in the editor's terms, and the crate
 that holds the process's one process service provides it:
@@ -2150,9 +2152,8 @@ upstream's own crate vendored unmodified under `vendor/`
 MIT; `vendor/README.md`), whose build compiles
 the generated `parser.c` (and the grammar's scanner, if it has one) with
 `cc` when Cargo builds the library; the objects end up in
-the editor's one Rust archive, the crate the package-set build generates
-from `editor-ffi` and the set's package crates (`libeditor_rust.a` for a
-set with none), which Lake links. Lean is vendored because no crates.io crate builds
+the editor's one Rust archive, the crate the core's build generates
+from `editor-ffi` (`libeditor_rust.a`), which Lake links. Lean is vendored because no crates.io crate builds
 against the pinned library: the one Lean grammar crate, `tree-sitter-lean4`,
 has a normal dependency on tree-sitter 0.25, which cannot coexist with
 0.27.2. The workspace excludes `vendor/`, so the copy is a path dependency

@@ -22,10 +22,11 @@ processes.
   the rest go to stderr.
 - Installing or removing a package rebuilds the editor and restarts it;
   packages are not loaded or unloaded while it runs.
-- The app ships only the Lean toolchain. A package with native code needs
-  your own tooling (the Xcode command line tools, or rustup's Cargo for Rust,
-  from a checkout only) or a prebuilt binary. A Rust crate from outside this
-  repository is not supported yet.
+- The app ships only the Lean toolchain. A package's native code is a
+  library loaded when the editor starts: one the package ships already
+  built needs no Cargo or compiler at `:reload`, and one its lakefile
+  builds needs your own tooling (Cargo, zig, a C compiler), as its
+  documentation says ([installing-packages.md](docs/packages/installing-packages.md)).
 
 ## Download
 

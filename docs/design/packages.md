@@ -3250,27 +3250,52 @@ package may import it. Its module docs say where an addition goes.
 
 ## Rust in a package
 
-Status: **built** (`phase/packages/phase-11-rust-in-packages`), and **the
-per-set crate retired** in `package-native-libraries` phase 5: a package's
-Rust now ships as a library of its own, written against `editor-package`
-and loaded when the editor starts ("A package's library, staged and
-loaded, as built", "acp, ported, as built", below), and every set's editor
-links the core's archive alone. This section and the next keep the history
-of the archive generated from a set's package crates; what still holds is
-the glue and the binding (a package's glue, its `@[extern]` declarations,
-its Lean lakefile).
+Status: the archive design was **built** by
+`phase/packages/phase-11-rust-in-packages`, and **replaced** by
+`package-native-libraries` (phases 1 to 5): a package ships native code,
+Rust or any language with a C ABI, as a dynamic library of its own with a
+C interface, which the editor loads at run time. The core's own Rust stays
+statically linked, one archive (`libeditor_rust.a`) every set's editor
+links.
 
 A package may need code that exists as a Rust crate, as the agent client
 protocol does: the ACP client runs on the protocol's Rust SDK instead of
 writing JSON-RPC and the protocol's types again in Lean (the package
 `acp`'s crate `acp-service`, [agent-hosting.md](agent-hosting.md), "The
-ACP client, as built"). A package brings
-Rust as a crate of its own, a C file of glue and Lean bindings, and the
-package-set build links all of it into the one executable. A Lean binding is
-an `@[extern]` declaration of a glue function, which turns Lean objects into
-plain data and calls a Rust function of the C ABI, as the core's are
-(`editor_glue_…` over `editor_ffi_…`). The fixture package `echo`
-(`tests/packages/echo/`) is the proof.
+ACP client, as built").
+
+A package with native code has three parts:
+
+- **Its library**: a `cdylib` written in Rust against `editor-package`, or
+  a shared library built from C, C++ or Zig against the generated header
+  (`crates/editor-package-runtime/include/editor_package_runtime.h`). It
+  exports `editor_package_init` and `editor_package_declaration`.
+- **Its glue**: a C file compiled by the toolchain's `clang` against
+  `lean.h` and linked through its library's `moreLinkObjs`. It keeps the
+  `@[extern]` binding, as the core's glue does (`editor_glue_…` over
+  `editor_ffi_…`), and forwards each call through the table the library's
+  init writes.
+- **A Lean `builtin_initialize`**, which loads the staged library through
+  `Editor.PackageLibrary.staged` and the core's `editor_ffi_package_load`
+  before `main`.
+
+The fixtures `echo` (`tests/packages/echo/`) and `acp` (`packages/acp/`)
+are the proof. The subsections below record it as built, in reading
+order: "A library loaded when the editor runs, as built (the spike)", "The
+package runtime, as built", "The package crate wrapper, as built
+(`editor-package`)", "A package's library, staged and loaded, as built"
+and "acp, ported, as built". The author's side is the guide,
+[writing-a-package.md](../packages/writing-a-package.md), "A native
+library".
+
+Decision history: the archive generated from the set's package crates was
+2026-11-19's design (a proposal, built in packages phase 11; "One Rust
+archive per editor, generated from the set", below, keeps how it was). The
+owner decisions of 2026-11-20 and 2026-11-26 are in "Who can build it".
+`package-native-libraries` took up the dynamic library because the
+installed app could not do the Rust half at all: it refused a crate
+outside its bundle (`outsideCrateRefusal?`) and a set whose `editor-core`
+is not its own (`coreRefusal?`).
 
 ### One Rust archive per editor, generated from the set
 
@@ -3342,18 +3367,60 @@ Not chosen:
 - **An archive per set, generated into the set's `.lake`.** Sets with the
   same crates would each bundle an 80 MB archive, and Cargo's target
   directory must be shared anyway to reuse dependency builds.
-- **A library loaded when the editor runs** (`dlopen`), when this section
-  was built. It needs no relink and no Cargo, which suits a third party's
-  prebuilt binary, but `@[extern]` binds at link time, so every call goes
-  through a table of pointers. The roadmap `package-native-libraries`
-  takes it up, keeping the `@[extern]` binding in each package's glue,
-  linked as before, which forwards through the table the library's init
-  answers; the ad-hoc-signed app has no library validation to relax. Its
-  phase 1 built it for `echo`, and its phase 2 made the runtime a library
-  is handed the stable C contract every package library builds against
-  (below, "The package runtime, as built").
+- **A library loaded when the editor runs** (`dlopen`), set aside when
+  the archive was built, because `@[extern]` binds at link time, so every
+  call would go through a table of pointers. It needs no relink and no
+  Cargo, which suits a third party's prebuilt binary.
+  `package-native-libraries` answered the objection by keeping the
+  `@[extern]` binding in each package's glue, linked as before, which
+  forwards through the table the library's init answers; the
+  ad-hoc-signed app has no library validation to relax. It is now the
+  design ("A library loaded when the editor runs, as built", below).
+
+#### Why the archive could not simply be split
+
+`acp-service`, while it was compiled into the archive, linked
+`editor-service` and shared process-wide Rust statics with the core:
+
+- the completion queue (`crates/editor-service/src/queue.rs`, `pub static
+  COMPLETION`);
+- the service-id counter (`crates/editor-service/src/service.rs`, `static
+  NEXT`, which starts at `FIRST_PACKAGE_ID`);
+- the stream source, handed over as a Rust trait object
+  (`crates/editor-service/src/stream.rs`, `static SOURCE`);
+- buffers lent and reclaimed as Rust allocations.
+
+They were one copy only because everything was one archive. A package
+crate built as its own dynamic library would carry its own copy of each:
+its completions would go to a queue no one reads, `take_over` would answer
+`NoService`, and a buffer would be freed by the wrong allocator. That is
+why the shipped design hands each library a runtime of C function pointers
+("The package runtime, as built"), with no Rust type crossing, instead of
+linking `editor-service` into the library.
 
 ### A library loaded when the editor runs, as built (the spike)
+
+This is the design that shipped. Each piece has a subsection that records
+it as built:
+
+- **The library and its two symbols**, `editor_package_init` and
+  `editor_package_declaration` ("The package runtime, as built", "The
+  declaration").
+- **The declaration, read before the init**, and the load's eight
+  refusals ("A package's library, staged and loaded, as built", "The
+  declaration and the refusals").
+- **The versioned runtime**, append-only, its `size` first ("The package
+  runtime, as built").
+- **The Rust wrapper and its fake** ("The package crate wrapper, as built
+  (`editor-package`)").
+- **Staging** beside every editor a set's build links and into the
+  install, with the record `<executable>.libraries` ("A package's library,
+  staged and loaded, as built").
+- **The glue's load** through `editor_ffi_package_load` (the same).
+- **acp, the second user** ("acp, ported, as built").
+
+What follows is the spike's record (phase 1), and what later phases
+changed.
 
 Status: **built** for the fixture `echo`
 (`phase/package-native-libraries/phase-1-packages-load-native-libraries-at-run-time`).
@@ -3494,9 +3561,9 @@ What the later phases must change in the design basis:
 Status: **built**
 (`phase/package-native-libraries/phase-2-package-runtime-abi`). This
 runtime, not `editor-service`'s conventions, is the contract a package's
-library builds against. `editor-service` stays the convention only for the
-package crates still linked into the editor's archive (acp's, until the
-roadmap's phase 5; "The service conventions as a crate of their own",
+library builds against. `editor-service` is the convention of the core's
+own crates only: since phase 5 no package crate is linked into the
+editor's archive ("The service conventions as a crate of their own",
 below).
 
 The runtime is a `#[repr(C)]` struct of `extern "C"` function pointers,
@@ -3672,7 +3739,7 @@ no crate-publishing process exists (`docs/dev-practices/publishing.md`
 covers making the repository public). The cost: a dependent fetches the
 whole repository. Publishing later is additive: drop the flag and version
 the three crates. No test exercises the git source (it needs the network
-and the public repository); phase 6's author guide gives the line.
+and the public repository); the author's guide gives the line.
 
 **The boundary.** Its dependencies are `editor-package-runtime`,
 re-exported as `editor_package::raw` (for the macro's paths and the tags),
@@ -3851,8 +3918,9 @@ whose runtime is `REQUIRED`), and the editor refuses a library declaring
 another interface or a newer runtime. Phase 5 is done and needed nothing
 new of the wrapper: acp's port maps onto it as it stands ("acp, ported, as
 built"), joins `editor-package`'s wrappers and leaves `editor-service`'s,
-its `Service` static replaced by one held in its state. Phase 6: the author
-guide's dependency line.
+its `Service` static replaced by one held in its state. Phase 6 is done:
+the author's guide (`docs/packages/writing-a-package.md`, 'A native
+library') gives the dependency line.
 
 ### A package's library, staged and loaded, as built
 
@@ -3963,7 +4031,9 @@ another interface says "`<p>`: the library `<l>` has interface version
 package set so the library and its package match", and a newer runtime
 "… was built for a newer package runtime than this editor's: it needs
 `<needs>` bytes of runtime, and this editor's is `<has>`; update the
-editor, or use a build of `<p>` for this one".
+editor, or use a build of `<p>` for this one". Each sentence, and what a
+user does about it, is listed in the guide ('A native library', 'When a
+library is refused').
 
 **A missing tool.** The build cannot ask beforehand which tool a target
 needs, so the report is taken from what failed. The staging
@@ -3974,10 +4044,12 @@ registered job, by its caption. A log entry saying the tool could not be
 run (`libraryToolMissing?`: Lean's `could not execute external process
 '<cmd>'`, which Lake 4.35's `proc` logs under `stderr:`, or Lake's own
 `failed to execute '<cmd>': <error>`) fails the staging with
-`libraryToolRequired`: "`<tool>` is required to
-build `<package>`'s library, and none works here (`<how>`): install it (for
-cargo, with rustup from https://rustup.rs), or use the package's prebuilt
-library, as its documentation says, then :reload". The build job's
+`libraryToolRequired`, whose `#guard` pins it for cargo as "cargo is
+required to build echo's library, and none works here (could not execute
+external process 'cargo'): install it with rustup from https://rustup.rs,
+or use the package's prebuilt library, as its documentation says, then
+:reload" (any other tool reads "install it" where cargo's names rustup).
+The build job's
 `missingTooling?` answers that sentence from Lake's `error:` line, so its
 failure line is `lake build exited with status 1: <sentence>`. Any other
 failure of the target is its own log, which the monitor prints, then "the
@@ -4214,11 +4286,11 @@ A package's Rust is an adapter. Its Lean side is a binding behind a port,
 with a pure model and a contract check run against both, as every port is
 (`AGENTS.md`). The port is to be declared by an interface package, so an
 implementation backed by Rust and one written in Lean are both
-implementation packages, and either can replace the other. Interface
-packages are not built yet, so the fixture `echo` holds its port
-(`Echo.lean`), pure model (`Echo/Model.lean`), contract
-(`Echo/Contract.lean`) and binding (`Echo/Real.lean`) in one package: its
-test driver runs the contract against the model, and its linked test
+implementation packages, and either can replace the other. `echo`, a
+fixture, keeps its port (`Echo.lean`), pure model (`Echo/Model.lean`),
+contract (`Echo/Contract.lean`) and binding (`Echo/Real.lean`) in one
+package; `agents-api` is the interface package of a package service
+(below). Echo's test driver runs the contract against the model, and its linked test
 against the binding over the linked test kit's table of waits and
 completion pump, where each request completes through the completion
 queue. Its port holds no Rust, so splitting it out later is a move of
@@ -4297,9 +4369,10 @@ future the crate polls on a plain thread), runs over any stream, and lets
 a request be parked and answered later from another thread, so an answer
 from Lean is a call into the crate, never a callback. The connection's
 transport is the agent child the core's process service opened, whose
-streams the crate takes over through `editor-service`
-([rust-library.md](rust-library.md), "Handing a streaming child to a
-package's crate, as built"); `echo`'s library does it through the package
+streams the crate takes over through the package runtime's `take_over`
+(`Threads<Runtime>`, "acp, ported, as built"; before phase 5, through
+`editor-service`, [rust-library.md](rust-library.md), "Handing a streaming
+child to a package's crate, as built"); `echo`'s library does it through the package
 runtime's `take_over` in its linked test, which shows that a library of
 its own reaches the core's one process service that way. The SDK changes
 major version every month or two, which the exact pin in the root lock
@@ -4310,32 +4383,59 @@ the root `deny.toml` lets no other crate depend on the SDK.
 
 ### Who can build it
 
+**A package ships native code as a dynamic library of its own with a C
+interface, which the editor loads at run time (`package-native-libraries`).**
+The package-set build stages the library beside the editor, and the
+package's glue loads it before `main` ("A package's library, staged and
+loaded, as built").
+
+- **A library the package ships already built** needs no Cargo or other
+  compiler of the user's at `:reload`.
+- **A package whose `editorLibrary` target builds its library** runs the
+  user's own tooling through Lake's `proc` at `:reload`. This is the
+  supported fallback, and a missing tool is reported naming the package
+  and the tool (`libraryToolRequired`).
+- **The core's own Rust stays one static archive** (`libeditor_rust.a`),
+  which a user's set links as it is already built and never rebuilds (the
+  bullet "A user's set never runs Cargo for the core", below).
+
 **Decided by the owner, 2026-11-20 (packages phase 8): the app never ships
 Cargo. And (phase 9): the app ships the Lean toolchain only, with no macOS
 SDK and no C library headers.** A set of pure-Lean packages builds from the
 app alone ([lean-runtime.md](lean-runtime.md), "The app ships the
 toolchain"). A package with native code needs the user's own tooling (the
 Xcode command line tools for C headers or the SDK, rustup's Cargo for
-Rust) or a prebuilt binary its lakefile fetches with the system's `git` or
-`curl`, and says so in its own documentation, the way an Emacs package with
-a native module either compiles it or fetches a prebuilt one.
+Rust) or a library it ships already built, and says so in its own
+documentation, the way an Emacs package with a native module either
+compiles it or fetches a prebuilt one.
 
-- **A C FFI is the preferred way for a package to bring native code**: C or
-  C++ sources the toolchain's compiler builds, as Lake builds the core's
-  own glue (`buildLeanO`), or a system C library it links. It needs
-  nothing beyond the bundled toolchain. A package's object reaches the
-  editor's link through its library's `moreLinkObjs`, its C bound by an
-  `@[extern]` declaration. From the app, the bundled `clang` compiles C
-  that includes `lean/lean.h` alone, and its linker links what the
-  link stubs hold, the system's functions the shipped editor itself
-  imports. C that includes a header of the system's C library
-  (`<stdio.h>`), or calls a system function the stubs lack, needs the
-  user's own Xcode command line tools, which the package's own build must
-  use. When such a build fails, the build buffer's failure line and the
-  echo area say which header, framework or library is missing, and to
-  install the Xcode command line tools (`xcode-select --install`) or use
-  the package's prebuilt binary (`missingTooling?`,
-  `lean/Editor/PackageSet/Build.lean`).
+**Decided by the owner, 2026-11-26 (rdm:roadmap/acp-agents, "Decisions
+(owner, 2026-11-26)"): acp ships opt-in, built with the user's own Cargo,
+for now.** `acp` and `agents-api` stayed out of the default set, and a user
+built acp's crate with rustup's Cargo (`cargoRequired`), with loading a
+library at run time named as the later capability. `package-native-libraries`
+phase 5 superseded it: acp's library is built ahead, at install time, with
+the developer's Cargo (`mise run install -- --agents`), and never at
+`:reload`. The agents packages stay opt-in because the app's bundle stages
+no default package's library yet (`stage-bundle`; the gap in "Where it is
+staged", "A package's library, staged and loaded, as built").
+
+- **C compiled into the glue.** A package's glue, and any small C bound
+  directly by an `@[extern]` declaration, is C the bundled toolchain's
+  compiler builds against `lean.h`, as Lake builds the core's own glue
+  (`buildLeanO`), and links through its library's `moreLinkObjs`. From the
+  app, the bundled `clang` compiles C that includes `lean/lean.h` alone,
+  and its linker links what the link stubs hold, the system's functions
+  the shipped editor itself imports. C that includes a header of the
+  system's C library (`<stdio.h>`), or calls a system function the stubs
+  lack, needs the user's own Xcode command line tools, which the package's
+  own build must use. When such a build fails, the build buffer's failure
+  line and the echo area say which header, framework or library is
+  missing, and to install the Xcode command line tools (`xcode-select
+  --install`) or use the package's prebuilt binary (`missingTooling?`,
+  `lean/Editor/PackageSet/Build.lean`). Native code of any size belongs in
+  the package's library, which needs nothing of the toolchain at `:reload`
+  when it ships built.
 - **A user's set never runs Cargo for the core.** It links the core's
   Rust archive as it is already built (`libeditor_rust.a`, with its record
   of system libraries `target/editor-rust/core/native-static-libs`): no
@@ -4358,19 +4458,19 @@ a native module either compiles it or fetches a prebuilt one.
   library')" (`rustCrateRefusal`; until phase 5, Cargo was required for a
   set holding a crate, `cargoRequired`, and a crate outside the
   repository was refused, `outsideCrateRefusal?`).
-- **Why not archives built ahead for each platform.** An editor links one
-  Rust archive, so it holds one copy of Rust's standard library ("One Rust
-  archive per editor"), so a package's crate cannot arrive as a prebuilt
-  static library of its own. An archive built ahead would have to be the
-  whole editor's archive for that exact combination of crates, core and
-  platform, which no package author can build. A dynamic library loaded at
-  run time was set aside when this was decided (`@[extern]` binds at link
-  time); the roadmap `package-native-libraries` takes it up, a package's
-  glue keeping the binding and forwarding through the library's table, and
-  its spike loads `echo`'s ("A library loaded when the editor runs, as
-  built"). Since its phase 4 a library is staged into every install, and
-  since its phase 5 that is the only way a package's Rust reaches an
-  editor.
+- **Why not archives built ahead for each platform** (decision history).
+  While an editor linked one Rust archive, it held one copy of Rust's
+  standard library ("One Rust archive per editor"), so a package's crate
+  could not arrive as a prebuilt static library of its own: an archive
+  built ahead would have had to be the whole editor's archive for that
+  exact combination of crates, core and platform, which no package author
+  can build. A dynamic library per package carries its own standard
+  library, which is sound across a C boundary, and that is what shipped
+  ("Why the archive could not simply be split").
+- **Signing.** The app is signed ad hoc without the hardened runtime, so
+  library validation does not apply and a package's library loads
+  unsigned by the app ([rust-library.md](rust-library.md), "Code signing
+  and a loaded grammar"). The app is not notarized.
 
 **From the app, a package's Rust reaches the editor as its library.** The
 installed app's `:reload` stages each package's library, already built or
@@ -4565,9 +4665,10 @@ points it registers at and reads, and the names it declares or reaches.
 Two first-party packages live under `packages/` and have no row, as they
 are not of the default set: the agents packages, opt-in (owner decision,
 2026-11-26; `packages/lakefile.toml`'s header), since the app's bundle
-stages no package's library yet. acp ships its Rust as a library of its
-own ("acp, ported, as built"): `mise run install -- --agents` builds it
-from the checkout into the package's `lib/` and adds both packages to a
+stages no package's library yet. acp ships its Rust as a package library
+loaded at run time ("acp, ported, as built"), built at install time by
+`mise run install -- --agents`, which builds it from the checkout with the
+developer's Cargo into the package's `lib/` and adds both packages to a
 user's config, whose `:reload` then runs no Cargo. The fixture set requires
 both, so the gate covers them.
 
