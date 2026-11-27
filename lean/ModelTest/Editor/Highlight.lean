@@ -364,6 +364,21 @@ def markdownAfter (setup : SetupM Unit) (libraries : Array (String × GrammarReg
   let (answered, _) := driver.finish 1
   return openedIn answered "/w/a.md"
 
+/-- The driver once a delivered command has opened a buffer called `path`
+over a JSON text, recorded the language the registry's table chooses for
+the path, shown it in the first window and set the `code` mode through
+that window (`ViewId.setMajorMode`), where `openedIn` sets it on the
+buffer. -/
+def shownIn (driver : TestDriver) (path : String) : TestDriver :=
+  let shows : EditorM Unit := do
+    let text ← createText "[1]"
+    let .ok buffer ← addBuffer path text | return
+    discard <| buffer.setLanguage (← languageOf path)
+    let view : ViewId := ⟨0⟩
+    discard <| view.show buffer
+    discard <| view.setMajorMode Language.codeName
+  (driver.stepped (driver.loop.deliver driver.handed s!"show {path}" shows)).1
+
 /-- The injected languages of `markdownAfter`'s Markdown buffer, by
 `injectedFaces`. -/
 def injectedAfter (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
@@ -459,6 +474,45 @@ def highlightInjectedChecks : List Check :=
             delivered.isSome && lean answered == #[("lean", #["syntax.number"])] &&
               answered.model.syntaxTree.attached.map (·.2) == #["markdown"] &&
               answered.loop.state.echo == ""
+          | none => false },
+    { name :=
+        "a buffer of a declared grammar's language with injections, opened before the job's command and highlighted again by it, gives its fences of the lean a declaration overrides the declared query"
+      run :=
+        pure <|
+          let leanLibrary := "/g/libtree-sitter-lean.so"
+          let setup : SetupM Unit := do
+            defineGrammar "ini" "/g/libtree-sitter-ini.so"
+            defineGrammar "lean" leanLibrary
+            defineLanguage
+                { name := "ini", patterns := [.extension "ini"],
+                  syntaxTree :=
+                    { grammar := "ini"
+                      injections := some "(pair value: (string) @injection.content)" } }
+          match
+            installedWith setup
+              (iniLibrary.push (leanLibrary, .exports #[("tree_sitter_lean", .grammar)]))
+              #[("/g/queries/highlights.scm", declaredHighlights)] with
+          | some driver =>
+            let before := openedIn driver "/w/a.ini"
+            let (answered, delivered) := before.finish 1
+            delivered.isSome && injectedFaces before == #[] &&
+              (injectedFaces answered).filter (·.1 == "lean") == #[("lean", #["syntax.number"])]
+          | none => false },
+    { name :=
+        "a Markdown buffer given its mode through a window after the job's command gives its fences a language for the grammar config declared, its highlights read from the grammar's query directory"
+      run :=
+        pure <|
+          match
+            installedWith (markdownWithFences *> declaresIni) iniLibrary
+              #[("/g/queries/highlights.scm", declaredHighlights)] (compiled :=
+              #["json", "lean", "markdown"]) with
+          | some driver =>
+            let (answered, _) := driver.finish 1
+            let shown := shownIn answered "/w/a.md"
+            (injectedFaces shown).filter (·.1 == "ini") == #[("ini", #["syntax.number"])] &&
+              ((shown.loop.state.target? ⟨0⟩).map fun target =>
+                  (target.buffer.name, target.buffer.major)) ==
+                some ("/w/a.md", some Language.codeName)
           | none => false }]
 
 end ModelTest

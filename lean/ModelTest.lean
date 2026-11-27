@@ -1301,9 +1301,11 @@ names a scheme's key:
   from the package's, a declaration overriding the compiled-in `lean`
   drawn with the declared query, a language entry's own highlights
   winning over the grammar's file, a declared grammar's injections query
-  read from its directory, and a Markdown buffer opened before the
-  command injected into again by it, its overridden `lean` fence taking
-  the declared query.
+  read from its directory, a Markdown buffer opened before the command
+  injected into again by it, its overridden `lean` fence taking the
+  declared query; and the same resolution through the dispatch's other
+  two paths: a declared language's buffer highlighted again by the
+  command, and a mode set through a window.
 - `indentRuleChecks`: the indent rule (`Editor/Indent.lean`), pure, over
   hand-built rows: begins on one row count once, a branch takes a level
   away only as a row's first non-blank, the level never below 0, the rows
