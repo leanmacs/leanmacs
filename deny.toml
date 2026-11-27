@@ -559,6 +559,27 @@
 # wrappers; nothing else of its tree (syn, serde, toml, heck, indexmap,
 # log) has an entry. cbindgen is MPL-2.0, like `nucleo-matcher` above; the
 # header it writes is generated from our definitions.
+#
+# For the package wrapper (2026-11-27, the package-native-libraries
+# roadmap's phase 3), each entry changed in the commit of the edge it
+# governs. `editor-package`, the safe crate a package's library is written
+# against, joined `editor-package-runtime`'s wrappers when it came to
+# depend on it, and got its own entry with the test-only crate
+# `editor-package-check`, which also joined `editor-service`'s and
+# `editor-package-library`'s, by dev-dependencies; neither of those names
+# the wrapper, so it has no edge to the core's statics, not even for its
+# tests. When echo's crate moved onto the wrapper, it joined
+# `editor-package`'s wrappers and left `editor-package-runtime`'s, and
+# `editor-wait`, which until then any crate could depend on, got an entry
+# naming the crates that use it, echo's not among them: with
+# `editor-wait` added to echo's dev-dependencies it fails ("crate
+# 'editor-wait = 0.1.0' is explicitly banned"), and so it does with
+# `editor-package-runtime` there. So echo's crate depends on the wrapper
+# and on nothing else of the editor's that has an entry. The limit above
+# for crates nothing depends on holds for echo too: an edge from it to
+# `editor-ffi`, a `-std` binaries' crate, `editor-package-runtime-header`,
+# `editor-package-check` or another package's crate cannot be refused in
+# this graph, and is held by review.
 
 [graph]
 all-features = false

@@ -3340,10 +3340,11 @@ capabilities at its init.
   compiled into the glue (`-DECHO_LIBRARY`, `Echo.Real.library`).
 - **What the glue forwards.** The six `@[extern]` functions of
   `Echo.Real` (`start`, `cancel`, `takeRaw`, `flush`, `attach`,
-  `attachTakeRaw`), each through the library's table (`EchoTable`: its
-  size, then `start`, `cancel`, `take`, `flush`, `attach`, `attach_take`,
-  `free`), mirrored by the glue's `echo_table` and held in one atomic
-  pointer. Before a load each answers false or `none`. A reply's text is
+  `attachTakeRaw`), each through the library's table (its size, then
+  `start`, `cancel`, `take`, `flush`, `attach`, `attach_take`, `free`;
+  since phase 3 the wrapper's `Table` of echo's `EchoFunctions`, declared
+  with `package!`), mirrored by the glue's `echo_table` and held in one
+  atomic pointer. Before a load each answers false or `none`. A reply's text is
   handed back through the table's `free`, so the library's allocator frees
   what it made.
 - **The runtime** (`editor_package_library::runtime::PackageRuntime`,
@@ -3354,10 +3355,11 @@ capabilities at its init.
   service), `take_over` (the process's stream source; the child crosses as
   a handle the core owns), `child_pull` (one record of words and bytes),
   `child_write`, `child_release` and `buffer_free`. Echo's crate mirrored it
-  by hand (`rust/src/runtime.rs`) and depended on nothing of the editor's;
-  `deny.toml`'s entry for `editor-service` leaves it out. Phase 2 replaced
-  this runtime with the versioned one below ("The package runtime, as
-  built"), which echo now builds against.
+  by hand and depended on nothing of the editor's; `deny.toml`'s entry for
+  `editor-service` leaves it out. Phase 2 replaced this runtime with the
+  versioned one below ("The package runtime, as built"), and phase 3 moved
+  echo onto the safe wrapper over it ("The package crate wrapper, as
+  built").
 - **Who owns what.** The runtime is the core's static for the life of the
   process, and a library may keep its pointer. A child handle is the
   core's: the library may pull from one thread while it writes from
@@ -3385,8 +3387,9 @@ capabilities at its init.
     small and a failed init, on the fixture package libraries
     (`editor-package-library-fixture`), whose inits answer 1 and 7 to the
     process's real runtime. The adapter's contract holds the first three
-    on the fixture grammar library, and echo's `tests/init.rs` pins that
-    echo's own init answers 1, with no table, to no runtime and to one
+    on the fixture grammar library, and `editor-package`'s
+    `tests/declare.rs` pins that an init declared with the package wrapper
+    (echo's is one) answers 1, with no table, to no runtime and to one
     smaller than it requires.
   - its sentence and its reading from the tag by
     `EchoTest.echoLibraryChecks`, which also pins, refusal by refusal,
@@ -3573,11 +3576,191 @@ libraries through the real loader (`editor-package-library-fixture`'s
 `current_runtime.c`, the one place the generated header is compiled by a C
 compiler and run against the Rust runtime); and echo's
 `tests/later_runtime.rs`, echo's real init on a runtime embedded in a
-larger struct.
+larger struct (since phase 3 the package wrapper's fake,
+`FakeRuntime::later`, whose run of this contract is
+`editor-package-check`'s).
 
-**A Rust library** builds against `editor-package-runtime` directly, as
-echo does (`tests/packages/echo/rust/src/runtime.rs`, its hand-written
-ports over the runtime until phase 3's safe wrapper replaces them).
+**A Rust library** is written against the package wrapper,
+`editor-package`, which re-exports these definitions and wraps them in safe
+types ("The package crate wrapper, as built", below). A library in C, C++
+or Zig builds against the generated header.
+
+### The package crate wrapper, as built (`editor-package`)
+
+Status: **built**
+(`phase/package-native-libraries/phase-3-package-crate-wrapper`). A
+package's library written in Rust depends on `editor-package` and on
+nothing else of the editor's, as `emacs-module-rs` wraps `emacs_env`: the
+runtime in safe types, one macro for the init and the table, all of the
+`unsafe`, and a fake that runs on the test's thread.
+
+**How a third party depends on it: a git source, pinned by revision.**
+
+```toml
+editor-package = { git = "https://github.com/leanmacs/leanmacs", rev = "<sha>" }
+```
+
+Cargo finds the package by name in the repository; its path dependencies
+(`editor-package-runtime`, `editor-wait`) and its workspace keys resolve
+inside the same checkout. It is not published to crates.io, and keeps
+`publish = false`: its dependencies would have to be published too, each
+with a semver kept in step with the runtime's own version (its `size`, and
+phase 4's interface version); the `editor-*` names are generic, and
+claiming them on a global registry is the owner's step, not a phase's; and
+no crate-publishing process exists (`docs/dev-practices/publishing.md`
+covers making the repository public). The cost: a dependent fetches the
+whole repository. Publishing later is additive: drop the flag and version
+the three crates. No test exercises the git source (it needs the network
+and the public repository); phase 6's author guide gives the line.
+
+**The boundary.** Its dependencies are `editor-package-runtime`,
+re-exported as `editor_package::raw` (for the macro's paths and the tags),
+and `editor-wait`, re-exported as `editor_package::wait`, so a package
+names neither. It has no dev-dependency on an editor crate and no
+third-party dependency. `deny.toml`'s entries for `editor-service` and
+`editor-package-library` do not name it, so it has no edge to the core's
+statics, not even for its tests: that boundary is held by cargo-deny, not
+review. Running the core's contract on its fake is therefore the work of a
+crate of its own, `editor-package-check` (below).
+
+**The init and the table: `package!`, over `Package<S, F>`.** A package
+writes a `#[repr(C)]` struct `F` of `extern "C"` function pointers, its own
+and opaque to the core, and an init, `fn(Runtime) -> S`, that makes its
+state.
+
+```rust
+package! {
+    pub static PACKAGE: Package<Loaded, EchoFunctions> =
+        Package::new(Loaded::new, EchoFunctions { start, /* … */ free: buffer::free });
+}
+```
+
+The macro declares the `static` and exports `editor_package_init` over
+`Package::export`, whose signature is checked against the definitions'
+`PackageInit` at compile time; a second invocation in one library fails to
+link. `export` answers 1 for a null runtime and for one whose `size` ends
+before `buffer_free` (`editor_package::REQUIRED`, `runtime_has!`), the
+table unwritten and no state made; otherwise it makes the state once, from
+the first runtime loaded (`Package::load`), writes the table and answers
+0, the same table to a second init. The table is `Table<F>`, `{ size,
+functions }` with the size computed, so its layout is a flat `{ size_t
+size; fns… }`. A table's function reaches the state with
+`PACKAGE.state()`, none before a load. A member appended to the runtime
+later is called only after `runtime_has!` in the wrapper's method that
+calls it, which answers that method's absent outcome on an older runtime:
+Emacs's per-member `size` check. It is a declarative macro, not a
+procedural attribute: the table's functions are ordinary `extern "C" fn`s
+over the FFI-safe types below, so nothing per parameter is generated, and
+a procedural macro would compile `syn` and `quote` into every package's
+build. rustc's `unsafe_code` lint does not fire on an external macro's
+expansion, so the export's `unsafe` is written once, in the wrapper, and a
+package keeps `#![deny(unsafe_code)]`.
+
+**What crosses a package's own table (`editor_package::buffer`).** Each
+type's fields are private, made in Rust only soundly; its C shape is what
+the glue declares.
+
+| Type | What | C shape |
+|---|---|---|
+| `Bytes<'a>` | Bytes borrowed for a call: `Bytes::of`, `as_slice` (no bytes, whatever the pointer, at length 0), `to_string_lossy` | `{ const uint8_t *bytes; size_t len; }`, by value |
+| `Lent` | A buffer the library lends and owns: `Lent::of`, `Lent::empty`, `as_bytes`; freed by the library's allocator when dropped, neither `Copy` nor `Clone`; `buffer::free(lent)` is the `free` a table names | `{ uint8_t *bytes; size_t len; }`, handed back by value |
+| `Out<'a, T>` | A place for one result: `Out::of(&mut T)`, `put` writes once without dropping what was there, and nothing to a null place | `T *` |
+| `CoreBuffer` | A buffer the core lent (a pull's words and bytes, a refused write's words, `Runtime::lend`'s): `as_bytes`; handed back through `buffer_free` exactly once, when dropped | the runtime's own |
+
+So a package's table functions need no `unsafe`, and its tests call them as
+plain Rust.
+
+**The safe API mirrors `editor-service`'s**, so a crate's logic ports by
+its imports; its C edge is the part rewritten around `package!`.
+
+- `frame::{Stream, Framing, Frames}`, plain data. No `Framer`: framing is
+  the core's rule.
+- `stream`: `ChildStreams`, `StreamSource`, `Delivery`, `Ended`, `Pulled`,
+  `Refused`, `InputClosed`, the same names, variants and fields; `Child`,
+  the runtime's child, pulled through `child_pull` and decoded, written
+  through `child_write`, released on drop.
+- `wire::{encode, decode}`: how a pull crosses. A pull whose words cannot
+  be read delivers `Ended::Failed` with `wire::UNREADABLE`.
+- `Runtime`, a `Copy` handle made only by the export (after the size
+  check) and by the fake: `register(name) -> Service`, `take_over(child)`
+  (an unknown tag reads as `NoService`), `impl StreamSource`, `lend`,
+  `size`.
+- `Service`, `Copy`: `id`, `complete`, `post` (`post_event`), and the
+  `Completer` port. Unlike `editor_service::Service` it is not a `static`:
+  a package holds it in its state, made from the runtime its init is
+  handed. The wrapper keeps no process-wide state of its own.
+- `Completer`, `RecordingCompleter` (`new`, `take`, `wait_reported`) and
+  `completer_contract`. `editor-service`'s count wait is not mirrored.
+- `Worker` is not mirrored: no package crate uses it. When one does, it
+  moves into a dependency-free crate both re-export, rather than being
+  copied.
+
+**The fake and the contract.** `editor_package::fake::FakeRuntime` is a
+real `PackageRuntime` whose members act on state of its own behind
+`private_members`: ids from 1024, core ids refused; its registrations
+(`services`); completions and events queued once (`next_completion`,
+`next_event`, and `wait_completed`, a wait on one completion); its own
+ledger of what it lent (`outstanding`); and a source of children, a
+`ScriptedSource` by default (`over`). It starts no thread. `later()` embeds
+it in a larger struct with one more member, `sized(bytes)` makes its
+`size` say less, `leak()` keeps it for the process, and `init(init)` calls
+a library's init on it, so a package's test needs no `unsafe`. The
+runtime's contract stays `editor-package-library`'s and runs on the fake
+from `editor-package-check` (`tests/contract.rs`, current and later), its
+children `editor-service`'s `FakeSource` through a test-local adapter that
+converts every variant to the wrapper's mirror: the crate that owns the
+runtime publishes its contract, and the core's model, `RUNTIME` and the
+wrapper's fake are each held to it. A change to the fake fails that crate's
+test, not the core's. Two pure runtimes exist, the core's model and the
+wrapper's fake, written apart because a package may depend on neither the
+core nor `editor-service`; the one contract keeps both, and `RUNTIME`, in
+step. `editor-package-check`'s `tests/wire.rs` pins the wire in both
+directions against the core's, and `tests/load.rs` loads a package
+declared with the macro through the core's load on `RUNTIME`.
+
+**The stream port's own contract** (`stream::contract::check`) holds the
+scripted fake and the real adapter to the same rules: frames in order,
+one end in the last delivery, then cancelled; a pull with nothing to
+deliver parks until something is deliverable; a cancel reaches a parked
+pull; a second take-over is taken; an unknown or ended child is no such
+child; a write without input, and after the end, is refused with words.
+It runs on `ScriptedSource`, on `Runtime` over `FakeRuntime` (every pull
+and write through the fake's members and the wire), and on `Runtime` over
+the process's `RUNTIME` (`editor-package-check`'s `tests/load.rs`, behind a
+test-local gate that parks a pull in front of `FakeSource`, which never
+blocks). Framing, the bound and a job's pending read are not its
+properties: they are the process service's, pinned by `editor-service`'s
+stream contract and, through the members, by the runtime's `CHILD_FRAMED`.
+A scripted child parks when nothing is scripted, as the core's does,
+because the contract forces the parked interleavings
+(`ScriptedChild::wait_pulling`, banned outside its own tests and the
+contract's grounds); a test whose child must end without an end scripted
+cancels it, as the job's cancel does.
+
+**echo, ported.** echo's crate depends on `editor-package` alone; its
+`src/lib.rs` and each of its tests carry `#![deny(unsafe_code)]`, which
+the compiler holds. Its one marked `unsafe` site is its binding of the
+system's zlib (`src/zlib.rs`): a C library of the package's own choosing,
+no part of the runtime, which the wrapper wraps. Its tests run on
+`FakeRuntime`, `ScriptedSource` and `RecordingCompleter`; its `cdylib`,
+built with the macro, is what its glue loads through
+`editor_ffi_package_load` in `ffi-test` (`EchoTest.Linked.echoLoadChecks`,
+`echoRealChecks`, `attachChecks`, `echoProbeChecks`).
+
+**Where the `unsafe` lives.** In the wrapper, each site marked with its
+reason: `runtime` (`Runtime::from_raw`, the one `Calls` impl through which
+every member is called), `buffer` (`Bytes::as_slice`, `Lent`'s parts, its
+drop, `Send` and `Sync`, `Out::put`, `CoreBuffer::as_bytes`), `stream`
+(`Child`'s `Send` and `Sync`), `package` (`Package::export` and the
+macro's expansion) and `fake` (its C members, its ledger's free and its
+`init`).
+
+**Left to later phases.** Phase 4: a library's declared size and interface
+version and the editor's refusal (`Package::export` is where a
+wrapper-built library declares them, and `REQUIRED` is the size it
+declares). Phase 5: acp's port, which joins `editor-package`'s wrappers
+and leaves `editor-service`'s, its `Service` static replaced by one held
+in its state. Phase 6: the author guide's dependency line.
 
 ### The service conventions as a crate of their own
 
@@ -3589,7 +3772,9 @@ conventions are the crate `editor-service`, which `editor-ffi` and every
 package crate linked into the editor's archive (acp's) depend on; a
 package whose Rust is a library of its own (echo's) reaches them through
 the package runtime instead, the package-facing contract ("The package
-runtime, as built", above). `editor-service` stays the convention only for
+runtime, as built", above), written against `editor-package`, which
+mirrors these conventions over the runtime ("The package crate wrapper, as
+built"). `editor-service` stays the convention only for
 the crates still linked into the archive:
 
 - `queue`: the two event queues, their events and the fake source, moved
@@ -3615,7 +3800,7 @@ crates are members of the root workspace, so the root `deny.toml` already
 refuses an edge from one to any editor crate it has an entry for, and
 `editor-service`'s entry names the package crates linked into the
 archive (acp's) and leaves out echo's, whose library reaches the core
-through the runtime alone. But nothing in the root graph depends on
+through the runtime alone, and `editor-package`'s entry names echo's. But nothing in the root graph depends on
 `editor-ffi` or on a package crate, and cargo-deny bans a crate with no
 parents under `wrappers = []` and fails a wrapper it never meets under
 `-D unused-wrapper`, so the root cannot say "only the generated crate". The

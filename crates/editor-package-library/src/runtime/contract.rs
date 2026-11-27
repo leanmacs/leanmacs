@@ -1,9 +1,12 @@
 //! The runtime's contract: the properties every package runtime keeps, run
 //! through its C members, as a library calls them, on the pure model
-//! ([`super::model::ModelRig`], in the model's tests) and on the process's
-//! real runtime ([`super::RUNTIME`], in `tests/contract.rs`). So the check
-//! holds the ABI itself, not a Rust trait standing in for it, and the model
-//! cannot drift from the runtime the editor hands a library.
+//! ([`super::model::ModelRig`], in the model's tests), on the process's
+//! real runtime ([`super::RUNTIME`], in `tests/contract.rs`), and on the
+//! package wrapper's fake (`editor_package::fake::FakeRuntime`, in
+//! `editor-package-check`'s `tests/contract.rs`, as the wrapper may not
+//! depend on this crate). So the check holds the ABI itself, not a Rust
+//! trait standing in for it, and neither pure runtime can drift from the
+//! one the editor hands a library.
 //!
 //! [`check`] takes a [`Rig`]: the runtime, and what the contract reads that
 //! the runtime has no member for (the next completion and the next event

@@ -105,8 +105,12 @@ linked test runs twice. The stress loop's `linked-wiring` suite is `run
 
 ## The Rust bans check
 
-A package's crate depends on `editor-service` and on nothing else of the
-editor's. The root `deny.toml` cannot hold that (its header says why), so
+An archive-linked package crate depends on `editor-service` alone, a
+library of its own on `editor-package` alone, and neither on anything else
+of the editor's. The root `deny.toml` holds the second for echo's crate,
+whose every other edge to a crate of the editor's its entries refuse, but
+cannot hold the edges to `editor-ffi` or to another package's crate (its
+header says why), so
 `ffi-test` runs cargo-deny's bans, offline, over the crate the package-set
 build generates from the fixture set and from the default set (`lake -d
 <set> query :editorRustCrate`), with the `deny.toml` the build writes

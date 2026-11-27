@@ -19,7 +19,10 @@
 //!   of each member over `editor-service`; how a pull is encoded
 //!   ([`runtime::wire`]); the ledger of lent buffers ([`runtime::ledger`]);
 //!   the runtime's pure model ([`runtime::model`]); and the contract both
-//!   keep ([`runtime::contract`]). The runtime's C definitions are
+//!   keep ([`runtime::contract`]): it runs on the model, on `RUNTIME`, and
+//!   on the package wrapper's fake (`editor-package`'s `FakeRuntime`) in
+//!   `editor-package-check`, since the wrapper may not depend on this
+//!   crate. The runtime's C definitions are
 //!   `editor-package-runtime`'s, re-exported, with who owns what, which
 //!   threads may call each member and how a pull crosses.
 //! - [`library`]: the port, [`library::Libraries`] and

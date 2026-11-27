@@ -38,8 +38,12 @@
 //! package runtime the core hands it. That runtime, not this crate, is the
 //! contract between the core and a package's library: its C definitions
 //! are `editor-package-runtime`'s and its implementation over this crate
-//! `editor-package-library`'s. This crate stays the convention only for the
-//! package crates still linked into the archive.
+//! `editor-package-library`'s. Such a library is written against the
+//! package wrapper, `editor-package`, which mirrors this crate's names over
+//! the runtime (`Completer`, `RecordingCompleter`, `completer_contract`,
+//! `frame`, `stream`), so a crate's logic ports from one to the other by
+//! its imports. This crate stays the convention only for the package crates
+//! still linked into the archive.
 //!
 //! # Where an addition goes
 //!

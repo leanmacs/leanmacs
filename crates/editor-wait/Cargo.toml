@@ -7,11 +7,13 @@ license.workspace = true
 publish = false
 
 # No dependency and no dev-dependency: the crate wraps std's own bounded
-# primitives (a channel's receive, a Condvar's wait, a sleep) and every
-# crate of the editor may depend on it. A package's crate reaches it
-# through `editor-service` (`editor_service::wait`), the one crate of the
-# editor a package's crate depends on (docs/design/packages.md, "Rust in a
-# package").
+# primitives (a channel's receive, a Condvar's wait, a sleep). The crates of
+# the editor that use it are named in `deny.toml`'s entry for it, and a new
+# one joins there. A package's crate does not depend on it: it reaches it
+# through the one crate of the editor's it depends on, `editor-service`
+# (`editor_service::wait`) for a crate linked into the editor's archive, or
+# the package wrapper (`editor_package::wait`) for a library of its own
+# (docs/design/packages.md, "Rust in a package").
 [dependencies]
 
 [lints]
