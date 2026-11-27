@@ -137,6 +137,30 @@ No record, or no line for a Lake package, is no directory: a package of it
 that declares grammars is refused (`Editor/Config/Packages.lean`, "A
 package's grammars").
 
+## The libraries
+
+A package set's Lake packages that declare a native library (an
+`editorLibrary` target; docs/design/packages.md, "A package's library,
+staged and loaded, as built") have it staged beside the executable, and a
+record of lines `<lake name><TAB><library>` says where
+(`librariesRecordedIn`), read by the grammars' rule (`recordedLibraries`):
+
+- **Outside a bundle**, `<executable>.libraries` (`librariesRecordPath`), a
+  relative line resolved against the executable's directory: the set's
+  build writes absolute lines naming
+  `<set>/.lake/build/libraries/<lake>/<file>`, and a per-user install copies
+  each library to `libraries/<lake>/<file>` beside its executable and
+  writes relative lines, so the install still renames into place.
+- **In a bundle**, `<bundle>/Contents/Resources/editor.libraries`
+  (`bundleLibrariesRecordPath`), relative lines resolved against
+  `Contents/Resources`. The record beside the executable is never read in
+  a bundle. No default package declares a library yet, so `stage-bundle`
+  writes none.
+
+The package's initialiser reads it, through `Editor.PackageLibrary.staged`,
+with the executable's path and the real file read its `.Real` module
+supplies; a package with no line is refused there, naming the record.
+
 Nothing is read from the environment: `LEAN_PATH` and every other variable
 are ignored, as the elaborator ignores them. The executable's path is read
 at each edge, from `IO.appPath`, with the record through `recorded`: the
@@ -357,5 +381,49 @@ def grammarDirectories {m : Type → Type} [Monad m] (appPath : String)
   | none =>
     let directory := (System.FilePath.mk appPath).parent.getD "."
     return ((← readFile (grammarsRecordPath appPath)).map (grammarsRecordedIn directory)).getD []
+
+/-- The file the package-set build writes beside an executable it links, to
+say where the library of each Lake package of the set that declares one is
+staged ("The libraries", in the module docs): `<executable>.libraries`. -/
+def librariesRecordPath (appPath : String) : System.FilePath :=
+  appPath ++ ".libraries"
+
+/-- The bundle's record of its staged libraries ("The libraries", in the
+module docs): `<bundle>/Contents/Resources/editor.libraries`. -/
+def bundleLibrariesRecordPath (bundle : System.FilePath) : System.FilePath :=
+  bundle / "Contents" / "Resources" / "editor.libraries"
+
+/-- The libraries record the executable at `appPath` reads: the bundle's in
+a bundle (`bundleLibrariesRecordPath`), else the one beside it
+(`librariesRecordPath`). -/
+def librariesRecordFor (appPath : String) : System.FilePath :=
+  match bundle? appPath with
+  | some bundle => bundleLibrariesRecordPath bundle
+  | none => librariesRecordPath appPath
+
+/-- What the text of a libraries record names: each line that holds a tab,
+a Lake package's name before it and its library after it, a relative path
+resolved against `base` and an absolute one kept, in order; a blank line
+and a line with no tab are skipped. The grammars record's format
+(`grammarsRecordedIn`). -/
+def librariesRecordedIn (base : System.FilePath) (text : String) :
+    List (String × System.FilePath) :=
+  grammarsRecordedIn base text
+
+/-- The staged library of each Lake package of the set the executable at
+`appPath` was built from that declares one, read through `readFile`, the
+port, which answers a file's text or none when it cannot be read: in a
+bundle, those of the bundle's record resolved against its
+`Contents/Resources`; outside one, those of the file `librariesRecordPath`
+names resolved against the executable's directory; none when there is no
+such file. A package's initialiser passes the real read
+(`Editor.PackageLibrary.staged`), and the model tests a fake. -/
+def recordedLibraries {m : Type → Type} [Monad m] (appPath : String)
+    (readFile : System.FilePath → m (Option String)) : m (List (String × System.FilePath)) := do
+  let base :=
+    match bundle? appPath with
+    | some bundle => bundle / "Contents" / "Resources"
+    | none => (System.FilePath.mk appPath).parent.getD "."
+  return ((← readFile (librariesRecordFor appPath)).map (librariesRecordedIn base)).getD []
 
 end Editor.ModuleLookup

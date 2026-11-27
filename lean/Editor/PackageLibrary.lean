@@ -1,3 +1,5 @@
+import Editor.ModuleLookup
+
 /-!
 # A package's native library, as the core reads it
 
@@ -14,6 +16,18 @@ a sentence of its own that names the package and the library
 with: every package with a library reads the core's tags here, naming
 itself. It is pure, so the model tests pin it with no Rust
 (`ModelTest.packageLibraryChecks`).
+
+## Where the library is
+
+The package-set build stages each package's library beside the executable
+it links and records where (`Editor/ModuleLookup.lean`, "The libraries"):
+`<executable>.libraries` beside a set's editor or a per-user install, the
+bundle's `Contents/Resources/editor.libraries` in an app bundle. A
+package's initialiser finds its library there with `staged`, handing it
+the executable's path and the real file read from its `.Real` module, the
+edge; with no line for its Lake package it throws `notStaged`'s sentence
+instead. `staged` reads nothing itself, so the model tests pin it on a
+fake reader (`ModelTest.packageLibraryStagedChecks`).
 -/
 
 namespace Editor.PackageLibrary
@@ -75,5 +89,34 @@ def LoadRefusal.describe (refusal : LoadRefusal) (package library : String) : St
     s!"{package}: the library {library} was built for a newer package runtime than this editor's: it needs {needs} bytes of runtime, and this editor's is {has}; update the editor, or use a build of {package} for this one"
   | .otherInterface declared expected =>
     s!"{package}: the library {library} has interface version {declared}, and this editor's {package} expects {expected}; rebuild the package set so the library and its package match"
+
+/-- The staged library of the Lake package `lake` among `entries`, a
+libraries record's lines (`ModuleLookup.recordedLibraries`): its path, or
+none when it has no line. -/
+def stagedOf? (entries : List (String × System.FilePath)) (lake : String) : Option String :=
+  (entries.find? (·.1 == lake)).map (·.2.toString)
+
+/-- What is said when the package `package` finds no library staged for its
+Lake package `lake` in the record `record`. -/
+def notStaged (package lake : String) (record : System.FilePath) : String :=
+  s!"{package}: no library is staged for its Lake package {lake} beside this editor ({record}); rebuild the package set (:reload)"
+
+/-- The library the package-set build staged for the Lake package `lake`
+beside the executable at `appPath`, read through `readFile`, the port,
+which answers a file's text or none when it cannot be read: its path, or
+the sentence naming the package `package`, `lake` and the record read
+(`notStaged`) when the record has no line for it, or there is no record
+(`ModuleLookup.recordedLibraries`, `ModuleLookup.librariesRecordFor`). A
+package's `.Real` initialiser passes `IO.appPath` and the real read, and
+throws the sentence; the model tests pass a fake. -/
+def staged {m : Type → Type} [Monad m] (appPath : String)
+    (readFile : System.FilePath → m (Option String)) (package lake : String) :
+    m (Except String String) := do
+  let entries ← ModuleLookup.recordedLibraries appPath readFile
+  match stagedOf? entries lake with
+  | some library =>
+    return .ok library
+  | none =>
+    return .error (notStaged package lake (ModuleLookup.librariesRecordFor appPath))
 
 end Editor.PackageLibrary

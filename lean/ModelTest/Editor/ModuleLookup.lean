@@ -21,7 +21,8 @@ directories joined with `:`, used before the recorded ones outside a bundle
 and in place of the bundle's in one; the record, read through a
 reader; and the directories of the set the executable was built from and
 of the core it links, each by its own record outside a bundle and by the
-bundle's layout in one. -/
+bundle's layout in one; and the staged grammars and libraries, each by its
+record beside the executable outside a bundle and the bundle's in one. -/
 def moduleLookupChecks : List Check :=
   let bundled (bundle : String) : ModuleLookup.Directories :=
     { sysroot := some s!"{bundle}/Contents/Resources/lean/toolchain", oleans := [] }
@@ -249,6 +250,49 @@ def moduleLookupChecks : List Check :=
                   (s!"{installed}.grammars", "x\t/x\n")] ==
               ([("ini-grammar",
                     ("/Applications/Leanmacs.app/Contents/Resources/lean/set/ini-grammar/grammars" :
+                      System.FilePath))],
+                [bundleRecord]) &&
+            read [] == ([], [bundleRecord])) },
+    { name :=
+        "outside a bundle, the libraries record beside the executable names each Lake package's staged library, a relative one resolved against the executable's directory and an absolute one kept; with no record, none"
+      run :=
+        let installedAt := "/d/editors/c0ffee/2/editor"
+        let read (appPath : String) (files : List (String × String)) :
+          List (String × System.FilePath) × List String :=
+          Id.run
+            ((ModuleLookup.recordedLibraries (m := StateM (List String)) appPath fun path => do
+                  modify (· ++ [path.toString])
+                  return (files.find? (·.1 == path.toString)).map (·.2)).run
+              [])
+        let record :=
+          "echo\tlibraries/echo/libecho_service.dylib\nfar\t/s/.lake/build/libraries/far/libfar.so\n"
+        pure
+          (ModuleLookup.librariesRecordPath installedAt == "/d/editors/c0ffee/2/editor.libraries" &&
+            ModuleLookup.librariesRecordFor installedAt == "/d/editors/c0ffee/2/editor.libraries" &&
+            read installedAt [(s!"{installedAt}.libraries", record)] ==
+              ([("echo",
+                    ("/d/editors/c0ffee/2/libraries/echo/libecho_service.dylib" : System.FilePath)),
+                  ("far", "/s/.lake/build/libraries/far/libfar.so")],
+                [s!"{installedAt}.libraries"]) &&
+            read built [] == ([], [s!"{built}.libraries"])) },
+    { name :=
+        "in a bundle, Contents/Resources/editor.libraries names the staged libraries, relative lines resolved against Contents/Resources; the record beside the executable is never read"
+      run :=
+        let bundleRecord := "/Applications/Leanmacs.app/Contents/Resources/editor.libraries"
+        let read (files : List (String × String)) : List (String × System.FilePath) × List String :=
+          Id.run
+            ((ModuleLookup.recordedLibraries (m := StateM (List String)) installed fun path => do
+                  modify (· ++ [path.toString])
+                  return (files.find? (·.1 == path.toString)).map (·.2)).run
+              [])
+        pure
+          (ModuleLookup.bundleLibrariesRecordPath "/Applications/Leanmacs.app" == bundleRecord &&
+            ModuleLookup.librariesRecordFor installed == bundleRecord &&
+            read
+                [(bundleRecord, "echo\tlibraries/echo/libecho_service.dylib\n"),
+                  (s!"{installed}.libraries", "x\t/x\n")] ==
+              ([("echo",
+                    ("/Applications/Leanmacs.app/Contents/Resources/libraries/echo/libecho_service.dylib" :
                       System.FilePath))],
                 [bundleRecord]) &&
             read [] == ([], [bundleRecord])) }]

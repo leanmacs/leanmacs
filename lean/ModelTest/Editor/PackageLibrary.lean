@@ -89,4 +89,80 @@ def packageLibraryChecks : List Check :=
               some
                 s!"the new editor did not start: it exited with status 1; uncaught exception: {text}") }
 
+/-- The checks of where a package's staged library is found
+(`Editor/PackageLibrary.lean`, `staged`): the line for its Lake package in
+the libraries record beside the executable, a relative one resolved against
+the executable's directory and an absolute one kept, the bundle's in a
+bundle; and with no line, or no record, the sentence naming the package,
+its Lake package and the record. -/
+def packageLibraryStagedChecks : List Check :=
+  let entries : List (String × System.FilePath) :=
+    [("greeting", "/s/.lake/build/libraries/greeting/libgreeting.so"),
+      ("echo", "/s/.lake/build/libraries/echo/libecho_service.so")]
+  -- What `staged` answered, the sentence on the left and the path on the
+  -- right, and the files it read.
+  let staged (appPath : String) (files : List (String × String)) (lake : String) :
+    (String ⊕ String) × List String :=
+    let (answer, read) :=
+      Id.run
+        ((PackageLibrary.staged (m := StateM (List String)) appPath
+              (fun path => do
+                modify (· ++ [path.toString])
+                return (files.find? (·.1 == path.toString)).map (·.2))
+              "echo" lake).run
+          [])
+    (match answer with
+      | .ok library => .inr library
+      | .error sentence => .inl sentence,
+      read)
+  let built := "/s/.lake/build/bin/editor"
+  let installed := "/d/editors/c0ffee/2/editor"
+  let bundled := "/Applications/Leanmacs.app/Contents/MacOS/editor"
+  let bundleRecord := "/Applications/Leanmacs.app/Contents/Resources/editor.libraries"
+  [{  name := "a staged library is the line of its Lake package in the record, and none without one"
+      run :=
+        pure
+          (PackageLibrary.stagedOf? entries "echo" ==
+              some "/s/.lake/build/libraries/echo/libecho_service.so" &&
+            PackageLibrary.stagedOf? entries "far" == none &&
+            PackageLibrary.stagedOf? [] "echo" == none) },
+    { name := "a library not staged is said naming the package, its Lake package and the record"
+      run :=
+        pure
+          (PackageLibrary.notStaged "echo" "echo-lake" s!"{built}.libraries" ==
+            s!"echo: no library is staged for its Lake package echo-lake beside this editor ({built}.libraries); rebuild the package set (:reload)") },
+    { name :=
+        "beside a set's editor, the absolute line of the record names the staged library, read through the reader"
+      run :=
+        pure
+          (staged built
+              [(s!"{built}.libraries", "echo\t/s/.lake/build/libraries/echo/libecho_service.so\n")]
+              "echo" ==
+            (.inr "/s/.lake/build/libraries/echo/libecho_service.so", [s!"{built}.libraries"])) },
+    { name :=
+        "beside an installed editor, the relative line of the record is resolved against the executable's directory, never the working directory"
+      run :=
+        pure
+          (staged installed
+              [(s!"{installed}.libraries", "echo\tlibraries/echo/libecho_service.so\n")] "echo" ==
+            (.inr "/d/editors/c0ffee/2/libraries/echo/libecho_service.so",
+              [s!"{installed}.libraries"])) },
+    { name := "in a bundle, the bundle's record is read, and the one beside the executable never"
+      run :=
+        pure
+          (staged bundled
+              [(bundleRecord, "echo\tlibraries/echo/libecho_service.so\n"),
+                (s!"{bundled}.libraries", "echo\t/elsewhere/libecho_service.so\n")]
+              "echo" ==
+            (.inr "/Applications/Leanmacs.app/Contents/Resources/libraries/echo/libecho_service.so",
+              [bundleRecord])) },
+    { name := "with no line for the Lake package, or no record, the sentence names the record read"
+      run :=
+        pure
+          (staged built [(s!"{built}.libraries", "greeting\t/g/libgreeting.so\n")] "echo" ==
+              (.inl (PackageLibrary.notStaged "echo" "echo" s!"{built}.libraries"),
+                [s!"{built}.libraries"]) &&
+            staged bundled [] "echo" ==
+              (.inl (PackageLibrary.notStaged "echo" "echo" bundleRecord), [bundleRecord])) }]
+
 end ModelTest

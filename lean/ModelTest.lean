@@ -1133,6 +1133,12 @@ The config session's decisions are tested here too, with no elaborator:
   both of their numbers; each refusal's sentence, naming the package, the
   library and, for those two, both versions; and each sentence carried to
   the package build's failure line by its probe;
+- `packageLibraryStagedChecks`: where a package's staged library is found
+  (`Editor/PackageLibrary.lean`, `staged`), through a fake reader: the
+  line of the libraries record beside a set's editor, a relative line
+  beside an installed one resolved against its directory, the bundle's
+  record in a bundle, and the sentence naming the package, its Lake
+  package and the record when none is staged;
 - the core's Lake package registers no package and has no entry module
   (the features-as-packages roadmap's phase 8): `packageChecks` holds that
   a host handed no package starts from a registry that holds nothing, and
@@ -1584,6 +1590,7 @@ def checks : List Check :=
     packageSetEditChecks ++
     packageSetBuildChecks ++
     packageLibraryChecks ++
+    packageLibraryStagedChecks ++
     headlessCommandLineChecks ++
     executableModeChecks ++
     executableRefusalChecks ++
