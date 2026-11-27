@@ -13,6 +13,11 @@
 //! span in a face naming `system-ui` is drawn in the proportional fixture
 //! and a face naming `monospace` over it in the monospace one. The faces
 //! are the tests' own; which faces the editor ships is Lean's.
+//!
+//! And of align-to stops: cells of one column, after first cells of
+//! different widths on the proportional fixture, start at one x. The stop
+//! is computed from layout's own measure, and the cells are compared with
+//! each other, not with a number.
 
 mod common;
 
@@ -20,7 +25,7 @@ use std::ops::Range;
 
 use editor_layout::Layout;
 use editor_layout::face::{Face, FaceDef};
-use editor_layout::scene::{Decoration, Padding, Rect, Scene};
+use editor_layout::scene::{AlignStop, Decoration, Padding, Rect, Scene};
 use editor_layout::shaper::Shaper;
 use editor_layout::tabs::SEGMENT_BYTES;
 use editor_shape_parley::{FontSet, ParleyShaper, ShapeCounters};
@@ -244,4 +249,59 @@ fn a_code_face_naming_monospace_over_the_prose_face_is_shaped_in_monospace() {
     let code = 11..15;
     let scene = faced(text, &[(0..text.len(), "prose"), (code.clone(), "code")]);
     drawn_proportional_where(&scene, |cluster| !code.contains(&cluster));
+}
+
+#[test]
+fn stops_line_cells_up_over_the_proportional_fixture() {
+    // Rows whose first cells are in the default family, the proportional
+    // fixture, and of different measured widths; each has a second cell
+    // at one stop. The stop is past the widest first cell, from layout's
+    // own measure, so no number of layout's is stated.
+    let rows = ["il x", "WWW x", "mm x"];
+    let firsts = rows.map(|row| &row[..row.find('x').expect("a second cell")]);
+    let mut layout = Layout::new(shaper());
+    let widths = firsts.map(|first| layout.measure(first, &[]));
+    assert!(
+        widths[0] != widths[1] && widths[1] != widths[2] && widths[0] != widths[2],
+        "the first cells measure apart: {widths:?}"
+    );
+    let stop_x = widths.iter().max().copied().unwrap_or_default() + 8;
+    let text = rows.join("\n");
+    let mut scene = Scene::of_text(&text, rect(800));
+    let mut row_start = 0;
+    let mut seconds = Vec::new();
+    for row in rows {
+        let offset = row_start + row.find('x').expect("a second cell");
+        seconds.push((offset, offset - row_start));
+        row_start += row.len() + 1;
+    }
+    scene.views[0].stops = seconds
+        .iter()
+        .map(|(offset, _)| AlignStop {
+            offset: *offset,
+            x: stop_x,
+        })
+        .collect();
+    let frame = layout.frame(&scene);
+    let xs: Vec<f32> = seconds
+        .iter()
+        .map(|(offset, column)| {
+            let row = frame.views[0]
+                .rows
+                .iter()
+                .find(|row| row.bytes.contains(offset))
+                .expect("the row of the cell");
+            let glyph = row
+                .line
+                .glyphs
+                .iter()
+                .find(|glyph| glyph.cluster == *column)
+                .expect("the cell's first glyph");
+            row.x + glyph.x
+        })
+        .collect();
+    assert!(
+        xs.iter().all(|x| *x == xs[0]),
+        "every second cell starts at one x: {xs:?}"
+    );
 }
