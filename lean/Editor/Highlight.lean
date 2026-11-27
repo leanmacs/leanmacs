@@ -21,7 +21,8 @@ vocabulary's syntax captures (`Face.syntaxCaptures`,
 that list, not copied, so it cannot drift from the vocabulary. After them
 come markdown's markup captures, each mapped to its `text.` face
 (`Face.markupCaptures`): a heading by its level, `text.emphasis`,
-`text.strong`, `text.literal` (a code span) to `text.code-span`,
+`text.strong`, `text.literal` (a code span, and only that: a link's title
+is `text.reference`) to `text.code-span`,
 `text.code-block`, `text.uri` and `text.reference` to `text.link`,
 `text.quote`, `text.list-marker` and `text.table-header`. So the default is
 the syntax captures then the markup captures, and a `.md` file opened as

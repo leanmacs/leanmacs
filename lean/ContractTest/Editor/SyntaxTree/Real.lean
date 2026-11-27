@@ -565,7 +565,7 @@ def syntaxTreeChecks : List Check :=
         return published.isOk && (frame.splitOn "5..15:00cc00ff").length == 2 &&
             (frame.splitOn "20..26:0000ccff").length == 2 },
     { name :=
-        "a Markdown text entered with the shipped default is drawn with its heading, emphasis, code span and link in the text faces"
+        "a Markdown text entered with the shipped default is drawn with its heading, emphasis, code span, link and link title in the text faces, the title not as code"
       run := do
         let table ← Snapshots.new
         let real ← RealSyntaxTree.new table.reader
@@ -581,7 +581,7 @@ def syntaxTreeChecks : List Check :=
               (colours.toArray.map fun (name, colour) =>
                 { name := ⟨name⟩, face := { foreground := some colour } })
         let heading := "# Title"
-        let paragraph := "Some *em* and `code` and [link](u)."
+        let paragraph := "Some *em* and `code` and [link](u \"T\")."
         let entered : EditorM (SnapshotId × MarkerId) := do
           let text ← createText s!"{heading}\n\n{paragraph}\n"
           Highlight.enter "markdown" text { grammar := "markdown" }
@@ -611,7 +611,8 @@ def syntaxTreeChecks : List Check :=
           s!"{start}..{start + needle.utf8ByteSize}:{"".pushn '0' (8 - hex.length)}{hex}"
         let runs :=
           [run heading "Title" "text.heading.1", run paragraph "*em*" "text.emphasis",
-            run paragraph "`code`" "text.code-span", run paragraph "link" "text.link"]
+            run paragraph "`code`" "text.code-span", run paragraph "link" "text.link",
+            run paragraph "\"T\"" "text.link"]
         return published.isOk && runs.all fun expected => (frame.splitOn expected).length == 2 }]
 
 end ContractTest

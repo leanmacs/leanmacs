@@ -2654,7 +2654,7 @@ is used wherever it ships one, as phase 2 decided for highlights:
 | `rust` | the crate's | the crate's (a macro's or a macro rule's token tree, as Rust, its children included) | ours | ours |
 | `json` | the crate's | none | none | none |
 | `markdown` | ours, the crate's block query changed (below) | the crate's, of the block grammar (a fence's code in the language its info string names, and each `(inline)` node as `markdown_inline`) | none | none |
-| `markdown_inline` | the crate's, of the inline grammar | the crate's, of the inline grammar (`html` and `latex`, which the service has not, so nothing) | none | none |
+| `markdown_inline` | ours, the crate's inline query changed (below) | the crate's, of the inline grammar (`html` and `latex`, which the service has not, so nothing) | none | none |
 | `toml` | the crate's | none | none | none |
 | `lean` | upstream's, vendored with the grammar | none | none | none |
 
@@ -2739,8 +2739,16 @@ from a span could be styled. Ours captures a heading's text by its level
 or indented code block as `@text.code-block`, a list marker as
 `@text.list-marker`, a block quote as `@text.quote` and a pipe table's
 header row as `@text.table-header`, and keeps the crate's other captures;
-`tests/highlights.rs` pins them. The inline grammar keeps the crate's
-query. The default face mapping (`Highlight.defaultFaces`, from
+a link reference definition's title is `@text.reference`, a link, where
+the crate's gives it `@text.literal`; `tests/highlights.rs` pins them. The
+inline grammar's highlights query is the repository's too,
+`crates/editor-syntax-treesitter/queries/markdown_inline/highlights.scm`
+(the phase's code review): the crate's inline query copied with its
+provenance and changed only so a link's title is `@text.reference` beside
+the link's text and label, where the crate's gives it `@text.literal`, the
+name of a code span, which would draw a title in the code-span face; ours
+keeps `@text.literal` for a code span alone, and the crate's other
+captures. The default face mapping (`Highlight.defaultFaces`, from
 `Face.markupCaptures`) draws these and the inline grammar's captures in the
 `text.` faces ([text-and-display.md](text-and-display.md), "The markup
 faces"); `punctuation.delimiter` draws in `syntax.punctuation`. A

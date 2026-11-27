@@ -67,14 +67,20 @@
 //! the crate's query, copied with its provenance and changed so a heading is
 //! captured by its level and a code block apart from an inline code span,
 //! which the crate's query gives one name; the `text.` faces need both
-//! (`tests/highlights.rs`).
+//! (`tests/highlights.rs`). For the same reason Markdown's inline
+//! highlights are this repository's, `queries/markdown_inline/highlights.scm`:
+//! the crate's query, copied with its provenance and changed so a link's
+//! title is captured as a link (`@text.reference`), not by the name of a
+//! code span, `@text.literal`, which the crate's gives both; a title would
+//! otherwise be drawn in the code-span face. The block query captures a
+//! link reference definition's title the same way.
 //!
 //! | Grammar | Reparse | Highlights | Injections | Text objects | Indents |
 //! |---|---|---|---|---|---|
 //! | `json` | incremental | the crate's | none | none | none |
 //! | `rust` | incremental | the crate's | the crate's | `queries/rust/textobjects.scm` | `queries/rust/indents.scm` |
 //! | `markdown` | incremental | `queries/markdown/highlights.scm` | the crate's, of its block grammar | none | none |
-//! | `markdown_inline` | whole | the crate's, of its inline grammar | the crate's, of its inline grammar | none | none |
+//! | `markdown_inline` | whole | `queries/markdown_inline/highlights.scm` | the crate's, of its inline grammar | none | none |
 //! | `toml` | incremental | the crate's | none | none | none |
 //! | `lean` | incremental | upstream's, vendored with the grammar | none | none | none |
 //!
@@ -294,7 +300,7 @@ const GRAMMARS: [Grammar; 6] = [
         queries: &[
             (
                 QueryKind::Highlights,
-                tree_sitter_md::HIGHLIGHT_QUERY_INLINE,
+                include_str!("../queries/markdown_inline/highlights.scm"),
             ),
             (
                 QueryKind::Injections,

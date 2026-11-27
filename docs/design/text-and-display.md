@@ -1669,9 +1669,9 @@ and a role, beside `compilation.` and `cursor.` (not `syntax.` faces):
 | `text.heading.1` … `text.heading.6` | a heading of that level, its text without the marker | `text.heading.1` … `text.heading.6` (a setext heading is level 1 or 2) |
 | `text.emphasis` | emphasised text | `text.emphasis` |
 | `text.strong` | strong text | `text.strong` |
-| `text.code-span` | an inline code span | `text.literal` (the inline grammar's) |
+| `text.code-span` | an inline code span | `text.literal` (the inline grammar's; only a code span, since both grammars' queries, the repository's, capture a link's title as `text.reference`) |
 | `text.code-block` | a fenced or indented code block | `text.code-block` |
-| `text.link` | a link's text, label or destination | `text.reference`, `text.uri` |
+| `text.link` | a link's text, label, destination or title | `text.reference`, `text.uri` |
 | `text.quote` | a block quote | `text.quote` |
 | `text.list-marker` | a list item's marker | `text.list-marker` |
 | `text.table-header` | a table's header row | `text.table-header` |
@@ -1679,8 +1679,8 @@ and a role, beside `compilation.` and `cursor.` (not `syntax.` faces):
 
 The capture-to-face mapping is Lean data (`Face.markupCaptures`), and the
 shipped default `Highlight.defaultFaces` is the syntax captures' mapping
-followed by it. The block grammar's highlights query that makes those
-captures is the repository's (`docs/design/rust-library.md`, the queries
+followed by it. Both Markdown grammars' highlights queries that make those
+captures are the repository's (`docs/design/rust-library.md`, the queries
 table). The shipped look is the palette mapping's (`Palette.theme`): a
 heading bold in an accent, levels 1 to 3 larger; emphasis italic, strong
 bold; a code span in an accent and a code block on the raised colour; a

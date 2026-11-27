@@ -2,18 +2,22 @@
 ; query (tree-sitter-md 0.5.4, `tree-sitter-markdown/queries/highlights.scm`,
 ; from nvim-treesitter, MIT) copied and changed, because the crate's captures
 ; every heading as `@text.title`, with no level, and gives a code block the
-; name an inline code span has, `@text.literal`. Lean maps these names to the
+; name an inline code span has, `@text.literal`, and a link's title that name
+; too. Lean maps these names to the
 ; `text.` faces (`Highlight.defaultFaces`, lean/Editor/Highlight.lean):
 ;
 ; - `@text.heading.1` ... `@text.heading.6`: a heading's text, by its level;
 ;   a setext heading underlined with `=` is level 1 and with `-` level 2.
+; - `@text.reference`: a link reference definition's title, drawn as a link
+;   like its label, not as a code span.
 ; - `@text.code-block`: a fenced or indented code block.
 ; - `@text.list-marker`: a list item's marker.
 ; - `@text.quote`: a block quote.
 ; - `@text.table-header`: a pipe table's header row.
 ;
-; The other captures are the crate's. The inline grammar keeps the crate's
-; query, whose `@text.literal` is a code span.
+; The other captures are the crate's. The inline grammar's query is the
+; repository's too (`queries/markdown_inline/highlights.scm`), whose
+; `@text.literal` is only a code span.
 
 (atx_heading (atx_h1_marker) heading_content: (inline) @text.heading.1)
 (atx_heading (atx_h2_marker) heading_content: (inline) @text.heading.2)
@@ -36,7 +40,7 @@
   (setext_h2_underline)
 ] @punctuation.special
 
-(link_title) @text.literal
+(link_title) @text.reference
 
 [
   (indented_code_block)

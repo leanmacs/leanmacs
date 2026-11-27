@@ -114,7 +114,8 @@ def markupEntries : Array Entry :=
             "A fenced or indented code block, in the monospace family so it stays monospace over prose"
             "`text.code-block`" },
       { name := ⟨"text.link"⟩
-        meaning := drawn "A link's text, label or destination" "`text.uri` or `text.reference`" },
+        meaning :=
+          drawn "A link's text, label, destination or title" "`text.uri` or `text.reference`" },
       { name := ⟨"text.quote"⟩, meaning := drawn "A block quote" "`text.quote`" },
       { name := ⟨"text.list-marker"⟩
         meaning := drawn "A list item's marker" "`text.list-marker`" },
@@ -127,7 +128,10 @@ def markupEntries : Array Entry :=
 /-- Each capture name of markdown's highlights queries that draws a markup
 face, with that face: the block grammar's (the repository's query,
 `crates/editor-syntax-treesitter/queries/markdown/highlights.scm`) and the
-inline grammar's (the crate's). The shipped capture-to-face mapping
+inline grammar's (the repository's query too,
+`crates/editor-syntax-treesitter/queries/markdown_inline/highlights.scm`). Both
+capture a link's title as `text.reference`, so `text.literal` is only a code
+span. The shipped capture-to-face mapping
 (`Highlight.defaultFaces`) is the syntax captures' then these. `text.prose`
 has no capture: a markdown file opened as code stays monospace. -/
 def markupCaptures : Array (String × FaceName) :=
