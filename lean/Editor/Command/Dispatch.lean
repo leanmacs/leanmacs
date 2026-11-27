@@ -252,6 +252,10 @@ from the next command.
     (`environmentBase`, `Config.Registry.baseName`): a command that says the
     layers asks, as the default set's standing fixture
     `tests/headless/environment-sources` does.
+  - the command a buffer's own modes fill a role with (`roleCommand`, from
+    `Config.Registry.roleCommand`), handed the buffer's major and minor
+    modes: `link-follow` asks for `activate` off a link
+    (`Editor/Links.lean`).
 - **Loading a theme** (`StateRequest.loadTheme`) is refused with
   `noSuchTheme` for a name the loop was not told a theme is registered
   under, with the state as it was. Otherwise the name is kept in the state,
@@ -590,6 +594,11 @@ structure Loop.Registered where
   (`Config.Registry.baseName`), for a command that asks
   (`RegistryRequest.environmentBase`). -/
   environmentBase : String := Process.inheritedName
+  /-- The command a buffer's own modes fill a role with, given its major mode
+  and its minor modes, the one added last first
+  (`Config.Registry.roleCommand`), for a command that asks
+  (`RegistryRequest.roleCommand`). `none` where no mode fills it. -/
+  roleCommand : Option String → Array String → Role → Option String := fun _ _ _ => none
 
 /-- The workspace settings `registered` says: config's workspace roots, the
 git program, and config's workspace listers. The marker modes are not the
@@ -628,6 +637,7 @@ def Loop.Registered.answer (registered : Loop.Registered) :
   | .extensions key => registered.extensions key
   | .configExtensions key => registered.configExtensions key
   | .environmentBase => registered.environmentBase
+  | .roleCommand major minors role => registered.roleCommand major minors role
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/

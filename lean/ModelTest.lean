@@ -1273,8 +1273,9 @@ names a scheme's key:
   tree; and config's declaration of a package grammar's name registered in
   its place;
 - `modeRegistryChecks`: modes in the registry
-  (`Editor/Config/Registry.lean`): a mode's lineage, and the active keymaps
-  of a view, in precedence order;
+  (`Editor/Config/Registry.lean`): a mode's lineage, the active keymaps
+  of a view, in precedence order, the links mode's first in a buffer with
+  links, and the command a buffer's own modes fill a role with;
 - `modeDispatchChecks`: keys in the loop over the registry's active
   keymaps, on the editor's models: a role's key runs the major mode's
   command in a view of its buffer and the global binding elsewhere, a minor

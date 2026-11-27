@@ -154,11 +154,18 @@ is used in its place until a reload drops it.
   suffixes (`Mode.keymaps`), the suffixes under the localleader in force
   (`leaders`): a derived mode's own role wins, and a role it does not fill
   falls to the nearest parent that fills it.
-- **The active keymaps of a view** (`activeMaps`) are its buffer's minor
-  modes', the one added last first, then its major mode's, then the global
-  keymap (`keymap`). A name no mode is registered under contributes
+- **The active keymaps of a view** (`activeMaps`) are, for a buffer with
+  links, the links mode's (`Links.modeName`, `Editor/Links.lean`), then its
+  buffer's minor modes', the one added last first, then its major mode's,
+  then the global keymap (`keymap`). A buffer with no links, or a registry
+  with no links mode (the package that registers it left out), leaves the
+  links mode out. A name no mode is registered under contributes
   nothing, and a view with no window has the global keymap alone. The host
   makes them for each key, so a reload's modes hold from the next key.
+- **The command a buffer's modes fill a role with** (`roleCommand`) is read
+  in the same order as the keymaps, minor modes first, each lineage nearest
+  first, and never from the links mode: the links mode's `activate` runs
+  it off a link (`Editor/Links.lean`).
 - **Setting a buffer's major mode** is a command's request
   (`ViewId.setMajorMode`, `Editor/Api.lean`), which the loop that runs the
   command answers (`Editor/Command/Dispatch.lean`). What the loop is told
@@ -1289,7 +1296,9 @@ def modeKeymaps (registry : Registry) (scheme : InputScheme) (name : String) :
 
 /-- The active keymaps of `view` in `state` for `scheme`, in precedence
 order: for the open prompt's minibuffer view, when the prompt has a
-category, that category's keymap (`categoryKeymap`); then the keymaps of
+category, that category's keymap (`categoryKeymap`); then, when the
+view's buffer has links, the links mode's (`Links.modeName`), none when no
+mode of that name is registered; then the keymaps of
 each minor mode of the view's buffer, the one added last first, then its
 major mode's, then the global keymap of every owner's key bindings in no
 category (`keymap`). A view with no window has the global keymap alone. -/
@@ -1306,9 +1315,25 @@ def activeMaps (registry : Registry) (scheme : InputScheme) (state : EditorState
           (prompt.candidates.category.map (registry.categoryKeymap scheme)).toList
         else []
       | none => []
+    -- The links mode goes first for a buffer with links; with no mode of
+    -- its name registered it contributes nothing.
+    let links :=
+      if target.buffer.links.isEmpty then [] else registry.modeKeymaps scheme Links.modeName
     let minors := target.buffer.minors.toList.flatMap (registry.modeKeymaps scheme)
     let major := (target.buffer.major.map (registry.modeKeymaps scheme)).getD []
-    category ++ minors ++ major ++ [global]
+    category ++ links ++ minors ++ major ++ [global]
+
+/-- The command the modes of a buffer whose major mode is `major` and whose
+minor modes are `minors`, the one added last first, fill `role` with: the
+first over each minor mode's lineage, then over the major mode's, each
+nearest first, the order the active keymaps resolve the role's keys in
+(`activeMaps`). The links mode is never asked, so a command that runs in its
+place reaches the buffer's own. `none` when no mode fills `role`. -/
+def roleCommand (registry : Registry) (major : Option String) (minors : Array String)
+    (role : Role) : Option String :=
+  let ofMode (name : String) : Option String :=
+    (registry.lineage name).findSome? fun mode => (mode.roles.find? (·.1 == role)).map (·.2)
+  (minors.toList ++ major.toList).findSome? ofMode
 
 /-- The names the uses for `mode` (`none` for every buffer) give: config's
 in the order it made them, then the packages'. -/
@@ -1376,7 +1401,9 @@ those registered in a category (`sourcesIn`), for a prompt that asks for
 them; and the codec a store is kept across a restart with (`codec?`), with
 its owner's name, and whether a job is reported as stopped by a restart
 (`reported`), for the session restore; and the name of the base of a
-child's environment (`baseName`), for a command that says the layers. Which command a
+child's environment (`baseName`), for a command that says the layers; and
+the command a buffer's own modes fill a role with (`roleCommand`), for
+`link-follow` off a link. Which command a
 name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
@@ -1395,7 +1422,8 @@ def registered (registry : Registry) : Loop.Registered :=
     atPoint := registry.atPoint?, atPointNames := registry.atPointNames
     codec? := fun name => (registry.codec? name).map fun (owner, codec) => (owner.name, codec)
     reported := registry.reported, extensions := registry.extensionsAt
-    configExtensions := registry.configExtensionsAt, environmentBase := registry.baseName }
+    configExtensions := registry.configExtensionsAt, environmentBase := registry.baseName
+    roleCommand := registry.roleCommand }
 
 end Registry
 

@@ -4,6 +4,7 @@ import Editor.Ex.Line
 import Editor.InputScheme
 import Editor.Language.IndentUnit
 import Editor.Process.Environment
+import Editor.Role
 import Editor.Store.Codec
 import Editor.Workspace
 
@@ -76,6 +77,12 @@ request of the editor's port (`EditorRequest.registry`,
   registered in a category, and `atPointSources` the names of the
   at-point sources of the chain of a buffer with the modes it is handed,
   that ask on an occasion.
+- `roleCommand` is answered the command a buffer's own modes fill a role
+  with, handed the buffer's major and minor modes: the first over the
+  minor modes' lineages, the one added last first, then the major mode's,
+  never the links mode's. The links mode's `link-follow` asks for
+  `activate`, to run the buffer's own handler off a link
+  (`Editor/Links.lean`).
 - `storeCodec` is answered the codec a store of a name is kept across a
   restart with, and its owner's name (`Editor/Store/Codec.lean`): what the
   session restore meets a kept cell with before it hands the cell to the
@@ -163,6 +170,12 @@ inductive RegistryRequest where
   config's choice, else the latest package's default, else `inherited`
   (`Config.Registry.baseName`). -/
   | environmentBase
+  /-- The command the modes of a buffer whose major mode is `major` and whose
+  minor modes are `minors`, the one added last first, fill `role` with: the
+  first over each minor mode's lineage, then the major mode's, nearest
+  first, as the keymaps resolve; never the links mode's
+  (`Config.Registry.roleCommand`). -/
+  | roleCommand (major : Option String) (minors : Array String) (role : Role)
 
 /-- The type of the reply to each question. -/
 abbrev RegistryRequest.Reply : RegistryRequest → Type
@@ -185,6 +198,7 @@ abbrev RegistryRequest.Reply : RegistryRequest → Type
   | .extensions _ => Array Dynamic
   | .configExtensions _ => Array Dynamic
   | .environmentBase => String
+  | .roleCommand .. => Option String
 
 /-- The answer to `request` where no loop dispatched the command: as with
 nothing registered and config's defaults, except that any job name is
@@ -209,5 +223,6 @@ def RegistryRequest.bare : (request : RegistryRequest) → request.Reply
   | .extensions _ => #[]
   | .configExtensions _ => #[]
   | .environmentBase => Process.inheritedName
+  | .roleCommand .. => none
 
 end Editor

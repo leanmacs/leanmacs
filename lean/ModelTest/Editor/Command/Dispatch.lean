@@ -477,6 +477,27 @@ config (`Loop.Registered.answer`, `Editor/Command/Dispatch.lean`), and of
 where its arms for them stand towards the guard. -/
 def dispatchRegistryChecks : List Check :=
   [{  name :=
+        "a dispatched command that asks which command a buffer's modes fill a role with is answered from what the loop was told, handed the modes it asked with"
+      run :=
+        let registered : Loop.Registered :=
+          {
+            roleCommand := fun major minors role =>
+              if major == some "listing" && minors == #["one"] && role == Role.activate then
+                some "listing-visit"
+              else none }
+        let program : EditorM (Guarded (Option String × Option String) × EditorState) := do
+          (do
+                  return (←
+                        RegistryRequest.ask (.roleCommand (some "listing") #["one"] Role.activate),
+                      ←
+                        RegistryRequest.ask
+                            (.roleCommand (some "listing") #[] Role.activate))).dispatched
+              registered (← twoBuffers)
+        pure <|
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) => answer == (some "listing-visit", none)
+          | _ => false },
+    { name :=
         "a dispatched command that asks for a store's codec is answered the loop's codec of that name with its owner's name, or none"
       run :=
         let codec : StoreCodec := Store.codec Test.counter
