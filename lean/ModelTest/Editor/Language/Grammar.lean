@@ -103,8 +103,7 @@ def grammarDeclarationChecks : List Check :=
           [entry "toml" (some "(own) @toml"), entry "ini" (some "(string) @string"),
             entry "ini" (some "(later) @later")]
         let injected (answers : Language.Grammar.Answers) (languages : List Language)
-            (grammar : String) :=
-          Language.Grammar.injectedTreeOf declared answers 2 languages grammar
+          (grammar : String) := Language.Grammar.injectedTreeOf declared answers 2 languages grammar
         pure
           (injected {} [] "json" == some { grammar := "json" } &&
             injected {} languages "toml" ==
@@ -118,8 +117,7 @@ def grammarDeclarationChecks : List Check :=
                 { grammar := "ini", highlights := some "(string) @string"
                   injections := some "(file) @injection" } &&
             injected {} languages "ini" == none &&
-            injected (answered (.refused (.refused .notFound) false)) languages "ini" ==
-              none) },
+            injected (answered (.refused (.refused .notFound) false)) languages "ini" == none) },
     { name :=
         "a refusal's sentence names the grammar, the error and what stays: the compiled-in grammar, the grammar registered before, or no syntax tree for its languages; a query file's refusal names the grammar, the file and the error"
       run :=

@@ -1,9 +1,7 @@
 import Editor.Api
 import Editor.Command.Model
-import Editor.Config.Packages
 import Editor.Config.Registry
 import Editor.Config.Reload
-import Editor.File.Model
 import Editor.InputScheme.Test
 import Editor.Job.Model
 import Editor.Language
@@ -19,7 +17,6 @@ import Editor.SyntaxTree.Model
 import Editor.SyntaxTree.Registration
 import Editor.SyntaxTree.Registration.Model
 import Editor.Test.Driver
-import Editor.Test.Models
 import Editor.Test.Modes
 import ModelTest.Check
 import ModelTest.Support.Elaborator
