@@ -14,14 +14,16 @@ publish = false
 # crate's own integration test links.
 crate-type = ["cdylib", "rlib"]
 
-# No dependency of the editor's, `editor-service` included: the library
-# reaches the core only through the package runtime it is handed at its
-# init, through a hand-written mirror of the runtime (`src/runtime.rs`).
-# It carries its own Rust standard library, and no copy of any of the
-# core's statics. `deny.toml`'s entry for `editor-service` leaves this
-# crate out of its wrappers, so it cannot depend on it again, even for its
-# tests.
+# The package runtime's C definitions alone (`editor-package-runtime`):
+# the struct the core hands the library at its init, its handle and
+# records, its tags and `runtime_has!`. That crate has no dependency, no
+# build script and no static, so the library still carries no copy of any
+# of the core's statics, and its own Rust standard library. Nothing else of
+# the editor's, `editor-service` included: `deny.toml`'s entry for
+# `editor-service` leaves this crate out of its wrappers, so it cannot
+# depend on it again, even for its tests.
 [dependencies]
+editor-package-runtime = { path = "../../../../crates/editor-package-runtime" }
 
 # The typed time bounds its tests' waits take (`HangGuard`, `recv`,
 # `wait_while`), under the root `clippy.toml`'s wait bans. `editor-wait`

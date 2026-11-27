@@ -13,7 +13,6 @@
 //! answers before any init is `tests/not_loaded.rs`, a process of its own
 //! that never loads it.
 
-use std::ffi::c_void;
 use std::mem::{MaybeUninit, size_of};
 use std::ptr;
 use std::sync::Mutex;
@@ -22,7 +21,10 @@ use std::sync::mpsc::{Sender, channel};
 use std::time::Duration;
 
 use echo_service::ffi::{EchoTable, RawReply, editor_package_init};
-use echo_service::runtime::{REQUIRED, RawBuffer, RawPull, Runtime};
+use echo_service::runtime::REQUIRED;
+use editor_package_runtime::{
+    PackageChild, PackageRuntime, RawBuffer, RawPull, TAKE_OVER_NO_SUCH_CHILD,
+};
 use editor_wait::{HangGuard, recv};
 
 /// hang guard: the completion the wait ends on, posted from echo's worker.
@@ -38,7 +40,11 @@ static NAME: Mutex<String> = Mutex::new(String::new());
 /// Where each completion posted through the runtime goes.
 static COMPLETED: Mutex<Option<Sender<(u64, u64)>>> = Mutex::new(None);
 
-unsafe extern "C" fn register_service(name: *const u8, len: usize) -> u64 {
+unsafe extern "C" fn register_service(
+    _: *const PackageRuntime,
+    name: *const u8,
+    len: usize,
+) -> u64 {
     // SAFETY: the library lends `len` bytes for the call.
     let name = unsafe { std::slice::from_raw_parts(name, len) };
     *NAME.lock().expect("unpoisoned") = String::from_utf8_lossy(name).into_owned();
@@ -46,7 +52,7 @@ unsafe extern "C" fn register_service(name: *const u8, len: usize) -> u64 {
     SERVICE
 }
 
-extern "C" fn complete(service: u64, request: u64) -> bool {
+extern "C" fn complete(_: *const PackageRuntime, service: u64, request: u64) -> bool {
     COMPLETED
         .lock()
         .expect("unpoisoned")
@@ -54,14 +60,19 @@ extern "C" fn complete(service: u64, request: u64) -> bool {
         .is_some_and(|completed| completed.send((service, request)).is_ok())
 }
 
-unsafe extern "C" fn take_over(_: u64, _: *mut *mut c_void) -> u32 {
-    2
+extern "C" fn post_event(_: *const PackageRuntime, _: u64, _: u64, _: *const u8, _: usize) -> bool {
+    false
 }
 
-unsafe extern "C" fn child_pull(_: *mut c_void, _: *mut RawPull) {}
+extern "C" fn take_over(_: *const PackageRuntime, _: u64, _: *mut *mut PackageChild) -> u32 {
+    TAKE_OVER_NO_SUCH_CHILD
+}
 
-unsafe extern "C" fn child_write(
-    _: *mut c_void,
+extern "C" fn child_pull(_: *const PackageRuntime, _: *mut PackageChild, _: *mut RawPull) {}
+
+extern "C" fn child_write(
+    _: *const PackageRuntime,
+    _: *mut PackageChild,
     _: *const u8,
     _: usize,
     _: *mut RawBuffer,
@@ -69,32 +80,39 @@ unsafe extern "C" fn child_write(
     false
 }
 
-unsafe extern "C" fn child_release(_: *mut c_void) {}
+extern "C" fn child_release(_: *const PackageRuntime, _: *mut PackageChild) {}
 
-unsafe extern "C" fn buffer_free(_: *mut u8, _: usize) {}
+extern "C" fn buffer_lend(_: *const PackageRuntime, _: *const u8, _: usize, _: *mut RawBuffer) {}
+
+extern "C" fn buffer_free(_: *const PackageRuntime, _: *mut u8, _: usize) -> bool {
+    false
+}
 
 /// A runtime of test functions saying it is `size` bytes.
-const fn runtime(size: usize) -> Runtime {
-    Runtime {
+const fn runtime(size: usize) -> PackageRuntime {
+    PackageRuntime {
         size,
+        private_members: ptr::null_mut(),
         register_service,
         complete,
+        post_event,
         take_over,
         child_pull,
         child_write,
         child_release,
+        buffer_lend,
         buffer_free,
     }
 }
 
 /// A runtime one member smaller than echo requires.
-static SMALL: Runtime = runtime(REQUIRED - size_of::<usize>());
+static SMALL: PackageRuntime = runtime(REQUIRED - size_of::<usize>());
 
 /// A whole runtime.
-static WHOLE: Runtime = runtime(REQUIRED);
+static WHOLE: PackageRuntime = runtime(REQUIRED);
 
 /// The init's status for `runtime`, and the table it wrote, if any.
-fn init(runtime: &'static Runtime) -> (u32, Option<&'static EchoTable>) {
+fn init(runtime: &'static PackageRuntime) -> (u32, Option<&'static EchoTable>) {
     let mut table: *const EchoTable = ptr::null();
     // SAFETY: the runtime is a static as large as it says, and the table's
     // place is writable; the table, a static of the library, lives for the

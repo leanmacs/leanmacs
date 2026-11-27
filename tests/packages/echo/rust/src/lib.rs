@@ -28,14 +28,17 @@
 //! ([`runtime`]), registers the service `echo` through it, and answers the
 //! table of C functions the glue forwards echo's `@[extern]` calls through
 //! ([`ffi::EchoTable`]). `tests/init.rs` runs the init and the table over
-//! a runtime of test functions.
+//! a runtime of test functions, and `tests/later_runtime.rs` over one from
+//! a newer core, larger than the one echo was built for.
 //!
 //! A request may also read a streaming child the core's process service
 //! opened, taken over through the runtime ([`attach`], [`Echo::attach`]):
 //! its answer is what it read ([`Echo::take_read`]).
 //!
-//! The crate depends on nothing of the editor's: it reaches the core only
-//! through the runtime, so it holds no copy of the core's statics.
+//! The crate depends on nothing of the editor's but the runtime's C
+//! definitions (`editor-package-runtime`, which has no static): it reaches
+//! the core only through the runtime, so it holds no copy of the core's
+//! statics.
 
 pub mod attach;
 pub mod buffer;

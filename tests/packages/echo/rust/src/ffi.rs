@@ -3,8 +3,8 @@
 //! ([`EchoTable`]), through which the package's glue (`ffi/glue.c`)
 //! forwards echo's `@[extern]` calls.
 //!
-//! The init is handed the core's package runtime ([`Runtime`]). It refuses
-//! one smaller than echo requires ([`REQUIRED`]), answering 1 with the
+//! The init is handed the core's package runtime ([`PackageRuntime`]). It
+//! refuses one smaller than echo requires ([`REQUIRED`]), answering 1 with the
 //! table unwritten; otherwise it registers the service `echo` through the
 //! runtime, once, makes the process's one [`Echo`] over a completer that
 //! posts through the runtime, writes [`TABLE`] and answers 0. A second init
@@ -22,14 +22,16 @@ use std::ptr;
 use std::sync::OnceLock;
 
 use crate::attach::{attach, attach_take};
-use crate::runtime::{REQUIRED, Runtime, RuntimeCompleter};
+use editor_package_runtime::{INIT_LOADED, INIT_RUNTIME_TOO_SMALL, PackageRuntime};
+
+use crate::runtime::{REQUIRED, RuntimeCompleter};
 use crate::{Echo, SERVICE_NAME, buffer};
 
 /// The library, once its init has run: the runtime it was handed, and the
 /// process's echo service over it.
 pub(crate) struct Loaded {
     /// The core's runtime.
-    pub(crate) runtime: &'static Runtime,
+    pub(crate) runtime: &'static PackageRuntime,
     /// The process's echo service, reporting through the runtime.
     pub(crate) echo: Echo<RuntimeCompleter>,
 }
@@ -101,25 +103,25 @@ pub static TABLE: EchoTable = EchoTable {
 /// pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_package_init(
-    runtime: *const Runtime,
+    runtime: *const PackageRuntime,
     table: *mut *const EchoTable,
 ) -> u32 {
     if runtime.is_null() {
-        return 1;
+        return INIT_RUNTIME_TOO_SMALL;
     }
     // SAFETY: the size is the runtime's first member, read alone, before
     // anything of a runtime that may be smaller than echo's is.
     let size = unsafe { ptr::addr_of!((*runtime).size).read() };
     if size < REQUIRED {
-        return 1;
+        return INIT_RUNTIME_TOO_SMALL;
     }
-    // SAFETY: the runtime holds every member echo reads, and is the core's
-    // static, for the life of the process.
-    let runtime: &'static Runtime = unsafe { &*runtime };
+    // SAFETY: the runtime holds every member echo reads, and is the core's,
+    // for the life of the process.
+    let runtime: &'static PackageRuntime = unsafe { &*runtime };
     LOADED.get_or_init(|| {
         let name = SERVICE_NAME;
         // SAFETY: the name is lent for the call.
-        let service = unsafe { (runtime.register_service)(name.as_ptr(), name.len()) };
+        let service = unsafe { (runtime.register_service)(runtime, name.as_ptr(), name.len()) };
         Loaded {
             runtime,
             echo: Echo::new(RuntimeCompleter { runtime, service }),
@@ -127,7 +129,7 @@ pub unsafe extern "C" fn editor_package_init(
     });
     // SAFETY: the caller hands a writable pointer.
     unsafe { table.write(&raw const TABLE) };
-    0
+    INIT_LOADED
 }
 
 /// Starts the request `id` of the `len` bytes of text at `text`

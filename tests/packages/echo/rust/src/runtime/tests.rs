@@ -1,6 +1,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
+use editor_package_runtime::TAKE_OVER_NO_SUCH_CHILD;
+
 use super::*;
 
 /// Words, as the little-endian bytes a pull carries them in.
@@ -36,24 +38,32 @@ fn lent(bytes: Vec<u8>) -> (*mut u8, usize) {
 /// The handle the test runtime hands out for the child 1.
 const HANDLE: usize = 0x5eed;
 
-unsafe extern "C" fn register_service(_: *const u8, _: usize) -> u64 {
+extern "C" fn register_service(_: *const PackageRuntime, _: *const u8, _: usize) -> u64 {
     0
 }
 
-extern "C" fn complete(_: u64, _: u64) -> bool {
+extern "C" fn complete(_: *const PackageRuntime, _: u64, _: u64) -> bool {
     false
 }
 
-unsafe extern "C" fn take_over(child: u64, handle: *mut *mut c_void) -> u32 {
+extern "C" fn post_event(_: *const PackageRuntime, _: u64, _: u64, _: *const u8, _: usize) -> bool {
+    false
+}
+
+unsafe extern "C" fn take_over(
+    _: *const PackageRuntime,
+    child: u64,
+    handle: *mut *mut PackageChild,
+) -> u32 {
     if child != 1 {
-        return 2;
+        return TAKE_OVER_NO_SUCH_CHILD;
     }
     // SAFETY: the caller hands a writable place.
     unsafe { handle.write(ptr::without_provenance_mut(HANDLE)) };
     0
 }
 
-unsafe extern "C" fn child_pull(_: *mut c_void, out: *mut RawPull) {
+unsafe extern "C" fn child_pull(_: *const PackageRuntime, _: *mut PackageChild, out: *mut RawPull) {
     let (delivered, words, bytes) =
         CANNED
             .with_borrow_mut(VecDeque::pop_front)
@@ -73,7 +83,8 @@ unsafe extern "C" fn child_pull(_: *mut c_void, out: *mut RawPull) {
 }
 
 unsafe extern "C" fn child_write(
-    _: *mut c_void,
+    _: *const PackageRuntime,
+    _: *mut PackageChild,
     bytes: *const u8,
     len: usize,
     refused: *mut RawBuffer,
@@ -91,25 +102,31 @@ unsafe extern "C" fn child_write(
     false
 }
 
-unsafe extern "C" fn child_release(_: *mut c_void) {
+extern "C" fn child_release(_: *const PackageRuntime, _: *mut PackageChild) {
     RELEASED.set(RELEASED.get() + 1);
 }
 
-unsafe extern "C" fn buffer_free(bytes: *mut u8, len: usize) {
+extern "C" fn buffer_lend(_: *const PackageRuntime, _: *const u8, _: usize, _: *mut RawBuffer) {}
+
+unsafe extern "C" fn buffer_free(_: *const PackageRuntime, bytes: *mut u8, len: usize) -> bool {
     FREED.with_borrow_mut(|freed| freed.push((bytes.addr(), len)));
     // SAFETY: the buffer is one `lent` gave up, handed back once.
     unsafe { buffer::reclaim(bytes, len) };
+    true
 }
 
 /// A runtime of test functions, its state each test thread's own.
-static TEST_RUNTIME: Runtime = Runtime {
+static TEST_RUNTIME: PackageRuntime = PackageRuntime {
     size: REQUIRED,
+    private_members: ptr::null_mut(),
     register_service,
     complete,
+    post_event,
     take_over,
     child_pull,
     child_write,
     child_release,
+    buffer_lend,
     buffer_free,
 };
 
