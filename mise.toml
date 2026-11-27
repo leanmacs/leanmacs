@@ -286,8 +286,13 @@ run = "cargo build --quiet --locked --release -p editor-launch-std --bins"
 description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's, the job port's and the syntax tree interface's contracts against their real bindings (lean/ContractTest.lean), the config session against the real elaborator (lean/ConfigTest.lean), cargo-deny over each set's generated crate, the headless fixtures under tests/headless on the default set's fixture harness, stepped on the fakes, and the linked test and headless fixtures of each package of the fixture set, which names every default package, so each linked test runs once, then the default set's headless fixtures alone (tools/package-set.sh --no-linked)"
 depends = ["lean"]
 dir = "lean"
-# Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max).
-timeout = "300s"
+# Measured at 130 to 210 s on 2026-11-20 (Apple M5 Max). On 2026-11-27, with
+# echo's user-set wiring check (a user's set built and linked with the
+# toolchain's lake, tests/packages/echo/EchoTest/Linked/Echo/Real/UserSet.lean),
+# the whole task took 126 s and echo's wiring groups alone 12.6 s, the
+# user-set check about 10 s of that, on the same machine; the limit is
+# raised by more than that check's share under load.
+timeout = "360s"
 run = [
   # A package's crate depends on `editor-service` and on nothing else of
   # the editor's, held by cargo-deny's bans over the crate generated from

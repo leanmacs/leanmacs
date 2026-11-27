@@ -7,6 +7,7 @@ import EchoTest.Linked.Echo.Real.Attach
 import EchoTest.Linked.Echo.Real.Job
 import EchoTest.Linked.Echo.Real.Load
 import EchoTest.Linked.Echo.Real.Probe
+import EchoTest.Linked.Echo.Real.UserSet
 import Editor
 import Editor.Headless
 import Editor.RealHost
@@ -51,6 +52,13 @@ test kit's services and pump, and runs:
 - the fixture set's editor, run with `--probe` through the real process
   port, which passes only once echo's initialiser loaded the library
   (`EchoTest.Linked.echoProbeChecks`, `EchoTest/Linked/Echo/Real/Probe.lean`);
+- a user's set holding a copy of echo, built with the toolchain's `lake`
+  under the sysroot it is handed, through the real process port, with no
+  `cargo` on the child's `PATH`: with the library already built it builds
+  and its editor loads the library from the set's build once the copy is
+  gone; with the library to build, it stops naming echo and cargo
+  (`EchoTest.Linked.echoUserSetChecks`,
+  `EchoTest/Linked/Echo/Real/UserSet.lean`);
 
 and says so, counting the contract's properties.
 
@@ -79,9 +87,11 @@ plain group, the contract's one check in the group of
 `EchoTest/Linked/Echo/Real.lean`, the take-over's checks in the group of
 `EchoTest/Linked/Echo/Real/Attach.lean`, the running jobs' checks in the
 group of `EchoTest/Linked/Echo/Real/Job.lean`, over the package services
-the edge builds from echo's packages, and the probe of the fixture set's
-editor in the group of `EchoTest/Linked/Echo/Real/Probe.lean`, the last four
-of the wiring set. -/
+the edge builds from echo's packages, the probe of the fixture set's
+editor in the group of `EchoTest/Linked/Echo/Real/Probe.lean`, and the
+builds of a user's set in the group of
+`EchoTest/Linked/Echo/Real/UserSet.lean`, over the sysroot the context was
+made with, the last five of the wiring set. -/
 def EchoTest.Linked.checks : List (Editor.CheckGroup EchoTest.Linked.Context EchoTest.Check) :=
   [.plain fun (context, _) => EchoTest.Linked.echoPackageChecks context,
     .plain fun _ => EchoTest.Linked.echoLoadChecks,
@@ -93,7 +103,9 @@ def EchoTest.Linked.checks : List (Editor.CheckGroup EchoTest.Linked.Context Ech
       fun (_, services) =>
       EchoTest.Linked.echoJobChecks services (Editor.Headless.packageServices Echo.packages),
     .wired "EchoTest.Linked.Echo.Real.Probe" wiringSet.EchoTest.Linked.Echo.Real.Probe
-      fun (_, services) => EchoTest.Linked.echoProbeChecks services]
+      fun (_, services) => EchoTest.Linked.echoProbeChecks services,
+    .wired "EchoTest.Linked.Echo.Real.UserSet" wiringSet.EchoTest.Linked.Echo.Real.UserSet
+      fun (context, services) => EchoTest.Linked.echoUserSetChecks context.sysroot services]
 
 /-- Runs the checks `mode` selects from the check set
 (`Editor.CheckGroup.select`) with the hosts' context, made with
