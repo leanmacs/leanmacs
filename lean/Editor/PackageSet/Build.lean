@@ -71,7 +71,11 @@ core directory.
    manifest the core check read after the resolve, and the set's name.
 6. **Probe**: `<staging>/editor --probe`, within 10 s, must print `probe:
    ok`, which catches a bad link, a bad signature or an `initialize` that
-   throws before anything is published.
+   throws before anything is published. A probe that did not pass fails
+   the build with `probeFailed`'s text, which carries the first line the
+   probe wrote to standard error: an initialiser's uncaught error, such as
+   a package's library that was refused, as Lean's generated `main` prints
+   it.
 7. **Publish**: `/bin/mv <staging> <data>/editors/<core>/<n>`.
 8. **Prune**: `/bin/rm -rf` for each directory `pruned` names, never the
    one that holds the running executable.
@@ -519,6 +523,16 @@ def succeeded (executable : String) (milliseconds : Nat) : EditorM Unit := do
   else
     message s!"packages: built {executable}; it starts at the next launch"
 
+/-- How the build fails when its probe of the new editor (`probe`) did not
+pass: `the new editor did not start: ` and how (`Restore.probeFailure`), or
+none when it passed. -/
+def probeFailed (probe : Except ProcessError Process.Ran) : Option String :=
+  let how :=
+    match probe with
+    | .error error => some error.describe
+    | .ok ran => Restore.probeFailure ran
+  how.map fun how => s!"the new editor did not start: {how}"
+
 /-- Runs `command` to its end within `time`: how it failed, or what it
 wrote. -/
 def runOf (command : Process.Command) (time : Nat) : JobM (Except String Process.Ran) := do
@@ -673,13 +687,9 @@ def buildWork (arguments : List Argument) : Work := fun _ => do
   let probe ←
     Process.request
         (.runWithin (rootCommand (staging ++ "/editor") #["--probe"]) 65536 Restore.probePatience)
-  let probeHow :=
-    match probe with
-    | .error error => some error.describe
-    | .ok ran => Restore.probeFailure ran
-  if let some how := probeHow then
+  if let some how := probeFailed probe then
     removeStaging
-    return ← fail s!"the new editor did not start: {how}"
+    return ← fail how
   -- 7. Publish.
   let directory := coreDirectory order.data core
   discard <| File.makeDirectory directory

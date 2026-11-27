@@ -577,7 +577,7 @@ def packageSetBuildChecks : List Check :=
                 (startedRuns done).contains ("/bin/rm", #["-rf", staging]) &&
                 !(startedRuns done).any (·.1 == "/bin/mv")) },
     { name :=
-        "a probe whose package initialiser threw a refused load ends the build failed with the refusal's text, removes the staging directory and publishes nothing"
+        "a probe whose package initialiser threw ends the build failed with probeFailed's text, which carries the error, removes the staging directory and publishes nothing"
       run :=
         let facts := lakefileWith #[hello]
         match orderFor facts with
@@ -589,18 +589,23 @@ def packageSetBuildChecks : List Check :=
                 #["update", "--keep-toolchain", "default-set", "editor-core", "hello"])
               #[]
           -- Lean's generated `main` prints an initialiser's uncaught error
-          -- and exits 1, before the editor's `main` prints anything.
-          let refusal :=
-            "uncaught exception: echo: its library /x is missing; build the package echo (lake build EchoReal)"
+          -- and exits 1, before the editor's `main` prints anything. What a
+          -- package's refused library throws is the package's: echo's
+          -- refusals are each pinned through `probeFailed` in its tests
+          -- (`EchoTest.echoLibraryChecks`).
+          let thrown := "uncaught exception: a package's library was refused"
           let (scripts, streams) :=
-            succeeding order (probe := "") (probeCode := 1) (probeStderr := refusal ++ "\n")
+            succeeding order (probe := "") (probeCode := 1) (probeStderr := thrown ++ "\n")
+          let probe : Process.Ran :=
+            { exit := .code 1, stdout := .empty, stderr := (thrown ++ "\n").toUTF8 }
           match buildDriver (runningWith facts) scripts (streams.push resolve) with
           | none => pure false
           | some driver =>
             let done := built driver order
             pure
-              (failedWith done
-                  s!"the new editor did not start: it exited with status 1; {refusal} after" &&
+              (probeFailed (.ok probe) ==
+                  some s!"the new editor did not start: it exited with status 1; {thrown}" &&
+                failedWith done s!"{(probeFailed (.ok probe)).getD ""} after" &&
                 (startedRuns done).contains ("/bin/rm", #["-rf", staging]) &&
                 !(startedRuns done).any (·.1 == "/bin/mv")) },
     { name :=
