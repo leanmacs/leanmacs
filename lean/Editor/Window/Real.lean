@@ -417,9 +417,13 @@ build recorded beside that executable (`ModuleLookup.recorded`, with the
 real file read: a record that is not there, or cannot be read, is none),
 and where its set's grammars directories are staged
 (`ModuleLookup.grammarDirectories`, by the same rule).
+The variables are read through `readVariable`: the edge hands the
+process's own (the default), and a test hands its own.
 `main` reads it for the running executable, and `ffi-test
-window-host-direct` for an editor it is pointed at. -/
-def environmentAt (appPath : String) : IO Environment := do
+window-host-direct` for an editor it is pointed at, in a home of its own. -/
+def environmentAt (appPath : String)
+    (readVariable : String → IO (Option String) := fun name => IO.getEnv name) : IO Environment :=
+  do
   let readFile (path : System.FilePath) : IO (Option String) := do
     try
       return some (← IO.FS.readFile path)
@@ -427,9 +431,10 @@ def environmentAt (appPath : String) : IO Environment := do
       return none
   return {
       workingDirectory := (← IO.currentDir).toString
-      xdgConfigHome := ← IO.getEnv "XDG_CONFIG_HOME", xdgStateHome := ← IO.getEnv "XDG_STATE_HOME"
-      xdgDataHome := ← IO.getEnv "XDG_DATA_HOME"
-      home := ← IO.getEnv "HOME", appPath
+      xdgConfigHome := ← readVariable "XDG_CONFIG_HOME"
+      xdgStateHome := ← readVariable "XDG_STATE_HOME"
+      xdgDataHome := ← readVariable "XDG_DATA_HOME"
+      home := ← readVariable "HOME", appPath
       recordedOleans := ← ModuleLookup.recorded appPath readFile
       grammarDirectories := ← ModuleLookup.grammarDirectories appPath readFile }
 

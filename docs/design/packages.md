@@ -736,7 +736,10 @@ globs = ["Config.+"]
   phase 6 the base's modules were all the core's and the first directory
   alone was used. The gate starts the window mode's wiring for both sets'
   editors with that default and requires config to load (`ffi-test
-  window-host-direct`, a window scenario). The default set's record names
+  window-host-direct`, a window scenario). That scenario runs in a
+  temporary home of its own, never the process's: only the `.olean`
+  directories are found as a direct run finds them, so a session the
+  developer kept is never restored or written. The default set's record names
   forty-six directories, the core's, then those of its twenty-seven
   default packages and eighteen interface packages in the order the build
   visits them, each interface package before the first package that
