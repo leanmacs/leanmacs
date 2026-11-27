@@ -635,6 +635,17 @@ def Loop.Registered.treeOfLanguage (registered : Loop.Registered) (state : Edito
     Language.Grammar.treeOf registered.grammars state.grammars registered.generation
       language.syntaxTree
 
+/-- The tree `buffer`'s text is parsed and drawn with, by `registered` and
+the answers `state` recorded: what its major mode's lineage says
+(`Mode.syntaxTreeOf`) over its language's tree (`treeOfLanguage`); `none`
+for a buffer with no major mode, one `registered` does not hold, or one
+drawn plain. The one rule the loop's highlighting follows: entering a major
+mode, highlighting again, and a host's readout of it (`Headless.Running.highlights`). -/
+def Loop.Registered.treeOfBuffer (registered : Loop.Registered) (state : EditorState)
+    (buffer : Buffer) : Option Mode.SyntaxTree :=
+  (buffer.major.bind registered.entering).bind fun lineage =>
+    Mode.syntaxTreeOf lineage (registered.treeOfLanguage state buffer.language)
+
 /-- The buffers `rehighlight grammars` highlights again, in the state's
 order: each open buffer whose language's tree, as `registered` holds it,
 names one of `grammars`, and whose major mode is registered, with that
@@ -656,10 +667,9 @@ docs): each buffer `rehighlighted` picks detached, then entered as its
 major mode's lineage now says over its language's resolved tree. -/
 def rehighlighting (registered : Loop.Registered) (state : EditorState) (grammars : Array String) :
     EditorM Unit := do
-  for (buffer, major, lineage) in registered.rehighlighted state grammars do
+  for (buffer, major, _) in registered.rehighlighted state grammars do
     Highlight.leave buffer.text
-    if let some tree :=
-        Mode.syntaxTreeOf lineage (registered.treeOfLanguage state buffer.language) then
+    if let some tree := registered.treeOfBuffer state buffer then
       Highlight.enter major buffer.text tree
 
 /-- What runs when the mode `name`, of `lineage` (root first), has become
@@ -713,8 +723,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
     | some target, some lineage =>
       let language := registered.treeOfLanguage state target.buffer.language
-      let before :=
-        (target.buffer.major.bind registered.entering).bind (Mode.syntaxTreeOf · language)
+      let before := registered.treeOfBuffer state target.buffer
       match state.handle (.setMajorMode view name) with
       | (.ok true, state) =>
         dispatched registered state do
@@ -730,7 +739,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
     | some buffer, some lineage =>
       let language := registered.treeOfLanguage state buffer.language
-      let before := (buffer.major.bind registered.entering).bind (Mode.syntaxTreeOf · language)
+      let before := registered.treeOfBuffer state buffer
       let views := (state.windows.filter (·.buffer == id)).toList.map (·.id)
       match state.handle (.setBufferMajorMode id name) with
       | (.ok true, state) =>

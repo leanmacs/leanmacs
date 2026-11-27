@@ -2313,9 +2313,8 @@ def highlightsLine (view : ViewId) (faces : Option (Array (FaceName × Nat × Na
     s!"highlights {view.index}: {" ".intercalate each}"
 
 /-- Prints the faces the focused view's text is drawn in (`highlightsLine`):
-its buffer's tree, its major mode's lineage over its language's tree
-resolved as the loop resolves it (`Loop.Registered.treeOfLanguage`,
-`Mode.syntaxTreeOf`), read with `Highlight.capturedFaces`; `none` for a
+its buffer's tree, as the core's one rule resolves it
+(`Loop.Registered.treeOfBuffer`), read with `Highlight.capturedFaces`; `none` for a
 buffer with no tree or a text the library has not attached, and the
 refusal for any other. With no frame, `highlights: no frame`. -/
 def highlights (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
@@ -2328,12 +2327,8 @@ def highlights (collaborators : Collaborators β σ scheme) (running : Running �
   let some target := state.target? view |
     collaborators.emit (highlightsLine view none)
     return running
-  let registered := running.config.registry.registered
   let buffer := target.buffer
-  let tree :=
-    (buffer.major.bind registered.entering).bind fun lineage =>
-      Mode.syntaxTreeOf lineage (registered.treeOfLanguage state buffer.language)
-  let some tree := tree |
+  let some tree := running.config.registry.registered.treeOfBuffer state buffer |
     collaborators.emit (highlightsLine view none)
     return running
   let (read, texts) ←

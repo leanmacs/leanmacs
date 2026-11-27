@@ -253,6 +253,34 @@ command runs the mode's on-enter actions inside it
 (`Editor/Command/Dispatch.lean`). -/
 def modeEnterChecks : List Check :=
   [{  name :=
+        "a buffer's syntax tree (Loop.Registered.treeOfBuffer) is what its major mode's lineage says over its language's tree as the loop resolves it: none with no major mode or one not registered; for a mode that takes its language's, the declared grammar's tree once this generation's answer is recorded, none before it and none with no language; and a mode's own tree whatever the language"
+      run :=
+        pure <|
+          let coded : Mode := { name := "coded", syntaxTreeOfLanguage := true }
+          let own : Mode := { name := "own", syntaxTree := some { grammar := "json" } }
+          let registered := (declaredRegistry #[coded, own]).registered
+          let answered := iniAnswered { highlights := some "(number) @number" }
+          let program : EditorM (List (Option Mode.SyntaxTree)) := do
+            let state := ((← twoBuffers).setLanguage ⟨1⟩ (some "ini")).2
+            let treeAs (state : EditorState) (major : Option String) : Option Mode.SyntaxTree :=
+              let state :=
+                match major with
+                | some name => (state.setMajorMode ⟨1⟩ name).2
+                | none => state
+              (state.buffer? ⟨1⟩).bind (registered.treeOfBuffer state)
+            let recorded := { state with grammars := answered }
+            let languageless := ((recorded.setLanguage ⟨1⟩ none).2)
+            return [treeAs recorded none, treeAs recorded (some "nowhere"),
+                treeAs state (some "coded"), treeAs recorded (some "coded"),
+                treeAs languageless (some "coded"), treeAs state (some "own"),
+                treeAs recorded (some "own")]
+          match program.runModel iniModel with
+          | (.ok trees, _) =>
+            trees.map (·.map fun tree => (tree.grammar, tree.highlights)) ==
+              [none, none, none, some ("ini", some "(number) @number"), none, some ("json", none),
+                some ("json", none)]
+          | (.error _, _) => false },
+    { name :=
         "the code mode over a buffer whose language names a declared grammar is plain while no answer of this generation is recorded, and is attached with the grammar and highlighted with the recorded highlights query once one is"
       run :=
         pure <|
