@@ -82,7 +82,10 @@ A package is refused, and registers nothing, when
   (`Package.namedTwice`): the second would replace the first's entries;
 - its `setup` throws, or what it registered cannot be meant
   (`Registrations.problem?`);
-- its `setup` sets what only config may choose.
+- its `setup` sets what only config may choose;
+- its grammars have a path that is absolute or leaves its Lake package's
+  grammars directory, or no such directory is staged for it ("A package's
+  grammars", above).
 
 A package that is refused is skipped, and the others register:
 `ofPackages` hands back each refusal's message, which names the package
