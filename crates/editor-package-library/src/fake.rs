@@ -4,14 +4,18 @@
 //!
 //! A path canned with [`FakeLibraries::not_a_library`] is a file that will
 //! not open; one canned with [`FakeLibraries::library`] opens as a library
-//! exporting the init functions a test wrote, by symbol; any other path is
-//! missing. It keeps [`crate::contract::check`], in that module's tests.
+//! exporting the init functions a test wrote, by symbol, and with
+//! [`FakeLibraries::declaring`] the declaration a test wrote, as
+//! `editor_package_declaration`; any other path is missing. It keeps
+//! [`crate::contract::check`], in that module's tests.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
-use crate::library::{Libraries, Library, PackageInit, Unopened};
+use editor_package_runtime::DECLARATION_SYMBOL;
+
+use crate::library::{Libraries, Library, PackageDeclaration, PackageInit, Unopened};
 
 /// What a path is canned as.
 #[derive(Debug, Clone)]
@@ -19,7 +23,7 @@ enum Canned {
     /// A file that will not open as a library.
     NotALibrary,
     /// A library exporting these symbols.
-    Library(Vec<(String, PackageInit)>),
+    Library(FakeLibrary),
 }
 
 /// Libraries canned per path: the port's fake.
@@ -47,11 +51,34 @@ impl FakeLibraries {
     /// This fake, with a library at `path` exporting each of `symbols`.
     #[must_use]
     pub fn library(mut self, path: impl Into<PathBuf>, symbols: &[(&str, PackageInit)]) -> Self {
-        let symbols = symbols
+        let inits = symbols
             .iter()
             .map(|&(symbol, init)| (symbol.to_owned(), init))
             .collect();
-        self.canned.insert(path.into(), Canned::Library(symbols));
+        self.canned.insert(
+            path.into(),
+            Canned::Library(FakeLibrary {
+                inits,
+                declaration: None,
+            }),
+        );
+        self
+    }
+
+    /// This fake, with the library at `path` also exporting `declaration`
+    /// as `editor_package_declaration`: a library exporting no init when
+    /// none was canned there. A declaration whose `size` ends before a
+    /// member is handed back as written, as the real adapter hands back
+    /// what a short declaration covers.
+    #[must_use]
+    pub fn declaring(mut self, path: impl Into<PathBuf>, declaration: PackageDeclaration) -> Self {
+        let path = path.into();
+        let mut library = match self.canned.remove(&path) {
+            Some(Canned::Library(library)) => library,
+            _ => FakeLibrary::default(),
+        };
+        library.declaration = Some(declaration);
+        self.canned.insert(path, Canned::Library(library));
         self
     }
 
@@ -73,20 +100,30 @@ impl Libraries for FakeLibraries {
         match self.canned.get(path) {
             None => Err(Unopened::Missing),
             Some(Canned::NotALibrary) => Err(Unopened::NotALibrary),
-            Some(Canned::Library(symbols)) => Ok(Box::new(FakeLibrary(symbols.clone()))),
+            Some(Canned::Library(library)) => Ok(Box::new(library.clone())),
         }
     }
 }
 
-/// A canned library, opened.
-#[derive(Debug)]
-struct FakeLibrary(Vec<(String, PackageInit)>);
+/// A canned library: the init functions it exports by symbol, and its
+/// declaration, if it exports one.
+#[derive(Debug, Clone, Default)]
+struct FakeLibrary {
+    /// The init functions, by symbol.
+    inits: Vec<(String, PackageInit)>,
+    /// The declaration exported as `editor_package_declaration`.
+    declaration: Option<PackageDeclaration>,
+}
 
 impl Library for FakeLibrary {
     fn init(&self, symbol: &str) -> Option<PackageInit> {
-        self.0
+        self.inits
             .iter()
             .find(|(exported, _)| exported == symbol)
             .map(|&(_, init)| init)
+    }
+
+    fn declaration(&self, symbol: &str) -> Option<PackageDeclaration> {
+        self.declaration.filter(|_| symbol == DECLARATION_SYMBOL)
     }
 }

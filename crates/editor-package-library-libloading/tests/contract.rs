@@ -1,8 +1,12 @@
 //! The adapter keeps the library port's contract on real files: the
 //! fixture grammar library (`editor-syntax-fixture-ini`) opens and finds
-//! the symbol it exports, `tree_sitter_ini`, and not a package's init;
-//! its grammar's source is a file that is no library; and a path beside the
-//! library that is never made is missing.
+//! the symbol it exports, `tree_sitter_ini`, and not a package's init, and
+//! has no declaration; its grammar's source is a file that is no library;
+//! a path beside the library that is never made is missing; and the
+//! fixture package library built against the generated header
+//! (`editor-package-library-fixture`'s `CURRENT_RUNTIME`) has the
+//! declaration `EDITOR_PACKAGE_DECLARE(1, buffer_free)` writes, read
+//! whole.
 //!
 //! The check is the port's own, the one the fake keeps
 //! (`editor_package_library::contract::check`). No file is created.
@@ -10,7 +14,10 @@
 use std::path::{Path, PathBuf};
 
 use editor_package_library::contract::{Corpus, check};
+use editor_package_library::library::PackageDeclaration;
 use editor_package_library::load::INIT_SYMBOL;
+use editor_package_library::runtime::PackageRuntime;
+use editor_package_library_fixture as package;
 use editor_package_library_libloading::LibLoading;
 use editor_syntax_fixture_ini as fixture;
 
@@ -25,13 +32,19 @@ fn absent_library() -> PathBuf {
 }
 
 #[test]
-fn the_adapter_keeps_the_library_contract_on_the_fixture_library() {
+fn the_adapter_keeps_the_library_contract_on_the_fixture_libraries() {
     let corpus = Corpus {
         absent: absent_library(),
         not_a_library: fixture::NOT_A_LIBRARY.into(),
         library: fixture::LIBRARY.into(),
         exported: fixture::SYMBOL.to_owned(),
         not_exported: INIT_SYMBOL.to_owned(),
+        declaring: package::CURRENT_RUNTIME.into(),
+        declaration: PackageDeclaration {
+            size: size_of::<PackageDeclaration>(),
+            runtime: size_of::<PackageRuntime>(),
+            interface: 1,
+        },
     };
     #[expect(
         clippy::disallowed_methods,

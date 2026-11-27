@@ -27,16 +27,26 @@
 //! `clippy.toml` refuses everywhere but `editor-ffi`'s one static and this
 //! crate's contract test.
 //!
-//! The crate denies `unsafe` everywhere but its two marked sites: opening a
-//! library runs its initialisers, and reading a symbol as an init trusts
-//! that it is one.
+//! **A declaration is read by the members its size covers**
+//! ([`Library::declaration`]): the static's `size` alone first, then each
+//! member whose end that size reaches, a member past it read as 0, so a
+//! declaration from an older library, shorter than today's, is never read
+//! past its end. Whether it is long enough is the core's.
+//!
+//! The crate denies `unsafe` everywhere but its three marked sites: opening
+//! a library runs its initialisers, reading a symbol as an init trusts that
+//! it is one, and reading a symbol as a declaration trusts that it is one
+//! as long as its size says.
 
 #![deny(unsafe_code)]
 
 use std::io::ErrorKind;
+use std::mem::offset_of;
 use std::path::Path;
 
-use editor_package_library::library::{Libraries, Library, PackageInit, Unopened};
+use editor_package_library::library::{
+    Libraries, Library, PackageDeclaration, PackageInit, Unopened,
+};
 
 /// The platform's loader: the library port's real adapter.
 #[derive(Debug)]
@@ -96,5 +106,46 @@ impl Library for Opened {
         // the life of the process.
         let init = unsafe { self.0.get::<PackageInit>(symbol.as_bytes()) }.ok()?;
         Some(*init)
+    }
+
+    fn declaration(&self, symbol: &str) -> Option<PackageDeclaration> {
+        #[expect(
+            unsafe_code,
+            reason = "reading a package's declaration is dlsym of its symbol and a read of the static it names, by the members its size covers"
+        )]
+        // SAFETY: the symbol is read as a package's declaration, which is
+        // what a library that exports `editor_package_declaration` says it
+        // is, as the core trusts its init. Its `size` is read alone first,
+        // and then only the members that size covers, so a shorter, older
+        // declaration is never read past its end. The library is never
+        // closed, so the static stays valid.
+        unsafe {
+            let address = self
+                .0
+                .get::<*const u8>(symbol.as_bytes())
+                .ok()?
+                .try_as_raw_ptr()?;
+            let base = address.cast::<u8>().cast_const();
+            let size = base
+                .add(offset_of!(PackageDeclaration, size))
+                .cast::<usize>()
+                .read_unaligned();
+            let covers = |offset: usize, width: usize| size >= offset + width;
+            let runtime_at = offset_of!(PackageDeclaration, runtime);
+            let interface_at = offset_of!(PackageDeclaration, interface);
+            Some(PackageDeclaration {
+                size,
+                runtime: if covers(runtime_at, size_of::<usize>()) {
+                    base.add(runtime_at).cast::<usize>().read_unaligned()
+                } else {
+                    0
+                },
+                interface: if covers(interface_at, size_of::<u32>()) {
+                    base.add(interface_at).cast::<u32>().read_unaligned()
+                } else {
+                    0
+                },
+            })
+        }
     }
 }

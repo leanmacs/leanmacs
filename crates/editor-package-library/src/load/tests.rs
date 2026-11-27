@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use super::*;
 use crate::contract::{self, Corpus};
 use crate::fake::FakeLibraries;
-use crate::library::PackageInit;
+use crate::library::{PackageDeclaration, PackageInit};
 use crate::runtime::RUNTIME;
 
 /// The table [`writes_its_table`] writes.
@@ -41,12 +41,22 @@ extern "C" fn writes_none(_: *const PackageRuntime, _: *mut *const c_void) -> u3
     0
 }
 
+/// The declaration of a library built for the core's runtime and
+/// interface 1.
+const CURRENT: PackageDeclaration = PackageDeclaration {
+    size: size_of::<PackageDeclaration>(),
+    runtime: size_of::<PackageRuntime>(),
+    interface: 1,
+};
+
 /// A fake with one library at `/l/lib.so` exporting `init` as the init
-/// symbol, a library at `/l/other.so` exporting another symbol, and a file
-/// that is no library at `/l/grammar.js`.
+/// symbol and [`CURRENT`] as its declaration, a library at `/l/other.so`
+/// exporting another symbol, and a file that is no library at
+/// `/l/grammar.js`.
 fn fake(init: PackageInit) -> FakeLibraries {
     FakeLibraries::new()
         .library("/l/lib.so", &[(INIT_SYMBOL, init)])
+        .declaring("/l/lib.so", CURRENT)
         .library("/l/other.so", &[("tree_sitter_ini", init)])
         .not_a_library("/l/grammar.js")
 }
@@ -146,6 +156,8 @@ fn the_fake_the_load_is_tested_on_keeps_the_library_contract() {
         library: "/l/other.so".into(),
         exported: "tree_sitter_ini".to_owned(),
         not_exported: INIT_SYMBOL.to_owned(),
+        declaring: "/l/lib.so".into(),
+        declaration: CURRENT,
     };
     assert_eq!(contract::check(&fake(too_small), &corpus), [""; 0]);
 }

@@ -1,6 +1,7 @@
 //! The port a package's library is opened through, in the core's terms:
 //! [`Libraries`] opens the file at a path as a library, and a [`Library`]
-//! finds a symbol in it as a package's init function ([`PackageInit`]).
+//! finds a symbol in it as a package's init function ([`PackageInit`]), or
+//! reads a symbol as the library's declaration ([`PackageDeclaration`]).
 //!
 //! Finding the symbol is the adapter's; calling it is the core's
 //! ([`crate::load`]), so the fake ([`crate::fake::FakeLibraries`]) hands
@@ -10,7 +11,7 @@
 
 use std::path::Path;
 
-pub use editor_package_runtime::PackageInit;
+pub use editor_package_runtime::{PackageDeclaration, PackageInit};
 
 /// Why a path did not open as a library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -42,4 +43,12 @@ pub trait Library: Send + Sync {
     /// function, or none when it exports no such symbol. It is found, never
     /// called: the core calls it.
     fn init(&self, symbol: &str) -> Option<PackageInit>;
+
+    /// The static the library exports as `symbol`, read as its
+    /// declaration, or none when it exports no such symbol. Its `size` is
+    /// read first, alone, and then only the members that size covers: a
+    /// member past it reads as 0, as the runtime's append-only rule reads
+    /// a member past a runtime's size as absent. Whether the declaration is
+    /// long enough is the core's ([`crate::load`]).
+    fn declaration(&self, symbol: &str) -> Option<PackageDeclaration>;
 }

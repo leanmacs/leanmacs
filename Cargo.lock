@@ -793,6 +793,7 @@ name = "editor-package-library-libloading"
 version = "0.1.0"
 dependencies = [
  "editor-package-library",
+ "editor-package-library-fixture",
  "editor-syntax-fixture-ini",
  "libloading",
 ]

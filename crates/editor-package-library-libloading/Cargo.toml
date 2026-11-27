@@ -27,6 +27,9 @@ libloading = { version = "=0.8.9" }
 # opens it as a library, finds a symbol it exports and misses one it does
 # not, and reads its source as a file that is no library.
 editor-syntax-fixture-ini = { path = "../editor-syntax-fixture-ini" }
+# The fixture package libraries, built for tests alone: the contract test
+# reads the declaration of the one built against the generated header.
+editor-package-library-fixture = { path = "../editor-package-library-fixture" }
 
 [lints]
 workspace = true

@@ -2,7 +2,9 @@
 // declares that smaller runtime itself, as the header read then, checks the
 // runtime it is handed is at least that large, registers the service
 // "older" and writes a table whose `fire` completes a request through the
-// older view (../src/lib.rs). It runs on any later, larger runtime.
+// older view (../src/lib.rs). It declares that smaller runtime by hand, as
+// the declaration read when it was built. It runs on any later, larger
+// runtime.
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -19,6 +21,17 @@ struct older_runtime {
   bool (*complete)(const struct older_runtime *runtime, uint64_t service,
                    uint64_t request);
 };
+
+// The declaration as a library declares it by hand, against no header: its
+// own size, the runtime through `complete`, and interface 1.
+struct older_declaration {
+  size_t size;
+  size_t runtime;
+  uint32_t interface;
+};
+
+FIXTURE_EXPORT const struct older_declaration editor_package_declaration = {
+    sizeof(struct older_declaration), sizeof(struct older_runtime), 1};
 
 // The library's table: its size, its service's id and `fire`.
 struct older_table {
