@@ -176,10 +176,10 @@ with the tree in the change that grows it:
   `package-linked-roots`, its model-test root to the `[[co-reach]]` roots,
   and the package to the `[[target-config]]` targets. If it is an
   implementation package, add it to `packages` too.
-- A new core `….Model`, `…Contract` or `….Cases` module goes in
-  `doubles`; a new internal or `….Real` module goes in `internal`, and in
-  `linked-root-extra` if it is a real binding. A module left off
-  `internal` silently becomes API.
+- A new core `….Model`, `…Contract`, `….Cases` or `….Fake` module goes
+  in `doubles`; a new internal or `….Real` module goes in `internal`, and
+  in `linked-root-extra` if it is a real binding. A module left off
+  `doubles` or `internal` silently becomes API.
 - The host's sets come from the generated roots and need no upkeep.
 - A new implementation package missing from `packages` fails doc-packages
   rule 1 once its module-map row is written.
