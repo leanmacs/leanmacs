@@ -121,7 +121,10 @@ gets its declared queries. So an undeclared grammar keeps the entry's tree
 and the grammar's shipped queries under it; a declared, registered one
 takes the queries read from its directory, the entry's own source winning;
 and one with no answer yet, or refused and no longer listed, gives no
-injected language.
+injected language. A buffer whose fences go plain while an answer is
+pending gets them back when the job's command highlights again: the
+dispatch then injects again into every other highlighted buffer too
+(`Editor/Command/Dispatch.lean`, "Highlighting again").
 
 ## The query files (`queryFiles`)
 

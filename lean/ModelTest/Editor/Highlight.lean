@@ -441,6 +441,24 @@ def highlightInjectedChecks : List Check :=
             let injections := injectedInjections driver
             injections.filter (·.1 == "ini") == #[("ini", true)] &&
               injections.filter (·.1 == "json") == #[("json", false)]
+          | none => false },
+    { name :=
+        "a Markdown buffer opened before the job's command, while a declaration overriding the compiled-in lean awaits its answer, is injected into again by the command: its lean fence is then highlighted with the declared query, and the buffer is not detached"
+      run :=
+        pure <|
+          let library := "/g/libtree-sitter-lean.so"
+          match
+            installedWith (markdownWithFences *> defineGrammar "lean" library)
+              #[(library, .exports #[("tree_sitter_lean", .grammar)])]
+              #[("/g/queries/highlights.scm", declaredHighlights)] (compiled :=
+              #["json", "lean", "markdown"]) with
+          | some driver =>
+            let before := openedIn driver "/w/a.md"
+            let (answered, delivered) := before.finish 1
+            let lean (driver : TestDriver) := (injectedFaces driver).filter (·.1 == "lean")
+            delivered.isSome && lean answered == #[("lean", #["syntax.number"])] &&
+              answered.model.syntaxTree.attached.map (·.2) == #["markdown"] &&
+              answered.loop.state.echo == ""
           | none => false }]
 
 end ModelTest

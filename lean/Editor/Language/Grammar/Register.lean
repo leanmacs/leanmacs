@@ -52,7 +52,9 @@ port's error gains no constructor.
    install set (`setGrammarAnswers`).
 3. **Highlighted again**: every open buffer whose language names a declared
    grammar (`rehighlightGrammars`, `Editor/Command/Dispatch.lean`), so a
-   buffer opened while the job ran, drawn plain then, gets its tree now.
+   buffer opened while the job ran, drawn plain then, gets its tree now;
+   every other highlighted buffer is injected into again, so its fences of
+   a declared grammar take the answered queries.
 4. **Said** last, joined by `; ` into one echo text, so no message from a
    highlight hides them.
 

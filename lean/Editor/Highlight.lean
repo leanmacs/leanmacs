@@ -83,7 +83,8 @@ the mode's own or the grammar's shipped one:
    are drawn with the queries read from its directory, and a compiled-in
    grammar's entry that gives its own highlights uses them here too. A
    grammar for which `injected` gives none (declared and awaiting its
-   answer, or refused and no longer listed) gives no language. With no
+   answer, or refused and no longer listed) gives no language; once the
+   answer is recorded, injecting again (below) gives it one. With no
    `injected`, each grammar's bare tree: its shipped queries. Names are
    grammar names: an alias (`rs`) names nothing.
 8. **Text objects.** The text objects query: compiled, kept
@@ -108,6 +109,17 @@ replaced. Detaching a text that is not attached does nothing.
 `leave` detaches the text, when a major mode with no syntax tree replaces
 one with a syntax tree. A mode that says nothing of a syntax tree, set over
 one that said nothing either, asks the port nothing.
+
+**Injecting again** (`reinject`) runs steps 6 and 7 alone over a text its
+mode already highlights, with the trees `injected` now gives: the
+dispatch runs it when the `register-grammars` job's command has recorded
+its answers, for each highlighted buffer it does not highlight again from
+scratch, so a fence of a grammar that was awaiting its answer, or that the
+answer replaced, takes the queries the answer gives
+(`Editor/Command/Dispatch.lean`, "Highlighting again"). Nothing is
+detached and the highlights stay. A text that is not attached is asked
+nothing more and nothing is said, since its refusal was said when its mode
+was entered; any other refusal is said as step 6's.
 
 Pinned by `ModelTest.highlightFaceChecks` (the rule, pure),
 `ModelTest.highlightEnterChecks` (on the editor's models, through the
@@ -238,6 +250,23 @@ def structural (mode : String) (snapshot : SnapshotId) (syntaxTree : Mode.Syntax
   for (what, step) in steps do
     if let .error refusal← SyntaxTree.lift step then
       say s!"{what}: `{mode}`: {refusal.describe}"
+
+/-- Steps 6 and 7 of the module docs again, alone, for the text `text`
+that a major mode called `mode` with `syntaxTree` already highlights: its
+injections, and a language for each grammar the library has, of the tree
+`injected` gives for its name ("Injecting again", in the module docs).
+The highlights and the parse stay. A text that is not attached (its attach
+was refused when the mode was entered, and said then) is asked nothing
+more and nothing is said; any other refusal is said as step 6's. -/
+def reinject (mode : String) (text : TextId) (syntaxTree : Mode.SyntaxTree)
+    (injected : String → Option Mode.SyntaxTree) : EditorM Unit :=
+  text.withSnapshot fun snapshot => do
+      match ← SyntaxTree.lift (injections snapshot syntaxTree injected) with
+      | .ok ()
+      | .error .notAttached =>
+        pure ()
+      | .error refusal =>
+        say s!"injections: `{mode}`: {refusal.describe}"
 
 /-- What setting a major mode with `syntaxTree` asks of the syntax tree port
 for its text `text` (the steps of the module docs): attached with the

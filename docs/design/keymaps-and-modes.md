@@ -3739,9 +3739,9 @@ otherwise be a cycle).
     grammar still awaiting its answer, or refused and no longer listed,
     gives no language. A compiled-in language whose entry gives its own
     highlights uses them for its injections too. A Markdown buffer
-    highlighted before the answers arrive is not highlighted again for
-    them: its fences of a newly registered grammar stay plain until its
-    mode is set again.
+    highlighted before the answers arrive is injected into again by the
+    job's command (`Highlight.reinject`), its own parse and highlights
+    kept, so its fences then take the answered queries.
   - *The order.* Each install whose grammar table is not empty starts the
     core's job `register-grammars` for its config generation, owned by
     `config`, after cancelling the old config's jobs
@@ -3749,8 +3749,9 @@ otherwise be a cycle).
     declaration and reads its query files; its command records the answers
     in the editor state, stamped with the generation, highlights every
     open buffer of a declared grammar's language again (detaching first,
-    so an overridden grammar's buffer gets the new parser), and says the
-    refusals last. A buffer whose mode is set while the job runs is drawn
+    so an overridden grammar's buffer gets the new parser), injects into
+    every other highlighted buffer again so that its fences take the
+    answers, and says the refusals last. A buffer whose mode is set while the job runs is drawn
     plain, with nothing attached and nothing said, until the command
     highlights it; answers of an older generation are never read
     (`Language.Grammar.treeOf`), and an older generation's command, should

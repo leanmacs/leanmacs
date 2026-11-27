@@ -183,8 +183,14 @@ from the next command.
   `Highlight.enter` with the tree its major mode's lineage now says over
   the resolved language's (`Mode.syntaxTreeOf`), when it says one. The
   detach first makes the library open a new session, so a buffer whose
-  grammar was just overridden gets the new parser. Other buffers are asked
-  nothing.
+  grammar was just overridden gets the new parser. Then every other open
+  buffer whose text is drawn with a tree and whose major mode is
+  registered (`Loop.Registered.reinjected`) is injected into again
+  (`Highlight.reinject`): its injections and injected languages alone,
+  with the injected trees the recorded answers now resolve, so a Markdown
+  buffer's fence of a grammar that was awaiting its answer, or that the
+  answer replaced, takes the answered queries, while its own parse and
+  highlights stay. Buffers drawn plain are asked nothing.
 - **An on-enter action runs inside the command.** Its program is put before
   the rest of the command's and goes through this same transformation: its
   state requests are answered from the state the command had reached, its
@@ -687,15 +693,32 @@ def Loop.Registered.rehighlighted (registered : Loop.Registered) (state : Editor
     let lineage ← registered.entering major
     return (buffer, major, lineage)
 
+/-- The buffers `rehighlight grammars` injects into again, in the state's
+order: each open buffer `rehighlighted` does not pick whose text is drawn
+with a tree (`treeOfBuffer`), with its major mode's name and that tree. -/
+def Loop.Registered.reinjected (registered : Loop.Registered) (state : EditorState)
+    (grammars : Array String) : List (Buffer × String × Mode.SyntaxTree) :=
+  let picked := (registered.rehighlighted state grammars).map (·.1.text)
+  state.buffers.toList.filterMap fun slot => do
+    let buffer ← slot
+    if picked.contains buffer.text then
+      none
+    let major ← buffer.major
+    let tree ← registered.treeOfBuffer state buffer
+    return (buffer, major, tree)
+
 /-- What `rehighlight grammars` runs ("Highlighting again", in the module
 docs): each buffer `rehighlighted` picks detached, then entered as its
-major mode's lineage now says over its language's resolved tree. -/
+major mode's lineage now says over its language's resolved tree; then
+each buffer `reinjected` picks injected into again (`Highlight.reinject`). -/
 def rehighlighting (registered : Loop.Registered) (state : EditorState) (grammars : Array String) :
     EditorM Unit := do
   for (buffer, major, _) in registered.rehighlighted state grammars do
     Highlight.leave buffer.text
     if let some tree := registered.treeOfBuffer state buffer then
       Highlight.enter major buffer.text tree (registered.injectedTreeOf state)
+  for (buffer, major, tree) in registered.reinjected state grammars do
+    Highlight.reinject major buffer.text tree (registered.injectedTreeOf state)
 
 /-- What runs when the mode `name`, of `lineage` (root first), has become
 the major mode of a buffer over `text` whose old major mode said
