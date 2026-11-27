@@ -451,6 +451,24 @@
 //! syntax checks of `ffi-test` and `contract-test`'s syntax-tree
 //! properties.
 //!
+//! ## A package's native library
+//!
+//! A package that ships its native code as a library of its own has its C
+//! glue ask this crate to load it, once, at the package's startup
+//! ([`package_library::editor_ffi_package_load`]). It is called by a
+//! package's glue, not by Lean: from the package's `builtin_initialize`,
+//! before Lean's `main` (the one call into this library at initialisation,
+//! below). The load opens the library through the one real loader,
+//! calls its init with the process's package runtime and hands the glue
+//! the table it wrote, or answers why not as a tag, 1 to 5. Plain data: a
+//! path in, borrowed for the call, a status and a pointer out.
+//!
+//! Tests: `editor-package-library`'s unit tests (the load's order on the
+//! port's fake, the runtime's members on `editor-service`'s fakes);
+//! `tests/package_load.rs`, each refusal through C on real files; and the
+//! fixture package echo's linked test, whose glue loads its library through
+//! it (`EchoTest.Linked.echoLoadChecks`).
+//!
 //! ## The window
 //!
 //! A window is not a service behind the completion queue: it is run by the
@@ -599,7 +617,12 @@
 //! ## Nothing runs at initialisation
 //!
 //! A Lean module initialiser must not call this library: library objects are
-//! created from Lean's `main` or later. The process-wide state here is
+//! created from Lean's `main` or later. The one exception is a package's
+//! load of its native library ([`package_library`]), which a package's
+//! `builtin_initialize` makes through its glue: it creates no library
+//! object, only opens the package's library and calls its init, and a
+//! `builtin_initialize` runs only in an executable that links the module
+//! natively, never when a module that imports it is compiled. The process-wide state here is
 //! `const`-initialised statics, so the library needs no start-up call
 //! either. A service's thread starts with the first request made of it.
 //!

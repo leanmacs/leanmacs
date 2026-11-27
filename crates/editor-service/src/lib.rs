@@ -27,11 +27,15 @@
 //!   a package's crate bounds its tests' waits with a [`wait::HangGuard`]
 //!   while depending on this crate alone.
 //!
-//! A package's crate depends on this crate and on nothing else of the
-//! editor's. All of the editor is linked from one Rust archive, generated
-//! from the package set, so the process holds one copy of this crate and
-//! of everything process-wide in it: one editor queue, one completion
-//! queue and one counter of service ids.
+//! A package's crate linked into the editor's archive depends on this crate
+//! and on nothing else of the editor's. That archive is generated from the
+//! package set, so the process holds one copy of this crate and of
+//! everything process-wide in it: one editor queue, one completion queue
+//! and one counter of service ids. A package whose Rust is a library of its
+//! own, loaded at run time, carries its own copy of nothing here: it
+//! depends on none of it, and reaches the queues, the counter
+//! ([`service::register`]), the stream source and the buffers through the
+//! package runtime the core hands it (`editor-package-library`).
 //!
 //! # Where an addition goes
 //!

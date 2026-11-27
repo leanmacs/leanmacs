@@ -528,18 +528,22 @@ that holds the process's one process service provides it:
   the linked test's wiring module `EchoTest/Linked/Echo/Real/Attach.lean`
   opens a streaming child through the linked kit's real process port, with
   a bound of four mebibytes, hands its number to `Echo.Real.attach`, and
-  the crate (`rust/src/attach.rs`, depending on `editor-service` alone)
-  takes it over, reads `one`, `ping-me`, `got pong` (writing `pong` back)
-  and `three` and sees the exit 2; a second child, blocked in a pull, is
-  cancelled through the job port and the crate sees `<cancelled>`; and a
-  child whose last delivery was pulled is not taken over again. So one
-  archive does give one copy of `editor-service`'s static, and the source
-  `editor-ffi` provided is the one the package's crate finds. That the
-  crate reaches the child through `editor-service` alone is its manifest's
-  one dependency on the editor (`cargo tree -p echo-service --edges
-  normal` lists `editor-service` and `editor-wait` and nothing else of the
-  editor's), a reviewer's check: the generated crate's bans refuse
-  `editor-ffi` and peer package crates, not `editor-process`.
+  echo's library (`rust/src/attach.rs`), a library of its own loaded when
+  the editor starts ([packages.md](packages.md), "A library loaded when the
+  editor runs, as built"), takes it over through the package runtime
+  (`take_over`, then `child_pull`, `child_write` and `child_release`, each
+  the core's over `editor_service::stream`), reads `one`, `ping-me`,
+  `got pong` (writing `pong` back) and `three` and sees the exit 2; a
+  second child, blocked in a pull, is cancelled through the job port and
+  the library sees `<cancelled>`; and a child whose last delivery was
+  pulled is not taken over again. So the runtime reaches the source
+  `editor-ffi` provided, from a library that carries no copy of
+  `editor-service`'s statics. That echo's crate depends on nothing of the
+  editor's is held by `deny.toml`'s entry for `editor-service`, which
+  leaves it out of its wrappers (`mise run deny`; cargo-deny counts its
+  dev-dependencies too). A package crate still linked into the archive
+  (acp's) takes a child over through `editor_service::stream::take_over`
+  directly, as before.
 
 **The bound for ACP.** Claude Code's adapter sent a 27,490-byte line on its
 first prompt (its list of commands), and a tool call's update carries the

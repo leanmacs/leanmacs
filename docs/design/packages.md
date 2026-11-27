@@ -2036,7 +2036,7 @@ guide quotes.
 | `tests/packages/greeting-api/` | The interface package `greeting-api` (`keywords = ["editor-interface"]`): the name `greeting-reply` (`GreetingApi.replyName`) and every name it declares (`GreetingApi.names`); in its test library, the fake `GreetingApiTest.fake` and the contract check `GreetingApiTest.contractChecks`, and its test driver, which holds the fake to the contract and shows the contract refuse a package that lacks or misspells the name. It has no entry module and registers nothing |
 | `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
-| `tests/packages/echo/` | The Lake package `echo`, which holds Rust ("Rust in a package", below): its crate `echo-service` (`rust/`), its glue (`ffi/glue.c`), the port of its service with a pure model, a contract and the Rust-backed binding, its test driver (`EchoTest/Model.lean`) and its linked test (`EchoTest/Linked.lean`). Its crate also takes over a streaming child a job opened, through `editor-service`'s stream source alone (`rust/src/attach.rs`, bound as `Echo.Real.attach` and `attachTake`), which the linked test's wiring module `EchoTest/Linked/Echo/Real/Attach.lean` runs. It registers the package `echo`: the jobs and commands `echo-say` and `echo-attach`, `echo-attach-cancel`, and its service, which a running job reaches through the runner's package port (`Package.services`; "Behind a port, so it stays replaceable", below) |
+| `tests/packages/echo/` | The Lake package `echo`, which holds Rust ("Rust in a package", below): its crate `echo-service` (`rust/`), built as a library of its own that the core loads when the editor starts ("A library loaded when the editor runs, as built", below), its glue (`ffi/glue.c`), which asks the core to load it and forwards through its table, the port of its service with a pure model, a contract and the Rust-backed binding, its test driver (`EchoTest/Model.lean`) and its linked test (`EchoTest/Linked.lean`), which also loads the library through the glue (`EchoTest/Linked/Echo/Real/Load.lean`) and probes the fixture set's editor (`EchoTest/Linked/Echo/Real/Probe.lean`). Its library also takes over a streaming child a job opened, through the package runtime alone (`rust/src/attach.rs`, bound as `Echo.Real.attach` and `attachTake`), which the linked test's wiring module `EchoTest/Linked/Echo/Real/Attach.lean` runs. It registers the package `echo`: the jobs and commands `echo-say` and `echo-attach`, `echo-attach-cancel`, and its service, which a running job reaches through the runner's package port (`Package.services`; "Behind a port, so it stays replaceable", below) |
 | `packages/agents-api/` | The interface package of agents (`keywords = ["editor-interface"]`), opt-in and outside the default set: the plain events and orders of a session, the agent registration point `AgentsApi.Agent`, the conversation's view point `AgentsApi.ConversationView`, the permission policy point `AgentsApi.PermissionPolicy`, the package service `agents` with its request vocabulary, its replies and the job wrappers (`AgentsApi/Job.lean`), a session's values as command arguments (`AgentsApi/Arguments.lean`), and the agent table, its records, its pure reducer and its project store `agents-table` (`AgentsApi/Table.lean`). Its test library publishes the protocol's pure model with three theorems (`AgentsApiTest/Protocol.lean`, `Protocol/Theorems.lean`), the policy's theorem (`AgentsApiTest/AgentsApi/Policy/Theorems.lean`), the agent table's two theorems (`AgentsApiTest/AgentsApi/Table/Theorems.lean`), the service's fake built on that model (`AgentsApiTest/Fake.lean`, handed a stepped stage as a package's own fake, `Job.PackageFake`), the contract (`AgentsApiTest/Contract.lean`) and its fixture support (`AgentsApiTest/FixtureSupport.lean`); its linked test runs a session over the fake on the stepped host (`AgentsApiTest/Linked.lean`). It registers nothing ([agent-hosting.md](agent-hosting.md), "The ACP client, as built") |
 | `packages/acp/` | The implementation of `agents-api`'s service over the Agent Client Protocol's Rust SDK, opt-in and outside the default set, which holds Rust ("Rust in a package", below): its crate `acp-service` (`rust/`), which pins the SDK and keeps its types inside, its glue (`ffi/glue.c`), the codec of the crate's text (`Acp/Codec.lean`), the service over the binding (`Acp/Service.lean`, `Acp/Real.lean`), Claude Code's adapter (`Acp/ClaudeCode.lean`), the sessions and the conversation buffer (`Acp/Conversation.lean` and `Acp/Conversation/`), the queue of permission requests, the policy's application and the audit log (`Acp/Permissions.lean` and `Acp/Permissions/`), the agent table's feeds, its agents lists, the stall watchdog and resume (`Acp/Table.lean` and `Acp/Table/`), its test driver (`AcpTest/Model.lean`), its fixture support (`AcpTest/FixtureSupport.lean`), its headless fixture (`tests/headless/conversation/`) and its linked test (`AcpTest/Linked.lean`), which runs the conversation on the stepped host over `agents-api`'s fake, and `agents-api`'s contract and a whole session on the real crate over a scripted agent executable. It registers the package `acp`, which brings the service `agents` (`Package.services`) and registers the conversation, the permissions and the agent table's codec, list and resume ([agent-hosting.md](agent-hosting.md), "Sessions and the conversation, as built", "Permissions, as built", "The agent table and resume, as built"). No package imports it |
 | `docs/packages/word-count/` | The Lake package `word-count`, the example the guide to writing a package ([writing-a-package.md](../packages/writing-a-package.md)) quotes: the command `word-count` (`WordCount.lean`), its entry module, its test driver (`WordCountTest/Model.lean`, which runs `WordCountTest/WordCount.lean`) and three fixtures: `count`, the command compiled in; `as-config`, the same code as a config file; and `from-config`, a config that imports the package's module. It has no linked test |
@@ -2056,7 +2056,7 @@ guide quotes.
 - **Every fixture lakefile is TOML but `echo`'s**, turns every Lean linter
   on with `warningAsError`, as the core does, and names default targets.
   `echo`'s is Lean, because a TOML lakefile cannot declare a target that
-  compiles C, `moreLinkObjs`, or the crate's target. A package's test
+  compiles C, `moreLinkObjs`, or the target that builds its library. A package's test
   driver is not a default target, as the core's
   `model-test` is not: `mise run lean` links with the system compiler,
   which a TOML lakefile has no flags for.
@@ -3263,10 +3263,12 @@ way (`lean/lakefile.lean`):
   set: `target/editor-rust/core/` (crate `editor-rust`, archive
   `target/release/libeditor_rust.a`) for a set with none, and
   `target/editor-rust/<packages>/` (`editor-rust-<packages>`) otherwise,
-  `echo`'s alone being `editor-rust-echo`, archive `libeditor_rust_echo.a`,
-  and the fixture set's, `echo`'s and `acp`'s, `editor-rust-echo-acp`. So
-  the core's executables, the default set, `tests/empty-set` and every
-  linked test of a package without Rust share one archive, the core's
+  the fixture set's, `acp`'s alone, being `editor-rust-acp`, archive
+  `libeditor_rust_acp.a`. `echo` declares no crate: its Rust is a library
+  of its own, loaded when the editor starts ("A library loaded when the
+  editor runs, as built", below). So the core's executables, the default
+  set, `tests/empty-set` and every linked test of a package with no crate
+  in the archive, `echo`'s among them, share one archive, the core's
   (`rustlib`). Its `Cargo.toml` is a `staticlib` whose dependencies are
   `editor-ffi` and each package crate, by absolute path; its `lib.rs`
   re-exports each, so each is linked; its `Cargo.lock` is seeded from the
@@ -3283,8 +3285,8 @@ way (`lean/lakefile.lean`):
   that needs a system library links with no edit to the core's
   `linkArgs`, which keeps only the toolchain's library directory and the
   entry point. The core's `lean_exe`s read the core's line as a response
-  file (`@…/native-static-libs`). `echo`'s crate links the system's zlib
-  this way.
+  file (`@…/native-static-libs`). `echo`'s library, linked by Cargo as a
+  `cdylib`, links the system's zlib itself.
 - **A package's glue** is a C file of its own, compiled by a target of its
   own lakefile against the toolchain's `lean.h`, and the `moreLinkObjs` of
   the library that holds its binding alone, so Lake links it into exactly
@@ -3302,11 +3304,105 @@ Not chosen:
 - **An archive per set, generated into the set's `.lake`.** Sets with the
   same crates would each bundle an 80 MB archive, and Cargo's target
   directory must be shared anyway to reuse dependency builds.
-- **A library loaded when the editor runs** (`dlopen`). It needs no relink
-  and no Cargo, which suits a third party's prebuilt binary, but
-  `@[extern]` binds at link time, so every call would go through a table of
-  pointers, and the signed app would have to relax library validation. It
-  stays an option for third-party packages only.
+- **A library loaded when the editor runs** (`dlopen`), when this section
+  was built. It needs no relink and no Cargo, which suits a third party's
+  prebuilt binary, but `@[extern]` binds at link time, so every call goes
+  through a table of pointers. The roadmap `package-native-libraries`
+  takes it up, keeping the `@[extern]` binding in each package's glue,
+  linked as before, which forwards through the table the library's init
+  answers; the ad-hoc-signed app has no library validation to relax. Its
+  phase 1 built it for `echo` (below).
+
+### A library loaded when the editor runs, as built (the spike)
+
+Status: **built** for the fixture `echo`
+(`phase/package-native-libraries/phase-1-packages-load-native-libraries-at-run-time`).
+The design basis is the roadmap's: a package's library with a C interface,
+in the shape of Emacs's dynamic modules, handed a runtime of the core's
+capabilities at its init.
+
+- **What loads.** `echo`'s crate, built by Cargo as a `cdylib`
+  (`echoLibrary` in `tests/packages/echo/lakefile.lean`, into the
+  repository's `target/release/`), whose one exported symbol is its init,
+  `editor_package_init`. The core's loader (`editor_ffi_package_load`,
+  `crates/editor-ffi/src/package_library.rs`, over
+  `editor_package_library::load` and the `libloading` adapter
+  `editor-package-library-libloading`) opens it, finds the init, calls it
+  with the core's runtime and gives the glue the table it wrote. It runs at
+  `echo`'s `builtin_initialize` (`Echo.Real`), before `main`, in every
+  executable that links `Echo.Real` natively: the set's editor, its
+  fixture harness and `echo`'s linked test. The path is the one the build
+  compiled into the glue (`-DECHO_LIBRARY`, `Echo.Real.library`).
+- **What the glue forwards.** The six `@[extern]` functions of
+  `Echo.Real` (`start`, `cancel`, `takeRaw`, `flush`, `attach`,
+  `attachTakeRaw`), each through the library's table (`EchoTable`: its
+  size, then `start`, `cancel`, `take`, `flush`, `attach`, `attach_take`,
+  `free`), mirrored by the glue's `echo_table` and held in one atomic
+  pointer. Before a load each answers false or `none`. A reply's text is
+  handed back through the table's `free`, so the library's allocator frees
+  what it made.
+- **The runtime** (`editor_package_library::runtime::PackageRuntime`,
+  `#[repr(C)]`, one static `RUNTIME`): `size`, then `register_service`
+  (`editor_service::register`, an id from the counter every service takes
+  its id from), `complete` (`editor_service::queue::complete`, refused for
+  an id below `FIRST_PACKAGE_ID`, so a library cannot post as a core
+  service), `take_over` (the process's stream source; the child crosses as
+  a handle the core owns), `child_pull` (one record of words and bytes),
+  `child_write`, `child_release` and `buffer_free`. Echo's crate mirrors it
+  by hand (`rust/src/runtime.rs`) and depends on nothing of the editor's;
+  `deny.toml`'s entry for `editor-service` leaves it out.
+- **Who owns what.** The runtime is the core's static for the life of the
+  process, and a library may keep its pointer. A child handle is the
+  core's: the library may pull from one thread while it writes from
+  another, one writer at a time, and releases it once, after its last
+  call. Every buffer the core lends is handed back once through
+  `buffer_free`, and every buffer the library lends through its own table's
+  `free`. Bytes handed in are borrowed for the call. A library's table is
+  a static of the library, which is never unloaded.
+- **The refusals, in order** (`editor_package_library::load`): a path that
+  is not absolute, or nothing at it, is missing (1); a file that will not
+  open is not a library (2); a library without `editor_package_init` has no
+  init (3); an init answering 1, the runtime smaller than the library
+  requires, is runtime too small (4); any other answer, or 0 with no table,
+  is a failed init (5). `Echo.LoadRefusal` reads the tag back and says each
+  as a sentence naming the path; the initialiser throws it, Lean's
+  generated `main` prints it as `uncaught exception: <text>` and exits 1,
+  and the package-set build's probe carries it to its failure line
+  (`Restore.probeFailure`), so a refused load is a value, never an abort.
+  Pinned by the load's tests on the port's fake, the adapter's contract on
+  the fixture grammar library, `editor-ffi`'s `tests/package_load.rs`
+  (tags 1, 2, 3 through C), echo's `tests/init.rs` (its init answers 1 to
+  a smaller runtime), `EchoTest.echoLibraryChecks`,
+  `ModelTest.packageSetBuildChecks` and `EchoTest.Linked.echoLoadChecks`.
+  That an initialiser's error makes Lean's generated `main` exit 1 is
+  Lean's own; no committed test runs an editor whose library is refused
+  (it was seen by hand: the set's editor, its library moved away, printed
+  the refusal and exited 1).
+- **Shown end to end** by `EchoTest.Linked.echoProbeChecks`: the fixture
+  set's editor, run with `--probe`, passes the build's own judgement only
+  once echo's initialiser loaded the library.
+
+What the later phases must change in the design basis:
+
+- **The child crosses as an opaque handle with pull and write, not file
+  descriptors** (for phase 2 to adopt or overturn). Handing raw
+  descriptors would take the child's reading away from the core's process
+  service, which frames each stream, holds it at its bound, keeps one
+  reader, reaches a consumer blocked in a pull on a cancel or a shutdown,
+  and reaps the child; acp's connection runs over a pull and write stream
+  too.
+- **The size check is the library's** (its init answers 1). Phase 4 moves
+  the refusal to the editor, from a declared size and interface version.
+- **The path is absolute into the checkout's `target/`.** Phase 4 stages
+  each package's library into the install and hands its path.
+- **The load must be a `builtin_initialize`.** A plain `initialize` runs
+  when a module that imports it is compiled or imported (the config
+  elaborator imports `Echo.EditorPackage` at run time), where the glue's
+  symbols do not exist.
+- **Any library at the path that exports `editor_package_init` is taken
+  as echo's**: there is no interface version until phase 4.
+- **The core refuses completions for core ids**, so the runtime's
+  `complete` is safe to hand a third party's library.
 
 ### The service conventions as a crate of their own
 
@@ -3315,15 +3411,19 @@ A package's crate runs work the way the core's services do
 never blocks; one completion event for each request, on the completion
 queue; `cancel`; and plain data only, never a call into Lean. Those
 conventions are the crate `editor-service`, which `editor-ffi` and every
-package's crate depend on:
+package crate linked into the editor's archive (acp's) depend on; a
+package whose Rust is a library of its own (echo's) reaches them through
+the package runtime instead ("A library loaded when the editor runs, as
+built", above):
 
 - `queue`: the two event queues, their events and the fake source, moved
   out of `editor-ffi`, which re-exports them. The editor holds one archive,
   so one copy of the crate and one of each queue.
-- `service`: `Service::named("echo")`, made in a `static`, takes an id from
-  a process-wide counter that starts at 1024 on first use (the core's
+- `service`: `Service::named("<name>")`, made in a `static`, takes an id
+  from a process-wide counter that starts at 1024 on first use (the core's
   services keep their fixed ids, 1 to 7), and `Service::complete` posts a
-  completion from the library's source with that id. A service reports
+  completion from the library's source with that id; `register(name)`
+  takes one from the same counter at run time, for a package's library. A service reports
   through the port `Completer`, whose published fake is
   `RecordingCompleter` and whose contract, `completer_contract`, runs on the
   fake and on the real queue (`crates/editor-service/tests/queue.rs`).
@@ -3337,7 +3437,9 @@ it, never on `editor-ffi` or on another package's crate.
 **The rule is held by cargo-deny over the generated crate.** The package
 crates are members of the root workspace, so the root `deny.toml` already
 refuses an edge from one to any editor crate it has an entry for, and
-`editor-service` has none. But nothing in the root graph depends on
+`editor-service`'s entry names the package crates linked into the
+archive (acp's) and leaves out echo's, whose library reaches the core
+through the runtime alone. But nothing in the root graph depends on
 `editor-ffi` or on a package crate, and cargo-deny bans a crate with no
 parents under `wrappers = []` and fails a wrapper it never meets under
 `-D unused-wrapper`, so the root cannot say "only the generated crate". The
@@ -3438,9 +3540,9 @@ from Lean is a call into the crate, never a callback. The connection's
 transport is the agent child the core's process service opened, whose
 streams the crate takes over through `editor-service`
 ([rust-library.md](rust-library.md), "Handing a streaming child to a
-package's crate, as built"); `echo`'s crate does it in the fixture set's
-linked test, which shows that a package's crate reaches the core's one
-process service that way. The SDK changes
+package's crate, as built"); `echo`'s library does it through the package
+runtime's `take_over` in its linked test, which shows that a library of
+its own reaches the core's one process service that way. The SDK changes
 major version every month or two, which the exact pin in the root lock
 absorbs, and the port keeps its types out of Lean. Built so in
 acp-agents phase 4: the package `acp`'s crate `acp-service`
@@ -3497,10 +3599,14 @@ a native module either compiles it or fetches a prebuilt one.
   archive per editor"), so a package's crate cannot arrive as a prebuilt
   static library of its own. An archive built ahead would have to be the
   whole editor's archive for that exact combination of crates, core and
-  platform, which no package author can build; a dynamic library loaded at
-  run time was refused earlier (`@[extern]` binds at link time). So a
-  package's Rust reaches an editor only by compiling the generated crate
-  on the user's machine, with Cargo.
+  platform, which no package author can build. A dynamic library loaded at
+  run time was set aside when this was decided (`@[extern]` binds at link
+  time); the roadmap `package-native-libraries` takes it up, a package's
+  glue keeping the binding and forwarding through the library's table, and
+  its spike loads `echo`'s ("A library loaded when the editor runs, as
+  built"). Until its later phases stage a library into an install, a
+  package's Rust in the archive reaches an editor only by compiling the
+  generated crate on the user's machine, with Cargo.
 
 **From the app, no Rust package builds.** A package crate is outside the
 bundle's "repository", `Contents/Resources/lean`, so the refusal below
@@ -3509,7 +3615,7 @@ Cargo.
 
 **Built, and refused.** A user's set builds the package crates the editor's
 own Cargo workspace holds: every package crate under the repository, such
-as the fixture `echo`, whose dependencies the core's `Cargo.lock` pins. A
+as `acp`'s, whose dependencies the core's `Cargo.lock` pins. A
 crate whose manifest is outside the repository is refused by
 `setRustCrates`, so `:editorRustCrates` and the build stop early with:
 "`<package>`'s Rust crate `<crate>` is outside the editor's Cargo workspace

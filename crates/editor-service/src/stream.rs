@@ -23,7 +23,10 @@
 //!   [`Ended`], this crate's own.
 //! - **One static.** The editor is linked from one Rust archive, so the
 //!   process holds one copy of this crate, and [`take_over`] reaches the
-//!   source `editor-ffi` provided, whichever crate calls it.
+//!   source `editor-ffi` provided, whichever crate in the archive calls it.
+//!   A package's library loaded at run time reaches the same source through
+//!   the package runtime's `take_over` (`editor-package-library`), which
+//!   calls this one.
 //! - **A pull is the job's read and take in one call.** It blocks until
 //!   something is deliverable, the child has ended, or it was cancelled,
 //!   and drains what it delivers, which makes room under the bound and
