@@ -11,9 +11,9 @@ package's glue (`ffi/glue.c`). This module is a library of its own,
 imports it links the glue. The crate is not linked: it is a library of its
 own, which the package-set build stages beside every executable it links,
 from the package's `editorLibrary` target, and records in
-`<executable>.libraries`; this module's initialiser reads that record
-(`stagedLibrary`, through the core's `Editor.PackageLibrary.staged`) and
-asks the glue to load the library from there (docs/design/packages.md, "A
+`<executable>.libraries`; this module's initialiser finds the library
+there through the core's edge (`Editor.PackageLibrary.staged "echo"
+"echo"`) and asks the glue to load it from there (docs/design/packages.md, "A
 package's library, staged and loaded, as built"). So an installed editor
 loads it from its own install, never from the package's source
 directory. The package's test driver does not import it, so it links no
@@ -70,29 +70,12 @@ refusal's sentence: the body of the module's initialiser. -/
 def load (path : String) : IO Unit := do
   loadExpecting path (← interface)
 
-/-- The library the package-set build staged for echo beside the running
-executable: the line of echo's Lake package in its libraries record, read
-through the real file read, or the core's sentence when none is staged
-(`Editor.PackageLibrary.staged`). -/
-def stagedLibrary : IO String := do
-  -- The record, read at this edge: one that is not there, or cannot be
-  -- read, names no library.
-  let readFile (path : System.FilePath) : IO (Option String) := do
-    try
-      return some (← IO.FS.readFile path)
-    catch _ =>
-      return none
-  match ← Editor.PackageLibrary.staged (← IO.appPath).toString readFile "echo" "echo" with
-  | .ok library =>
-    return library
-  | .error sentence =>
-    throw (IO.userError sentence)
-
 /- Loads echo's library before `main`, from where the build staged it
-beside the executable, in an executable that links this module natively,
-and never at an import (the module docs). -/
+beside the executable (the core's edge, `Editor.PackageLibrary.staged`,
+which throws its sentence when none is staged), in an executable that
+links this module natively, and never at an import (the module docs). -/
 builtin_initialize
-  load (← stagedLibrary)
+  load (← Editor.PackageLibrary.staged "echo" "echo")
 
 /-- Starts the request `id` of `text` in the crate's service. -/
 @[extern "echo_glue_start"]

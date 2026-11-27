@@ -157,9 +157,10 @@ record of lines `<lake name><TAB><library>` says where
   a bundle. No default package declares a library yet, so `stage-bundle`
   writes none.
 
-The package's initialiser reads it, through `Editor.PackageLibrary.staged`,
-with the executable's path and the real file read its `.Real` module
-supplies; a package with no line is refused there, naming the record.
+The package's initialiser reads it through the core's edge
+`Editor.PackageLibrary.staged`, which reads the executable's path and the
+record with the real file read; a package with no line is refused there,
+naming the record.
 
 Nothing is read from the environment: `LEAN_PATH` and every other variable
 are ignored, as the elaborator ignores them. The executable's path is read
@@ -416,7 +417,7 @@ port, which answers a file's text or none when it cannot be read: in a
 bundle, those of the bundle's record resolved against its
 `Contents/Resources`; outside one, those of the file `librariesRecordPath`
 names resolved against the executable's directory; none when there is no
-such file. A package's initialiser passes the real read
+such file. The core's edge passes the real read
 (`Editor.PackageLibrary.staged`), and the model tests a fake. -/
 def recordedLibraries {m : Type → Type} [Monad m] (appPath : String)
     (readFile : System.FilePath → m (Option String)) : m (List (String × System.FilePath)) := do

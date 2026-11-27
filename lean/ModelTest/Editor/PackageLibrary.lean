@@ -90,7 +90,9 @@ def packageLibraryChecks : List Check :=
                 s!"the new editor did not start: it exited with status 1; uncaught exception: {text}") }
 
 /-- The checks of where a package's staged library is found
-(`Editor/PackageLibrary.lean`, `staged`): the line for its Lake package in
+(`Editor/PackageLibrary.lean`, `stagedIn`, on a fake reader; its real edge
+`staged` is run by echo's linked test, `EchoTest.Linked.echoLoadChecks`):
+the line for its Lake package in
 the libraries record beside the executable, a relative one resolved against
 the executable's directory and an absolute one kept, the bundle's in a
 bundle; and with no line, or no record, the sentence naming the package,
@@ -99,13 +101,13 @@ def packageLibraryStagedChecks : List Check :=
   let entries : List (String × System.FilePath) :=
     [("greeting", "/s/.lake/build/libraries/greeting/libgreeting.so"),
       ("echo", "/s/.lake/build/libraries/echo/libecho_service.so")]
-  -- What `staged` answered, the sentence on the left and the path on the
+  -- What `stagedIn` answered, the sentence on the left and the path on the
   -- right, and the files it read.
   let staged (appPath : String) (files : List (String × String)) (lake : String) :
     (String ⊕ String) × List String :=
     let (answer, read) :=
       Id.run
-        ((PackageLibrary.staged (m := StateM (List String)) appPath
+        ((PackageLibrary.stagedIn (m := StateM (List String)) appPath
               (fun path => do
                 modify (· ++ [path.toString])
                 return (files.find? (·.1 == path.toString)).map (·.2))

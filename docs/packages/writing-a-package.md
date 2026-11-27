@@ -479,10 +479,13 @@ the library and the glue together, whenever the table's shape changes.
   asking `EDITOR_PACKAGE_RUNTIME_HAS` first.
 
 The glue finds the staged library with
-`Editor.PackageLibrary.staged (← IO.appPath).toString readFile
-"<package>" "<lake package>"` in its `builtin_initialize`, and reads a
-refused load back with `Editor.PackageLibrary.LoadRefusal.of?`, as echo's
-`Echo/Real.lean` does.
+`Editor.PackageLibrary.staged "<package>" "<lake package>"`, an `IO
+String` that reads the record beside the running editor and throws a
+sentence naming your package when none is staged, so its
+`builtin_initialize` is one line, `load (← Editor.PackageLibrary.staged
+"<package>" "<lake package>")`. It reads a refused load back with
+`Editor.PackageLibrary.LoadRefusal.of?`, as echo's `Echo/Real.lean`
+does.
 
 ## Shipping a grammar
 

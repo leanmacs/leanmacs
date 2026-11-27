@@ -3879,14 +3879,17 @@ it, else `cargo build -p echo-service` in the repository
 **How the glue finds it.** `Editor.ModuleLookup`'s "The libraries" reads the
 record, `<executable>.libraries` or the bundle's, a relative line resolved
 against the executable's directory (`recordedLibraries`). The core's API
-module `Editor.PackageLibrary` gives `staged appPath readFile package
-lake`, which answers the line of the Lake package or `notStaged`'s
-sentence ("`<package>`: no library is staged for its Lake package `<lake>`
-beside this editor (`<record>`); rebuild the package set (:reload)"); the
-package's `.Real` initialiser, the edge, hands it `IO.appPath` and the real
-file read, and throws the sentence. echo's is
-`load (← stagedLibrary)` (`Echo/Real.lean`), and its glue compiles in no
-path.
+module `Editor.PackageLibrary` gives the edge `staged package lake : IO
+String`, which reads `IO.appPath` and the record with the real file read
+and answers the line of the Lake package, or throws `notStaged`'s sentence
+("`<package>`: no library is staged for its Lake package `<lake>` beside
+this editor (`<record>`); rebuild the package set (:reload)"). What it
+decides is `stagedIn appPath readFile package lake`, which takes the
+reader as a port and is pinned on a fake. The edge is in the core, in an
+API module, so no package rebuilds it, and a package's library modules may
+import only the core's API. echo's initialiser is
+`load (← Editor.PackageLibrary.staged "echo" "echo")` (`Echo/Real.lean`),
+and its glue compiles in no path.
 
 **The declaration and the refusals.** Beside its init a library exports
 `editor_package_declaration` ("The package runtime, as built", "The
@@ -3980,7 +3983,9 @@ of its own ("Who can build it").
   `newer_runtime.c`, and `current_runtime.c` loaded for interface 2).
 - The reading and the sentences, the probe's failure line among them, and
   where a staged library is found: `ModelTest.packageLibraryChecks`,
-  `ModelTest.packageLibraryStagedChecks`, `ModelTest.moduleLookupChecks`.
+  `ModelTest.packageLibraryStagedChecks` (`stagedIn` on a fake reader),
+  `ModelTest.moduleLookupChecks`; the edge `staged` over a real record,
+  found and not found, `EchoTest.Linked.echoLoadChecks`.
 - The staging's places, records and the missing tool's words: the
   `#guard`s beside `stagedLibraryPlace`, `librariesRecordText`,
   `installLibrariesRecord`, `libraryToolMissing?` (over Lake 4.35's entry,

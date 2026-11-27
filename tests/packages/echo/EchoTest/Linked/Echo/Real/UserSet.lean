@@ -1,5 +1,6 @@
 import Echo.Real
 import EchoTest.Check
+import Editor.PackageLibrary
 import Editor.PackageSet.Build
 import Editor.PackageSet.Running
 import Editor.RealHost
@@ -22,7 +23,8 @@ built"):
 
 - **A prebuilt library builds with no Cargo, and loads from the set's
   build.** A copy of echo (`.lake` left out) holds the library this linked
-  test loaded (`Echo.Real.stagedLibrary`) at `lib/libecho_service.<ext>`,
+  test loaded (`Editor.PackageLibrary.staged "echo" "echo"`) at
+  `lib/libecho_service.<ext>`,
   so its `editorLibrary` target answers it and runs no process; its core
   require names the repository's core. A set requiring the default set,
   the copy and the core last, as a user's config does, resolves with
@@ -216,7 +218,7 @@ def echoUserSetChecks (sysroot : String) (services : Editor.Test.Linked.Services
           IO.FS.createDirAll home
           let environment := userSetEnvironment record home
           let echo := tmp / "echo"
-          copyEcho echo (repo / "lean") (some (← Echo.Real.stagedLibrary))
+          copyEcho echo (repo / "lean") (some (← Editor.PackageLibrary.staged "echo" "echo"))
           let set := tmp / "set"
           IO.FS.createDirAll set
           IO.FS.writeFile (set / "lakefile.toml")

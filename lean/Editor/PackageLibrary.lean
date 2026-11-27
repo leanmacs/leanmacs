@@ -14,8 +14,8 @@ module reads that answer back (`LoadRefusal.of?`) and says each refusal as
 a sentence of its own that names the package and the library
 (`LoadRefusal.describe`), the text a refused load ends the editor's start
 with: every package with a library reads the core's tags here, naming
-itself. It is pure, so the model tests pin it with no Rust
-(`ModelTest.packageLibraryChecks`).
+itself. All of it but `staged`, the one edge, is pure, so the model tests
+pin it with no Rust (`ModelTest.packageLibraryChecks`).
 
 ## Where the library is
 
@@ -23,11 +23,17 @@ The package-set build stages each package's library beside the executable
 it links and records where (`Editor/ModuleLookup.lean`, "The libraries"):
 `<executable>.libraries` beside a set's editor or a per-user install, the
 bundle's `Contents/Resources/editor.libraries` in an app bundle. A
-package's initialiser finds its library there with `staged`, handing it
-the executable's path and the real file read from its `.Real` module, the
-edge; with no line for its Lake package it throws `notStaged`'s sentence
-instead. `staged` reads nothing itself, so the model tests pin it on a
-fake reader (`ModelTest.packageLibraryStagedChecks`).
+package's initialiser finds its library there with `staged "<package>"
+"<lake>"`, the core's edge: it reads `IO.appPath` and the record with the
+real file read, and with no line for the Lake package throws `notStaged`'s
+sentence instead, so a package's `.Real` module rebuilds none of it. The
+edge sits here, in an API module, because a package's library modules may
+import the core's API alone (`.agents/rules/structure.md`, "What a package
+may import"): an internal or `.Real` module of the core is refused to
+them. What it decides is `stagedIn`, which takes the executable's path and
+the reader as a port and reads nothing itself, so the model tests pin it
+on a fake reader (`ModelTest.packageLibraryStagedChecks`); echo's linked
+test runs the edge over a real record (`EchoTest.Linked.echoLoadChecks`).
 -/
 
 namespace Editor.PackageLibrary
@@ -106,10 +112,10 @@ beside the executable at `appPath`, read through `readFile`, the port,
 which answers a file's text or none when it cannot be read: its path, or
 the sentence naming the package `package`, `lake` and the record read
 (`notStaged`) when the record has no line for it, or there is no record
-(`ModuleLookup.recordedLibraries`, `ModuleLookup.librariesRecordFor`). A
-package's `.Real` initialiser passes `IO.appPath` and the real read, and
-throws the sentence; the model tests pass a fake. -/
-def staged {m : Type → Type} [Monad m] (appPath : String)
+(`ModuleLookup.recordedLibraries`, `ModuleLookup.librariesRecordFor`). The
+real edge, `staged`, passes `IO.appPath` and the real read; the model tests
+pass a fake. -/
+def stagedIn {m : Type → Type} [Monad m] (appPath : String)
     (readFile : System.FilePath → m (Option String)) (package lake : String) :
     m (Except String String) := do
   let entries ← ModuleLookup.recordedLibraries appPath readFile
@@ -118,5 +124,25 @@ def staged {m : Type → Type} [Monad m] (appPath : String)
     return .ok library
   | none =>
     return .error (notStaged package lake (ModuleLookup.librariesRecordFor appPath))
+
+/-- The library the package-set build staged for the Lake package `lake`
+beside the running executable, or a throw of the sentence naming the
+package `package`, `lake` and the record read (`notStaged`): `stagedIn`
+over `IO.appPath` and the real file read, where a record that is not
+there, or cannot be read, names no library. The edge a package's `.Real`
+initialiser calls, `load (← Editor.PackageLibrary.staged "echo" "echo")`,
+so no package rebuilds it; echo's linked test runs it
+(`EchoTest.Linked.echoLoadChecks`). -/
+def staged (package lake : String) : IO String := do
+  let readFile (path : System.FilePath) : IO (Option String) := do
+    try
+      return some (← IO.FS.readFile path)
+    catch _ =>
+      return none
+  match ← stagedIn (← IO.appPath).toString readFile package lake with
+  | .ok library =>
+    return library
+  | .error sentence =>
+    throw (IO.userError sentence)
 
 end Editor.PackageLibrary

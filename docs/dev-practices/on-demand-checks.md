@@ -351,7 +351,8 @@ in `mise run ffi-test`), and the install's places and relative lines by the
 guards on `installLibrariesRecord` and `stagedLibraryPlace` and
 `ModelTest.moduleLookupChecks`. Run it after a change to the install
 (`editorInstall`), the libraries record (`editor.libraries`,
-`Editor/ModuleLookup.lean`, `Editor.PackageLibrary.staged`) or the staging
+`Editor/ModuleLookup.lean`, `Editor.PackageLibrary.stagedIn` and its edge
+`staged`) or the staging
 (`editorLibraries`). Running the same test un-ignored in `ffi-test` would
 put it in the gate, at the install's disk and time; that is the owner's to
 decide.
