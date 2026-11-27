@@ -1,6 +1,7 @@
 //! The library's init and its table over a runtime of test functions, as
-//! the core's loader calls them: a runtime smaller than echo requires is
-//! refused with 1 and the table left unwritten; a whole one is answered
+//! the core's loader calls them: no runtime (a null pointer), and a runtime
+//! smaller than echo requires, are each refused with 1, the table left
+//! unwritten and nothing registered; a whole one is answered
 //! with 0 and the table, the service `echo` registered through it once;
 //! and a request started through the table completes through the
 //! runtime's `complete` with that service's id and the request's id, and
@@ -8,7 +9,9 @@
 //! from the system's zlib, handed back through the table's `free`.
 //!
 //! An integration test of its own, and one test, because the library's
-//! service is process-wide: once loaded, it stays loaded.
+//! service is process-wide: once loaded, it stays loaded. What the table
+//! answers before any init is `tests/not_loaded.rs`, a process of its own
+//! that never loads it.
 
 use std::ffi::c_void;
 use std::mem::{MaybeUninit, size_of};
@@ -122,6 +125,12 @@ fn take(table: &EchoTable, id: u64) -> Option<(String, u32)> {
 fn the_init_refuses_a_small_runtime_and_a_whole_one_s_table_completes_through_the_runtime() {
     let (completed, completions) = channel();
     *COMPLETED.lock().expect("unpoisoned") = Some(completed);
+
+    let mut none: *const EchoTable = ptr::null();
+    // SAFETY: a null runtime is one the init refuses, and the table's place
+    // is writable.
+    let refused = unsafe { editor_package_init(ptr::null(), &raw mut none) };
+    assert_eq!((refused, none.is_null()), (1, true), "no runtime: no table");
 
     let (small, unwritten) = init(&SMALL);
     assert_eq!(
