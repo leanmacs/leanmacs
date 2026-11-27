@@ -38,31 +38,47 @@ use crate::text;
 )]
 static LIBRARIES: LibLoading = LibLoading::system();
 
-/// Loads the package library at the `len` bytes of path at `path`, calling
-/// its init with the process's package runtime, and answers 0 with the
-/// table the init wrote in `table`; or answers the refusal's tag, 1 to 5
-/// (`editor_package_library::load::LoadRefusal`), with `table` untouched.
+/// Loads the package library at the `len` bytes of path at `path`, for a
+/// glue of the package's interface version `interface`, calling its init
+/// with the process's package runtime, and answers 0 with the table the
+/// init wrote in `table`; or answers the refusal's tag, 1 to 8
+/// (`editor_package_library::load::LoadRefusal`), with `table` untouched,
+/// and for a newer runtime (7) or another interface (8) writes the two
+/// numbers it compared into `versions[0]` and `versions[1]`: what the
+/// library needs and the runtime's size, or the library's interface
+/// version and `interface`. `versions` is written for those two alone.
 ///
 /// The path is absolute; one that is not is refused as missing.
 ///
 /// # Safety
 ///
-/// `path` points to `len` readable bytes, unless `len` is zero, and `table`
-/// points to a writable pointer.
+/// `path` points to `len` readable bytes, unless `len` is zero, `table`
+/// points to a writable pointer, and `versions` to two writable `u64`s.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_package_load(
     path: *const u8,
     len: usize,
+    interface: u32,
     table: *mut *const c_void,
+    versions: *mut u64,
 ) -> u32 {
     // SAFETY: the caller guarantees the pointer and the length.
     let path = unsafe { text::borrow(path, len) };
-    match load(&LIBRARIES, Path::new(&*path), &RUNTIME) {
+    match load(&LIBRARIES, Path::new(&*path), interface, &RUNTIME) {
         Ok(loaded) => {
             // SAFETY: the caller guarantees `table` is writable.
             unsafe { table.write(loaded.as_ptr()) };
             0
         }
-        Err(refusal) => refusal.tag(),
+        Err(refusal) => {
+            if let Some((first, second)) = refusal.versions() {
+                // SAFETY: the caller guarantees two writable `u64`s.
+                unsafe {
+                    versions.write(first);
+                    versions.add(1).write(second);
+                }
+            }
+            refusal.tag()
+        }
     }
 }

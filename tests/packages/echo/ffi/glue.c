@@ -64,10 +64,19 @@ typedef struct {
   void (*free)(echo_lent text);
 } echo_table;
 
+// The interface version this glue was compiled for: the shape of
+// `echo_table`, which the library declares too (`package! { interface 1; …
+// }`, `rust/src/ffi.rs`). A change to the table's shape is a new version,
+// here and in the library together.
+#define ECHO_INTERFACE 1u
+
 // The core's loader of a package's library (`editor-ffi`'s
-// `package_library.rs`): 0 with the table written, or a refusal, 1 to 5.
+// `package_library.rs`): 0 with the table written, or a refusal, 1 to 8,
+// with the two numbers it compared written to `versions` for a newer
+// runtime (7) or another interface (8).
 uint32_t editor_ffi_package_load(const uint8_t *path, size_t len,
-                                 const void **table);
+                                 uint32_t interface, const void **table,
+                                 uint64_t *versions);
 
 // The table of the library loaded, or none yet: set once, by a load, and
 // read by every call, from any thread.
@@ -83,18 +92,33 @@ lean_obj_res echo_glue_library(void) {
   return lean_io_result_mk_ok(lean_mk_string(ECHO_LIBRARY));
 }
 
-// `Echo.Real.loadFrom : @& String → IO UInt32`: asks the core to load the
-// library at `path`, keeps its table on 0, and answers the core's status.
-lean_obj_res echo_glue_load(b_lean_obj_arg path) {
+// `Echo.Real.interface : IO UInt32`: the version this glue was compiled
+// for.
+lean_obj_res echo_glue_interface(void) {
+  return lean_io_result_mk_ok(lean_box_uint32(ECHO_INTERFACE));
+}
+
+// `Echo.Real.loadFrom : @& String → UInt32 → IO (UInt32 × UInt64 × UInt64)`:
+// asks the core to load the library at `path` for a glue of `interface`,
+// keeps its table on 0, and answers the core's status and the two numbers
+// it wrote, 0 and 0 when it wrote none.
+lean_obj_res echo_glue_load(b_lean_obj_arg path, uint32_t interface) {
   const void *table = NULL;
-  uint32_t status =
-      editor_ffi_package_load((const uint8_t *)lean_string_cstr(path),
-                              lean_string_size(path) - 1, &table);
+  uint64_t versions[2] = {0, 0};
+  uint32_t status = editor_ffi_package_load(
+      (const uint8_t *)lean_string_cstr(path), lean_string_size(path) - 1,
+      interface, &table, versions);
   if (status == 0) {
     atomic_store_explicit(&loaded, (const echo_table *)table,
                           memory_order_release);
   }
-  return lean_io_result_mk_ok(lean_box_uint32(status));
+  lean_object *numbers = lean_alloc_ctor(0, 2, 0);
+  lean_ctor_set(numbers, 0, lean_box_uint64(versions[0]));
+  lean_ctor_set(numbers, 1, lean_box_uint64(versions[1]));
+  lean_object *answer = lean_alloc_ctor(0, 2, 0);
+  lean_ctor_set(answer, 0, lean_box_uint32(status));
+  lean_ctor_set(answer, 1, numbers);
+  return lean_io_result_mk_ok(answer);
 }
 
 // `Echo.Real.start : UInt64 → @& String → IO Bool`

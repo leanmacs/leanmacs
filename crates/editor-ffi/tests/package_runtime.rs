@@ -64,9 +64,19 @@ struct CurrentTable {
 /// The library's table is a `T`.
 unsafe fn load<T>(path: &str) -> &'static T {
     let mut table: *const c_void = ptr::null();
-    // SAFETY: the path is the string's, for the call, and the table's place
-    // is writable.
-    let status = unsafe { editor_ffi_package_load(path.as_ptr(), path.len(), &raw mut table) };
+    let mut versions = [0; 2];
+    // SAFETY: the path is the string's, for the call, the table's place is
+    // writable, and `versions` holds two. The fixture libraries declare
+    // interface 1.
+    let status = unsafe {
+        editor_ffi_package_load(
+            path.as_ptr(),
+            path.len(),
+            1,
+            &raw mut table,
+            versions.as_mut_ptr(),
+        )
+    };
     assert_eq!(status, 0, "{path} loads");
     // SAFETY: the caller says what the table is; a library's table lives
     // for the process.

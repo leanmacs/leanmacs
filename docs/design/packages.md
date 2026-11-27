@@ -3373,8 +3373,12 @@ capabilities at its init.
   open is not a library (2); a library without `editor_package_init` has no
   init (3); an init answering 1, the runtime smaller than the library
   requires, is runtime too small (4); any other answer, or 0 with no table,
-  is a failed init (5). `Echo.LoadRefusal` reads the tag back and says each
-  as a sentence naming the path; the initialiser throws it, Lean's
+  is a failed init (5). Phase 4 put the library's declaration before the
+  init, with three more refusals (6 to 8), and moved the reading of the
+  tags into the core ("A package's library, staged and loaded, as built",
+  below). `Echo.LoadRefusal` read the tag back and said each
+  as a sentence naming the path (since phase 4, the core's
+  `Editor.PackageLibrary.LoadRefusal`, naming the package too); the initialiser throws it, Lean's
   generated `main` prints it as `uncaught exception: <text>` and exits 1,
   and the package-set build's probe carries it to its failure line
   (`PackageSet.probeFailed`, over `Restore.probeFailure`), so a refused
@@ -3392,7 +3396,8 @@ capabilities at its init.
     (echo's is one) answers 1, with no table, to no runtime and to one
     smaller than it requires.
   - its sentence and its reading from the tag by
-    `EchoTest.echoLibraryChecks`, which also pins, refusal by refusal,
+    `ModelTest.packageLibraryChecks` (until phase 4,
+    `EchoTest.echoLibraryChecks`), which also pins, refusal by refusal,
     that a probe whose standard error is the initialiser's
     `uncaught exception: <sentence>` fails the build with
     `the new editor did not start: it exited with status 1; uncaught

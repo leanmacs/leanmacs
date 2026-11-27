@@ -1,9 +1,9 @@
-//! Loading a package's library: open it, find its init, call it with the
-//! core's runtime, and give back the table it wrote, or why not
-//! ([`load`]).
+//! Loading a package's library: open it, find its init, read its
+//! declaration, call its init with the core's runtime, and give back the
+//! table it wrote, or why not ([`load`]).
 //!
 //! **The order of the refusals**, the order of `editor-syntax-treesitter`'s
-//! native grammars:
+//! native grammars, then the declaration's, then the init's:
 //!
 //! 1. A path that is not absolute is [`LoadRefusal::Missing`], with nothing
 //!    opened: the platform's loader searches its own paths for a bare name,
@@ -13,19 +13,38 @@
 //!    [`LoadRefusal::NotALibrary`].
 //! 4. A library that does not export [`INIT_SYMBOL`] is
 //!    [`LoadRefusal::NoInit`].
-//! 5. An init that answers 1, the library finding the runtime's `size`
-//!    smaller than it requires, is [`LoadRefusal::RuntimeTooSmall`].
-//! 6. An init that answers anything else, or 0 with no table, is
+//! 5. A library that exports no declaration ([`DECLARATION_SYMBOL`]), or
+//!    one whose `size` ends before its `interface`
+//!    ([`DECLARATION_REQUIRED`]), is [`LoadRefusal::NoDeclaration`].
+//! 6. A declaration of another interface than the glue's is
+//!    [`LoadRefusal::OtherInterface`], with both versions: a library of
+//!    another interface is not the one this glue was built for at all, so
+//!    it is asked before the runtime.
+//! 7. A declaration that needs more runtime than the core's `size` is
+//!    [`LoadRefusal::NewerRuntime`], with what it needs and what the core
+//!    has.
+//! 8. Only then is the init called: one that answers 1, the library
+//!    finding the runtime's `size` smaller than it requires, is
+//!    [`LoadRefusal::RuntimeTooSmall`], the library's own guard behind the
+//!    core's.
+//! 9. An init that answers anything else, or 0 with no table, is
 //!    [`LoadRefusal::InitFailed`], so no status is left unmapped.
 //!
-//! Each refusal crosses as its [`LoadRefusal::tag`], 1 to 5, and 0 means
-//! loaded. A library is never unloaded: its table and its functions stay
-//! valid for the life of the process.
+//! So a library refused by its declaration runs none of its code: the
+//! declaration is a static, read before anything is called.
+//!
+//! Each refusal crosses as its [`LoadRefusal::tag`], 1 to 8, the tags of
+//! the declaration's refusals (6 to 8) appended after the five that came
+//! before them, and 0 means loaded; a newer runtime and another interface
+//! also cross their two numbers ([`LoadRefusal::versions`]). A library is
+//! never unloaded: its table and its functions stay valid for the life of
+//! the process.
 
 use std::ffi::c_void;
 use std::path::Path;
 use std::ptr::{self, NonNull};
 
+pub use editor_package_runtime::{DECLARATION_REQUIRED, DECLARATION_SYMBOL};
 use editor_package_runtime::{INIT_LOADED, INIT_RUNTIME_TOO_SMALL};
 
 use crate::library::{Libraries, Unopened};
@@ -39,22 +58,60 @@ pub const INIT_SYMBOL: &str = "editor_package_init";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LoadRefusal {
     /// The path is not absolute, or nothing is at it.
-    Missing = 1,
+    Missing,
     /// The file will not open as a library.
-    NotALibrary = 2,
+    NotALibrary,
     /// The library does not export [`INIT_SYMBOL`].
-    NoInit = 3,
+    NoInit,
     /// The library's init found the runtime smaller than it requires.
-    RuntimeTooSmall = 4,
+    RuntimeTooSmall,
     /// The library's init answered a status that is neither 0 nor 1, or 0
     /// with no table.
-    InitFailed = 5,
+    InitFailed,
+    /// The library exports no declaration, or one that ends before its
+    /// interface version.
+    NoDeclaration,
+    /// The library's declaration needs more runtime than the core's.
+    NewerRuntime {
+        /// The runtime the library declares it needs, in bytes.
+        needs: usize,
+        /// The core's runtime's size, in bytes.
+        has: usize,
+    },
+    /// The library's declaration is of another interface than the glue's.
+    OtherInterface {
+        /// The interface version the library declares.
+        declared: u32,
+        /// The interface version the package's glue expects.
+        expected: u32,
+    },
 }
 
 impl LoadRefusal {
-    /// The number the refusal crosses as, 1 to 5; 0 is a load.
+    /// The number the refusal crosses as, 1 to 8; 0 is a load.
     pub const fn tag(self) -> u32 {
-        self as u32
+        match self {
+            Self::Missing => 1,
+            Self::NotALibrary => 2,
+            Self::NoInit => 3,
+            Self::RuntimeTooSmall => 4,
+            Self::InitFailed => 5,
+            Self::NoDeclaration => 6,
+            Self::NewerRuntime { .. } => 7,
+            Self::OtherInterface { .. } => 8,
+        }
+    }
+
+    /// The two numbers a refusal crosses beside its tag: for a newer
+    /// runtime, what the library needs and what the core has; for another
+    /// interface, the library's version and the glue's; none for any other
+    /// refusal.
+    pub const fn versions(self) -> Option<(u64, u64)> {
+        match self {
+            Self::NewerRuntime { needs, has } => Some((needs as u64, has as u64)),
+            Self::OtherInterface { declared, expected } => Some((declared as u64, expected as u64)),
+            _ => None,
+        }
     }
 }
 
@@ -86,8 +143,9 @@ unsafe impl Send for Table {}
 )]
 unsafe impl Sync for Table {}
 
-/// Loads the package library at `path` through `libraries`, calling its
-/// init with `runtime`, and gives the table it wrote.
+/// Loads the package library at `path` through `libraries`, for a glue of
+/// the package's interface version `interface`, calling its init with
+/// `runtime`, and gives the table it wrote.
 ///
 /// # Errors
 ///
@@ -95,6 +153,7 @@ unsafe impl Sync for Table {}
 pub fn load(
     libraries: &dyn Libraries,
     path: &Path,
+    interface: u32,
     runtime: &'static PackageRuntime,
 ) -> Result<Table, LoadRefusal> {
     if !path.is_absolute() {
@@ -105,6 +164,22 @@ pub fn load(
         Unopened::NotALibrary => LoadRefusal::NotALibrary,
     })?;
     let init = library.init(INIT_SYMBOL).ok_or(LoadRefusal::NoInit)?;
+    let declaration = library
+        .declaration(DECLARATION_SYMBOL)
+        .filter(|declaration| declaration.size >= DECLARATION_REQUIRED)
+        .ok_or(LoadRefusal::NoDeclaration)?;
+    if declaration.interface != interface {
+        return Err(LoadRefusal::OtherInterface {
+            declared: declaration.interface,
+            expected: interface,
+        });
+    }
+    if declaration.runtime > runtime.size {
+        return Err(LoadRefusal::NewerRuntime {
+            needs: declaration.runtime,
+            has: runtime.size,
+        });
+    }
     let mut table: *const c_void = ptr::null();
     #[expect(
         unsafe_code,

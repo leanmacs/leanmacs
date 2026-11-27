@@ -98,7 +98,7 @@ the package but its tests and the binding. -/
 @[default_target] lean_lib Echo where
   globs :=
   #[.one `Echo, .one `Echo.Model, .one `Echo.Contract, .one `Echo.Checksum, .one `Echo.Job,
-    .one `Echo.Library, .one `Echo.Packages, .one `Echo.EditorPackage]
+    .one `Echo.Packages, .one `Echo.EditorPackage]
   plugins := lintPlugin
 
 /-- The Rust-backed binding, with the package's glue. -/

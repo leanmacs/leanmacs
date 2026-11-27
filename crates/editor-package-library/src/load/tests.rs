@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use super::*;
 use crate::contract::{self, Corpus};
@@ -61,9 +61,178 @@ fn fake(init: PackageInit) -> FakeLibraries {
         .not_a_library("/l/grammar.js")
 }
 
-/// The load of `path` from `libraries` over the core's runtime.
+/// The load of `path` from `libraries` over the core's runtime, for a glue
+/// of interface 1.
 fn loaded(libraries: &FakeLibraries, path: &str) -> Result<Table, LoadRefusal> {
-    load(libraries, Path::new(path), &RUNTIME)
+    load(libraries, Path::new(path), 1, &RUNTIME)
+}
+
+/// An init that counts its calls in `$calls`, writes [`TABLE`] and answers
+/// 0: one of its own for each test that says an init never ran, since the
+/// tests run side by side.
+macro_rules! counted {
+    ($init:ident, $calls:ident) => {
+        /// How many times the init beside it was called.
+        static $calls: AtomicUsize = AtomicUsize::new(0);
+
+        /// An init that counts its calls, writes its table and answers 0.
+        #[expect(
+            unsafe_code,
+            reason = "a test's init writes its table where the core says, as a library's does"
+        )]
+        extern "C" fn $init(_: *const PackageRuntime, table: *mut *const c_void) -> u32 {
+            $calls.fetch_add(1, Ordering::SeqCst);
+            // SAFETY: the core hands a writable pointer.
+            unsafe { table.write(ptr::from_ref(&TABLE).cast()) };
+            0
+        }
+    };
+}
+
+/// A fake with one library at `/l/lib.so` exporting `init` and declaring
+/// `declaration`, or nothing.
+fn declaring(init: PackageInit, declaration: Option<PackageDeclaration>) -> FakeLibraries {
+    let libraries = FakeLibraries::new().library("/l/lib.so", &[(INIT_SYMBOL, init)]);
+    match declaration {
+        Some(declaration) => libraries.declaring("/l/lib.so", declaration),
+        None => libraries,
+    }
+}
+
+counted!(other_interface_init, OTHER_INTERFACE_CALLS);
+
+#[test]
+fn a_library_declaring_another_interface_is_refused_with_both_versions_and_its_init_never_runs() {
+    let libraries = declaring(
+        other_interface_init,
+        Some(PackageDeclaration {
+            interface: 2,
+            ..CURRENT
+        }),
+    );
+    assert_eq!(
+        loaded(&libraries, "/l/lib.so"),
+        Err(LoadRefusal::OtherInterface {
+            declared: 2,
+            expected: 1
+        })
+    );
+    assert_eq!(OTHER_INTERFACE_CALLS.load(Ordering::SeqCst), 0);
+}
+
+counted!(newer_runtime_init, NEWER_RUNTIME_CALLS);
+
+#[test]
+fn a_library_declaring_a_newer_runtime_is_refused_with_what_it_needs_and_the_runtime_s_size_and_its_init_never_runs()
+ {
+    let needs = size_of::<PackageRuntime>() + size_of::<usize>();
+    let libraries = declaring(
+        newer_runtime_init,
+        Some(PackageDeclaration {
+            runtime: needs,
+            ..CURRENT
+        }),
+    );
+    assert_eq!(
+        loaded(&libraries, "/l/lib.so"),
+        Err(LoadRefusal::NewerRuntime {
+            needs,
+            has: RUNTIME.size
+        })
+    );
+    assert_eq!(NEWER_RUNTIME_CALLS.load(Ordering::SeqCst), 0);
+}
+
+counted!(undeclared_init, UNDECLARED_CALLS);
+
+#[test]
+fn a_library_with_no_declaration_is_refused_and_its_init_never_runs() {
+    assert_eq!(
+        loaded(&declaring(undeclared_init, None), "/l/lib.so"),
+        Err(LoadRefusal::NoDeclaration)
+    );
+    assert_eq!(UNDECLARED_CALLS.load(Ordering::SeqCst), 0);
+}
+
+counted!(short_declaration_init, SHORT_DECLARATION_CALLS);
+
+#[test]
+fn a_declaration_ending_before_its_interface_is_refused_as_none() {
+    let libraries = declaring(
+        short_declaration_init,
+        Some(PackageDeclaration {
+            size: DECLARATION_REQUIRED - 1,
+            ..CURRENT
+        }),
+    );
+    assert_eq!(
+        loaded(&libraries, "/l/lib.so"),
+        Err(LoadRefusal::NoDeclaration)
+    );
+    assert_eq!(SHORT_DECLARATION_CALLS.load(Ordering::SeqCst), 0);
+}
+
+counted!(older_runtime_init, OLDER_RUNTIME_CALLS);
+
+#[test]
+fn a_library_declaring_an_older_runtime_and_the_same_interface_loads() {
+    let through_complete = 4 * size_of::<usize>();
+    let libraries = declaring(
+        older_runtime_init,
+        Some(PackageDeclaration {
+            runtime: through_complete,
+            ..CURRENT
+        }),
+    );
+    let table = loaded(&libraries, "/l/lib.so").expect("loaded");
+    assert_eq!(table.as_ptr(), ptr::from_ref(&TABLE).cast());
+    assert_eq!(OLDER_RUNTIME_CALLS.load(Ordering::SeqCst), 1);
+}
+
+counted!(longer_declaration_init, LONGER_DECLARATION_CALLS);
+
+#[test]
+fn a_later_longer_declaration_is_read_by_the_members_it_knows() {
+    let libraries = declaring(
+        longer_declaration_init,
+        Some(PackageDeclaration {
+            size: size_of::<PackageDeclaration>() + size_of::<usize>(),
+            ..CURRENT
+        }),
+    );
+    assert!(loaded(&libraries, "/l/lib.so").is_ok());
+    assert_eq!(LONGER_DECLARATION_CALLS.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn each_refusal_crosses_as_its_tag_and_only_the_versioned_ones_carry_versions() {
+    let refusals = [
+        LoadRefusal::Missing,
+        LoadRefusal::NotALibrary,
+        LoadRefusal::NoInit,
+        LoadRefusal::RuntimeTooSmall,
+        LoadRefusal::InitFailed,
+        LoadRefusal::NoDeclaration,
+        LoadRefusal::NewerRuntime { needs: 96, has: 88 },
+        LoadRefusal::OtherInterface {
+            declared: 2,
+            expected: 1,
+        },
+    ];
+    assert_eq!(refusals.map(LoadRefusal::tag), [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(
+        refusals.map(LoadRefusal::versions),
+        [
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some((96, 88)),
+            Some((2, 1))
+        ]
+    );
 }
 
 #[test]
@@ -133,19 +302,6 @@ fn an_init_that_answers_zero_is_loaded_with_its_table_and_was_handed_the_core_s_
         HANDED.load(Ordering::SeqCst).cast_const(),
         ptr::from_ref(&RUNTIME)
     );
-}
-
-#[test]
-fn each_refusal_crosses_as_a_tag_of_its_own_and_none_is_a_load_s() {
-    let tags = [
-        LoadRefusal::Missing,
-        LoadRefusal::NotALibrary,
-        LoadRefusal::NoInit,
-        LoadRefusal::RuntimeTooSmall,
-        LoadRefusal::InitFailed,
-    ]
-    .map(LoadRefusal::tag);
-    assert_eq!(tags, [1, 2, 3, 4, 5]);
 }
 
 #[test]

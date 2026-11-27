@@ -590,9 +590,8 @@ def packageSetBuildChecks : List Check :=
               #[]
           -- Lean's generated `main` prints an initialiser's uncaught error
           -- and exits 1, before the editor's `main` prints anything. What a
-          -- package's refused library throws is the package's: echo's
-          -- refusals are each pinned through `probeFailed` in its tests
-          -- (`EchoTest.echoLibraryChecks`).
+          -- package's refused library throws is the core's sentence, each
+          -- pinned through `probeFailed` (`ModelTest.packageLibraryChecks`).
           let thrown := "uncaught exception: a package's library was refused"
           let (scripts, streams) :=
             succeeding order (probe := "") (probeCode := 1) (probeStderr := thrown ++ "\n")

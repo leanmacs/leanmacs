@@ -1,6 +1,6 @@
 import Echo
 import Echo.Job
-import Echo.Library
+import Editor.PackageLibrary
 
 /-!
 # The Rust-backed binding of the echo port
@@ -20,8 +20,11 @@ executable that links this module natively (the set's editor, its fixture
 harness and the package's linked test), and never when a module that
 imports it is compiled or imported, as by the config elaborator at run
 time, where the glue's symbols do not exist: a plain `initialize` would
-run there. A refused load throws its sentence (`Echo.LoadRefusal.describe`,
-through `load`); Lean's generated `main` prints an initialiser's error as
+run there. The glue hands the core the interface version it was compiled
+for (`interface`, the glue's `ECHO_INTERFACE`), and the core refuses a
+library that declares another, or a newer runtime, before it calls
+anything of it. A refused load throws its sentence, read back through the
+core's `Editor.PackageLibrary.LoadRefusal` and naming echo (`load`); Lean's generated `main` prints an initialiser's error as
 `uncaught exception: <text>` and exits 1, which the package-set build's
 probe reports in its failure line (`Editor.Restore.probeFailure`). That an
 initialiser's error ends the program so is Lean's own `main`; the linked
@@ -42,17 +45,31 @@ absolute, into the checkout's `target/release/`. -/
 @[extern "echo_glue_library"]
 opaque library : IO String
 
-/-- Asks the core to load the library at `path`, keeping its table in the
-glue when it loads, and answers the core's status: 0, or a refusal
-(`Echo.LoadRefusal.ofStatus?`). -/
-@[extern "echo_glue_load"]
-opaque loadFrom (path : @& String) : IO UInt32
+/-- The interface version the glue was compiled for, `ECHO_INTERFACE`: the
+shape of the table it mirrors, which the library declares too
+(`package! { interface 1; … }`). -/
+@[extern "echo_glue_interface"]
+opaque interface : IO UInt32
 
-/-- Loads the library at `path`, or throws the refusal's sentence: the body
-of the module's initialiser. -/
+/-- Asks the core to load the library at `path` for a glue of interface
+`interface`, keeping its table in the glue when it loads, and answers the
+core's status, 0 or a refusal, with the two numbers it wrote for a newer
+runtime or another interface (`Editor.PackageLibrary.LoadRefusal.of?`). -/
+@[extern "echo_glue_load"]
+opaque loadFrom (path : @& String) (interface : UInt32) : IO (UInt32 × UInt64 × UInt64)
+
+/-- Loads the library at `path` for a glue of interface `interface`, or
+throws the refusal's sentence, naming echo: the initialiser's body with the
+version a check can vary. -/
+def loadExpecting (path : String) (interface : UInt32) : IO Unit := do
+  let (status, first, second) ← loadFrom path interface
+  if let some refusal := Editor.PackageLibrary.LoadRefusal.of? status first second then
+    throw (IO.userError (refusal.describe "echo" path))
+
+/-- Loads the library at `path` for the glue's own interface, or throws the
+refusal's sentence: the body of the module's initialiser. -/
 def load (path : String) : IO Unit := do
-  if let some refusal := Echo.LoadRefusal.ofStatus? (← loadFrom path) then
-    throw (IO.userError (refusal.describe path))
+  loadExpecting path (← interface)
 
 /- Loads echo's library before `main`, in an executable that links this
 module natively, and never at an import (the module docs). -/

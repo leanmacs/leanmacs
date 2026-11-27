@@ -6,7 +6,11 @@
 //! keeps the completer contract over the process's completion queue, takes
 //! a child of the process's stream source over with every lent buffer
 //! handed back to the process's ledger, and keeps the wrapper's own stream
-//! contract. A runtime too small is refused through the load.
+//! contract. The fake library declares what the macro exported beside the
+//! init (`editor_package_declaration`), and the load passes the package's
+//! interface, 1. A runtime smaller than the declaration says is refused by
+//! the core before the init, and one the library declared too little for
+//! by the init's own guard.
 //!
 //! The process's stream source is `editor-service`'s `FakeSource`, provided
 //! once, behind a test-local gate ([`Observed`]): `FakeSource` never
@@ -37,6 +41,7 @@ use editor_package::stream::{ChildStreams as _, StreamSource as WrapperSource, c
 use editor_package::wait::HangGuard;
 use editor_package::{Package, REQUIRED, Runtime, Service, completer_contract, package};
 use editor_package_library::fake::FakeLibraries;
+use editor_package_library::library::PackageDeclaration;
 use editor_package_library::load::{INIT_SYMBOL, LoadRefusal, load};
 use editor_package_library::runtime::RUNTIME;
 use editor_package_library::runtime::ledger::LEDGER;
@@ -270,17 +275,33 @@ const PATH: &str = "/checked/libchecked.dylib";
 /// The path the fake libraries hold the package at for a runtime too small.
 const SMALL_PATH: &str = "/checked/small/libchecked.dylib";
 
+/// The path the fake libraries hold the package at, declaring less runtime
+/// than its init needs, so only the init's own guard refuses a runtime too
+/// small.
+const UNDERSTATED_PATH: &str = "/checked/understated/libchecked.dylib";
+
 #[test]
 fn a_package_declared_with_the_wrapper_loads_through_the_core_s_load_and_runs_on_the_process_s_runtime()
  {
     let observed: &'static Observed = Box::leak(Box::default());
     assert!(stream::provide(observed), "the first source provided");
+    let small = FakeRuntime::new().sized(REQUIRED - 8).leak();
     let libraries = FakeLibraries::new()
         .library(PATH, &[(INIT_SYMBOL, editor_package_init)])
-        .library(SMALL_PATH, &[(INIT_SYMBOL, editor_package_init)]);
+        .declaring(PATH, editor_package_declaration)
+        .library(SMALL_PATH, &[(INIT_SYMBOL, editor_package_init)])
+        .declaring(SMALL_PATH, editor_package_declaration)
+        .library(UNDERSTATED_PATH, &[(INIT_SYMBOL, editor_package_init)])
+        .declaring(
+            UNDERSTATED_PATH,
+            PackageDeclaration {
+                runtime: REQUIRED - 8,
+                ..editor_package_declaration
+            },
+        );
 
     // The load.
-    let table = load(&libraries, Path::new(PATH), &RUNTIME).expect("loaded");
+    let table = load(&libraries, Path::new(PATH), 1, &RUNTIME).expect("loaded");
     let declared: *const c_void = ptr::from_ref(PACKAGE.table()).cast();
     assert_eq!(table.as_ptr(), declared);
 
@@ -338,10 +359,18 @@ fn a_package_declared_with_the_wrapper_loads_through_the_core_s_load_and_runs_on
     assert_eq!(stream_contract::check(&ground), [""; 0]);
     assert_eq!(LEDGER.outstanding(), 0, "every lent buffer handed back");
 
-    // A runtime too small, refused through the load.
-    let small = FakeRuntime::new().sized(REQUIRED - 8).leak();
+    // A runtime smaller than the declaration says, refused by the core
+    // before the init; and one the library declared too little for,
+    // refused by the init's own guard.
     assert_eq!(
-        load(&libraries, Path::new(SMALL_PATH), small.raw()).err(),
+        load(&libraries, Path::new(SMALL_PATH), 1, small.raw()).err(),
+        Some(LoadRefusal::NewerRuntime {
+            needs: REQUIRED,
+            has: REQUIRED - 8
+        })
+    );
+    assert_eq!(
+        load(&libraries, Path::new(UNDERSTATED_PATH), 1, small.raw()).err(),
         Some(LoadRefusal::RuntimeTooSmall)
     );
 }
