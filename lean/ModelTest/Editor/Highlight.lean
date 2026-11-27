@@ -347,8 +347,7 @@ def injectedFaces (driver : TestDriver) : Array (String × Array String) :=
 its grammar's name and whether it was given an injections query, in
 order. -/
 def injectedInjections (driver : TestDriver) : Array (String × Bool) :=
-  driver.model.syntaxTree.languages.map fun (_, name, _, _, injections) =>
-    (name, injections.isSome)
+  driver.model.syntaxTree.languages.map fun (_, name, _, _, injections) => (name, injections.isSome)
 
 /-- The driver once a Markdown buffer `/w/a.md` has been opened after the
 command of the `register-grammars` job of a config whose `setup` is

@@ -261,12 +261,11 @@ more and nothing is said; any other refusal is said as step 6's. -/
 def reinject (mode : String) (text : TextId) (syntaxTree : Mode.SyntaxTree)
     (injected : String → Option Mode.SyntaxTree) : EditorM Unit :=
   text.withSnapshot fun snapshot => do
-      match ← SyntaxTree.lift (injections snapshot syntaxTree injected) with
-      | .ok ()
-      | .error .notAttached =>
-        pure ()
-      | .error refusal =>
-        say s!"injections: `{mode}`: {refusal.describe}"
+    match ← SyntaxTree.lift (injections snapshot syntaxTree injected) with
+    | .ok () | .error .notAttached =>
+      pure ()
+    | .error refusal =>
+      say s!"injections: `{mode}`: {refusal.describe}"
 
 /-- What setting a major mode with `syntaxTree` asks of the syntax tree port
 for its text `text` (the steps of the module docs): attached with the
