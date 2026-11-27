@@ -406,16 +406,56 @@ earlier install script left. It opens, registers or runs nothing.
 mise run install -- --agents
 ```
 
-also adds the opt-in agent packages, `agents-api` and `acp`
+first builds `acp`'s library from this checkout with your own Cargo
+(`cargo build --release --locked --lib -p acp-service`, the command the
+`.cargo` form of acp's `editorLibrary` target runs) and places it in
+`packages/acp/lib/libacp_service.dylib` (gitignored), before the app is
+replaced, so a missing or failing Cargo exits 1 and changes nothing. It
+then adds the opt-in agent packages, `agents-api` and `acp`
 ([agent-hosting.md](../design/agent-hosting.md)), to
-`~/.config/leanmacs/lakefile.toml` by this checkout's
-`packages/` paths, ahead of its `editor-core` require, skipping any already
-required. With no lakefile it writes the one the editor would generate
+`~/.config/leanmacs/lakefile.toml` by this checkout's `packages/` paths,
+ahead of its `editor-core` require, skipping any already required. With no
+lakefile it writes the one the editor would generate
 (`lean/Editor/Config/LakePackage.lean`) with the two added; a
-`lakefile.lean` it refuses, as the package commands do. They stay out of
-the default set because `acp`'s crate needs Cargo, which the app does not
-ship (`packages/lakefile.toml`), so the editor's next `:reload` builds the
-set with your own Cargo.
+`lakefile.lean` it refuses, as the package commands do. `default-set` and
+`editor-core` stay at the bundle. The editor's next `:reload` builds the
+set with acp's library from its `lib/` and runs no Cargo: for a set
+outside the repository acp's `editorLibrary` takes the library already
+built ([packages.md](../design/packages.md), "acp, ported, as built").
+After updating the checkout, run the install again, so the core, acp's
+Lean and its library agree. `LEANMACS_APPLICATIONS` and
+`LEANMACS_CONFIG_DIR` point the script at a scratch prefix and config
+directory instead of `/Applications` and `~/.config/leanmacs`, for testing
+only.
+
+## The agents packages, installed, on demand
+
+On macOS on arm64, once on a head that changes the install or acp's
+library, in a scratch prefix, so nothing outside the checkout is touched:
+
+```sh
+mise run app
+tmp=$(mktemp -d)
+LEANMACS_APPLICATIONS=$tmp/apps LEANMACS_CONFIG_DIR=$tmp/config tools/install-app.sh packages --agents
+lake=$tmp/apps/Leanmacs.app/Contents/Resources/lean/toolchain/bin/lake
+mkdir -p "$tmp/home"
+env -i HOME=$tmp/home PATH=/usr/bin:/bin "$lake" -d "$tmp/config" update --keep-toolchain
+env -i HOME=$tmp/home PATH=/usr/bin:/bin "$lake" -d "$tmp/config" build :editor
+"$tmp/config/.lake/build/bin/editor" --probe
+```
+
+The install exits 0 and leaves `packages/acp/lib/libacp_service.dylib`;
+both `lake` runs exit 0, with the bundle's own `lake`, `clang` and link
+stubs, as the app's build job runs them, and no cargo on the `PATH`; and
+the probe prints `probe: ok`. It covers what the gate does not: the app's
+own `clang` and link stubs compiling acp's glue, and the script's real
+build, placement and edit of the config. The gate's
+`AcpTest.Linked.acpInstalledSetChecks` holds the config the install
+leaves, built with the checkout's toolchain.
+
+The owner's check follows landing: `mise run install -- --agents`,
+`:reload` in the installed app (the `*package-build*` buffer shows no
+Cargo), then `:agent-start`, which talks to Claude Code.
 
 ## The job benchmark, on demand
 

@@ -6,25 +6,38 @@
 # built. This script then:
 #
 # 1. refuses unless this is macOS on arm64, as the bundle is;
-# 2. replaces `$apps/Leanmacs.app` with the built bundle (`ditto`) and
+# 2. with `--agents`, before anything is replaced, builds acp's library
+#    from this checkout with the developer's Cargo (`cargo build --release
+#    --locked --lib -p acp-service`, the same command as the `.cargo` form
+#    of acp's `editorLibrary` target, packages/acp/lakefile.lean) and places
+#    it in the package's `lib/` (gitignored): copied beside it and renamed
+#    over it, so the file is a new one, as the core's `stageLibrary` makes
+#    it. No Cargo, or a failed build, exits 1 with nothing changed;
+# 3. replaces `$apps/Leanmacs.app` with the built bundle (`ditto`) and
 #    verifies the installed copy with `codesign --verify --strict --deep`.
 #    `$apps` is `/Applications`, or `$LEANMACS_APPLICATIONS` (for testing on
 #    a scratch prefix only);
-# 3. installs the default config `config/default`, a starter `SPC` map, its
-#    root `init.lean` and the files under `Config/`, to
-#    `$HOME/.config/leanmacs` only when that directory does not exist; when
+# 4. installs the default config `config/default`, a starter `SPC` map, its
+#    root `init.lean` and the files under `Config/`, to `$cfg`,
+#    `$HOME/.config/leanmacs` or `$LEANMACS_CONFIG_DIR` (for testing on a
+#    scratch prefix only), only when that directory does not exist; when
 #    it does, it only says where the default config is, so an existing
 #    config is never touched;
-# 4. with `--agents`, adds the opt-in agent packages, `agents-api` and
+# 5. with `--agents`, adds the opt-in agent packages, `agents-api` and
 #    `acp`, by this checkout's paths, to the config's `lakefile.toml`, just
 #    ahead of its `editor-core` require, skipping any already there. With no
 #    lakefile it writes the one the editor would generate
 #    (`lean/Editor/Config/LakePackage.lean`) with the two added, and the
 #    editor still writes `lean-toolchain` itself. A `lakefile.lean` is
-#    refused, as the editor's package commands refuse to edit one. The
-#    editor's next `:reload` builds the set, with the user's Cargo for
-#    `acp`'s crate (docs/packages/installing-packages.md);
-# 5. deletes the `Leanmacs.app.backup-*` and `leanmacs.backup-*` directories
+#    refused, as the editor's package commands refuse to edit one.
+#    `default-set` and `editor-core` stay at the bundle, since the installed
+#    app refuses any other core. The editor's next `:reload` builds the set
+#    with acp's library from its `lib/` and runs no Cargo (acp's
+#    `editorLibrary` takes the library already built for a set outside the
+#    repository). After updating the checkout, run the install again, so
+#    the core, acp's Lean, read from the checkout at `:reload`, and its
+#    library agree (docs/packages/installing-packages.md);
+# 6. deletes the `Leanmacs.app.backup-*` and `leanmacs.backup-*` directories
 #    the earlier install script left beside them.
 #
 # It keeps no backups: the app is rebuilt from any commit with `mise run app`.
@@ -56,12 +69,27 @@ repo=$(cd "$set_dir/.." && pwd)
 built="$set_dir/.lake/build/Leanmacs.app"
 apps=${LEANMACS_APPLICATIONS:-/Applications}
 app="$apps/Leanmacs.app"
-cfg="$HOME/.config/leanmacs"
+cfg=${LEANMACS_CONFIG_DIR:-$HOME/.config/leanmacs}
 default="$repo/config/default"
 
 if [ ! -d "$built" ]; then
   echo "install: no bundle at $built: run \`mise run app\`" >&2
   exit 1
+fi
+
+if $agents; then
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "install: --agents builds acp's library with Cargo, which is not on PATH: install it with rustup (https://rustup.rs)" >&2
+    exit 1
+  fi
+  # The same command as the `.cargo` form of acp's `editorLibrary` target
+  # (packages/acp/lakefile.lean).
+  cargo build --release --locked --lib -p acp-service --manifest-path "$repo/Cargo.toml" --target-dir "$repo/target"
+  lib="$repo/packages/acp/lib"
+  mkdir -p "$lib"
+  cp "$repo/target/release/libacp_service.dylib" "$lib/libacp_service.dylib.new"
+  mv "$lib/libacp_service.dylib.new" "$lib/libacp_service.dylib"
+  echo "install: built acp's library from this checkout into $lib"
 fi
 
 rm -rf "$app"
@@ -124,7 +152,7 @@ EOF
     mv "$lakefile.new" "$lakefile"
     echo "install: $lakefile now requires $pkg from $repo/packages/$pkg"
   done
-  echo "install: :reload in the editor builds the set with acp (it needs Cargo)"
+  echo "install: :reload in the editor builds the set with acp's library, built now from this checkout, and runs no Cargo; after updating the checkout, run \`mise run install -- --agents\` again"
 fi
 
 for old in "$apps"/Leanmacs.app.backup-* "$cfg".backup-*; do
