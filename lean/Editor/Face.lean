@@ -72,7 +72,13 @@ matches of the last search are drawn in (`Editor/Loop.lean`,
 `compilation.note`, which the compile mode's locations are drawn in
 (`packages/compile/Compile.lean`, "Locations"), and `mode-line.active` and
 `window-divider`, the selected window's status row and the divider between
-tiled windows, which the loop names (`Loop.statusOf`, `Loop.dividerFace`).
+tiled windows, which the loop names (`Loop.statusOf`, `Loop.dividerFace`),
+and the markup faces (`text.heading.1` to `text.heading.6`, `text.emphasis`,
+`text.strong`, `text.code-span`, `text.code-block`, `text.link`,
+`text.quote`, `text.list-marker`, `text.table-header` and `text.prose`),
+which markdown's captures are drawn in (`Highlight.defaultFaces`) and whose
+code faces name the monospace family over the prose face's proportional one
+(`Face.monospaceFamily`, `Face.proseFamily`).
 Layout reads four names by itself:
 `default`, under every other face; `selection`, which the selections are
 drawn in; `mode-line`, under each field of a view's status line; and
@@ -210,6 +216,20 @@ structure Face where
   verticalPadding : Option Pixels := none
   deriving DecidableEq, Repr
 
+/-- The family the shipped `default` face and the code faces name:
+`monospace`, a CSS generic family name, which the shaper resolves to the
+platform's monospace family (`crates/editor-shape-parley`, "How a text is
+shaped"). The name crosses as it is written; resolving it is the shaper's. -/
+def Face.monospaceFamily : String :=
+  "monospace"
+
+/-- The family the shipped prose face (`text.prose`) names: `system-ui`, a
+CSS generic family name, which the shaper resolves to the platform's
+proportional user interface font, and to its `sans-serif` family where it
+gives none (`crates/editor-shape-parley`, "How a text is shaped"). -/
+def Face.proseFamily : String :=
+  "system-ui"
+
 /-- A definition: the attributes a name sets. -/
 structure FaceDefinition where
   /-- The face's name. -/
@@ -318,7 +338,15 @@ first match face and `completions-common-part`; its annotations faint and
 italic, as `completions-annotations`; and its group headers strong and
 bold, as `vertico-group-title`. The compile mode's locations are bold, an error red, a warning orange
 and a note green, as Emacs's `compilation-error`, `-warning` and `-info`
-inherit `error`, `warning` and `success`. -/
+inherit `error`, `warning` and `success`. The markup faces (`text.`): a
+heading is bold in blue, levels 1 to 3 at 24, 20 and 18 points and the rest
+at the default's size; emphasis is italic and strong bold; a code span is
+green and a code block on raised, each in the monospace family
+(`Face.monospaceFamily`), so code over the prose face stays monospace, faces
+merging attribute by attribute; a link is cyan with a single underline; a
+quote is faint and italic; a list marker orange; a table's header row bold;
+and prose (`text.prose`) sets the prose family (`Face.proseFamily`) and
+nothing else. -/
 def Palette.theme (palette : Palette) : Theme :=
   let on (name : String) (foreground background : Color) : FaceDefinition :=
     { name := ⟨name⟩, face := { foreground := some foreground, background := some background } }
@@ -334,8 +362,14 @@ def Palette.theme (palette : Palette) : Theme :=
   let badges :=
     #[("normal", palette.blue), ("insert", palette.green), ("visual", palette.magenta),
       ("visual-line", palette.magenta), ("minibuffer", palette.cyan)]
+  let headingSizes : Array (Option Pixels) := #[some 24, some 20, some 18, none, none, none]
+  let headings :=
+    headingSizes.mapIdx fun level size =>
+      defined s!"text.heading.{level + 1}"
+        { foreground := some palette.blue, weight := some 700, size }
   #[defined "default"
-        { family := some "monospace", size := some 16, weight := some 400, slant := some .upright
+        { family := some Face.monospaceFamily, size := some 16, weight := some 400,
+          slant := some .upright
           foreground := some palette.ink, background := some palette.paper
           underline := some { style := .none }, strikeThrough := some false
           lineHeight := some (.multiple 64), verticalPadding := some 0 }] ++
@@ -379,7 +413,19 @@ def Palette.theme (palette : Palette) : Theme :=
       defined "working-set-drifted" { foreground := some palette.faint, slant := some .italic },
       defined "block-header"
         { foreground := some palette.strong, background := some palette.raised,
-          weight := some 700 }]
+          weight := some 700 }] ++
+    headings ++
+    #[defined "text.emphasis" { slant := some .italic },
+      defined "text.strong" { weight := some 700 },
+      defined "text.code-span"
+        { family := some Face.monospaceFamily, foreground := some palette.green },
+      defined "text.code-block"
+        { family := some Face.monospaceFamily, background := some palette.raised },
+      defined "text.link"
+        { foreground := some palette.cyan, underline := some { style := .single } },
+      defined "text.quote" { foreground := some palette.faint, slant := some .italic },
+      ink "text.list-marker" palette.orange, defined "text.table-header" { weight := some 700 },
+      defined "text.prose" { family := some Face.proseFamily }]
 
 /-- The palette of the built-in theme: Nord's colours. They are
 placeholders. -/

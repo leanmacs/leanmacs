@@ -36,6 +36,33 @@ def faceChecks : List Check :=
           | some face =>
             face.background.isSome && face.background != paper && face.foreground.isSome
           | none => false) },
+    { name := "the built-in prose face sets the prose family and nothing else"
+      run :=
+        pure
+          (Theme.builtin.merged ⟨"text.prose"⟩ == { family := some Face.proseFamily } &&
+            Face.proseFamily != Face.monospaceFamily) },
+    { name :=
+        "the built-in code span and code block faces set the monospace family, so either over the prose face over default has the monospace family"
+      run :=
+        let face := Theme.builtin.merged
+        let prose := (face ⟨"text.prose"⟩).over (face ⟨"default"⟩)
+        pure
+          (prose.family == some Face.proseFamily &&
+            [⟨"text.code-span"⟩, ⟨"text.code-block"⟩].all fun (code : FaceName) =>
+              (face code).family == some Face.monospaceFamily &&
+                ((face code).over prose).family == some Face.monospaceFamily) },
+    { name := "the built-in default face's family is the monospace family"
+      run := pure ((Theme.builtin.merged ⟨"default"⟩).family == some Face.monospaceFamily) },
+    { name :=
+        "the built-in heading faces are bold, emphasis is italic, strong is bold and the link is underlined"
+      run :=
+        let face := Theme.builtin.merged
+        pure
+          ((List.range 6).all
+              (fun level => (face ⟨s!"text.heading.{level + 1}"⟩).weight == some 700) &&
+            (face ⟨"text.emphasis"⟩).slant == some .italic &&
+            (face ⟨"text.strong"⟩).weight == some 700 &&
+            (face ⟨"text.link"⟩).underline.any (·.style == .single)) },
     { name := "the built-in default face sets every attribute, and no other built-in face does"
       run :=
         let complete (face : Face) : Bool :=

@@ -203,7 +203,9 @@ against its model here, in cells of two sizes (`displayFailures`). The real
 binding's run of it is the display pipeline's. `sceneChecks` and
 `displayChecks` are what only the model shows: the scenes published to it,
 and its exact layout rule. `faceChecks` are the checks of faces as data and
-of the built-in theme (`Editor/Face.lean`).
+of the built-in theme (`Editor/Face.lean`), the markup faces' families and
+looks among them: the prose face names the prose family alone, and the code
+faces the monospace family, so code over prose over default is monospace.
 
 The policy by which a view follows its cursor (`Editor/Scroll.lean`) is
 programs over the display port, and is checked on the display model alone
@@ -648,8 +650,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   quit the system did not ask asks the frame nothing;
 - `faceVocabularyChecks`: the face vocabulary (`Editor/Face/Vocabulary.lean`)
   names each face once with its meaning, marks its cursor faces, and
-  lists every face the mode line and the loop draw, layout's four and the
-  faces declared ahead (the faces the Vim scheme draws are held to it by
+  lists every face the mode line and the loop draw, layout's four, the
+  markup faces (`text.`, the prose face among them) and the faces declared
+  ahead (the faces the Vim scheme draws are held to it by
   `vimDefaultChecks`); the completeness check (`Editor/Theme/Check.lean`)
   holds a theme to the vocabulary's cursor faces or to the ones a scheme
   written there lists, and finds each
