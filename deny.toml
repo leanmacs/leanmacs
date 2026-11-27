@@ -543,6 +543,22 @@
 # network, so it is no gate step: one finding, RUSTSEC-2026-0192
 # (`ttf-parser` unmaintained), reached through winit's Wayland back end,
 # and none in the SDK's tree.
+#
+# For the package runtime's C definitions and their header (2026-11-27, the
+# package-native-libraries roadmap's phase 2). `editor-package-runtime`,
+# the definitions a package's library builds against, got its entry in the
+# commit in which `editor-package-library` came to depend on it, and echo's
+# crate joined its wrappers in the commit that moved echo onto it: with it
+# added to `editor-package-library-libloading`'s dependencies, it fails
+# ("crate 'editor-package-runtime = 0.1.0' is explicitly banned"). cbindgen,
+# the header's generator, is a build tool here, so "behind a port" is held
+# by naming its one wrapper, `editor-package-runtime-header`, which nothing
+# depends on: with cbindgen added to `editor-package-runtime`'s
+# build-dependencies, it fails ("crate 'cbindgen = 0.29.4' is explicitly
+# banned"). cbindgen depends on `tempfile` itself, so it joined that entry's
+# wrappers; nothing else of its tree (syn, serde, toml, heck, indexmap,
+# log) has an entry. cbindgen is MPL-2.0, like `nucleo-matcher` above; the
+# header it writes is generated from our definitions.
 
 [graph]
 all-features = false

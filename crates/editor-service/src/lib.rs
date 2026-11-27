@@ -35,7 +35,11 @@
 //! own, loaded at run time, carries its own copy of nothing here: it
 //! depends on none of it, and reaches the queues, the counter
 //! ([`service::register`]), the stream source and the buffers through the
-//! package runtime the core hands it (`editor-package-library`).
+//! package runtime the core hands it. That runtime, not this crate, is the
+//! contract between the core and a package's library: its C definitions
+//! are `editor-package-runtime`'s and its implementation over this crate
+//! `editor-package-library`'s. This crate stays the convention only for the
+//! package crates still linked into the archive.
 //!
 //! # Where an addition goes
 //!

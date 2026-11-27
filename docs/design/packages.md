@@ -3311,7 +3311,9 @@ Not chosen:
   takes it up, keeping the `@[extern]` binding in each package's glue,
   linked as before, which forwards through the table the library's init
   answers; the ad-hoc-signed app has no library validation to relax. Its
-  phase 1 built it for `echo` (below).
+  phase 1 built it for `echo`, and its phase 2 made the runtime a library
+  is handed the stable C contract every package library builds against
+  (below, "The package runtime, as built").
 
 ### A library loaded when the editor runs, as built (the spike)
 
@@ -3348,9 +3350,11 @@ capabilities at its init.
   an id below `FIRST_PACKAGE_ID`, so a library cannot post as a core
   service), `take_over` (the process's stream source; the child crosses as
   a handle the core owns), `child_pull` (one record of words and bytes),
-  `child_write`, `child_release` and `buffer_free`. Echo's crate mirrors it
-  by hand (`rust/src/runtime.rs`) and depends on nothing of the editor's;
-  `deny.toml`'s entry for `editor-service` leaves it out.
+  `child_write`, `child_release` and `buffer_free`. Echo's crate mirrored it
+  by hand (`rust/src/runtime.rs`) and depended on nothing of the editor's;
+  `deny.toml`'s entry for `editor-service` leaves it out. Phase 2 replaced
+  this runtime with the versioned one below ("The package runtime, as
+  built"), which echo now builds against.
 - **Who owns what.** The runtime is the core's static for the life of the
   process, and a library may keep its pointer. A child handle is the
   core's: the library may pull from one thread while it writes from
@@ -3408,14 +3412,15 @@ capabilities at its init.
 What the later phases must change in the design basis:
 
 - **The child crosses as an opaque handle with pull and write, not file
-  descriptors** (for phase 2 to adopt or overturn). Handing raw
+  descriptors** (adopted by phase 2, "The package runtime, as built"). Handing raw
   descriptors would take the child's reading away from the core's process
   service, which frames each stream, holds it at its bound, keeps one
   reader, reaches a consumer blocked in a pull on a cancel or a shutdown,
   and reaps the child; acp's connection runs over a pull and write stream
   too.
 - **The size check is the library's** (its init answers 1). Phase 4 moves
-  the refusal to the editor, from a declared size and interface version.
+  the refusal to the editor, from a declared size and interface version;
+  phase 2 kept it the library's.
 - **The path is absolute into the checkout's `target/`.** Phase 4 stages
   each package's library into the install and hands its path.
 - **The load must be a `builtin_initialize`.** A plain `initialize` runs
@@ -3423,9 +3428,153 @@ What the later phases must change in the design basis:
   elaborator imports `Echo.EditorPackage` at run time), where the glue's
   symbols do not exist.
 - **Any library at the path that exports `editor_package_init` is taken
-  as echo's**: there is no interface version until phase 4.
+  as echo's**: there is no interface version until phase 4 (phase 2 left
+  it so).
 - **The core refuses completions for core ids**, so the runtime's
-  `complete` is safe to hand a third party's library.
+  `complete` is safe to hand a third party's library. Phase 2 extends the
+  refusal to `post_event`.
+
+### The package runtime, as built (the contract between the core and every package library)
+
+Status: **built**
+(`phase/package-native-libraries/phase-2-package-runtime-abi`). This
+runtime, not `editor-service`'s conventions, is the contract a package's
+library builds against. `editor-service` stays the convention only for the
+package crates still linked into the editor's archive (acp's, until the
+roadmap's phase 5; "The service conventions as a crate of their own",
+below).
+
+The runtime is a `#[repr(C)]` struct of `extern "C"` function pointers,
+defined in Rust in `crates/editor-package-runtime` (no dependency, no build
+script, no static, so a library built against it carries nothing of the
+core's). Its C header, `crates/editor-package-runtime/include/editor_package_runtime.h`,
+is generated from that one source file by cbindgen (pinned `=0.29.4`, a
+build dependency of `crates/editor-package-runtime-header` alone, which
+nothing depends on). That crate's test
+`the_checked_in_header_is_the_one_cbindgen_generates` fails when the
+checked-in header differs; to regenerate it, copy the file the failure
+names over it. C names are namespaced (`EditorPackageRuntime`,
+`EDITOR_PACKAGE_…`). The core implements it in
+`editor_package_library::runtime` (one static, `RUNTIME`), forwarding each
+member to the queues, the service counter and the process service it
+already runs, so the core's own services are unchanged.
+
+| Member | What it does | The core's implementation | Threads | Blocks |
+|---|---|---|---|---|
+| `size` | The runtime's size in bytes: its version | `size_of` the struct | Read by any | No |
+| `private_members` | The core's state behind the runtime; a library never reads it | Null: the real runtime's state is the process's statics | — | — |
+| `register_service` | Registers a service by name, answers its id | `editor_service::register`, from the counter every service takes its id from, 1024 up | Any | No |
+| `complete` | Posts a completion from the library's service | The completion queue; refused (false, nothing posted) for an id below 1024, a core service's | Any | No |
+| `post_event` | Posts a message, a code and a text, from the library's service | A `Message` event on the editor queue; refused for a core service's id | Any | No |
+| `take_over` | Takes over a streaming child a job opened, as a handle | The process's stream source; 0, or a refusal's tag 1 to 4 | Any, once per child | No |
+| `child_pull` | The child's next delivery, as words and bytes, both lent | `ChildStreams::pull`, encoded | One at a time per handle | Yes |
+| `child_write` | Writes bytes to the child's input; a refusal lends the platform's words | `ChildStreams::write` | One writer at a time, beside a pull | Yes |
+| `child_release` | Releases a handle, after its last pull and write have returned | Drops the streams | Any, once | No |
+| `buffer_lend` | Copies bytes into a buffer of the core's and lends it | Lent through the ledger | Any | No |
+| `buffer_free` | Hands back a buffer the core lent: true once, false for a second hand-back or a pointer never lent, freeing nothing | The ledger's `reclaim` | Any | No |
+
+Every member takes the runtime as its first argument, as Emacs's
+`emacs_env` members do, so independent runtimes can live in one process
+(the pure model below is one) and a later phase can hand each library its
+own instance with no change to the ABI.
+
+**The append-only rule.** A new capability is a new trailing member; no
+member is ever removed, reordered or retyped. A library checks the runtime
+it is handed has every member it calls before it calls any
+(`runtime_has!(runtime, member)` in Rust, `EDITOR_PACKAGE_RUNTIME_HAS` in
+C, or `size` against the end of the last member it needs), and its init
+answers 1 when it does not. It is held three ways: the definitions crate's
+layout table pins each member's slot and the struct's length, so a member
+inserted, moved, widened or added without a row fails; the header's drift
+test shows every layout change as a header diff in review; and three tests
+run a library built for a smaller runtime on a larger one (below). No tool
+sees "append-only" across history, so review holds the rest.
+
+**Who owns what.**
+
+- The runtime is the core's, for the life of the process; a library may
+  keep the pointer.
+- `private_members` is the core's: opaque, never read or written by a
+  library.
+- A child handle is made by the core in `take_over` and owned by it until
+  the library releases it, once. No file descriptor crosses: the core's
+  process service keeps framing each stream, holding it at its bound,
+  keeping one reader, reaching a consumer blocked in a pull on a cancel or
+  shutdown, and reaping the child. A package that truly needs a descriptor
+  (a terminal's PTY) gets a trailing member with its own ownership rule.
+- A buffer the core lends (a pull's words and bytes, a refused write's
+  words, `buffer_lend`'s) is the library's to read until it hands it back,
+  exactly once, through `buffer_free`; the core frees it with its own
+  allocator. The core records every buffer it lends on a ledger (a
+  multiset of address and length, under a mutex), so a second hand-back,
+  or a pointer never lent, is refused rather than corrupting the heap. Its
+  limit: once freed, an address may be lent again at the same length, and
+  the ledger cannot tell a stale hand-back of the first from the second's;
+  the library's rule stays "exactly once".
+- A buffer the library lends (echo's replies) stays the library's, freed
+  through its own table's `free`.
+- Bytes handed in (a name, a text, a write's bytes) are borrowed for the
+  call and copied.
+- A library's table, written at its init, is the library's for the life of
+  the process: a library is never unloaded.
+
+**How a pull crosses.** Whether it delivered, then two lent buffers. The
+words are little-endian `u64`s: standard output's framing (0 lines, 1
+bytes, 2 messages), its frame count and each frame's length; the same for
+standard error; the end (0 none, 1 exited, 2 signalled, 3 line too long, 4
+message too long, 5 failed); two values (the status or signal, or the
+stream and its bound); and the failed words' length. The bytes are the
+frames and the failed words, end to end. Each tag is a constant of the
+definitions and the header.
+
+**`post_event`'s limits.** It posts a `Message` event from the library's
+own service; the editor queue's other kinds are the core's, and an id
+below 1024 is refused, so a library cannot pose as the core. Lean decodes
+it as `.message`; what the editor loop does with a package's message is
+not decided, since no package needs it yet. An event with words would be a
+later trailing member.
+
+**No interface version yet.** The init stays
+`editor_package_init(runtime, table) -> u32`, 0 loaded and 1 runtime too
+small, and the library checks the size itself. Phase 4 adds a library's
+declared size and interface version, and the editor's refusal, naming the
+package and both versions, of a library built for a newer runtime or
+another interface; through the init's protocol or a second exported
+symbol, either of them additive. Until then any library exporting
+`editor_package_init` is taken as the package's.
+
+**The model and the contract.** `editor_package_library::runtime::model::ModelRuntime`
+is the runtime's pure model: its own id counter, completion and editor
+queues, ledger, and the stream port's `FakeSource`, behind its
+`private_members`; it holds no process-wide state and starts no thread.
+`runtime::contract::check` drives a runtime through its C members, as a
+library does, and holds it to: a completion read once
+(`COMPLETION_READ_ONCE`), core ids refused (`CORE_ID_REFUSED`), unique
+service ids from four threads (`SERVICE_IDS_UNIQUE`), an event posted
+whole (`EVENT_POSTED`), the whole stream contract through the members,
+every pull decoded and every buffer handed back (`CHILD_FRAMED`), a lent
+buffer reclaimed exactly once (`BUFFER_RECLAIMED_ONCE`), and a library
+built for the prefix through `complete` running on it
+(`OLDER_LIBRARY_RUNS`). It runs on the model, as the current runtime and
+as a later, larger one (`src/runtime/model/tests.rs`), and on `RUNTIME`
+over the process's queues and ledger (`tests/contract.rs`), whose stream
+source is the stream port's `FakeSource`; that fake is held to the same
+stream contract as the real process service, and echo's linked attach
+checks run this runtime over real processes.
+
+**A library built for a smaller runtime runs on a larger one**, pinned
+three ways: `OLDER_LIBRARY_RUNS`, on the model, the later model and the
+real runtime; `editor-ffi`'s `tests/package_runtime.rs`, which loads two C
+libraries through the real loader (`editor-package-library-fixture`'s
+`older_runtime.c`, declaring its own struct as it ended at `complete`, and
+`current_runtime.c`, the one place the generated header is compiled by a C
+compiler and run against the Rust runtime); and echo's
+`tests/later_runtime.rs`, echo's real init on a runtime embedded in a
+larger struct.
+
+**A Rust library** builds against `editor-package-runtime` directly, as
+echo does (`tests/packages/echo/rust/src/runtime.rs`, its hand-written
+ports over the runtime until phase 3's safe wrapper replaces them).
 
 ### The service conventions as a crate of their own
 
@@ -3436,8 +3585,9 @@ queue; `cancel`; and plain data only, never a call into Lean. Those
 conventions are the crate `editor-service`, which `editor-ffi` and every
 package crate linked into the editor's archive (acp's) depend on; a
 package whose Rust is a library of its own (echo's) reaches them through
-the package runtime instead ("A library loaded when the editor runs, as
-built", above):
+the package runtime instead, the package-facing contract ("The package
+runtime, as built", above). `editor-service` stays the convention only for
+the crates still linked into the archive:
 
 - `queue`: the two event queues, their events and the fake source, moved
   out of `editor-ffi`, which re-exports them. The editor holds one archive,
