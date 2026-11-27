@@ -1,0 +1,19 @@
+[package]
+name = "editor-package-library"
+version = "0.1.0"
+description = "A package's native library, loaded at run time: the package runtime the core hands it, the port that opens a library, the load and its refusals, and the port's fake and contract"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The conventions every service keeps: each member of the package runtime
+# is the core's own implementation over them (a service registered by
+# name, a completion on the completion queue, a child taken over from the
+# process's stream source, a buffer reclaimed), so what a package's library
+# does through the runtime lands where the core already reads. No
+# dev-dependency: the tests run on `editor-service`'s published fakes.
+[dependencies]
+editor-service = { path = "../editor-service" }
+
+[lints]
+workspace = true

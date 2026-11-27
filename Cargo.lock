@@ -641,6 +641,8 @@ dependencies = [
  "editor-launch",
  "editor-launch-std",
  "editor-layout",
+ "editor-package-library",
+ "editor-package-library-libloading",
  "editor-platform",
  "editor-platform-arboard",
  "editor-platform-winit",
@@ -732,6 +734,22 @@ version = "0.1.0"
 dependencies = [
  "editor-text",
  "proptest",
+]
+
+[[package]]
+name = "editor-package-library"
+version = "0.1.0"
+dependencies = [
+ "editor-service",
+]
+
+[[package]]
+name = "editor-package-library-libloading"
+version = "0.1.0"
+dependencies = [
+ "editor-package-library",
+ "editor-syntax-fixture-ini",
+ "libloading",
 ]
 
 [[package]]

@@ -239,6 +239,7 @@ disallowed-methods = [
   { path = "editor_fs_std::StdFs::system", allow-invalid = true, reason = "the real file system is made in one place, the process's file service; everything else takes an `Fs`, and a test hands it `FakeFs`" },
   { path = "editor_process_std::StdProcesses::system", allow-invalid = true, reason = "real processes are started in one place, the process's process service; a test runs on `FakeProcesses`" },
   { path = "editor_watch_notify::NotifyWatch::system", allow-invalid = true, reason = "real files are watched in one place, the process's watch service; a test runs on `FakeWatch`" },
+  { path = "editor_package_library_libloading::LibLoading::system", allow-invalid = true, reason = "a package's library is opened in one place, the process's loader of package libraries; a test of the load runs on `FakeLibraries`" },
   { path = "editor_grep_ripgrep::RipgrepFiles::new", allow-invalid = true, reason = "real files are searched in one place, the process's grep service; a test runs on `FakeFiles`" },
   { path = "editor_fuzzy_nucleo::NucleoScorer::new", allow-invalid = true, reason = "the scorer library is made in one place, the process's fuzzy service; a test runs on the scorer's fake, `InOrder`" },
   { path = "editor_fuzzy_triple_accel::TripleAccel::new", allow-invalid = true, reason = "the searcher library is made in one place, the process's fuzzy service; a test runs on the searcher's fake, `locate::Scan`" },
