@@ -2267,6 +2267,28 @@ status 0 in mode-line.active: mode-line.state.normal "NORMAL" +8, mode-line.buff
   job reads it, so how many there are differs from run to run on a real
   host: its setup leaves the job lines out, and a scene line carries no
   count of the scenes published.
+- **`tests/headless/environment-sources`** is the default set's wiring of
+  a child's environment, the one check that the set registers the `mise`
+  package's directory source and the `login-shell` package's base, and
+  chooses that base: its config's command `layers` reads the installed
+  registry through `environment-api` (`EnvironmentApi.ofRegistry`, with
+  the base the registry names, `RegistryRequest.environmentBase`, as the
+  host reads them at a reload that installs) and says the base and the
+  directory sources it gives in the window mode, with the home directory
+  `/u`, and in the headless mode. With no setting, `base login-shell in
+  /u, probed by /usr/bin/printenv SHELL, /usr/bin/id -P, else /bin/zsh;
+  mise first of /u/.local/bin/mise, /opt/homebrew/bin/mise,
+  /usr/local/bin/mise, else skip | headless: base inherited; none`
+  (`LoginShell.program`, `Mise.candidates`); with `Mise.executable
+  "/opt/mise"` in config (`executable-config/`), `mise at /opt/mise` in
+  both, config's value replacing the package's, over the same bases. A
+  set that drops `mise`, from its lakefile's requires or its entry
+  modules, says `none` for the directory sources and rejects the second
+  config; one that drops `login-shell` says `base inherited` in both
+  modes. A config
+  that calls `Mise.executable` twice (`twice-config/`) is rejected, its
+  diagnostic saying the setting `Mise.executable` is set twice. It starts
+  no child.
 - **The fixtures of the four features that moved in the
   features-as-packages roadmap's phase 3 are their packages'**:
   `packages/mode-line/tests/headless/mode-line`, the core's until then;

@@ -153,6 +153,7 @@ import ModelTest.Editor.Watch.Model
 import ModelTest.Editor.Window
 import ModelTest.Editor.WindowCheck
 import ModelTest.Editor.Workspace
+import ModelTest.EnvironmentApi
 import ModelTest.FilesApi
 import ModelTest.Lint.RealHost
 import ModelTest.Lint.RealHost.Contract
@@ -568,7 +569,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   partial-listing statuses and the failures naming the program, a lister's or a filter's time-out among them; and through the loop on the driver, a new text
   cancelling the old generation, a stale batch never listed, the filter's
   order kept with the style's ranges, and a missing filter said in the
-  echo area;
+  echo area; and the lister and filter started with their layers'
+  environment;
 - `sourceContractChecks`: the completion sources' contract
   (`Editor/Completion/Contract.lean`) on the model, the fake and the key
   hints' source, run on the kit's
@@ -1033,7 +1035,10 @@ The config session's decisions are tested here too, with no elaborator:
   in the registry, which tells the loop of them beside the languages that
   name them, and starts their registration for the new generation after
   cancelling config's jobs and before its report; a rejected reload, and
-  an install that declares none, start none;
+  an install that declares none, start none. A reload whose registry would
+  name a base of a child's environment no source answers to, config's
+  choice or a package's default, is rejected with an error that lists the
+  bases, and the config loaded stays;
 - `reloadHintChecks`: an install replaces config's descriptions and prefix
   names with its bindings, so a later config without them clears them;
 - `packageChecks`: packages (`Editor/Package.lean`) and registering them
@@ -1068,7 +1073,9 @@ The config session's decisions are tested here too, with no elaborator:
   over a point (`Extension.workJob`) is made, when it is started, from the
   values registered there then, in registration order, from none when
   none is, from config's once a reload installs it and the package's alone
-  after one drops it, and never from another type's point;
+  after one drops it, and never from another type's point; and a
+  package's setting (`Extension.setting`) registers as `add` does, and a
+  `setup` that gives one setting twice is refused, naming it;
 - the shipped styles and displays are the default package `completion`'s
   (`packages/completion/`), the shipped segments the default package
   `mode-line`'s (`packages/mode-line/`), and the `code` mode with the
@@ -1323,6 +1330,21 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   the language the registry's table chooses for a file it opens; and a set's own `Files` value of
   the name `files`,
   registered after the feature's, is the one `files?` answers;
+- `environmentRegistryChecks`: the interface library `environment-api`'s
+  reading rules (`EnvironmentApi.lean`): the directory-source hook keeps
+  registration order and replaces a value of a name in its place; the base
+  choice gives `inherited` with nothing registered and the latest value of
+  a name, and refuses a name nobody answers to with the bases listed,
+  `inherited` first, each once, joined `a, b and c`;
+  `registered` keeps the base installed before for an unknown name; and,
+  on the job model, with nothing registered a child starts exactly as its
+  command says with no lookup, and the base setting picks the registered
+  base of that name, `inherited` when unset, config's choice over a
+  package's default;
+- `environmentApiChecks`: `environment-api`'s fakes keep its directory and
+  base contracts on the model rigs, a base whose program is probed among
+  them, and the contracts fail a package that
+  registers nothing and a source that ignores its output;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1520,7 +1542,7 @@ def checks : List Check :=
     fileRunnerChecks ++
     processChecks ++
     processEnvironmentChecks ++
-    environmentLookupChecks ++
+    environmentLayerChecks ++
     fileWatchModelChecks ++
     fileWatchRunnerChecks ++
     grepModelChecks ++
@@ -1686,6 +1708,8 @@ def checks : List Check :=
     excerptViewedChecks ++
     jsonChecks ++
     filesApiChecks ++
+    environmentRegistryChecks ++
+    environmentApiChecks ++
     gutterCarryChecks ++
     gutterTrackChecks ++
     boundChecks

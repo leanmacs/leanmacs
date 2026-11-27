@@ -138,8 +138,8 @@ def configOnlySettings : List (SetupM Unit × String) :=
   [(useTheme "default", "useTheme"), (modeLine ["state"] [], "modeLine"),
     (framePadding 4, "framePadding"), (keyHintDelay 250, "keyHintDelay"),
     (layout .monocle, "layout"), (tabBar .never, "tabBar"), (titleBar .standard, "titleBar"),
-    (processEnvironment .inherited, "processEnvironment"), (autoReload true, "autoReload"),
-    (workspace "/w", "workspace"), (workspaceLister "/w" "fd", "workspaceLister"),
+    (autoReload true, "autoReload"), (workspace "/w", "workspace"),
+    (workspaceLister "/w" "fd", "workspaceLister"),
     (projectLister (.remote "github.com/o/r") "fd", "projectLister"),
     (displayRule { target := .newTab }, "displayRule"), (shellTimeLimit 5, "shellTimeLimit"),
     (syntaxRefreshDelay 5, "syntaxRefreshDelay"), (leaderKey "SPC", "leaderKey"),
@@ -152,6 +152,17 @@ order they register in, what is refused, and what a reload and config do
 to them. -/
 def packageChecks : List Check :=
   [{  name :=
+        "a package's environmentBase is a default, not refused: the registry's base name is the latest package's default, inherited with none"
+      run :=
+        let base (name base : String) : Package := { name, setup := environmentBase base }
+        let (one, refusedOne) := packaged #[base "first" "a"]
+        let (two, refusedTwo) := packaged #[base "first" "a", base "second" "b"]
+        let (none_, _) := packaged #[]
+        pure
+          (refusedOne.isEmpty && refusedTwo.isEmpty && one.registry.baseName == "a" &&
+            two.registry.baseName == "b" &&
+            none_.registry.baseName == Process.inheritedName) },
+    { name :=
         "a package's codec across a restart is registered for its owner, and the loop is told it"
       run :=
         let (state, refused) := packaged #[everyKind "one"]

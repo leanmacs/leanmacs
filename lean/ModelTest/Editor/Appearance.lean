@@ -8,7 +8,6 @@ import Editor.DisplayRules
 import Editor.Face
 import Editor.Layout
 import Editor.ModeLine
-import Editor.Process.Environment
 import Editor.Program
 import Editor.Setup
 import Editor.TabBar

@@ -247,7 +247,11 @@ from the next command.
   - which at-point sources a buffer's chain has for an occasion
     (`atPointSources`, from `Loop.Registered.atPointNames` and
     `atPoint`), handed the buffer's major and minor modes:
-    `completeAtPoint` asks (`Editor/Api.lean`).
+    `completeAtPoint` asks (`Editor/Api.lean`);
+  - the name of the base of a child's environment a host installs
+    (`environmentBase`, `Config.Registry.baseName`): a command that says the
+    layers asks, as the default set's standing fixture
+    `tests/headless/environment-sources` does.
 - **Loading a theme** (`StateRequest.loadTheme`) is refused with
   `noSuchTheme` for a name the loop was not told a theme is registered
   under, with the state as it was. Otherwise the name is kept in the state,
@@ -582,6 +586,10 @@ structure Loop.Registered where
   tail of `extensions`' answer, for a command that asks for config's apart
   (`RegistryRequest.configExtensions`, `Extension.configValues`). -/
   configExtensions : Lean.Name → Array Dynamic := fun _ => #[]
+  /-- The name of the base of a child's environment a host installs
+  (`Config.Registry.baseName`), for a command that asks
+  (`RegistryRequest.environmentBase`). -/
+  environmentBase : String := Process.inheritedName
 
 /-- The workspace settings `registered` says: config's workspace roots, the
 git program, and config's workspace listers. The marker modes are not the
@@ -619,6 +627,7 @@ def Loop.Registered.answer (registered : Loop.Registered) :
   | .storeCodec name => registered.codec? name
   | .extensions key => registered.extensions key
   | .configExtensions key => registered.configExtensions key
+  | .environmentBase => registered.environmentBase
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/

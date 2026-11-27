@@ -1,0 +1,9 @@
+# The script the default set's fixture harness runs stepped against the
+# config in `twice-config/`, which calls `Mise.executable` twice. What it
+# prints must be exactly `twice-expected`. It touches no file and starts no
+# child.
+#
+# The reload is rejected, its diagnostic naming the setting given twice, as
+# the core's own settings are refused (`Config.Registrations.settingTwice`).
+reload
+settle

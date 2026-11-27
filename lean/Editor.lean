@@ -7,6 +7,7 @@ import Editor.Quit
 import Editor.Text.Word
 import Editor.UndoTree.Theorems
 import Editor.Vocabulary
+import EnvironmentApi
 
 /-!
 # The editor
@@ -36,7 +37,10 @@ config loads and saves files with `File.load` and `File.save`, and the
 process requests (`Editor/Process.lean`): a job of config's runs a program
 with `Process.run`. Faces come
 with `Editor/Setup.lean` too (`Editor/Face.lean`): config sets one with
-`face`. The file
+`face`. The interface library `environment-api` comes with it
+(`EnvironmentApi.lean`): config registers a child's environment sources at
+its extension points, `EnvironmentApi.DirectorySource` and
+`EnvironmentApi.BaseSource`, on any set. The file
 commands are the default package `files`' since the features-as-packages
 roadmap's phase 6 (`packages/files/Files.lean`): this base does not import
 them, and a config of a set that holds the package reaches `Files.open` and

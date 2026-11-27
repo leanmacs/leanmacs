@@ -75,7 +75,9 @@ relative (`Lister.relative`), as one batch. A lister's exit in its
 `partialListing`, `find`'s 1 past a directory it cannot read, still
 answers what it listed. A failure throws, naming the
 program and the lister's origin, and the echo area says
-`workspace-files: <message>`. A new text cancels the job, which kills its
+`workspace-files: <message>`. The lister and fzf are started with the
+child's layered environment, so fzf on no directory of that `PATH` is said
+as not found. A new text cancels the job, which kills its
 child. So no key waits on the lister or the filter: they run only in the
 job, on the pool.
 

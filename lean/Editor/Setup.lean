@@ -425,20 +425,27 @@ place of the themed one, whose paper is the theme's. It is read when the
 window opens, so a reload changes it at the next start. Choosing it twice
 is refused.
 
-Config chooses where a child's environment comes from
-(`Editor/Process/Environment.lean`) with `processEnvironment`, the first
-option of the port: `inherited`, no lookup; `mise`, with the absolute path of
-the executable or with none, which looks in the usual places; or the
-default, `auto`, which a `setup` that does not set it keeps:
+A child's environment is built from sources the packages register at the
+extension points of `environment-api` (`EnvironmentApi.lean`): the default
+package `mise` registers mise as a directory source, and its setting,
+`Mise.executable`, takes mise's path. Config chooses the base under every
+directory source by name with `environmentBase`, a base source a package
+registered or the core's `inherited`, launchd's environment, which is the
+base when nothing chooses one:
 
 ```lean
 def setup : SetupM Unit := do
-  processEnvironment (.mise (some "/opt/homebrew/bin/mise"))
+  environmentBase "inherited"
 ```
 
-A relative path is refused, and so is a second `processEnvironment` in one
-`setup`. A reload that installs takes the setting, and drops every
-directory's cached environment.
+In a package, `environmentBase` is a default, which config's overrides.
+Choosing it twice in one `setup` is refused. A name no base answers to
+refuses the config at reload, with a diagnostic that lists the bases there
+are, and children keep the base they had. A reload that
+installs takes the layers, and drops every cached environment, the base's
+and each directory's. `processEnvironment`, which chose mise or no lookup,
+is retired: a `setup` that calls it is refused with a message that names
+what replaces it (`processEnvironmentGone`).
 
 Config sets how long a `:!` or a filter may run before it is killed with
 `shellTimeLimit`, in milliseconds (`shellTimeLimit 5000`); with none it is
@@ -568,13 +575,14 @@ for the same reasons. Two things differ, both said in
 
 - **A package may not set what only config chooses**: `useTheme`,
   `modeLine`, `framePadding`, `keyHintDelay`, `layout`, `tabBar`,
-  `titleBar`, `processEnvironment`, `autoReload`, `workspace`,
+  `titleBar`, `autoReload`, `workspace`,
   `workspaceLister`, `projectLister`, `displayRule`, `shellTimeLimit`,
   `syntaxRefreshDelay`, `leaderKey`, `localLeaderKey`, `useStyle`,
   `useDisplay` and `useDisplayFor`. A package that calls one is
   refused whole, with a message that names it and the setting.
 - **A package's `useStyleFor` is a default**, not a choice: the style of
-  the category unless config's `useStyleFor` chooses another.
+  the category unless config's `useStyleFor` chooses another. So is a
+  package's `environmentBase`: the base unless config's chooses another.
 
 What a package registers belongs to the owner named after it, so the
 sentences here that say "for this config" read "for this package", and a
@@ -669,9 +677,10 @@ inductive SetupRequest where
   | tabBar (shown : TabBar.Shown)
   /-- Choose the title bar the window opens with (`Window.TitleBar`). -/
   | titleBar (style : Window.TitleBar)
-  /-- Choose where a child's environment comes from
-  (`Editor/Process/Environment.lean`). -/
-  | processEnvironment (setting : Process.Setting)
+  /-- Choose the base of a child's environment by name: a base source
+  registered at `EnvironmentApi.BaseSource`, or the core's `inherited`
+  (`Editor/Process/Environment.lean`). In a package it is a default. -/
+  | environmentBase (name : String)
   /-- Set auto-reload on or off (`Editor/Loop.lean`, "Auto-reload"). -/
   | autoReload (on : Bool)
   /-- Declare `root`, an absolute path, a workspace root, of the project
@@ -726,6 +735,10 @@ inductive SetupRequest where
   /-- Register `value` at the extension point `key`, the name of the type
   `value` was made from (`Editor/Extension.lean`). -/
   | extend (key : Lean.Name) (value : Dynamic)
+  /-- Say that this `setup` gives the package's setting `name`, which one
+  `setup` gives once (`Extension.setting`, `Editor/Extension.lean`): a second
+  is refused (`Config.Registrations.settingTwice`). -/
+  | setting (name : String)
   /-- Register the job called `name` over the extension point `key`: its
   work is made each time it is started, by `work` applied to the values
   registered at `key` then, in registration order, and the arguments it is
@@ -759,7 +772,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .layout _ => Unit
   | .tabBar _ => Unit
   | .titleBar _ => Unit
-  | .processEnvironment _ => Unit
+  | .environmentBase _ => Unit
   | .autoReload _ => Unit
   | .workspace .. => Unit
   | .workspaceLister _ => Unit
@@ -777,6 +790,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .useAtPoint .. => Unit
   | .menu _ => Unit
   | .extend .. => Unit
+  | .setting _ => Unit
   | .jobOver .. => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
@@ -1234,21 +1248,38 @@ at the next start. The editor refuses the `setup` for choosing it twice. -/
 def titleBar (style : Window.TitleBar) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.titleBar style))
 
-/-- The message a setting of mise's path is refused with when the path is not
-absolute. -/
-def relativeMise (path : System.FilePath) : String :=
-  s!"the path to mise must be absolute: {path}"
+/-- Chooses the base of a child's environment by name
+(`Editor/Process/Environment.lean`): the base source registered under
+`name` at `EnvironmentApi.BaseSource`, or the core's `inherited`, the base
+when nothing chooses one. In config it is the choice; in a package, a
+default, which config's choice overrides. A name no registered base answers
+to refuses the config at reload, with a diagnostic that lists the bases
+there are, and children keep the base they had. The editor
+refuses the `setup` for choosing it twice. -/
+def environmentBase (name : String) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.environmentBase name))
 
-/-- Chooses where a child's environment comes from: `inherited`, no lookup;
-`mise` with the absolute path of the executable, or with none, which takes
-the first of the usual places that exists; or `auto`, the default
-(`Editor/Process/Environment.lean`). Refuses the `setup` for a path that is
-not absolute. -/
-def processEnvironment (setting : Process.Setting) : SetupM Unit := do
-  if let .mise (some path) := setting then
-    unless path.isAbsolute do
-      throw (relativeMise path)
-  ExceptT.lift (Program.request (port := setupPort) (.processEnvironment setting))
+/-- What a `setup` that calls `processEnvironment` with `setting` is refused
+with: the setting is gone, since a child's environment comes from the
+packages' sources, and what replaces it, which names the mise package's
+setting, `Mise.executable`. -/
+def processEnvironmentGone (setting : Process.Setting) : String :=
+  let advice :=
+    match setting with
+    | .inherited =>
+      "to start children with the editor's own environment, leave the package `mise` out of the package set; its setting, `Mise.executable`, is gone with it"
+    | .mise (some path) =>
+      s!"to run mise at that path, call `Mise.executable \"{path}\"`, the setting of the package `mise`"
+    | .auto | .mise none =>
+      "the package `mise` looks for mise in the usual places itself; to run it at a path, call `Mise.executable`, its setting"
+  s!"`processEnvironment` is gone: a child's environment comes from the packages' environment sources; {advice}"
+
+/-- Kept only so that a config that still calls it elaborates and is then
+refused, with a message that names what replaces it
+(`processEnvironmentGone`): a child's environment comes from the packages'
+sources (`EnvironmentApi`), mise's from the package `mise`. -/
+def processEnvironment (setting : Process.Setting) : SetupM Unit :=
+  throw (processEnvironmentGone setting)
 
 /-- Turns auto-reload on, or with `false` off. With it on, a follow job
 watches each file buffer's file, and a change on disk reloads a buffer with

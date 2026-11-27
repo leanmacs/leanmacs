@@ -799,13 +799,18 @@ by, at once (`Editor/Process/Environment.lean`). -/
 structure Environments where
   /-- The answer to `request`. It never waits. -/
   ask : (request : EnvironmentRequest) → BaseIO request.Reply
+  /-- Takes `registered` as the layers, and drops every resolved program and
+  every entry: what a reload that installs does (`Process.Environments.install`).
+  Only the host installs; a job never does. -/
+  install : Process.Registered → BaseIO Unit
 
 /-- The environments of a runner given none: every request answered as the
-default state answers it, `auto` in the headless mode, which is `inherited`,
-and nothing kept. So a job's process requests start their children exactly
-as their commands say. -/
+default state answers it, the inherited base and no directory source, and
+nothing kept; an install changes nothing. So a job's process requests start
+their children exactly as their commands say. -/
 def Environments.inherited : Environments where
   ask request := pure (({} : Process.Environments).handle request).1
+  install _ := pure ()
 
 /-- The environments over `state`, which every job given them shares: each
 request is answered from it in one atomic step, and a message it says for
@@ -822,6 +827,7 @@ def sharedEnvironments (state : IO.Ref Process.Environments) (report : String �
     if let some text := said then
       report text
     return reply
+  install registered := state.modify (·.install registered)
 
 /-- The package services a runner is given, by name
 (`Editor/PackageService.lean`): the program's edge hands it every

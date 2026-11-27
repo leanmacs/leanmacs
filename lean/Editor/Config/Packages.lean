@@ -60,10 +60,13 @@ keys bound twice. What it collected is then one of three kinds.
   category (`Config.Registry.styleDefaults`), which sits between config's
   two choices: config's `useStyleFor` overrides it and its `useStyle` does
   not reach it. Of two packages' defaults for one category the later
-  package's is used.
+  package's is used. `environmentBase name` is the package's default base
+  of a child's environment (`Config.Registry.baseDefaults`): config's
+  `environmentBase` overrides it, and of two packages' defaults the later
+  package's is used (`Config.Registry.baseName`).
 - **Config's alone, refused in a package** (`Registrations.configOnly`):
   `useTheme`, `modeLine`, `framePadding`, `keyHintDelay`, `layout`, `tabBar`,
-  `titleBar`, `processEnvironment`, `autoReload`, `workspace`,
+  `titleBar`, `autoReload`, `workspace`,
   `workspaceLister`, `projectLister`, `displayRule`, `shellTimeLimit`,
   `syntaxRefreshDelay`, `leaderKey`, `localLeaderKey`, `useStyle`,
   `useDisplay` and `useDisplayFor`. They are what an install
@@ -156,7 +159,6 @@ def Registrations.configOnly (collected : Registrations) : List String :=
         (!collected.framePaddings.isEmpty, "framePadding"),
         (!collected.keyHintDelays.isEmpty, "keyHintDelay"), (!collected.layouts.isEmpty, "layout"),
         (!collected.tabBars.isEmpty, "tabBar"), (!collected.titleBars.isEmpty, "titleBar"),
-        (!collected.environments.isEmpty, "processEnvironment"),
         (!collected.autoReload.isEmpty, "autoReload"),
         (!collected.workspaceRoots.isEmpty, "workspace"), (listers false, "workspaceLister"),
         (listers true, "projectLister"), (!collected.displayRules.isEmpty, "displayRule"),
@@ -252,10 +254,11 @@ variable {β σ : Type}
 
 /-- `state` with `package` registered: its owned registrations for its owner
 (`Registry.replaceOwned`), its grammars among them, resolved against the
-directory `directories` names for its Lake package; its style defaults after
-the ones there are, the cells of its stores, and its name among the packages
-registered. Or the message it is refused with, when its name is one already
-registered (`Package.namedTwice`) or the package is refused by itself
+directory `directories` names for its Lake package; its style defaults and
+its base default after the ones there are, the cells of its stores, and its
+name among the packages registered. Or the message it is refused with, when
+its name is one already registered (`Package.namedTwice`) or the package is
+refused by itself
 (`Package.collected`); `state` is then unchanged. -/
 def register (state : State β σ) (package : Package)
     (directories : List (String × System.FilePath) := []) : Except String (State β σ) := do
@@ -268,7 +271,9 @@ def register (state : State β σ) (package : Package)
   return { state with
       packages := state.packages.push package.name
       registry :=
-        { registry with styleDefaults := registry.styleDefaults ++ collected.styleDefaults }
+        { registry with
+          styleDefaults := registry.styleDefaults ++ collected.styleDefaults
+          baseDefaults := registry.baseDefaults ++ collected.environmentBases }
       cells := (state.cells.install package.owner collected.stores).1
       cellsRevision := state.cellsRevision + 1 }
 

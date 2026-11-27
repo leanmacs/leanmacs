@@ -50,6 +50,9 @@ details:
   (`tests/grammar-set/`), whose build stages its package's `grammars/`
   and writes `editor.grammars`, with its package's targets and linked
   test, each on a line of its own.
+- **`lean-deny`**: lean-deny's check of the structure rules
+  (`.agents/rules/structure.md`) over the default set and over the core
+  ("The structure check").
 - **`lean-fmt`**: lean-fmt's format and lint checks over the core, each
   package of the fixture set ("Formatting") and the grammar set's package.
 - **`ffi-test`**: cargo-deny over each set's generated crate ("The Rust
@@ -109,6 +112,39 @@ build generates from the fixture set and from the default set (`lake -d
 <set> query :editorRustCrate`), with the `deny.toml` the build writes
 beside it (`rustDenyConfig` in `lean/lakefile.lean`), and passes by
 cargo-deny's exit status.
+
+## The structure check
+
+`mise run lean-deny` checks the structure rules of
+`.agents/rules/structure.md` with lean-deny, a checker of import rules over
+Lake's resolved module graph, as cargo-deny's bans check the Rust crates.
+
+- **lean-deny is required by a package of its own, its host**
+  (`tools/lean-deny/lakefile.toml`), as lean-fmt is ("Formatting"): the
+  core and the default set fetch no git repository
+  ([packages.md](../design/packages.md), "Manifests: a set's build fetches
+  nothing"). Its clone and build stay under `lean/.lake/packages` (the
+  host's `packagesDir`), and its `lean-toolchain` links to the pin, so it
+  is built with this repository's Lean, and the Lake inside it elaborates
+  `lean/lakefile.lean` as this repository's Lake does.
+- **Two policies, one per workspace.** `packages/lean-deny.toml`, over
+  `packages/` (the default set, which requires the core), holds Core
+  imports, Host imports, What a package may import, Three layers,
+  Leave-out, Module map (it reads `docs/design/packages.md`) and Lint
+  plugins. `lean/lean-deny.core.toml`, over `lean/`, holds the core
+  imports rules that the core alone answers. The task runs `lake -d
+  ../tools/lean-deny exe lean-deny check --workspace … --config …` in
+  `lean/` once for each.
+- **It runs after `lean`.** The default-set policy reads the two roots the
+  package-set build generates (`packages/.lake/build/root/EditorSetRoot.lean`
+  and `EditorSetFixtures.lean`) as `[[root]]` tables, and lean-deny never
+  runs Lake to write them, so the task depends on `lean`.
+- **It passes by exit status**: 0 when every rule holds, 1 on a violation,
+  2 on a bad policy or workspace, a selector that matches nothing, or an
+  entry that has no effect.
+- **Bumping the pin**: lean-deny has no release tag yet, so the host pins
+  a commit. Change `rev` in `tools/lean-deny/lakefile.toml` and run `lake
+  -d ../tools/lean-deny update --keep-toolchain` in `lean/`.
 
 ## The wait lints
 

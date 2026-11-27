@@ -19,14 +19,17 @@ local workflow_sources = List(".github/**", "mise.toml")
 // build from (`crates/**`, `vendor/**`: queries, shaders and grammar files
 // beside the Rust), the Lean core, the package sets and the fixtures, the
 // default config, the guide's example package (`docs/packages/*/**`, which
-// the fixture set requires), every script the gate runs (`tools/**`), what
-// the bundle steps stage (`packaging/**`), the tools' configs and this
-// file. A commit that stages nothing else (the docs, README.md, .agents/,
+// the fixture set requires), every script the gate runs (`tools/**`, with
+// the formatter's and lean-deny's hosts), what the bundle steps stage
+// (`packaging/**`), the tools' configs (lean-deny's policies are under
+// `lean/` and `packages/`), the module map that lean-deny reads
+// (`docs/design/packages.md`) and this file. A commit that stages nothing
+// else (the other docs, README.md, .agents/,
 // infra/ outside the workflow lint's file) runs no step. Narrower,
 // graph-based selection is rdm task build-graph-test-selection-tool.
 local ci = new Mapping<String, Step> {
     ["mise_ci"] {
-        glob = rust_sources + c_sources + workflow_sources + List("crates/**", "vendor/**", "deny.toml", "clippy.toml", ".clang-format", "hk.pkl", "lean/**", "packages/**", "tests/**", "config/**", "docs/packages/*/**", "tools/**", "packaging/**")
+        glob = rust_sources + c_sources + workflow_sources + List("crates/**", "vendor/**", "deny.toml", "clippy.toml", ".clang-format", "hk.pkl", "lean/**", "packages/**", "tests/**", "config/**", "docs/packages/*/**", "docs/design/packages.md", "tools/**", "packaging/**")
         check = "mise run ci"
         exclusive = true
     }

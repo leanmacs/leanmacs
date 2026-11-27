@@ -1,0 +1,12 @@
+# The script the default set's fixture harness runs stepped against the
+# config in `executable-config/`, which calls `Mise.executable "/opt/mise"`.
+# What it prints must be exactly `executable-expected`. It touches no file
+# and starts no child.
+#
+# Config's value of the name mise replaces the package's in its place: the
+# one source, named mise, is mise at /opt/mise in both modes, over the
+# login-shell base the set chooses, looked up in the window mode alone.
+reload
+settle
+run layers
+scene

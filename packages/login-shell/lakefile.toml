@@ -1,0 +1,72 @@
+# The login shell as the base of a child's environment: the package
+# registers a value at `environment-api`'s base-source extension point
+# (`EnvironmentApi.BaseSource`), named `login-shell`, that runs the user's
+# shell as a login shell in the home directory and reads the environment it
+# prints, and chooses it as the default base (`environmentBase`); its
+# setting, `LoginShell.timeLimit`, takes the lookup's time limit. A default
+# package, a Lake package outside the core that the default package set
+# requires (../lakefile.toml; docs/design/packages.md, "The package set and
+# its build"). It was added by the process-environment-sources roadmap's
+# phase 3. The gate's package steps build, test, lint and format-check it
+# through the fixture set, which requires the default set
+# (tools/package-set.sh), and review holds what it imports of the core to
+# the rule in `.agents/rules/structure.md`.
+#
+# - `LoginShell` is the package's library: `LoginShell.lean`, the source,
+#   its parser and the setting, `LoginShell/Compiled.lean`, the `Package`
+#   value, and its entry module `LoginShell/EditorPackage.lean`, which the
+#   package-set build reads. Its `globs` hold every module under
+#   `LoginShell`, so the library's build reaches each one. It implements
+#   the core's interface library `environment-api` (`EnvironmentApi`,
+#   `lean/EnvironmentApi.lean`), which is in the core's Lake package, so it
+#   requires the core alone.
+# - `login-shell-test` is its test driver (`lake test`): the tests that
+#   need no Rust library, rooted at `LoginShellTest/Model.lean`. It is no
+#   default target, as the core's `model-test` is not: `mise run lean` links
+#   with the system compiler, which this executable has no flags for.
+# - `LoginShellTest` holds the test modules, and `LoginShellTest/Linked.lean`:
+#   the root of the executable the core's `editorLinked` facet links as the
+#   editor is linked, with the Rust library. It runs `environment-api`'s
+#   base contract over the library's process service, and the one wiring
+#   check of a real base under a real directory source, with the fixtures
+#   under `tests/login-shell` standing in for a login shell and for mise.
+#   No test runs the user's own shell.
+#
+# It has no headless fixture of its own: the default set's standing fixture
+# tests/headless/environment-sources says the base it chooses.
+#
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the three-layer rule (.agents/rules/structure.md) holds it to that.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/login-shell update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages), and commit each lake-manifest.json.
+name = "login-shell"
+testDriver = "«login-shell-test»"
+defaultTargets = ["LoginShell", "LoginShellTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/lintShared"]
+
+# The core, whose Lake package holds the interface library this package
+# implements, `EnvironmentApi`, with its fakes, contract and model rigs
+# (`EnvironmentApiTest`).
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "LoginShell"
+globs = ["LoginShell.*"]
+
+[[lean_lib]]
+name = "LoginShellTest"
+globs = ["LoginShellTest.+"]
+
+[[lean_exe]]
+name = "login-shell-test"
+root = "LoginShellTest.Model"

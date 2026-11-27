@@ -694,9 +694,15 @@ structure Registry where
   languages : Array LanguageEntry := #[]
   /-- The grammar entries. -/
   grammars : Array GrammarEntry := #[]
-  /-- Where a child's environment comes from, as config set it; `none` when
-it did not, which a host reads as `auto`. -/
-  environment : Option Process.Setting := none
+  /-- The base of a child's environment config chose by name
+  (`environmentBase`, `Editor/Setup.lean`); `none` when it chose none, so
+  the packages' default holds (`baseName`). Set at every install. -/
+  environmentBase : Option String := none
+  /-- The packages' defaults of the base's name (`environmentBase` in a
+  package), in the order they registered: set when the host starts
+  (`Config.State.register`) and never by an install; the latest is the one
+  used (`baseName`). -/
+  baseDefaults : Array String := #[]
   /-- Whether config turns auto-reload on (`autoReload`,
   `Editor/Setup.lean`): false when it says nothing. -/
   autoReload : Bool := false
@@ -1167,6 +1173,12 @@ config's. -/
 def extensionsAt (registry : Registry) (key : Lean.Name) : Array Dynamic :=
   (registry.extensions.filter (·.key == key)).map (·.value)
 
+/-- The name of the base of a child's environment: config's choice
+(`environmentBase`), else the latest package's default (`baseDefaults`),
+else the core's `inherited` (`Process.inheritedName`). -/
+def baseName (registry : Registry) : String :=
+  registry.environmentBase.getD (registry.baseDefaults.back?.getD Process.inheritedName)
+
 /-- The values config registered at the extension point `key`, in
 registration order: the tail of `extensionsAt`'s answer, since config
 installs after every package. -/
@@ -1363,7 +1375,8 @@ completion source registered under a name (`source?`) and the names of
 those registered in a category (`sourcesIn`), for a prompt that asks for
 them; and the codec a store is kept across a restart with (`codec?`), with
 its owner's name, and whether a job is reported as stopped by a restart
-(`reported`), for the session restore. Which command a
+(`reported`), for the session restore; and the name of the base of a
+child's environment (`baseName`), for a command that says the layers. Which command a
 name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
@@ -1382,7 +1395,7 @@ def registered (registry : Registry) : Loop.Registered :=
     atPoint := registry.atPoint?, atPointNames := registry.atPointNames
     codec? := fun name => (registry.codec? name).map fun (owner, codec) => (owner.name, codec)
     reported := registry.reported, extensions := registry.extensionsAt
-    configExtensions := registry.configExtensionsAt }
+    configExtensions := registry.configExtensionsAt, environmentBase := registry.baseName }
 
 end Registry
 
@@ -1445,9 +1458,10 @@ accepted names at most one (`theme`). -/
   /-- The title bars `setup` chose (`titleBar`), in order: more than one is
   refused, so a `setup` that is accepted chooses at most one (`titleBar`). -/
   titleBars : Array Window.TitleBar := #[]
-  /-- Each setting of where a child's environment comes from, in the order
-they were made: one at most, in a `setup` that is not refused. -/
-  environments : Array Process.Setting := #[]
+  /-- Each base of a child's environment the `setup` chose by name
+  (`environmentBase`), in order: one at most, in a `setup` that is not
+  refused. -/
+  environmentBases : Array String := #[]
   /-- What each `autoReload` of the `setup` said, in order. -/
   autoReload : Array Bool := #[]
   /-- The workspace roots the `setup` declared, in order: a root once at
@@ -1496,6 +1510,10 @@ they were made: one at most, in a `setup` that is not refused. -/
   /-- The values registered at extension points (`Extension.add`), each with
   its point's key, in the order they were registered. -/
   extensions : Array (Lean.Name × Dynamic) := #[]
+  /-- The packages' settings the `setup` gave (`Extension.setting`), by
+  name, in order: a setting once at most, in a `setup` that is not
+  refused. -/
+  settings : Array String := #[]
 
 namespace Registrations
 
@@ -1623,8 +1641,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .tabBar shown, collected => ((), { collected with tabBars := collected.tabBars.push shown })
   | .titleBar style, collected =>
     ((), { collected with titleBars := collected.titleBars.push style })
-  | .processEnvironment setting, collected =>
-    ((), { collected with environments := collected.environments.push setting })
+  | .environmentBase name, collected =>
+    ((), { collected with environmentBases := collected.environmentBases.push name })
   | .autoReload on, collected => ((), { collected with autoReload := collected.autoReload.push on })
   | .workspace root project, collected =>
     ((), { collected with workspaceRoots := collected.workspaceRoots.push { root, project } })
@@ -1655,6 +1673,7 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .menu menu, collected => ((), { collected with menus := collected.menus.push menu })
   | .extend key value, collected =>
     ((), { collected with extensions := collected.extensions.push (key, value) })
+  | .setting name, collected => ((), { collected with settings := collected.settings.push name })
   | .jobOver key name work reported restarted, collected =>
     ((),
       { collected with
@@ -1663,10 +1682,10 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
             { name, work := fun _ _ => throw (JobRegistration.overMessage name), reported, restarted
               over := some (key, work) } })
 
-/-- Where a child's environment comes from, as the `setup` set it, or `none`
-when it did not. -/
-def environment (collected : Registrations) : Option Process.Setting :=
-  collected.environments[0]?
+/-- What a `setup` that gives the package's setting `name` twice is refused
+with (`Extension.setting`). -/
+def settingTwice (name : String) : String :=
+  s!"the setting `{name}` is set twice"
 
 /-- What a `setup` that sets auto-reload twice is refused with. -/
 def autoReloadTwice : String :=
@@ -1742,8 +1761,8 @@ twice, a command name or a job name registered twice, a face set twice, a
 theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
 twice, the layout chosen twice, the tab bar chosen twice, the title bar chosen twice, the leader set twice (`leaderTwice`), the localleader set twice (`localLeaderTwice`), a key sequence bound twice (compared as written, whatever states each binding names; `problemUnder?` compares the keys as they expand), a binding of
-no keys, an ex name bound twice, the process environment set twice,
-auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a command over a store that is not declared, a store kept across a restart twice, a mode name defined twice, a
+no keys, an ex name bound twice, the base environment chosen twice,
+auto-reload set twice, a package's setting given twice (`settingTwice`), a workspace root declared twice, the shell time limit set twice, a command over a store that is not declared, a store kept across a restart twice, a mode name defined twice, a
 mode with a problem under any scheme (`Mode.problems`), of which the first
 is named, a language name defined twice, a language with a pattern no
 file name can be meant by (`Language.problems`), of which the first is
@@ -1796,10 +1815,12 @@ def problem? (collected : Registrations) : Option String := do
     return "the tab bar is chosen twice"
   if collected.titleBars.size > 1 then
     return "the title bar is chosen twice"
-  if collected.environments.size > 1 then
-    return "the process environment is set twice"
+  if collected.environmentBases.size > 1 then
+    return "the base environment is chosen twice"
   if collected.autoReload.size > 1 then
     return autoReloadTwice
+  if let some name := repeated? collected.settings then
+    return settingTwice name
   if let some root := repeated? (collected.workspaceRoots.map (Process.trimmed ·.root)) then
     return workspaceTwice root
   if let some scope := repeated? (collected.workspaceListers.map (·.scope.trimmed)) then

@@ -1,0 +1,6 @@
+# lean-fmt's config for this package (`mise run lean-fmt`, through
+# tools/package-set.sh fmt). The files under `tests/` are no modules of
+# this package: the fixtures its linked test runs in place of a login shell
+# and of a directory source. Everything else is checked with the defaults,
+# as the core is.
+exclude = ["tests/**"]

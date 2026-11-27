@@ -41,10 +41,10 @@ import Editor.Test.Modes
 import Editor.Test.PackageSet
 import Editor.Test.Prompts
 import Editor.Test.Restore
+import Editor.Test.Shell
 import Editor.Test.Sources
 import Editor.Test.Views
 import Editor.Test.Windows
-import Editor.Test.Workspace
 import Editor.Text.Word
 import Editor.Theme.Check
 import Editor.Theme.Picture
@@ -93,12 +93,14 @@ tests' (`Editor.Test.…`, `Editor/Test/`: `Editor.Test.Prompts`, which
 imports much of it, among it the kit's
 hand-written minibuffer (`Editor.Test.Minibuffer`), and
 `Editor.Test.Shipped`, `Editor.Test.Sources`, the kit's hand-written
-at-point (`Editor.Test.AtPoint`), and `Editor.Test.Files`, `.Hosted`,
-`.Opener` and `.Workspace`, which no other kit module imports since the
+at-point (`Editor.Test.AtPoint`), and `Editor.Test.Files`, `.Hosted`
+and `.Opener`, which no other kit module imports since the
 listing's kit moved to `compile-api` in phase 8, the kit's stand-ins for
 session restore's and the package-set build's registrations and for the
 window and tab commands (`Editor.Test.Restore`, `.PackageSet`, `.Windows`,
-phase 8), the frame driver (`Editor.Test.Frame`) and the style and
+phase 8), a shell command's child and replies on the process model
+(`Editor.Test.Shell`, which brings `Editor.Test.Workspace`), the frame
+driver (`Editor.Test.Frame`) and the style and
 display written for tests (`Editor.Test.Listings`, the core's test support
 until the ex line's tests needed it, phase 8), with `Editor.File.Cases`
 and `Editor.UndoTree.Cases`, which it brought) and the

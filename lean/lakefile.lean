@@ -114,6 +114,24 @@ lean_lib FilesApiTest where
   globs := #[.submodules `FilesApiTest]
   plugins := lintPlugin
 
+/-- The interface library `environment-api` (`EnvironmentApi.lean`): the
+extension points a child's environment is built from, a hook of directory
+sources and a choice of base by name, and their reading rules. It is in the
+core's Lake package as its own `lean_lib`, outside `Editor`, with the
+layout and names an interface package has, as `FilesApi` is, and a core
+interface for good: the host reads a child's layers through it at every
+reload that installs, so the core names no source. It imports only the
+core's API, and its test library only that, this library and the core's
+test kit. -/
+lean_lib EnvironmentApi where plugins := lintPlugin
+
+/-- The test library of `environment-api` (`EnvironmentApiTest/`): its fakes
+(`EnvironmentApiTest.Fake`), its contract (`EnvironmentApiTest.Contract`)
+and the model rigs the contract runs on (`EnvironmentApiTest.Model`). -/
+lean_lib EnvironmentApiTest where
+  globs := #[.submodules `EnvironmentApiTest]
+  plugins := lintPlugin
+
 /-- Code that `ffi-test overflow` has Lean's interpreter run
 (`InterpretedFixture.lean`; `mise run ffi-overflow`). It is a library of its
 own that no executable imports, so it is compiled to an `.olean` and never
@@ -1816,12 +1834,13 @@ def relativeUnder (dir file : FilePath) : Option String :=
 #guard relativeUnder "/r/lean" "/r/other/Api.lean" == none
 
 /-- The interface libraries staged in the core's Lake package, each with its
-test library (`lean_lib FilesApi`, above): the config base imports them
-through the features still in the core, so the bundle ships them as it ships
-`Editor`. One moves out of this list when it moves to `packages/`, as
+test library (`lean_lib FilesApi`, `lean_lib EnvironmentApi`, above): the
+config base imports them, `FilesApi` through the features still in the core
+and `EnvironmentApi` for config's sources, so the bundle ships them as it
+ships `Editor`. One moves out of this list when it moves to `packages/`, as
 `VcApi` and `ProjectApi` did in phase 6. -/
 def stagedInterfaceLibraries : List Lean.Name :=
-  [`FilesApi, `FilesApiTest]
+  [`FilesApi, `FilesApiTest, `EnvironmentApi, `EnvironmentApiTest]
 
 /-- `shipsLibrary` on names: whether the library `libName` of a package
 whose base name is `baseName`, the core when `isCore`, ships. -/
@@ -1846,9 +1865,12 @@ def shipsLibrary (pkg : Package) (lib : LeanLib) : Bool :=
 
 /- Guards: which libraries the bundle ships (`shipsLibraryNamed`): of the
 core, `Editor`, the linters' `Lint` and the staged interface libraries
-`FilesApi` and `FilesApiTest`, and none of its test libraries; of another
+`FilesApi`, `FilesApiTest`, `EnvironmentApi` and `EnvironmentApiTest`, and
+none of its test libraries; of another
 package, each library but its tests, `<P>Test`. -/
-#guard [`Editor, `Lint, `FilesApi, `FilesApiTest].all (shipsLibraryNamed true `«editor-core» ·)
+#guard
+  [`Editor, `Lint, `FilesApi, `FilesApiTest, `EnvironmentApi, `EnvironmentApiTest].all
+    (shipsLibraryNamed true `«editor-core» ·)
 
 #guard
   ![`ModelTests, `ConfigFixture, `InterpretedFixture].any (shipsLibraryNamed true `«editor-core» ·)

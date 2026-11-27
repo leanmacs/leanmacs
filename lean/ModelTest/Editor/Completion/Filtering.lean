@@ -7,6 +7,7 @@ import Editor.Job.Model
 import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Process
+import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.State
 import Editor.Test.Completion
@@ -15,6 +16,8 @@ import Editor.Test.Keys
 import Editor.Test.Listings
 import Editor.Test.Loop
 import Editor.Test.Prompts
+import EnvironmentApiTest.Fake
+import EnvironmentApiTest.Model
 import ModelTest.Check
 import ModelTest.Editor.Completion.Later
 import ModelTest.Support.Candidates
@@ -153,6 +156,30 @@ def driver : Option TestDriver :=
 /-- The texts listed in the prompt `driver` holds. -/
 def listedTexts (driver : TestDriver) : Option (Array String) :=
   (candidatesOf driver).map (·.listed.map (·.text))
+
+/-- The base's `PATH` in the layered checks: Homebrew's directory first. -/
+def basePath : String :=
+  "/opt/homebrew/bin:/usr/bin:/bin"
+
+/-- What the directory source prints in `root`: its own entry, then the
+base's `PATH`. -/
+def toolsPath : String :=
+  s!"{root}/.tools/bin:{basePath}"
+
+/-- The base's lookup in the layered checks: `/bin/base`, run in `/` over
+the editor's environment alone. -/
+def baseLookup : Process.Command :=
+  { program := "/bin/base", directory := "/", environment := { set := #[] } }
+
+/-- The directory source's lookup in `root`, over the base's `PATH`. -/
+def directoryLookup : Process.Command :=
+  { program := "/bin/dir", directory := root, environment := { set := #[("PATH", basePath)] } }
+
+/-- `command` as a child of the layered checks is started: the directory
+source's `PATH` under its own environment. -/
+def layered (command : Process.Command) : Process.Command :=
+  { command with
+    environment := Process.Environment.over #[("PATH", toolsPath)] command.environment }
 
 end FilteringTest
 
@@ -351,6 +378,32 @@ def filteringChecks : List Check :=
                   listedTexts typed == some #["ab", "xa", "zz"] &&
                   listedTexts empty == some #[] &&
                   listedTexts done == some #[] &&
-                  done.loop.state.echo == "" }]
+                  done.loop.state.echo == "" },
+    { name :=
+        "a filtering source's lister and filter are started with the environment their layers give them: a bare-named filter (fzf) carries the directory source's PATH, looked up over the base's, under its own environment; the lookups run once, before the lister"
+      run :=
+        pure <|
+          let filter := filesFiltering.filterFor "a"
+          let scripts : Array Process.Script :=
+            #[{ command := baseLookup, reply := EnvironmentApiTest.printed s!"PATH={basePath}\n" },
+              { command := directoryLookup
+                reply := EnvironmentApiTest.printed s!"PATH={toolsPath}\n" },
+              { command := layered lister,
+                reply := .ok { exit := .code 0, stdout := listed, stderr := .empty } },
+              { command := layered filter, reply := ran "xa\nab\n" }]
+          let model : JobModel :=
+            { processes := { scripts }
+              environments :=
+                {
+                  sources :=
+                    { base := .lookup (EnvironmentApiTest.fakeSource "base" "/bin/base") "/"
+                      directories := #[EnvironmentApiTest.fakeSource "dir" "/bin/dir"] } } }
+          let (outcome, after) := (filesFiltering.found "a").runModel model
+          (match outcome with
+            | .finished (.ok records) => records == #["xa", "ab"]
+            | _ => false) &&
+            after.processes.started ==
+              #[baseLookup, directoryLookup, layered lister, layered filter] &&
+            after.reported.isEmpty }]
 
 end ModelTest

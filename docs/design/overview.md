@@ -242,9 +242,9 @@ roadmap's phase 8 ([packages.md](packages.md), "The module map"). The
 fixture set and its three fixture packages, used by tests alone, are under
 `tests/packages/` (`echo` among them, which holds Rust), a set with no
 package under `tests/empty-set/`, and the
-Lean formatter's host package is
-`tools/lean-fmt/` ([packages.md](packages.md), "The package set and its
-build"). The parts, the core's and, where a row names a default package,
+Lean formatter's and lean-deny's host packages are
+`tools/lean-fmt/` and `tools/lean-deny/` ([packages.md](packages.md), "The
+package set and its build"). The parts, the core's and, where a row names a default package,
 that package's (a Lake package under `packages/`, no module of the core):
 
 | Part | Contents |

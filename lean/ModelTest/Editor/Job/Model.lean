@@ -16,6 +16,7 @@ import Editor.SyntaxTree.Registration
 import Editor.SyntaxTree.Registration.Model
 import Editor.Test.Jobs
 import Editor.Text.Model
+import EnvironmentApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.Packages
 
@@ -157,19 +158,25 @@ def jobModelChecks : List Check :=
         let failure := Process.Failure.signalled 9
         let entry : Process.Entry := { stamps := #[], found := .failed failure }
         let job : JobM (Option Process.Entry × Process.Policy) := do
-          Process.askEnvironment (.record "/p/d" entry)
-          let found ← Process.askEnvironment (.cached "/p/d")
+          Process.askEnvironment (.record (.directory "/p/d" "mise") entry)
+          let found ← Process.askEnvironment (.cached (.directory "/p/d" "mise"))
           let policy ← Process.askEnvironment .policy
           return (found, policy)
         let (outcome, after) :=
-          job.runModel { now := 7, environments := { setting := .inherited, limit := 3 } }
+          job.runModel
+            { now := 7
+              environments :=
+                { sources := { directories := #[EnvironmentApiTest.fakeSource "mise" "/m"] }
+                  limit := 3 } }
         pure
-          (outcome ==
-              .finished
-                (some entry,
-                  { setting := .inherited, host := .headless, resolved := none, limit := 3 }) &&
+          ((match outcome with
+            | .finished (found, policy) =>
+              found == some entry && policy.sources.directories.map (·.name) == #["mise"] &&
+                policy.programs.isEmpty &&
+                policy.limit == 3
+            | _ => false) &&
             after.now == 7 &&
-            after.reported == #[Process.failureMessage "/p/d" failure]) },
+            after.reported == #[Process.failureMessage (.directory "/p/d" "mise") failure]) },
     { name := "in the job model, a post is recorded and answered at once, without moving the clock"
       run :=
         let job : JobM Nat := do

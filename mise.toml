@@ -121,8 +121,8 @@ run = [
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
 #
 # It waits for `lean-test` only so that two Lake builds never run in lean/ at
-# once: the Lake tasks run in one chain, `lean-test`, `lean`, then `lean-fmt`
-# and `ffi-test`.
+# once: the Lake tasks run in one chain, `lean-test`, `lean`, then
+# `lean-deny`, then `lean-fmt`, and `ffi-test`.
 [tasks.lean]
 description = "Build the Lean core and the test executables with Lake, which runs Cargo for the Rust static library, then the editor and the headless fixture harness from the default package set (packages/), the fixture set with its packages and its harness (tests/packages/) and the editor from the core alone (tests/empty-set/); every linter is on and a warning fails the build (lean/lakefile.lean)"
 depends = ["lean-test"]
@@ -173,6 +173,32 @@ run = [
   "lake -d ../tests/grammar-set/ini-grammar build --wfail +IniGrammarTest.Linked:editorLinked",
 ]
 
+# lean-deny checks the structure rules (.agents/rules/structure.md) over
+# Lake's resolved module graph (docs/dev-practices/the-gate.md, "The
+# structure check"). Like lean-fmt, it is the Lake dependency of a host of
+# its own (tools/lean-deny/lakefile.toml), so the core and the default set
+# fetch no git repository; `lake -d ../tools/lean-deny exe` builds and runs
+# it from the host, with no LEAN_CC, as for lean-fmt. Each line passes by its
+# exit status alone: 0 when every rule holds, 1 on a violation, 2 on a bad
+# policy or workspace.
+#
+# - packages/lean-deny.toml, over the default set (packages/, which requires
+#   the core): Core imports, Host imports, What a package may import, Three
+#   layers, Leave-out, Module map (it reads docs/design/packages.md) and
+#   Lint plugins. It reads the two roots that `lean`'s package-set build
+#   writes under packages/.lake/build/root/, and lean-deny never runs Lake to
+#   write them, so this task waits for `lean`.
+# - lean/lean-deny.core.toml, over the core alone (lean/): the core imports
+#   rules the core answers by itself.
+[tasks.lean-deny]
+description = "Check the structure rules with lean-deny, over the default package set and over the core (packages/lean-deny.toml, lean/lean-deny.core.toml)"
+depends = ["lean"]
+dir = "lean"
+run = [
+  "lake -d ../tools/lean-deny exe lean-deny check --workspace ../packages --config ../packages/lean-deny.toml",
+  "lake -d ../tools/lean-deny exe lean-deny check --workspace . --config lean-deny.core.toml",
+]
+
 # lean-fmt is the Lake dependency of a package of its own, its host
 # (tools/lean-fmt/lakefile.toml), pinned to the tag named after the Lean
 # toolchain: the core requires no git repository, so a package set that
@@ -182,10 +208,11 @@ run = [
 # and `--root .` names the package it is run over, the core; the last line
 # of each task runs it over each package of the fixture set, each of which
 # holds the link to the pin the formatter requires of a root. Both tasks wait
-# for `lean`, so two Lake builds never run in lean/ at once.
+# for `lean`, and `lean-fmt` for `lean-deny` too, so two Lake builds never
+# run in lean/ at once.
 [tasks.lean-fmt]
 description = "Check Lean formatting and lean-fmt's lints, over the core and each package of the fixture set; changes nothing"
-depends = ["lean"]
+depends = ["lean", "lean-deny"]
 dir = "lean"
 run = [
   "lake -d ../tools/lean-fmt exe lean-fmt format --check --workers \"$(sh ../tools/lean-fmt-workers.sh)\" --root .",
@@ -276,28 +303,27 @@ run = [
   # the Rust library: the text port's, and the job port's over the timer
   # service. Its check of Lean's task pool pins no size, so LEAN_NUM_THREADS
   # in the developer's shell does it no harm. Its first argument is the
-  # directory of the fixtures that stand in for mise in the checks of a
-  # child's environment (tests/process-environment). Its second is the
   # directory of the syntax fixtures, whose Rust fixtures the indent and
-  # text-object checks read (tests/syntax). Its third is the directory of
+  # text-object checks read (tests/syntax). Its second is the directory of
   # the fixture that stands in for fzf in the checks of a source a command
-  # filters (tests/completion). Its fourth is the directory of the launch
-  # fixtures the launcher's tests read too (tests/launch). Its fifth is the
+  # filters (tests/completion). Its third is the directory of the launch
+  # fixtures the launcher's tests read too (tests/launch). Its fourth is the
   # fixture grammar library the job port's grammar properties register,
   # built by Cargo and printed by the fixture crate's binary
   # (crates/editor-syntax-fixture-ini): the line only builds it and passes
   # its path, and a failed build fails the line. A compile over
   # the real process service is
   # no check of this executable any more, and nor are the workspace finder,
-  # the listers and `:!`: they are the compile package's, the workspace
-  # package's and the shell package's linked tests'
-  # (packages/compile/CompileTest/Linked.lean,
+  # the listers, `:!` and a child's environment looked up by mise: they are
+  # the compile package's, the workspace package's, the shell package's and
+  # the mise package's linked tests' (packages/compile/CompileTest/Linked.lean,
   # packages/workspace/WorkspaceTest/Linked.lean,
-  # packages/shell/ShellTest/Linked.lean), which the package steps run below
-  # on those packages' own fixtures (packages/compile/tests/compile,
-  # packages/workspace/tests/workspaces and tests/completion); the shell's
+  # packages/shell/ShellTest/Linked.lean, packages/mise/MiseTest/Linked.lean),
+  # which the package steps run below on those packages' own fixtures
+  # (packages/compile/tests/compile, packages/workspace/tests/workspaces and
+  # tests/completion, packages/mise/tests/process-environment); the shell's
   # run on a rig over fakes, with no fixture.
-  "lib=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-syntax-fixture-ini) && .lake/build/bin/contract-test ../tests/process-environment ../tests/syntax ../tests/completion ../tests/launch \"$lib\"",
+  "lib=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-syntax-fixture-ini) && .lake/build/bin/contract-test ../tests/syntax ../tests/completion ../tests/launch \"$lib\"",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment; its third argument is the directory of the syntax
@@ -532,10 +558,11 @@ run = "cargo run --quiet --locked -p editor-config-migrate-std --bin config-migr
 # bundle, installs the default config config/default (a starter SPC map) to
 # ~/.config/leanmacs only when no config is there, otherwise only saying
 # where the default config is, and deletes the backups
-# the earlier install script left. It keeps no backups and opens, registers
+# the earlier install script left. `mise run install -- --agents` also
+# requires agents-api and acp from this checkout in the config's lakefile. It keeps no backups and opens, registers
 # or runs nothing.
 [tasks.install]
-description = "Opt-in, never part of ci; macOS on arm64 only: build Leanmacs.app and install it to /Applications, replacing the old one and deleting leftover backups (tools/install-app.sh)"
+description = "Opt-in, never part of ci; macOS on arm64 only: build Leanmacs.app and install it to /Applications, replacing the old one and deleting leftover backups (tools/install-app.sh); `-- --agents` also adds agents-api and acp to ~/.config/leanmacs/lakefile.toml"
 depends = ["app"]
 run = "tools/install-app.sh packages"
 
@@ -1260,7 +1287,7 @@ run = 'LEANMACS_SYSROOT="$(cd lean && lean --print-prefix)" cargo test --locked 
 
 [tasks.ci]
 description = "The whole gate; the pre-commit hook and `hk check` run this, and it gates review and landing (rdm's dispatch.verify)"
-depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "window-scenarios", "c-fmt", "workflow-lint"]
+depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-deny", "lean-fmt", "ffi-test", "window-scenarios", "c-fmt", "workflow-lint"]
 
 # Never part of `ci` or hk.pkl: `linux-ci` runs `ci` in a copy of the
 # checkout with no history, where a history scan has nothing to read.

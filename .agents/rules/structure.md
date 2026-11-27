@@ -3,11 +3,14 @@
 What a module may import, where the core's modules sit, which targets
 load the build's linters, where a Rust crate's bans live and where a site
 may opt out of them, how a Lake root reads the Lean pin, and that each
-item of the wiring set has its run. Review holds a change to these rules;
-no gate step checks them (`gates.md`). The Lean linters (the wait and real-host
-linters) and Lake's own resolution of `require`s stay automated, and
-rdm task `lean-structure-rules-tool` is where automated checking of the
-rules below comes back.
+item of the wiring set has its run. lean-deny checks Core imports, Host
+imports, What a package may import, Three layers, Leave-out, Module map and
+Lint plugins under `mise run lean-deny`, from `packages/lean-deny.toml`
+(the default set) and `lean/lean-deny.core.toml` (the core); each section
+names the policy rules that check it. Review still holds Clippy's bans, The
+Lean pin and The wiring set's runs (`gates.md`). The Lean linters (the wait
+and real-host linters) and Lake's own resolution of `require`s stay
+automated too.
 
 ## Core imports
 
@@ -18,6 +21,10 @@ rules below comes back.
 - The core imports no package. A feature that is moving out of the core
   has its imports from the core cut before it moves; Lake refuses the
   import once it has moved, since the core requires no package.
+- The interface libraries staged in the core's Lake package (`FilesApi`,
+  `EnvironmentApi`, each with its test library) are the core's, not
+  packages: a core module may import the interface library, which imports
+  only the core's API, and a core test module its test library.
 - Every executable root that reaches the config elaborator adapter
   (`Editor.Config.Elaborate`) also links the config base (`Editor`): the
   elaborator imports the base's modules at runtime, so each must already be
@@ -31,6 +38,10 @@ rules below comes back.
 - The model tests' root reaches no raw binding (`Editor.Ffi` or anything
   under it): `model-test` links no Rust library. Write a port's fakes and
   contracts over the port alone.
+
+Checked by lean-deny: deny rules 1–3 and reachable rule 1 and co-reach
+rule 1 of `packages/lean-deny.toml`, and both deny rules of
+`lean/lean-deny.core.toml`.
 
 See `docs/design/packages.md`, "The core's root", and
 `docs/design/overview.md`, "Config is elaborated behind a port, and two
@@ -48,9 +59,12 @@ adapters link Lean's frontend".
   and names none of them. An entry module imports package modules and
   nothing else.
 - A package's fixture support module (`<P>Test.FixtureSupport`) is a test
-  module of its package: it may import what a test module may, and only
-  the fixture harness's generated root imports it, never the editor's root
+  module of its package: it may import what a test module may. Of the two
+  generated roots, only the fixture harness's imports it, and the editor's
+  root never reaches it; its own tests may import it
   (`docs/dev-practices/headless-mode.md`, "How the gate runs a fixture").
+
+Checked by lean-deny: deny rules 4–6.
 
 See `docs/design/lean-runtime.md`, "Packages".
 
@@ -58,12 +72,13 @@ See `docs/design/lean-runtime.md`, "Packages".
 
 The rule is about direct `import` lines, by four kinds of importer.
 
-- A library module imports only the core's API and the core interface
-  (`FilesApi`).
+- A library module imports only the core's API and the core interfaces
+  (`FilesApi`, `EnvironmentApi`).
 - A test module (`<P>Test.…`) may also import the test doubles: the pure
   models, contracts, fakes, `Editor.Test` and what is under it except
   `Editor.Test.Linked`, a feature's kit still in the core (`Editor.*.Kit`),
-  and `FilesApiTest` except what is under `FilesApiTest.Linked`.
+  and `FilesApiTest` and `EnvironmentApiTest` except what is under their
+  `.Linked`.
 - The linked test (`<P>Test.Linked` and the modules under it) may also
   import the linked test kit (`Editor.Test.Linked…`, `<I>Test.Linked…`).
 - The linked test's root alone may also import the real bindings of the
@@ -86,6 +101,8 @@ A core module that is neither internal nor a test double is part of the
 API. See `docs/design/packages.md`, "What a package may import", for the
 full lists.
 
+Checked by lean-deny: allow-only rules 1–4.
+
 ## Three layers
 
 - The core imports nothing of any package.
@@ -97,6 +114,8 @@ full lists.
   `keywords = ["editor-interface"]`; every other package is an
   implementation package.
 
+Checked by lean-deny: `[layers]`.
+
 See `docs/design/extension-points.md`, "Three layers".
 
 ## Leave-out
@@ -106,6 +125,10 @@ See `docs/design/extension-points.md`, "Three layers".
   other entry module. It follows from the three-layer rule.
 - To check it by hand, drop one `[[require]]` from a set's lakefile, run
   `lake update --keep-toolchain` there and then `lake build --wfail :editor`.
+
+Checked by lean-deny: `[layers]` and require-backed rule 1 (every
+cross-package import of a default-set package is backed by a direct
+require). The recipe above is a way to see it.
 
 See `docs/design/packages.md`, "The generated root", and
 `docs/design/extension-points.md`, "Three layers".
@@ -120,6 +143,14 @@ See `docs/design/packages.md`, "The generated root", and
 - Each package of the default set has a row with its layer, its
   registrations (column 4) and its reads (column 5).
 
+Checked by lean-deny: doc-modules rule 1 and doc-packages rule 1. They
+check "The core's modules" and columns 1–3 (package, layer, requires) of
+the first table under "The packages". Columns 4 and 5 (registrations and
+reads) and the agents table (`agents-api`, `acp`, not in the default set)
+stay with review. So a change that adds a core module or a default-set
+package, or changes a package's layer or requires, updates `packages.md`
+in the same change or the gate fails.
+
 ## Lint plugins
 
 - Every `lean_lib` and `lean_exe` of the core and of every package in this
@@ -130,7 +161,28 @@ See `docs/design/packages.md`, "The generated root", and
 - A package written as a user's (`docs/packages/word-count`) is not held
   to this.
 
+Checked by lean-deny: target-config rule 1.
+
 See `docs/dev-practices/the-gate.md`, "The wait lints".
+
+## Keeping the policy in step
+
+`packages/lean-deny.toml` enumerates packages and modules, until
+lean-deny's glob and workspace selectors land. Keep these lists in step
+with the tree in the change that grows it:
+
+- A new package, interface or implementation: add its test library to
+  `package-tests`, its linked test to `package-linked` and its root to
+  `package-linked-roots`, its model-test root to the `[[co-reach]]` roots,
+  and the package to the `[[target-config]]` targets. If it is an
+  implementation package, add it to `packages` too.
+- A new core `….Model`, `…Contract`, `….Cases` or `….Fake` module goes
+  in `doubles`; a new internal or `….Real` module goes in `internal`, and
+  in `linked-root-extra` if it is a real binding. A module left off
+  `doubles` or `internal` silently becomes API.
+- The host's sets come from the generated roots and need no upkeep.
+- A new implementation package missing from `packages` fails doc-packages
+  rule 1 once its module-map row is written.
 
 ## Clippy's bans
 

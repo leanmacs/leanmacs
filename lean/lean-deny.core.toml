@@ -1,0 +1,23 @@
+# editor-project's structure rules (.agents/rules/structure.md, "Core
+# imports", rules 4 and 5) as a lean-deny policy over the core alone: the
+# workspace lean/ (Lake package editor-core), which holds no package, so the
+# rules that name packages are in packages/lean-deny.toml, over packages/.
+# This copy is the maintained one; it started from lean-deny's
+# examples/editor-project/lean-deny.core.toml at 037dfa0.
+#
+# It runs under `mise run lean-deny` (docs/dev-practices/the-gate.md, "The
+# structure check"):
+#
+#   lake -d ../tools/lean-deny exe lean-deny check --workspace . --config lean-deny.core.toml
+
+[[deny]]
+from = ["mod:Editor!", "mod:ModelTest!"]
+to = ["external:Lean", "external:Lake"]
+transitive = true
+reason = "the config base and the model tests' root are plain Lean (core imports check, rule 4)"
+
+[[deny]]
+from = "mod:ModelTest!"
+to = "mod:Editor.Ffi"
+transitive = true
+reason = "model-test links no Rust library (core imports check, rule 5)"

@@ -826,48 +826,116 @@ and changes on disk:
 - **A child's environment, as built** (`lean/Editor/Process/Environment.lean`,
   `Process.prepared` in `lean/Editor/Job.lean`). The question is "what
   environment does a child started in this directory get?", and the answer
-  is the editor's own, then the variables its directory's lookup returns set
-  over it, then the command's own `Environment`. The editor's own process
-  environment is never changed. `Process.run`, `Process.runWithin` and
-  `Process.start` each prepare their command first, as a job program, so the
-  model and the runner run the same code; the lookup itself is a raw
-  request, so it never looks itself up.
-  - *Sources.* Config's setting (`processEnvironment`, the setup port's
-    first option): `inherited`, no lookup, children exactly as before;
-    `mise` with an absolute path, or with none; and the default `auto`.
-  - *Resolution.* `mise` with no path, and `auto` in the window mode, take
-    the first of `~/.local/bin/mise` (from `HOME`), `/opt/homebrew/bin/mise`
-    and `/usr/local/bin/mise` whose stamp a file request answers; with none,
-    `mise` reports "mise is not at …" once for each directory and `auto` is
-    `inherited`. `auto` in the headless mode and the checks is `inherited`.
-    The first job to resolve the setting keeps the answer in the shared
-    state until a reload.
-  - *The lookup* runs `<mise> env --json` in the child's directory through
-    the process service, with a mebibyte of output and a time limit, 5 s by
+  is four layers, each later one winning a variable of the same name: the
+  editor's own environment, then the base's variables (by default the
+  login shell's in the window mode, and none in the headless mode and the
+  tests), then each directory source's for the child's directory in order
+  (mise's), then the command's own `Environment`. The editor's own process
+  environment is never changed.
+  `Process.run`, `Process.runWithin` and `Process.start` each prepare their
+  command first, as a job program, so the model and the runner run the same
+  code; a lookup itself is a raw request, so it never looks itself up.
+  - *Sources as data.* A source (`Process.Source`) is a name, where its
+    executable is (a path; the first of some candidates whose stamp a file
+    request answers, skipped or reported when none is; or the first
+    absolute path some probes print, commands run through the process
+    service, else a fallback), the command its lookup runs (built from the
+    executable, the directory and the environment so far), a parser from
+    its output to variables, for a directory source the file names whose
+    stamps keep its result, and, if it has one, its own time limit. None of
+    it is a program, so the core composes sources it does not name, and a
+    source can travel through a registry and run in a job with no `EditorM`
+    in the reply.
+  - *Layers.* Each directory source's lookup runs with the base's and the
+    earlier sources' variables set over the editor's environment, so a
+    directory source sees the base's `PATH`.
+  - *The base* is launchd's `inherited` environment, the editor's own with
+    no lookup, built into the core under the name `inherited`, or a base
+    source a package registers. A base that is a lookup runs once per run,
+    the first time a child is prepared, over the editor's environment, its
+    probes first when its executable is probed; a failure falls back to the
+    editor's own environment and is said once per run. The default set's
+    base is the login-shell package's (`packages/login-shell/`, a default
+    package that chooses its base with `environmentBase`): in the window
+    mode, the user's shell (`SHELL`, else the user record's login shell,
+    else `/bin/zsh`) run as a login shell, not interactive, in the home
+    directory, printing its environment NUL-separated between two markers;
+    every variable but the shell's `PWD`, `OLDPWD`, `SHLVL` and `_` is
+    kept, under a time limit of 5 s, the package's setting
+    `LoginShell.timeLimit`. The headless mode and every test keep
+    launchd's environment. Config's `environmentBase "inherited"` opts out.
+  - *What a Finder start gets.* The editor itself runs with launchd's
+    minimal environment, `PATH=/usr/bin:/bin:/usr/sbin:/sbin`. Every child
+    it starts gets the login shell's variables over that, then mise's for
+    its directory (whose lookup so runs with the shell's `PATH`, and whose
+    `PATH` entries come first, so a project's pinned tool wins over the
+    shell's), then its own. If the shell fails, children get launchd's
+    environment under mise's, and the echo area says why once.
+    A bare-named child, the workspace finder's `fzf` among them, is found
+    on the `PATH` its layers give it: under the login shell's base,
+    Homebrew's `fzf` is found from a Finder start, and a workspace's mise
+    entries still come first. With launchd's environment alone (the
+    built-in base, or a shell that failed) and no `fzf` on it, the finder
+    says `workspace-files: fzf: the program or the directory is not there:
+    …` in the echo area, never an empty list. A filter that starts and
+    exits 1 is the open rdm:task/filter-failure-reads-as-no-matches.
+    Pinned by `WorkspaceTest.findFileChecks` (the finder's lister and
+    filter under a base and a directory source, and the missing filter),
+    `ModelTest.filteringChecks` (any filtering source's children
+    prepared), `ModelTest.environmentLayerChecks`, and the process
+    contracts (a bare name on the child's `PATH`). The Finder start itself
+    is under "Still to verify".
+  - *The registry* gives the layers. The sources are packages registered at
+    the extension points of the core's interface library `environment-api`
+    (`lean/EnvironmentApi.lean`; [packages.md](packages.md), "The core
+    interface library `environment-api`"): a hook of directory sources, and
+    a choice of base by the name the core's setting `environmentBase` gives
+    (config's, else a package's default, else `inherited`). At every reload
+    that installs, the host reads them (`EnvironmentApi.ofRegistry`) and
+    installs them in the shared state (`Job.Environments.install`); a source
+    may give none in a mode, and a config whose registry names a base
+    nothing answers to is rejected at reload, so nothing is installed and
+    the base installed before is kept. With nothing
+    registered, children start exactly as their commands say. The first job
+    to resolve a source's executable keeps the answer in the shared state
+    until a reload. The core names no source.
+  - *The mise package's lookup* (`packages/mise/`, a default package) runs
+    `<mise> env --json` in the child's directory in the window mode, mise
+    found at the first of the usual places whose stamp a file request
+    answers, skipped with none, and nothing said; a mise elsewhere is named
+    with `Mise.executable`. The headless mode and the checks look
+    nothing up. Config's `Mise.executable` takes mise's path, and leaving
+    the package out means no directory lookup. Every lookup runs through
+    the process service with a mebibyte of output and a time limit, 5 s by
     default (`ProcessRequest.runWithin`, a run killed with its group once
     its limit has passed: the runner arms an alarm on the clock and cancels
-    the run at the library when the alarm comes first). The JSON object of
+    the run at the library when the alarm comes first). A JSON object of
     strings is read in Lean, outside `Lean.Data.Json`, which config's
-    closure leaves out.
-  - *The cache* is one entry for each directory in the state every job of a
-    host shares (`JobRequest.environment`, answered at once, as `now` is,
-    and as the fuzzy matcher is, `JobRequest.fuzzy`, whose reply is an
-    `Except String` since the runner's service may throw;
-    `Job.sharedEnvironments` behind a reference). An entry is kept while the
-    stamps of `mise.toml`, `.mise.toml`, `.tool-versions` and
-    `mise.local.toml` in the directory and each ancestor, read through the
-    file port's stamp request before the lookup ran, are unchanged. A
-    reload that installs drops every entry. mise's global config and
-    environment variables are not stamped: a change there is picked up
-    after a reload.
-  - *Ordering.* A start in a directory with no entry waits for the lookup
+    closure leaves out (`Process.parseVariables`).
+  - *The cache* is the entries of the state every job of a host shares
+    (`JobRequest.environment`, answered at once, as `now` is, and as the
+    fuzzy matcher is, `JobRequest.fuzzy`, whose reply is an `Except String`
+    since the runner's service may throw; `Job.sharedEnvironments` behind a
+    reference), each under its slot: the base's, kept until a reload, so it
+    is looked up at most once per run; and one for each directory and
+    source, kept while the stamps of the source's stamp files in the
+    directory and each ancestor (for mise, its four config files), read
+    through the file port's
+    stamp request before the lookup ran, and the variables of the layers
+    below it are unchanged. A reload that installs drops every entry, the
+    base's included. mise's global config and environment variables are not
+    stamped: a change there is picked up after a reload. Two jobs that race
+    to a slot with no entry may both run its lookup; "once per run" holds
+    for jobs that start after the first has recorded.
+  - *Ordering.* A start in a directory with no entry waits for its lookups
     and then starts its child, in the job; the loop never waits for either.
-  - *Failures* (a status other than 0, a signal, output that is not a JSON
-    object of strings, a run past its limit, a refusal, no mise) start the
-    child with the inherited environment and are reported once for the
-    directory until its entry is dropped: the host posts the message to the
-    editor queue and says it in the echo area. In an untrusted directory
-    `mise env` exits non-zero, which is this path.
+  - *Failures* (a status other than 0, a signal, output the source's parser
+    refuses, a run past its limit, a refusal, no executable where one is
+    required) skip that source, keeping the layers below it and the other
+    sources, and are reported once for the slot until its entry is dropped:
+    once for each directory and source, once per run for the base. The host
+    posts the message to the editor queue and says it in the echo area. In
+    an untrusted directory `mise env` exits non-zero, which is this path.
 - **A streaming child is requests a job awaits, one at a time**:
   `Process.start` starts it with its input, how each output stream is
   framed (lines or bytes) and its bound, and names it for the job;
@@ -3442,6 +3510,18 @@ reload leaves the old config's watch delivering.
   one buffer (that `NSTreatUnknownArgumentsAsOpen = NO` took). Everything
   but receiving the real Apple Event is pinned by tests; trying it is the
   roadmap `macos-app`'s phase 6, the owner's.
+- Starting the bundle from Finder or the Dock, where launchd hands the
+  editor its minimal environment, is macOS's behaviour and is covered by no
+  test: an accepted gap. Everything from the installed layers to a child's
+  `PATH` is pinned (the process section, "A child's environment, as
+  built"); what a real launchd start hands the editor, and the default set
+  composed with the finder, are not. The owner confirms it by hand while
+  dogfooding: started from Finder, `SPC p f` in a buffer of a workspace
+  whose `mise.toml` pins no `fzf` lists the workspace's files through
+  Homebrew's `fzf` (roadmap `process-environment-sources`, "Done looks
+  like"). No script, bundle run or expected scene stands in for it
+  (`.agents/rules/gates.md`, "Prefer a gap in coverage to a fragile
+  check").
 - The system's quit has been seen only in the window adapter's contract
   example, which calls `terminate:` and sends its own process the quit
   Apple Event. A Quit from the Dock's menu and a logout from loginwindow

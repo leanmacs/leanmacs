@@ -27,6 +27,7 @@ import Editor.SyntaxTree.Real
 import Editor.Text.Real
 import Editor.Watch.Real
 import Editor.Window
+import EnvironmentApi
 
 /-!
 # The headless host
@@ -263,11 +264,21 @@ as before, so reload and job completion work as they did.
   the executable makes for its mode in `shipped`
   (`reportedEnvironments`): `.headless` for the headless mode, `.window`
   with the home directory for the window mode. What it reports, a failed
-  lookup once for a directory, is posted under the Lean source id
-  `Collaborators.environment`, and said in the echo area for the next scene
-  (`Running.said`). A reload that installs asks it to `install` config's
-  setting, `auto` when config sets none, which drops every directory's
-  cached environment. Pinned by `ConfigTest.environmentHostChecks`.
+  lookup once for a directory and source (once per run for the base), is
+  posted under the Lean source id `Collaborators.environment`, and said in
+  the echo area for the next scene (`Running.said`). A reload that installs
+  reads the registry it installed through `environment-api`
+  (`EnvironmentApi.ofRegistry`: every directory source registered, and the
+  base `Config.Registry.baseName` names) and hands the layers to
+  `Job.Environments.install`, which drops every cached environment, the
+  base's and each directory's. A config whose registry names a base
+  nothing answers to is rejected by the reducer (`Config.Report.baseRefused`,
+  `Editor/Config/Reload.lean`), so nothing is installed and the
+  environments keep the one they had; its error is printed as a
+  `diagnostic:` line and said in the echo area. A config rejected at
+  start-up, for an unknown base or anything else, installs nothing, so
+  children start with the editor's own environment until a reload
+  installs. Pinned by `ConfigTest.environmentHostChecks`.
 - **The host is handed its display** (`Collaborators.display`), a maker
   over the table of snapshots the text binding publishes, and holds what it
   makes as a `Host.Display`: what answers the loop's requests, wrapped so
@@ -1532,10 +1543,11 @@ def reduce (collaborators : Collaborators β σ scheme) (running : Running β σ
     (event : Config.Event β σ) : IO (Running β σ scheme) := do
   let (config, effects) := Config.step running.config event
   Config.retheme running.display.setTheme config effects
-  -- A reload that installs is config's setting of a child's environment,
-  -- and drops every directory's cached one.
+  -- A reload that installs installs the layers the registry gives a child's
+  -- environment, and drops every cached one.
   if Config.installed effects then
-    collaborators.services.environments.ask (.install (config.registry.environment.getD .auto))
+    collaborators.services.environments.install
+        (EnvironmentApi.ofRegistry config.registry.extensionsAt config.registry.baseName).1
   let mut running := { running with config }
   for effect in effects do
     match effect with

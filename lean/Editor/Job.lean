@@ -95,9 +95,13 @@ so no command can block on a registration.
 A job reaches the environments its host shares through one request,
 `environment`, which carries an `EnvironmentRequest`
 (`Editor/Process/Environment.lean`) and is answered at once, as `now` is:
-the setting config chose, what it resolved to, and each directory's cached
-lookup. The process operations ask it before they start a child, so a
-child gets its directory's environment (`Process.prepared`).
+the layers the host installed from the registry (a base, then directory
+sources; `EnvironmentApi.lean`),
+what each source's executable resolved to (from candidates' stamps, or
+from probes run through the process service), and the cached lookups, the
+base's and each directory and source's. The process operations ask it
+before they start a child, so a child gets its layers' variables under its
+command's own (`Process.prepared`).
 
 A job reaches a service a package brings through one request, `package`,
 which carries a `PackageRequest` (`Editor/PackageService.lean`): the
@@ -483,9 +487,10 @@ def File.stat (path : System.FilePath) : JobM (Except FileError File.Stamp) := d
   | .error refusal =>
     return .error refusal
 
-/-- Asks the environments every job of the host shares: the setting, what it
-resolved to, and each directory's cached lookup (`EnvironmentRequest`). It is
-answered at once, as `now` is, and never waits. -/
+/-- Asks the environments every job of the host shares: the layers, what each
+source's executable resolved to, and the cached lookups
+(`EnvironmentRequest`). It is answered at once, as `now` is, and never
+waits. -/
 def Process.askEnvironment (request : EnvironmentRequest) : JobM request.Reply :=
   ExceptT.lift (Program.request (port := jobPort) (.environment request))
 
@@ -515,68 +520,142 @@ def Process.firstStamped (candidates : Array System.FilePath) : JobM (Option Sys
       return some candidate
   return none
 
-/-- What the setting resolves to, as the shared state has it: resolved by an
-earlier job, at once when the setting needs no file, or else from the
-candidates' stamps, which is then kept for every job until a reload. -/
-def Process.lookup (policy : Process.Policy) : JobM Process.Lookup := do
-  if let some lookup := policy.resolved then
-    return lookup
-  if let some lookup := policy.setting.resolveNow policy.host then
-    return lookup
-  let found ← Process.firstStamped policy.host.candidates
-  let lookup := policy.setting.resolveWith policy.host found
-  Process.askEnvironment (.resolved lookup)
-  return lookup
+/-- The first absolute path one of `probes` names, each run in order as a
+raw process request, so with the editor's own environment and never looked
+up, under the time limit `limit` and the output limit of a lookup: a run
+that is refused, does not exit 0, or names no absolute path passes to the
+next, and nothing is said of it. -/
+def Process.firstProbed (probes : Array Process.Probe) (limit : Nat) :
+    JobM (Option System.FilePath) := do
+  for probe in probes do
+    match ← Process.request (.runWithin probe.command Process.lookupOutput limit) with
+    | .ok { exit := .code 0, stdout, .. } =>
+      if let some path := probe.answer.read stdout then
+        return some path
+    | _ =>
+      pure ()
+  return none
 
-/-- The entry of `directory` for `executable`: the cached one while its
-config files' stamps are what they were, and else a new lookup's, run with
-the time limit `limit`, which is recorded. The stamps are read before the
-lookup runs. -/
-def Process.entryOf (executable directory : System.FilePath) (limit : Nat) : JobM Process.Entry :=
-  do
-  let stamps ← (Process.configPaths directory).mapM Process.stampOrNone
-  let cached : Option Process.Entry ← Process.askEnvironment (.cached directory)
+/-- What the source `name` resolved to, as the shared state has it: the
+answer an earlier job kept (`policy.programs`), else `resolve`'s, which is
+then kept for every job until a reload. -/
+def Process.resolvedOnce (policy : Process.Policy) (name : String)
+    (resolve : JobM (Option System.FilePath)) : JobM (Option System.FilePath) := do
+  match policy.programs.find? (·.1 == name) with
+  | some (_, found) =>
+    return found
+  | none =>
+    let found ← resolve
+    Process.askEnvironment (.resolved name found)
+    return found
+
+/-- Where `source`'s executable is, as the shared state has it: its path;
+or the first of its candidates, resolved by an earlier job or else from the
+candidates' stamps; or the first path its probes name, run under `limit`,
+else its fallback; each of the last two kept for every job until a reload.
+With none of its candidates there, what the source does then. -/
+def Process.programOf (policy : Process.Policy) (source : Process.Source) (limit : Nat) :
+    JobM (Except Process.WhenNone System.FilePath) := do
+  match source.program with
+  | .at path =>
+    return .ok path
+  | .firstOf candidates whenNone =>
+    let found ← Process.resolvedOnce policy source.name (Process.firstStamped candidates)
+    return match found with
+      | some executable => .ok executable
+      | none => .error whenNone
+  | .probed probes otherwise =>
+    let found ←
+      Process.resolvedOnce policy source.name do
+          return some ((← Process.firstProbed probes limit).getD otherwise)
+    return .ok (found.getD otherwise)
+
+/-- The entry of `slot` for `source` run by `executable` in `directory` over
+`below`: the cached one while the stamps of `stampNames` there and in its
+ancestors, and `below`, are what they were, and else a new lookup's, run
+with the time limit `limit`, which is recorded. The stamps are read before
+the lookup runs. The lookup is a raw process request, so it never looks
+itself up. -/
+def Process.lookedUp (slot : Process.Slot) (source : Process.Source)
+    (executable directory : System.FilePath) (stampNames : Array String)
+    (below : Array (String × String)) (limit : Nat) : JobM Process.Entry := do
+  let stamps ← (Process.stampPaths stampNames directory).mapM Process.stampOrNone
+  let cached : Option Process.Entry ← Process.askEnvironment (.cached slot)
   if let some entry := cached then
-    if entry.stamps == stamps then
+    if entry.stamps == stamps && entry.below == below then
       return entry
   let ran ←
     Process.request
-        (.runWithin (Process.lookupCommand executable directory) Process.lookupOutput limit)
-  let entry : Process.Entry := { stamps, found := Process.foundOf ran }
-  Process.askEnvironment (.record directory entry)
+        (.runWithin (source.command executable directory { set := below }) Process.lookupOutput
+          limit)
+  let entry : Process.Entry := { stamps, below, found := Process.foundOf source ran }
+  Process.askEnvironment (.record slot entry)
   return entry
 
-/-- `command` with the environment its directory's lookup gives it
-(`Editor/Process/Environment.lean`): the lookup's variables under its own. It
-is returned unchanged when the process service would refuse it, a directory
-or a program that is not absolute; when it clears the editor's environment;
-when the setting is `inherited`; and when the lookup failed, which the
-shared state reports once for the directory. -/
+/-- The variables `source` gives in `slot`, looked up in `directory` over
+`below`, its result kept by the stamps of `stampNames`, its lookup and any
+probes run under its own time limit, else the shared one: none when it
+failed, so it is skipped and the layers below are kept, or when its
+executable is at none of its candidates, which is recorded once for the
+slot when the source reports it. -/
+def Process.sourceVariables (slot : Process.Slot) (source : Process.Source)
+    (directory : System.FilePath) (stampNames : Array String) (below : Array (String × String))
+    (policy : Process.Policy) : JobM (Array (String × String)) := do
+  let limit := source.limit.getD policy.limit
+  match ← Process.programOf policy source limit with
+  | .error .skip =>
+    return #[]
+  | .error .report =>
+    let candidates :=
+      match source.program with
+      | .firstOf candidates _ => candidates
+      | .at _ | .probed .. => #[]
+    let cached : Option Process.Entry ← Process.askEnvironment (.cached slot)
+    if cached.isNone then
+      Process.askEnvironment
+          (.record slot { stamps := #[], found := .failed (.missing candidates) })
+    return #[]
+  | .ok executable =>
+    match (← Process.lookedUp slot source executable directory stampNames below limit).found with
+    | .variables variables =>
+      return variables
+    | .failed _ =>
+      return #[]
+
+/-- `command` with the environment its layers give it
+(`Editor/Process/Environment.lean`): the base's variables, then each
+directory source's for its directory in order, each looked up over the
+layers before it, all under its own. It is returned unchanged when the
+process service would refuse it, a directory or a program that is not
+absolute; when it clears the editor's environment; and when the base is
+the inherited one with no directory source. A source whose executable is
+probed runs its probes before its first lookup, once until a reload
+(`Process.programOf`). A source whose lookup failed is skipped, which the
+shared state reports once for its slot. -/
 def Process.prepared (command : Process.Command) : JobM Process.Command := do
   if !command.directory.isAbsolute || command.namesRelative || command.environment.clear then
     return command
   let policy : Process.Policy ← Process.askEnvironment .policy
-  match ← Process.lookup policy with
-  | .inherited =>
+  if policy.sources.base matches .inherited && policy.sources.directories.isEmpty then
     return command
-  | .missing candidates =>
-    let cached : Option Process.Entry ← Process.askEnvironment (.cached command.directory)
-    if cached.isNone then
-      Process.askEnvironment
-          (.record command.directory { stamps := #[], found := .failed (.missing candidates) })
-    return command
-  | .mise executable =>
-    match (← Process.entryOf executable command.directory policy.limit).found with
-    | .variables variables =>
-      return { command with environment := Process.Environment.over variables command.environment }
-    | .failed _ =>
-      return command
+  let mut below : Array (String × String) ←
+    match policy.sources.base with
+    | .inherited =>
+      pure #[]
+    | .lookup source directory =>
+      Process.sourceVariables (.base source.name) source directory #[] #[] policy
+  for source in policy.sources.directories do
+    let variables ←
+      Process.sourceVariables (.directory command.directory source.name) source command.directory
+          source.stampNames below policy
+    below := Process.layer below variables
+  return { command with environment := Process.Environment.over below command.environment }
 
 /-- Runs `command` to its end and waits for it, collecting each output stream
 unless it is longer than `limit` bytes: how the child ended and both its
 streams, or why it was refused. The refusal is a value: the job goes on. A
 cancelled job's child is killed, with its process group. The child gets the
-environment its directory's lookup gives it (`Process.prepared`).
+environment its layers give it (`Process.prepared`).
 `Editor/Process.lean` has the rules. -/
 def Process.run (command : Process.Command) (limit : Nat) :
     JobM (Except ProcessError Process.Ran) := do
@@ -584,8 +663,8 @@ def Process.run (command : Process.Command) (limit : Nat) :
 
 /-- Runs `command` as `Process.run` does, and kills it, with its process
 group, if it has not ended `time` milliseconds after it was started: then the
-reply is `timedOut`. The child gets the environment its directory's lookup
-gives it (`Process.prepared`). `Editor/Process.lean` has the rules. -/
+reply is `timedOut`. The child gets the environment its layers give
+it (`Process.prepared`). `Editor/Process.lean` has the rules. -/
 def Process.runWithin (command : Process.Command) (limit : Nat) (time : Nat) :
     JobM (Except ProcessError Process.Ran) := do
   Process.request (.runWithin (← Process.prepared command) limit time)
@@ -593,7 +672,7 @@ def Process.runWithin (command : Process.Command) (limit : Nat) (time : Nat) :
 /-- Runs `command` as `Process.runWithin` does, with `input` as its standard
 input, followed by end of file: how the child ended and both its streams,
 or why it was refused. A child that does not read its input is no refusal.
-The child gets the environment its directory's lookup gives it
+The child gets the environment its layers give it
 (`Process.prepared`). `Editor/Process.lean` has the rules. -/
 def Process.runWithInput (command : Process.Command) (input : ByteArray) (limit : Nat)
     (time : Nat) : JobM (Except ProcessError Process.Ran) := do
@@ -609,8 +688,8 @@ def Process.runHead (command : Process.Command) (input : ByteArray) (limit : Nat
 
 /-- Starts `command` as a streaming child, as `streaming` says, and waits for
 it to start: the child, named for this job, or why it was refused. The child
-does not outlive the job. The child gets the environment its directory's
-lookup gives it (`Process.prepared`). `Editor/Process.lean` has the rules. -/
+does not outlive the job. The child gets the environment its
+layers give it (`Process.prepared`). `Editor/Process.lean` has the rules. -/
 def Process.start (command : Process.Command) (streaming : Process.Streaming) :
     JobM (Except ProcessError Process.Id) := do
   Process.request (.start (← Process.prepared command) streaming)

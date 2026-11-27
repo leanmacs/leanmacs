@@ -51,6 +51,17 @@ packages' are what comes before it. The compile mode's hook does
 No value registered is an ordinary case: a hook nobody registered at is
 empty, and a choice of a name nobody registered is `none`.
 
+## A package's setting
+
+A package's setting is a function config calls to register config's value
+at a point, in place of the package's: `Mise.executable "/path"` registers
+a directory source named `mise` (`packages/mise/Mise.lean`). It registers
+with `setting`, which names the setting beside the value, so a `setup` that
+gives one setting twice is refused (`Config.Registrations.settingTwice`), as
+one that chooses the layout twice is: the second would silently win, which a
+config that set it in two places did not mean. The package's own value is
+another `setup`'s, so config's one call is accepted beside it.
+
 ## How the values travel
 
 `add` makes one generic setup request, `SetupRequest.extend`, keyed by the
@@ -82,6 +93,13 @@ namespace Editor.Extension
 runs this `setup`: a package or config. -/
 def add {α : Type} [TypeName α] (value : α) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.extend (TypeName.typeName α) (.mk value)))
+
+/-- Registers `value` at the extension point of its type, `α`, as `add`
+does, as what the package's setting `name` gives ("A package's setting", in
+the module docs): a `setup` that gives `name` twice is refused. -/
+def setting {α : Type} [TypeName α] (name : String) (value : α) : SetupM Unit := do
+  ExceptT.lift (Program.request (port := setupPort) (.setting name))
+  add value
 
 /-- Every value registered at the extension point `α`, in registration
 order. -/

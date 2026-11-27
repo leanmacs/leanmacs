@@ -38,7 +38,10 @@
 # binding-search-api/), the compile mode (compile/, with its interface
 # package compile-api/, which it, workspace/ and project-api/ require),
 # completion at point
-# (at-point/, with at-point-api/), then the languages (languages/). They register in that order. The core's Lake package
+# (at-point/, with at-point-api/), the languages (languages/), then mise as
+# a child's directory environment source (mise/), then the login shell as
+# the base of a child's environment in the window mode (login-shell/). They
+# register in that order. The core's Lake package
 # registers no package and has no entry module, since the ex line, the
 # last feature it held, moved out (features-as-packages phase 8). This is
 # also the lakefile a user's
@@ -51,7 +54,8 @@
 # set's Rust archive one generated from that crate, which the app's bundle,
 # shipping the core's prebuilt archive and no Cargo, cannot build. A user
 # who wants them adds both to their own set and builds `acp`'s crate with
-# their own Cargo, which the package-set build asks for (`cargoRequired`).
+# their own Cargo, which the package-set build asks for (`cargoRequired`);
+# `mise run install -- --agents` adds both to the config's lakefile.
 # The fixture set (tests/packages/) requires them, so every package step
 # covers them.
 #
@@ -299,3 +303,31 @@ path = "at-point"
 [[require]]
 name = "languages"
 path = "languages"
+
+# mise as a child's directory environment source: a default package
+# (process-environment-sources phase 2). It registers a value at the core
+# interface library environment-api's directory-source extension point,
+# which runs `mise env --json` in a child's directory in the window mode,
+# and its setting, `Mise.executable`, takes mise's path. Leaving it out
+# means no directory lookup. It registers last, so no earlier package's
+# order moves, and registers no command. That this set registers it is
+# the standing fixture tests/headless/environment-sources's.
+[[require]]
+name = "mise"
+path = "mise"
+
+# The login shell as the base of a child's environment: a default package
+# (process-environment-sources phase 3). It registers a value at the core
+# interface library environment-api's base-source extension point, named
+# login-shell, which in the window mode runs the user's shell as a login
+# shell in the home directory and reads the environment it prints, and
+# chooses it as the default base (`environmentBase`), which config's
+# `environmentBase` overrides; its setting, `LoginShell.timeLimit`, takes
+# the lookup's time limit. The headless mode looks nothing up. Leaving it
+# out means launchd's environment as the base. It registers last, after
+# mise, so no earlier package's order moves, and registers no command. That
+# this set registers it and chooses its base is the standing fixture
+# tests/headless/environment-sources's.
+[[require]]
+name = "login-shell"
+path = "login-shell"

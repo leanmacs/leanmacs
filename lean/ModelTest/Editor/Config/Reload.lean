@@ -31,7 +31,6 @@ import Editor.Loop
 import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
-import Editor.Process.Environment
 import Editor.Program
 import Editor.Role
 import Editor.Scene
@@ -48,6 +47,8 @@ import Editor.Text.Model
 import Editor.Value
 import Editor.Window
 import Editor.Workspace
+import EnvironmentApi
+import EnvironmentApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.Elaborator
 
@@ -693,17 +694,61 @@ def reloadChecks : List Check :=
           (state.theme == Theme.builtin ++ #[defined "keyword" (coloured 1)] &&
             state.theme == loaded.theme) },
     { name :=
-        "an installed reload puts config's process environment in the registry, a rejected one leaves the one that was there, and a config that sets none gives none"
+        "criterion 7, in the model: a reload whose config chooses a base no source answers to is rejected, with an error that lists the bases there are, which the echo area says, and the config, its registry and its base name stay; a known name, or none, installs"
       run :=
+        let bases : Package :=
+          { name := "bases", setup := Extension.add (EnvironmentApiTest.fakeBase "x") }
+        let (state, _) : ModelState × Array String := Config.State.ofPackages #[bases]
         let (loaded, _) :=
-          reduce [.requested, .finished (accepted ["a"] (processEnvironment .inherited))]
+          reduceFrom state [.requested, .finished (accepted ["a"] (environmentBase "x"))]
+        let unknown := reportFrom loaded (accepted ["a", "b"] (environmentBase "nope"))
+        let (kept, _) :=
+          reduceFrom loaded [.requested, .finished (accepted ["a", "b"] (environmentBase "nope"))]
+        let said := EnvironmentApi.unknownBase "nope" #["inherited", "x"]
+        pure
+          (!unknown.installed &&
+            unknown.diagnostics == #[{ source := "setup", severity := .error, message := said }] &&
+            unknown.echo == some s!"reload: setup:0:0: error: {said}" &&
+            unknown.files == 1 &&
+            kept.files.size == 1 &&
+            kept.registry.environmentBase == some "x" &&
+            kept.registry.generation == loaded.registry.generation &&
+            (reportFrom state (accepted ["a"] (environmentBase "x"))).installed &&
+            (reportFrom state (accepted ["a"] (environmentBase "inherited"))).installed &&
+            (reportFrom state (accepted ["a"] (pure ()))).installed &&
+            (reportFrom state (accepted ["a"] (pure ()))).echo == none) },
+    { name :=
+        "a package's default base that no source answers to rejects a reload whose config chooses none, as config's own would; one that chooses a known base installs"
+      run :=
+        let defaulted : Package := { name := "defaulted", setup := environmentBase "gone" }
+        let (state, _) : ModelState × Array String := Config.State.ofPackages #[defaulted]
+        let bare := reportFrom state (accepted ["a"] (pure ()))
+        pure
+          (!bare.installed &&
+            bare.diagnostics.map (·.message) ==
+              #[EnvironmentApi.unknownBase "gone" #["inherited"]] &&
+            (reportFrom state (accepted ["a"] (environmentBase "inherited"))).installed) },
+    { name :=
+        "an installed reload puts config's base name in the registry, a rejected one keeps it, and one that names none leaves the packages' default; config's choice overrides a package's default"
+      run :=
+        let bases : Package :=
+          { name := "bases"
+            setup := do
+              Extension.add (EnvironmentApiTest.fakeBase "b")
+              Extension.add (EnvironmentApiTest.fakeBase "pkg")
+              environmentBase "pkg" }
+        let (start, _) : ModelState × Array String := Config.State.ofPackages #[bases]
+        let (loaded, _) :=
+          reduceFrom start [.requested, .finished (accepted ["a"] (environmentBase "b"))]
         let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
         let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
         pure
-          ((reduce []).1.registry.environment == none &&
-            loaded.registry.environment == some .inherited &&
-            kept.registry.environment == some .inherited &&
-            bare.registry.environment == none) },
+          ((reduce []).1.registry.environmentBase == none &&
+            loaded.registry.environmentBase == some "b" &&
+            loaded.registry.baseName == "b" &&
+            kept.registry.environmentBase == some "b" &&
+            bare.registry.environmentBase == none &&
+            bare.registry.baseName == "pkg") },
     { name :=
         "an installed reload puts config's workspace roots in the registry, which tells the loop of them with the config generation; every install bumps the generation, a rejected reload changes neither, and with nothing installed the generation is 0"
       run :=

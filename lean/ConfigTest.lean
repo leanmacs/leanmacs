@@ -294,6 +294,10 @@ show:
   one category, redrawn with the default by the install's own scene once a
   reload drops the choice. The accept key and the cancel key are the test scheme's
   for the roles the minibuffer's mode fills;
+- `processEnvironmentChecks`: a config that still calls the retired
+  `processEnvironment` is refused at reload, with a diagnostic that names
+  the mise package's setting, `Mise.executable`, or says to leave the
+  package `mise` out.
 - `leaderChecks`: the leader through a host of the test scheme: a
   config's `<leader> f f` binding runs on the scheme's leader and then
   `f f` while config sets no leader, and on `\ f f` once a reload sets the
@@ -535,6 +539,7 @@ def checks : List (CheckGroup Context Check) :=
         benchWaitChecks ++
         leaderChecks context ++
         grammarSetupChecks context ++
+        processEnvironmentChecks context ++
         hintChecks context ++
         keyHintChecks context ++
         defaultConfigChecks context ++

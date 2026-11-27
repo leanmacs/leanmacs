@@ -9,8 +9,8 @@ compile mode's computed commands (`mise tasks ls --json`,
 (`Json.render`), for the working sets a workspace keeps on disk
 (`packages/working-set/WorkingSet.lean`). Pure. It is read here, and not with
 `Lean.Data.Json`, which lives in `Lean`, outside config's closure, as
-`Editor/Process/Environment.lean` records for `mise env --json`, whose
-string reader (`Process.string`, `Process.skipSpace`) it shares.
+`Editor/Process/Environment.lean` records for a source that prints a JSON
+object of strings, whose string reader (`Process.string`, `Process.skipSpace`) it shares.
 
 ## The rules
 

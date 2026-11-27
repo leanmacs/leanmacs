@@ -1476,7 +1476,7 @@ def package : Package :=
     the first reload);
   - its `setup` sets what only config may choose: `useTheme`, `modeLine`,
     `framePadding`, `keyHintDelay`, `layout`, `tabBar`, `titleBar`,
-    `processEnvironment`, `autoReload`, `workspace`, `workspaceLister`,
+    `autoReload`, `workspace`, `workspaceLister`,
     `projectLister`, `displayRule`, `shellTimeLimit`, `syntaxRefreshDelay`,
     `leaderKey`, `localLeaderKey`, `projectCommands`, `useStyle`,
     `useDisplay` and `useDisplayFor`, which an install sets for config and
@@ -1503,7 +1503,7 @@ def package : Package :=
   features-as-packages roadmap's phase 8 moved the last seven packages it
   listed out (`ex`, `frame-commands`, `menu`, `window-commands`,
   `tab-commands`, `restore` and `package-set`) and removed it. The
-  default set registers its twenty-five packages in the order its lakefile
+  default set registers its twenty-seven packages in the order its lakefile
   requires them, those seven first, which keeps each kind of entry where
   the hosts registered it before there were packages
   ([packages.md](packages.md), "The order packages register in",

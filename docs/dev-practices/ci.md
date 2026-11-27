@@ -394,8 +394,15 @@ does not hold them, and may relink), and saves nothing. A change of `lean/lean-t
   still under `lean/.lake`. On an entry without it, the first `lean-fmt`
   step clones it there at the revision the host's manifest pins and builds
   it (20 s on a developer's Mac).
+- **lean-deny's clone and build**, the same way: its host
+  (`tools/lean-deny/`) has `packagesDir` `lean/.lake/packages` too, and
+  the first `lean-deny` step on an entry without it clones and builds it
+  there ([the-gate.md](the-gate.md), "The structure check"). Its pin, the
+  host's `lake-manifest.json`, is not in the key, as the formatter's is
+  not, so a bump checks the new revision out in place over the restored
+  clone.
 - **Not the sets' or the packages' build output**: `packages/.lake`,
-  each `.lake` under `packages/` (the twenty-five default packages' and the
+  each `.lake` under `packages/` (the twenty-seven default packages' and the
   eighteen interface packages'), `tests/packages/.lake`, each fixture package's `.lake` and
   `tests/empty-set/.lake` are in no cache. So every run writes and
   compiles the three generated roots, links the default set's editor, the

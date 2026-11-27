@@ -134,10 +134,12 @@ the set has to change or be rebuilt against it.
   its linked test included. A test that imported another feature's
   implementation would stop building when that feature is left out; it
   uses the interface package's fake instead.
-- **Review holds the rule** ([structure.md](../../.agents/rules/structure.md),
-  "Three layers"), as it holds what a package imports of the core ("What
-  a package may import"): no gate step checks either, and rdm task
-  `lean-structure-rules-tool` is where automated checking comes back. The
+- **lean-deny checks the rule** ([structure.md](../../.agents/rules/structure.md),
+  "Three layers"), as it checks what a package imports of the core ("What
+  a package may import"): `[layers]` of `packages/lean-deny.toml`, under
+  `mise run lean-deny`, over Lake's resolved module graph of the default
+  set ([the-gate.md](../dev-practices/the-gate.md), "The structure
+  check"). The
   rule is about `import` lines; a `require` of an implementation package,
   which only orders registration, is not refused (the task
   `layer-requires-check`).
@@ -255,6 +257,32 @@ extension points is:
   the name `default`, whose type admits only one of the request's own
   options or "ask" ([agent-hosting.md](agent-hosting.md), "Permissions, as
   built").
+
+The core's interface library `environment-api` (`lean/EnvironmentApi.lean`;
+[packages.md](packages.md), "The core interface library `environment-api`")
+has one of each. `EnvironmentApi.DirectorySource` is a hook whose reader
+replaces by name in place (`DirectorySource.ordered`): every value applies
+in registration order, and a later value of a name takes the earlier one's
+place, so config's `Mise.executable` replaces the mise package's value
+where the package put it. `EnvironmentApi.BaseSource` is a choice by name
+(`BaseSource.choose`), the name given by the core's setting
+`environmentBase`, beside the core's built-in `inherited`, launchd's
+environment; a name nothing answers to refuses the config at reload, with a
+diagnostic that lists the bases there are, and children keep the base they
+had. Its one shipped value is the login-shell package's `login-shell`,
+the default base because its package calls `environmentBase` (a
+package's call is a default, which config's overrides).
+
+**A package's setting** is a function config calls to register config's
+value at a point in place of the package's, as `Mise.executable` does. It
+registers with `Extension.setting`, which names the setting beside the
+value, so a `setup` that gives one setting twice is refused
+(`Config.Registrations.settingTwice`: the setting `Mise.executable` is set
+twice), as the core's own settings are: the second call would silently
+win. The package's own value comes from another `setup`, so config's one
+call beside it is accepted. Pinned by `ModelTest.extensionChecks` on the
+model, by `MiseTest.miseChecks` for mise's, and over the real elaborator by
+the standing fixture `tests/headless/environment-sources` (`twice-config`).
 
 ### How the values travel
 
@@ -610,7 +638,10 @@ and it is not routed through an extension point.**
   (`Extension.configValues`, decided in features-as-packages phase 8 for
   the first hook that needed it, the compile mode's): the order is the
   reader's rule, written once in the interface package, and a value
-  carries no rank. Emacs lets a hook function ask to run early or late
+  carries no rank. `environment-api`'s directory sources are a hook whose
+  reader replaces a value of a name already seen in its place: that rule is
+  that reader's, too, written once in the interface
+  (`EnvironmentApi.DirectorySource.ordered`). Emacs lets a hook function ask to run early or late
   (`add-hook`'s depth). Whether a value needs to say that for itself is
   still open, and is decided when a hook first needs it.
 - **The registrations the core already has.** Completion sources, styles,

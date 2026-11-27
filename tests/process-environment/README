@@ -1,9 +1,0 @@
-The fixtures of contract-test's environment checks
-(lean/ContractTest/Editor/Process/Environment.lean, environmentChecks), which `mise run ffi-test` hands
-contract-test as its one argument. Both must stay executable (mode 100755).
-
-- mise: stands for mise. `mise env --json` prints a JSON object whose PATH
-  is the line in the file fixture-path of the directory it runs in, so two
-  directories get two PATHs.
-- slow-mise: stands for a mise that outlives the lookup's time limit. It
-  sleeps for 30 seconds, and is killed first.

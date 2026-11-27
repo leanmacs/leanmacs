@@ -48,7 +48,7 @@ host registers one are in [lean-runtime.md](lean-runtime.md), "Packages".
 **No feature is in the core's Lake package** (`lean/lakefile.lean`, the
 package `editor-core`): it registers no `Package` and has no entry module
 ("A package's entry module", below). The default package set
-(`packages/lakefile.toml`) requires the core and twenty-five default
+(`packages/lakefile.toml`) requires the core and twenty-seven default
 packages, in this order, each with the interface packages it requires:
 
 1. `ex` (`ex-api`, `buffers-api`, `shell-api`), `frame-commands`
@@ -69,7 +69,13 @@ packages, in this order, each with the interface packages it requires:
    (`execute-command-api`, `minibuffer-api`), `binding-search`
    (`binding-search-api`, `minibuffer-api`), `compile` (`minibuffer-api`,
    `compile-api`, `shell-api`), `at-point` (`at-point-api`, `evil-api`)
-   and `languages`, the earlier phases'.
+   and `languages`, the earlier phases';
+5. `mise`, a child's directory environment source over the core's
+   interface library `environment-api`, the process-environment-sources
+   roadmap's phase 2 ("The core interface library `environment-api`",
+   below);
+6. `login-shell`, the base of a child's environment in the window mode,
+   over the same library, that roadmap's phase 3.
 
 Each has a directory under `packages/`, as each of the eighteen interface
 packages has. "The module map", below, lists them with what each
@@ -136,14 +142,15 @@ could move later.
 - **The default set is `packages/lakefile.toml`** (the Lake package
   `default-set`). It requires the core (`editor-core`, from `../lean`) and
   the default packages, each of which has a directory under `packages/`
-  and a `require` there. There are twenty-five, required in the order the
+  and a `require` there. There are twenty-seven, required in the order the
   top of this document lists: the seven of phase 8 ("The default packages
   of the features-as-packages roadmap's phase 8", below), `evil` and
   `themes` ("… phase 7"), the seven of phase 6 ("… phase 6"), then
   `completion`, `mode-line`, `minibuffer`, `shipped-themes`,
   `execute-command`, `binding-search`, `compile`, `at-point` and
   `languages` ("The first default package", "The default package
-  `compile`", "… phase 3" and "… phase 4"). Twenty of them require an
+  `compile`", "… phase 3" and "… phase 4"), then `mise` and
+  `login-shell` ("The core interface library `environment-api`"). Twenty of them require an
   interface package of their own or another's, which is in the set through
   that `require`. It is the lakefile a user's set starts from.
 - **The core defines the build**, as Lake facets in `lean/lakefile.lean`.
@@ -170,7 +177,7 @@ could move later.
 | `editorRootImports` | a package, the set | For `lake query`: the generated root's direct imports, one module a line |
 | `editorFixtures` | a package, the set | `<set>/.lake/build/bin/fixture-test`, the set's headless fixture harness, linked as the editor is from a root of its own (`EditorSetFixtures`), and beside it `fixture-test.oleans` ([headless-mode.md](../dev-practices/headless-mode.md), "How the gate runs a fixture") |
 | `editorBase` | a package, the set | For `lake query`: the set's config base, one module a line: `Editor`, then the entry module of each package of the set outside the core |
-| `editorShipped` | a package, the set | For `lake query`: what an app bundle ships of the set, built: one line `file<TAB><source><TAB><place>` a file (the core's `Editor` library, its interface library `FilesApi` and each other package's libraries but its tests, with their sources and every file Lake wrote; the lakefiles; the core's glue; the Rust archive), and one `oleans<TAB><place>` a `.olean` directory, for the `stage-bundle` binary (`editor_release::bundle`; [lean-runtime.md](lean-runtime.md), "The app ships the toolchain") |
+| `editorShipped` | a package, the set | For `lake query`: what an app bundle ships of the set, built: one line `file<TAB><source><TAB><place>` a file (the core's `Editor` library, its interface libraries `FilesApi` and `EnvironmentApi`, with their test libraries, and each other package's libraries but its tests, with their sources and every file Lake wrote; the lakefiles; the core's glue; the Rust archive), and one `oleans<TAB><place>` a `.olean` directory, for the `stage-bundle` binary (`editor_release::bundle`; [lean-runtime.md](lean-runtime.md), "The app ships the toolchain") |
 | `editorPackages` | a package, the set | For `lake query`: the set's packages a gate step runs over, one a line |
 | `editorRustCrates` | a package, the set | For `lake query`: the set's package crates, one a line ("Rust in a package", below) |
 | `editorRustCrate` | a package, the set | For `lake query`: writes the crate generated from the set's package crates and prints its directory; builds nothing |
@@ -401,7 +408,7 @@ The set's packages are visited from the set, **each after the packages it
 - an interface package has no entry module and registers nothing, so a
   `require` of one reorders nothing.
 
-So the default set registers its twenty-five in the order its lakefile
+So the default set registers its twenty-seven in the order its lakefile
 requires them. Each phase that moved features out of the core's own list
 put them first in the set, in the order that list held them, because the
 core's packages registered before every default package:
@@ -509,8 +516,8 @@ as shown. The last value before the arguments is what the
 build says of the editor for the files it generates in a config directory
 ("A config directory requires the core and the set", below): the set's Lake name and the
 text of the core's `lean-toolchain`. The default set's root imports
-exactly these twenty-seven modules (`lake -d ../packages query
-:editorRootImports` lists them), and its base is the twenty-six named
+exactly these twenty-nine modules (`lake -d ../packages query
+:editorRootImports` lists them), and its base is the twenty-eight named
 (`:editorBase`). The interface packages have no entry module, so neither
 names them; their modules come with their implementations' libraries.
 
@@ -730,7 +737,7 @@ globs = ["Config.+"]
   alone was used. The gate starts the window mode's wiring for both sets'
   editors with that default and requires config to load (`ffi-test
   window-host-direct`, a window scenario). The default set's record names
-  forty-four directories, the core's, then those of its twenty-five
+  forty-six directories, the core's, then those of its twenty-seven
   default packages and eighteen interface packages in the order the build
   visits them, each interface package before the first package that
   requires it (`shell-api`'s, `ex-api`'s, `buffers-api`'s, `ex`',
@@ -743,9 +750,10 @@ globs = ["Config.+"]
   `working-set`'s, `shell`'s, `version-control`'s, `completion-api`'s,
   `completion`'s, `mode-line`'s, `minibuffer`'s, `shipped-themes`',
   `execute-command-api`'s, `execute-command`'s, `binding-search-api`'s,
-  `binding-search`'s, `compile`'s, `at-point`'s and `languages`'), and the
-  fixture set's fifty-one, the core's, `greeting-api`'s, `greeting`'s,
-  `greeting-loud`'s, `echo`'s, the default set's forty-three in that
+  `binding-search`'s, `compile`'s, `at-point`'s, `languages`', `mise`'
+  and `login-shell`'s), and the
+  fixture set's fifty-three, the core's, `greeting-api`'s, `greeting`'s,
+  `greeting-loud`'s, `echo`'s, the default set's forty-five in that
   order, the opt-in `agents-api`'s and `acp`'s, and `word-count`'s, each
   holding its package's modules.
 - **A directory given on the command line is a search path**, one
@@ -833,7 +841,7 @@ by the same gate tasks as the core, through `tools/package-set.sh <step>
   package's commands, stops at the first that fails and passes its exit
   status through, and decides nothing of its own.
 - **The gate gives the steps the fixture set**, which requires the default
-  set. So the default packages, the twenty-five default packages and the
+  set. So the default packages, the twenty-seven default packages and the
   eighteen interface packages, are tested, built, formatted and run
   through it. The default set's own
   `editor` and `fixture-test` are built beside it, for the standing
@@ -2024,7 +2032,7 @@ guide quotes.
 
 | Path | What |
 |---|---|
-| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the twenty-five default packages and the eleven interface packages, then the opt-in packages `agents-api` and `acp` (below), after the default set so that `acp`'s ex names register after the default packages', as the default packages' fixtures, which this set's harness runs too, list them, then `word-count` |
+| `tests/packages/lakefile.toml` | The fixture set, `fixture-set`: it requires `greeting-loud`, then `greeting-api`, then `echo`, then the default set, and through it the twenty-seven default packages and the eleven interface packages, then the opt-in packages `agents-api` and `acp` (below), after the default set so that `acp`'s ex names register after the default packages', as the default packages' fixtures, which this set's harness runs too, list them, then `word-count` |
 | `tests/packages/greeting-api/` | The interface package `greeting-api` (`keywords = ["editor-interface"]`): the name `greeting-reply` (`GreetingApi.replyName`) and every name it declares (`GreetingApi.names`); in its test library, the fake `GreetingApiTest.fake` and the contract check `GreetingApiTest.contractChecks`, and its test driver, which holds the fake to the contract and shows the contract refuse a package that lacks or misspells the name. It has no entry module and registers nothing |
 | `tests/packages/greeting/` | The Lake package `greeting`, an implementation of `greeting-api`: the commands `greeting-hello` and `greeting-reply` (`Greeting.lean`), the second under `GreetingApi.replyName`, its entry module, its test driver (`GreetingTest/Model.lean`, which runs `GreetingTest/Greeting.lean` and greeting-api's contract check), its linked test (`GreetingTest/Linked.lean`, with the config it loads in `tests/linked/config`) and the fixture `tests/headless/hello` |
 | `tests/packages/greeting-loud/` | The Lake package `greeting-loud`, which requires `greeting`, to register after it, and `greeting-api`, and registers `greeting-reply` again with another text, by the name `greeting-api` declares. It imports nothing of `greeting`; its tests use greeting-api's fake. Its test driver and the fixture `tests/headless/reply` |
@@ -2082,8 +2090,8 @@ interface packages of the default set (`project-api`, `vc-api`,
 `minibuffer-api`, `execute-command-api`, `binding-search-api`,
 `at-point-api`), the fixture
 set, each fixture package (`echo` among them), the writing guide's
-example package (`docs/packages/word-count/`), the empty set, and the
-formatter's host.
+example package (`docs/packages/word-count/`), the empty set, the
+formatter's host and lean-deny's host.
 
 - **A set's manifest holds path entries only.** With it present, a
   dependency the manifest does not hold fails the build (`dependency … not
@@ -2099,24 +2107,28 @@ formatter's host.
   why none is left out: a build must not write into the checkout.
 - **The core requires no git repository.** A set that requires the core by
   path would clone every git dependency of the core into its own
-  `.lake/packages`. So the Lean formatter is not a `require` of the core:
-  it is the one `require` of a package of its own, its host
-  (`tools/lean-fmt/lakefile.toml`), which nothing requires and whose
-  `packagesDir` keeps the clone and its build under `lean/.lake/packages`,
-  where CI caches it. `lake -d ../tools/lean-fmt exe lean-fmt … --root
-  <package>` runs it over any package ([the-gate.md](../dev-practices/the-gate.md),
-  "Formatting").
+  `.lake/packages`. So neither the Lean formatter nor lean-deny, the
+  checker of the structure rules, is a `require` of the core or of the
+  default set: each is the one `require` of a package of its own, its host
+  (`tools/lean-fmt/lakefile.toml`, `tools/lean-deny/lakefile.toml`),
+  which nothing requires and whose `packagesDir` keeps the clone and its
+  build under `lean/.lake/packages`, where CI caches it. `lake -d
+  ../tools/lean-fmt exe lean-fmt … --root <package>` runs the formatter
+  over any package ([the-gate.md](../dev-practices/the-gate.md),
+  "Formatting"), and `lake -d ../tools/lean-deny exe lean-deny check
+  --workspace <dir> --config <policy>` runs lean-deny over a workspace
+  ([the-gate.md](../dev-practices/the-gate.md), "The structure check").
 
 ### The toolchain links
 
 `lean/lean-toolchain` is the one pin every task reads: every Lake command
 runs in `lean/`, naming another root with `--dir`. **Each Lake root outside
 `lean/` links its `lean-toolchain` to it**, a relative symbolic link (the
-default set and its forty-three packages, the twenty-five default
+default set and its forty-five packages, the twenty-seven default
 packages and the eighteen interface packages, the fixture set and its
 four packages, the writing guide's example package `word-count`, the
-empty set, the user-set fixture `tests/user-sets/hello-init`, and the
-formatter's host): `lean-fmt` refuses a root with no
+empty set, the user-set fixture `tests/user-sets/hello-init`, the
+formatter's host and lean-deny's host): `lean-fmt` refuses a root with no
 `lean-toolchain`, and elan reads the file, through the link, when Lake is
 run in that directory. So there is no copy to fall behind, and a bump of
 the pin (`AGENTS.md`, "Toolchains") changes one file. A new Lake root
@@ -2483,9 +2495,11 @@ an implementation package; a package may import interface packages. A
 package is an interface package when its lakefile declares
 `keywords = ["editor-interface"]`, and an implementation package
 otherwise. The rule holds for every module of a package, its tests
-included. The twenty-five default packages are implementation packages:
+included. The twenty-seven default packages are implementation packages:
 each imports the core and, but for `mode-line`, `shipped-themes`,
-`languages`, `restore` and `package-set`, one or more interface packages,
+`languages`, `restore`, `package-set`, `mise` and `login-shell` (the last
+two import the core's interface library `EnvironmentApi`), one or more
+interface packages,
 its own or another's ("The module map", below, lists each one's
 `require`s). The eighteen interface packages import the core alone, but
 for `ex-api`, whose contract names `shell-api`'s `shell-command`, and
@@ -2496,11 +2510,12 @@ for `ex-api`, whose contract names `shell-api`'s `shell-command`, and
   importable module imports is visible to the package's code whether or not
   the package may name it; what the rule limits is what a package depends
   on by name, which is what a later rename or move can break.
-- **The core's interface library is part of the API**, though the
-  core's Lake package holds it outside `Editor`: `FilesApi`, importable
-  by every module of a package, library or test. It is a core interface
-  for good: session restore, a core module, adopts files and reads the
-  load limit through it. `BuffersApi` and `ShellApi` were staged beside
+- **The core's interface libraries are part of the API**, though the
+  core's Lake package holds them outside `Editor`: `FilesApi` and
+  `EnvironmentApi`, importable by every module of a package, library or
+  test. Each is a core interface for good: session restore, a core
+  module, adopts files and reads the load limit through `FilesApi`, and
+  the host reads a child's environment sources through `EnvironmentApi`. `BuffersApi` and `ShellApi` were staged beside
   it until ex, which reached them, moved out (phase 8), and are the
   interface packages `buffers-api` and `shell-api` since
   (`packages/buffers-api/`, `packages/shell-api/`). `ProjectApi` and
@@ -2524,8 +2539,9 @@ for `ex-api`, whose contract names `shell-api`'s `shell-command`, and
   core's own model tests are written on (`Editor.Test.…`, 20 modules); and
   a feature's test kit in the core (`Editor.….Kit`; there is none since
   every feature moved out with its kit); and the
-  test library of the core's interface library (`FilesApiTest`: its fake,
-  contract check and support; `BuffersApiTest`, `ShellApiTest`,
+  test libraries of the core's interface libraries (`FilesApiTest`: its fake,
+  contract check and support; `EnvironmentApiTest`: its fakes, contract
+  and model rigs; `BuffersApiTest`, `ShellApiTest`,
   `ProjectApiTest` and `VcApiTest` were here until their libraries moved
   to `packages/`) but what
   is under `<I>Test.Linked`. A package's tests are the modules under
@@ -2610,12 +2626,15 @@ for `ex-api`, whose contract names `shell-api`'s `shell-command`, and
   among them), but for the core's interface libraries and their test
   libraries, above. The root of a linked test alone names the base,
   above.
-- **Review holds the rule, and the three-layer rule beside it**
+- **lean-deny checks the rule, and the three-layer rule beside it**
   ([structure.md](../../.agents/rules/structure.md), "What a package may
-  import" and "Three layers"). No gate step checks either: a check that
-  read Lake's module graph with a shell script stood behind them, and was
-  removed (rdm task `lean-structure-rules-tool` is where automated
-  checking comes back). The rule is about direct `import` lines, by the
+  import" and "Three layers"), under `mise run lean-deny`: allow-only
+  rules 1–4 and `[layers]` of `packages/lean-deny.toml`, over Lake's
+  resolved module graph of the default set
+  ([the-gate.md](../dev-practices/the-gate.md), "The structure check").
+  The policy lists the internal modules and the test doubles, so a new
+  one is added to it (structure.md, "Keeping the policy in step"). The
+  rule is about direct `import` lines, by the
   kinds of importer above: a package's library, a test, the linked test's
   root and a module under that root. A package's library's globs must
   still hold every module of it ("A package's tests and the gate's steps
@@ -3129,8 +3148,9 @@ for the cut:
 
 Each row is an interface library the core still holds and a core module
 that imports it, by Lake's module graph, leaving out the core's test roots
-and the interface's own test library. `FilesApi` is the one left, for
-good. `project-api` and `vc-api` are interface packages since phase 6
+and the interface's own test library. `FilesApi` is left, for good, and
+`EnvironmentApi`, added by the process-environment-sources roadmap's phase
+2, for good too. `project-api` and `vc-api` are interface packages since phase 6
 (`packages/project-api/`, `packages/vc-api/`), and `buffers-api` and
 `shell-api` since phase 8 (`packages/buffers-api/`,
 `packages/shell-api/`), when the ex line and the menu, the last core
@@ -3142,6 +3162,67 @@ modules that imported them or `FilesApi` for a feature's sake, moved out.
 | `FilesApi` | `Editor.Jumps.Go` | going to a place visits a file through it; evil's jumps and marks reach it | for good: going to a place is the core's, and evil, a package since phase 7, reaches it |
 | `FilesApi` | `Editor.Test.Ex` | the kit's ex line binds `w`, `e` and their kin to the names files-api declares | the kit's stand-in, while tests use it |
 | `FilesApi` | `Editor.Test.Workspace` | the kit's stand-in: its attach registers at `FilesApi.Opened` in place of the workspace's | the kit's stand-in, while tests use it |
+| `EnvironmentApi` | `Editor.Headless` | at every reload that installs, the host reads the registry's environment sources through it (`EnvironmentApi.ofRegistry`) and installs the layers | for good: the core reads a child's layers through it |
+| `EnvironmentApi` | `Editor.Config.Reload` | a reload whose registry names a base nothing answers to is rejected, its error listing the bases (`Report.baseRefused`) | for good: the core reads a child's layers through it |
+| `EnvironmentApi` | `Editor` (the config base) | config registers sources at its points on any set | for good: the core reads a child's layers through it |
+
+### The core interface library `environment-api`
+
+Status: **built** (`phase/process-environment-sources/phase-2-environment-interface-and-mise-package`).
+
+A child's environment is built in layers (`Editor/Process/Environment.lean`;
+[concurrency.md](concurrency.md), "A child's environment, as built"), and
+the sources of those layers are packages. The interface is a library staged
+in the core's Lake package, as `FilesApi` is, not an interface package: the
+core decodes the registered values, so it imports the module that declares
+their types, and the core requires no package. It has no lakefile of its
+own and so no `keywords` line; it imports only the core's API, and every
+package may import it. Its module docs say where an addition goes.
+
+| Library | Declares | Publishes for tests | Its own tests | Implemented by | Used by | Stays |
+|---|---|---|---|---|---|---|
+| `EnvironmentApi` (`lean/EnvironmentApi.lean`) | The hook `EnvironmentApi.DirectorySource` (every value applies in registration order, a later value of a name replacing the earlier in its place, `DirectorySource.ordered`) and the choice `EnvironmentApi.BaseSource` by the name the core's setting `environmentBase` gives, beside the core's built-in `inherited` (`BaseSource.choose`, `unknownBase`); `registered` and `ofRegistry`, the layers as the host installs them | `EnvironmentApiTest.fakeDirectory`, `fakeBase`, `fakePackage` and `fakeSource`; the contract, `directoryContract` and `baseContract`; the model rigs, `modelDirectoryRig` and `modelBaseRig` | `ModelTest.environmentRegistryChecks`, `ModelTest.environmentApiChecks` | `mise` (`Mise.Compiled`, `packages/mise/`), whose `miseChecks` run the directory contract on the model rig and whose linked test (`MiseTest.Linked.Mise.Contract`) runs it over the real process service; `login-shell` (`LoginShell.Compiled`, `packages/login-shell/`), whose `loginShellChecks` run the base contract on the model rig and whose linked test runs it over the real process service (`LoginShellTest.Linked.LoginShell.Contract`) and holds the one wiring check of a real base under a real directory source (`LoginShellTest.Linked.LoginShell.Real`) | the core's host (`Editor.Headless`) and reload reducer (`Editor.Config.Reload`); config | Stays a core interface: the core reads a child's layers through it |
+
+- **The base is chosen by name.** `environmentBase` is a core setting:
+  config's choice, else the latest package's default (a package's
+  `environmentBase` is a default, as its `useStyleFor` is), else
+  `inherited` (`Config.Registry.baseName`). A name nothing answers to
+  refuses the config at reload, with a diagnostic that lists the bases
+  there are, and children keep the base they had; at start-up nothing of
+  config's is installed, as for any rejected start-up reload.
+- **`processEnvironment` is retired.** A config that calls it is refused
+  with a message naming its replacement: leave the package `mise` out for
+  no lookup, `Mise.executable` for mise at a path
+  (`processEnvironmentGone`, `Editor/Setup.lean`).
+- **Rejected at start-up.** The host installs the layers at a reload that
+  installs, as it installed config's setting before; a config rejected at
+  start-up leaves nothing installed until one does.
+- **The default set's registration is pinned once, on its own harness.**
+  The package's checks run over `Mise.package` alone, so that the default
+  set registers it is the standing fixture
+  `tests/headless/environment-sources`'s, run on the default set's fixture
+  harness with the real elaborator: the installed registry, read through
+  `EnvironmentApi.ofRegistry`, gives one directory source, `mise` at the
+  first of `Mise.candidates` in the window mode and none in the headless
+  mode, and config's `Mise.executable "/opt/mise"` replaces it in both;
+  with the base the registry names (`RegistryRequest.environmentBase`),
+  `login-shell`, looked up in the home directory in the window mode and
+  inherited in the headless mode
+  ([headless-mode.md](../dev-practices/headless-mode.md), "How the gate
+  runs a fixture").
+- **The login shell is the default base** (`packages/login-shell/`,
+  process-environment-sources phase 3). The package registers the base
+  `login-shell` and calls `environmentBase "login-shell"`, a default that
+  config's `environmentBase` overrides. Its executable is a probed program
+  (`Process.Program.probed`): `SHELL`, else the user record's login shell
+  (`id -P`), else `/bin/zsh`, so the decision is data the core runs and
+  the models see, not a shell one-liner. Its lookup has a time limit of
+  its own (`Process.Source.limit`, 5 s, the setting
+  `LoginShell.timeLimit`). Its base is `.inherited` in the headless mode,
+  so every headless fixture and every test keeps launchd's environment.
+  mise cannot be registered beside it in a test (no package imports an
+  implementation package), so its one wiring check over a real directory
+  source uses this library's fake at a fixture standing in for mise.
 
 ## Rust in a package
 
@@ -3512,11 +3593,13 @@ there.
 
 The rows are generated from `find`, so no module is in no row, which
 closes the task `module-map-count-drift`. Beside `lean/Editor/` the core's
-Lake package holds one interface library, `FilesApi` (`lean/FilesApi.lean`,
+Lake package holds two interface libraries: `FilesApi` (`lean/FilesApi.lean`,
 with its test library `FilesApiTest`), which declares the extension points
 of files and which the core keeps because session restore and going to a
 place, core modules, reach files through it ("Interface libraries left in
-the core", above); the config base, `lean/Editor.lean`; and the core's own
+the core", above); and `EnvironmentApi` (`lean/EnvironmentApi.lean`, with
+`EnvironmentApiTest`), which declares a child's environment sources and
+which the host reads ("The core interface library `environment-api`"); the config base, `lean/Editor.lean`; and the core's own
 test roots.
 
 ### The packages
@@ -3528,7 +3611,8 @@ points it registers at and reads, and the names it declares or reaches.
 
 - **The extension points** are the types that derive `TypeName`:
   `FilesApi.Opened`, `FilesApi.Saved` and `FilesApi.Files` (the core's
-  interface library), `BuffersApi.Closing` and `BuffersApi.Buffers`,
+  interface library), `EnvironmentApi.DirectorySource` and
+  `EnvironmentApi.BaseSource` (the core's other), `BuffersApi.Closing` and `BuffersApi.Buffers`,
   `ProjectApi.Workspaces`, `VcApi.Backend`, and `Compile.Contribution`
   and `Compile.ProjectCommands` (`compile-api`'s).
 - **A registration** is an `Extension.add` of a value of the point's type,
@@ -3544,6 +3628,7 @@ points it registers at and reads, and the names it declares or reaches.
   | `FilesApi.runOpened` | `FilesApi.Opened` | `lean/FilesApi.lean` |
   | `FilesApi.runSaved` | `FilesApi.Saved` | `lean/FilesApi.lean` |
   | `FilesApi.files?` | `FilesApi.Files` | `lean/FilesApi.lean` |
+  | `EnvironmentApi.ofRegistry`, over the registry's values | `EnvironmentApi.DirectorySource`, `EnvironmentApi.BaseSource` | `lean/EnvironmentApi.lean` |
   | `BuffersApi.runClosing` | `BuffersApi.Closing` | `packages/buffers-api/BuffersApi.lean` |
   | `BuffersApi.buffers?` | `BuffersApi.Buffers` | `packages/buffers-api/BuffersApi.lean` |
   | `ProjectApi.workspaces?` | `ProjectApi.Workspaces` | `packages/project-api/ProjectApi.lean` |
@@ -3557,7 +3642,10 @@ points it registers at and reads, and the names it declares or reaches.
 - **The core reads `FilesApi.Files`** itself, in session restore
   (`lean/Editor/Restore/Run.lean`) and in going to a place
   (`lean/Editor/Jumps/Go.lean`), and its test kit registers stand-ins at
-  the files' points; the core's Lake package is no row.
+  the files' points; the core's Lake package is no row. **The core reads
+  `EnvironmentApi.DirectorySource` and `EnvironmentApi.BaseSource`** in the
+  host (`lean/Editor/Headless.lean`) and the reload reducer
+  (`lean/Editor/Config/Reload.lean`), through `EnvironmentApi.ofRegistry`.
 
 | Package | Layer | Requires, beside the core | Extension points it registers at | Extension points it reads | Names it declares, or reaches |
 |---|---|---|---|---|---|
@@ -3604,6 +3692,8 @@ points it registers at and reads, and the names it declares or reaches.
 | `compile` | implementation | `minibuffer-api`, `compile-api`, `shell-api` | `Compile.Contribution` | `Compile.Contribution`, `Compile.ProjectCommands`, `FilesApi.Files` | registers the compile mode's commands and its six ex names; reaches `minibuffer-api`'s names and `shell-api`'s history |
 | `at-point` | implementation | `at-point-api`, `evil-api` | none | none | registers `at-point-api`'s names; reaches `insert-newline` and `insert-tab` by `evil-api`'s constants |
 | `languages` | implementation | none | none | none | registers the `code` mode and the languages that ship |
+| `mise` | implementation | none | `EnvironmentApi.DirectorySource` | none | declares no name; its setting, `Mise.executable`, registers at the same point |
+| `login-shell` | implementation | none | `EnvironmentApi.BaseSource` (and a default `environmentBase`) | none | declares no name; its setting, `LoginShell.timeLimit`, registers at the same point |
 
 Two first-party packages live under `packages/` and have no row, as they
 are not of the default set: the agents packages, opt-in and built with
@@ -3620,15 +3710,20 @@ fixture set requires both, so the gate covers them.
 | `agents-api` | interface | none | none | none | declares the project store `agents-table` (`AgentsApi.Table.store`) with the agent table's types and pure reducer, and the points `AgentsApi.Agent`, `AgentsApi.ConversationView` and `AgentsApi.PermissionPolicy`, each a choice by name (`AgentsApi.Agent.named`, `AgentsApi.ConversationView.named`, `AgentsApi.PermissionPolicy.named`, each an `Extension.named`; the policy's type admits only an offered option or "ask", and a theorem says so), the package service `agents` (`AgentsApi.serviceName`) with its vocabulary, its replies and their argument encoding (`AgentsApi/Arguments.lean`), the protocol's model and theorems, the service's fake, its contract and its fixture support |
 | `acp` | implementation | `agents-api`, `buffers-api` | `AgentsApi.Agent` (`claude-code`), `AgentsApi.ConversationView` (`default`), `AgentsApi.PermissionPolicy` (`default`, which asks), `BuffersApi.Closing` | `AgentsApi.Agent` (the session job, an `Extension.workJob`, and `agent-start`), `AgentsApi.ConversationView`, `AgentsApi.PermissionPolicy` (`agent-events`) | brings the service `agents` (`Package.services`) over its crate `acp-service`; registers the session commands `agent-start`, `agent-prompt`, `agent-answer`, `agent-cancel`, `agent-stop` and `agent-toggle`, the queue's `agent-queue` and `agent-queue-answer` and the agents list's `agent-list` and `agent-visit`, with nine ex names, the jobs `agent-session`, `agent-send`, `agent-audit` and `agent-stall`, the modes `agent-conversation`, `agent-permissions` and `agent-list`, and the codec of the project store `agents-table`; no package imports it |
 
-Review holds this table and the one above to the tree
+This table and the one above are held to the tree
 ([structure.md](../../.agents/rules/structure.md), "Module map"): a change
 that adds, moves or removes a module under `lean/Editor/`, a package, a
 package's layer, or a package's registration at or read of an extension
 point updates the map in the same change, so every package of the default
 set has its row, with its layer as its lakefile declares it, and every
 (package, point) pair the library modules hold, by the rules above, is in
-that package's row. No gate step checks it; rdm task
-`lean-structure-rules-tool` is where automated checking comes back.
+that package's row. lean-deny checks part of it under `mise run
+lean-deny`: doc-modules rule 1 of `packages/lean-deny.toml` holds "The
+core's modules" to the core's `Editor.…` modules, and doc-packages rule 1
+holds columns 1–3 (package, layer, requires) of the first table above to
+the default set's lakefiles. Review holds the rest: columns 4 and 5, the
+names column, and this table (`agents-api`, `acp`, not in the default
+set).
 
 ### Where each feature went
 
@@ -3663,6 +3758,8 @@ in its phase's section, above.
 | The menu bar that ships | `menu` | features-as-packages phase 8 |
 | The frame commands | `frame-commands` | features-as-packages phase 8 |
 | The ex command line | `ex` | features-as-packages phase 8 |
+| A child's directory environment source, mise (the mise section of `Editor.Process.Environment`, chosen by config's `processEnvironment`) | `mise` | process-environment-sources phase 2 ("The core interface library `environment-api`") |
+| A child's base environment, the login shell (new) | `login-shell` | process-environment-sources phase 3 ("The core interface library `environment-api`") |
 
 ## Input schemes
 
@@ -3733,10 +3830,10 @@ that opens and takes no input.
 
 ## The core's root
 
-`Editor.Core`'s closure is the whole core, and review holds it so
-([structure.md](../../.agents/rules/structure.md), "Core imports"); no
-gate step checks it since its shell check was removed (rdm task
-`lean-structure-rules-tool`). Three rules hold of it:
+`Editor.Core`'s closure is the whole core, and lean-deny checks it so
+([structure.md](../../.agents/rules/structure.md), "Core imports") under
+`mise run lean-deny`: reachable rule 1 of `packages/lean-deny.toml` holds
+rule 2 below, and co-reach rule 1 rule 3. Three rules hold of it:
 
 1. **The root and what it imports hold no module of a feature that is
    moving out.** A moving feature is one whose edges from the core are

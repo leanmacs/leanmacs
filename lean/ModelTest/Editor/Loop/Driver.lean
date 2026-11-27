@@ -42,6 +42,7 @@ import Editor.Test.States
 import Editor.Text
 import Editor.Text.Model
 import Editor.Watch.Model
+import EnvironmentApiTest.Fake
 import ModelTest.Check
 
 /-!
@@ -215,11 +216,14 @@ def driverChecks : List Check :=
           | none => false
           | some driver =>
             let child : Process.Command := { program := "/bin/true", directory := "/p/d" }
-            let lookup := Process.lookupCommand "/opt/mise" "/p/d"
+            let lookup : Process.Command := { program := "/opt/mise", directory := "/p/d" }
             let driver :=
               { driver with
                 jobs :=
-                  { environments := { setting := .mise (some "/opt/mise") }
+                  { environments :=
+                      {
+                        sources :=
+                          { directories := #[EnvironmentApiTest.fakeSource "mise" "/opt/mise"] } }
                     processes :=
                       {
                         scripts :=
@@ -230,7 +234,8 @@ def driverChecks : List Check :=
                               reply :=
                                 .ok { exit := .code 0, stdout := .empty, stderr := .empty } }] } } }
             let (built, _) := fedTo driver (presses "C-c e")
-            built.loop.state.echo == Process.failureMessage "/p/d" (.exited 1 "") &&
+            built.loop.state.echo ==
+                Process.failureMessage (.directory "/p/d" "mise") (.exited 1 "") &&
               built.jobs.processes.started == #[lookup, child] },
     { name :=
         "a command that starts a job with an argument: the step hands the start back, the job is run with that argument, and once it is finished a command has run that received the value the job computed from it; the delivery publishes a scene and leaves the echo the command left"

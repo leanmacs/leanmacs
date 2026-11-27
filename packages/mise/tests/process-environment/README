@@ -1,0 +1,13 @@
+The fixtures of the mise package's linked test
+(packages/mise/MiseTest/Linked/Mise/Contract.lean, miseContractChecks and
+the checks beside it), which the linked test reads from this directory, the
+package's tests/process-environment, and copies into each check's own
+temporary directory. Both must stay executable (mode 100755).
+
+- mise: stands for mise. `mise env --json` prints a JSON object whose PATH
+  is the line in the file fixture-path of the directory it runs in, so two
+  directories get two PATHs. In a directory that holds the file
+  fixture-fail it prints `mise fixture: failing here` on its standard
+  error and exits 1.
+- slow-mise: stands for a mise that outlives the lookup's time limit. It
+  sleeps for 30 seconds, and is killed first.
