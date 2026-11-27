@@ -104,7 +104,10 @@ fn libraries_built_against_an_older_and_the_current_header_run_on_the_process_s_
     assert_ne!(older.service, current.service);
 
     assert!((older.fire)(5));
-    assert_eq!(next_completion(), Event::completion(library(older.service), 5));
+    assert_eq!(
+        next_completion(),
+        Event::completion(library(older.service), 5)
+    );
 
     assert!((current.fire)(6));
     assert_eq!(
@@ -123,5 +126,9 @@ fn libraries_built_against_an_older_and_the_current_header_run_on_the_process_s_
     let (mut first, mut second) = (false, true);
     // SAFETY: both places are writable.
     unsafe { (current.lend_twice)(&raw mut first, &raw mut second) };
-    assert_eq!((first, second), (true, false), "reclaimed once, refused once");
+    assert_eq!(
+        (first, second),
+        (true, false),
+        "reclaimed once, refused once"
+    );
 }
