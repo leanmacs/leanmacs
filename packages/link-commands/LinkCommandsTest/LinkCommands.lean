@@ -1,5 +1,4 @@
 import Editor.Api
-import Editor.Config.Registry
 import Editor.InputScheme.Test
 import Editor.Link
 import Editor.Links
