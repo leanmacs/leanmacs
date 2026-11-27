@@ -373,17 +373,19 @@ A failure for want of a tool says which tool and how to get it:
 
 - **git**, for a git or Reservoir package: install it with
   `xcode-select --install` on macOS, or from <https://git-scm.com>.
-- **Cargo**, for a package that holds a Rust crate: install it from
-  <https://rustup.rs>.
 - **A C header, framework or system library**, for a package with C code:
   install the Xcode command line tools (`xcode-select --install`), or use
   the package's prebuilt binary.
 - **The tool a package's native library is built with** (Cargo, zig, a C
   compiler), for a package whose library is not already built: the build
   stops with `<tool> is required to build <package>'s library, and none
-  works here (…)`. Install the tool, or use the package's prebuilt
-  library, as its documentation says. A package whose library is already
-  built needs no tool of yours at all.
+  works here (…)`. Install the tool (Cargo from <https://rustup.rs>), or
+  use the package's prebuilt library, as its documentation says. A package
+  whose library is already built needs no tool of yours at all.
+- **A package that still declares an `editorRustCrate` target** is refused:
+  the editor no longer compiles a package's Rust into its own archive, and
+  the message names the package and says to ship its Rust as a library of
+  its own. Ask its author for a version that does.
 
 A new editor that is built but does not start, because its link is bad or a
 package's `initialize` throws, is caught before the restart: nothing is
@@ -422,9 +424,13 @@ errors in `*package-build*`.
   ships no macOS SDK, no C headers and no Cargo. A package with C that
   includes only `lean/lean.h` builds from the app; one with other C needs
   the Xcode command line tools, or a prebuilt binary its lakefile fetches. A
-  package with a Rust crate builds only from a checkout of the editor, with
-  your own Cargo, and only when the crate is in the editor's repository;
-  one from elsewhere is refused for now.
+  package's Rust is a library of its own: one already built needs nothing
+  of yours, and one its lakefile builds needs your own Cargo.
+- **The agents packages** (`agents-api` and `acp`) are opt-in and come from
+  a checkout of the editor: `mise run install -- --agents` builds acp's
+  library with your Cargo, there, and adds both to your config, whose
+  `:reload` then needs no Cargo. Run it again after updating the
+  checkout.
 
 ## Where builds live
 

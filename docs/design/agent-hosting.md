@@ -71,14 +71,16 @@ package `agents-api`; decided by the owner, 2026-11-23):**
 
 Two packages, both opt-in: **`agents-api`** (`packages/agents-api/`), the
 interface, and **`acp`** (`packages/acp/`), its implementation, whose crate
-`acp-service` (`packages/acp/rust/`) runs the SDK. The default set requires
-neither (owner decision, 2026-11-26): `acp`'s crate needs Cargo, which the
-app never ships, and the bundle ships the core's prebuilt archive alone. A
-user who wants them adds both to their own set and builds `acp`'s crate
-with their own Cargo, which the package-set build asks for
-(`cargoRequired`); the fixture set (`tests/packages/`) requires them, so
-the gate covers them. Loading a package's native library at run time is
-later work (rdm:task/packages-load-native-libraries-at-run-time).
+`acp-service` (`packages/acp/rust/`) runs the SDK, shipped since
+`package-native-libraries` phase 5 as a library of its own, which the
+package-set build stages beside the editor and acp's glue loads when the
+editor starts ([packages.md](packages.md), "acp, ported, as built"). The
+default set requires neither (owner decision, 2026-11-26), since the
+bundle stages no package's library yet. `mise run install -- --agents`
+builds acp's library from the checkout into the package's `lib/` and adds
+both to the user's config, whose `:reload` in the installed app then runs
+no Cargo; after updating the checkout, run it again. The fixture set
+(`tests/packages/`) requires them, so the gate covers them.
 
 - **The port is a package service, `agents`** (`AgentsApi.serviceName`),
   whose vocabulary and reply types `agents-api` owns

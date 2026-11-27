@@ -410,10 +410,10 @@ it"](../design/packages.md#who-can-build-it)).
   framework or library is missing.
 - **Say which in the package's own documentation**: what tooling it needs,
   or which prebuilt binary it fetches.
-- **Rust**: a Rust crate inside this repository builds with the user's own
-  Cargo, installed with rustup, from a checkout only. A crate from outside
-  the repository is refused, with the reason: ship it as a native library
-  of its own instead (below).
+- **Rust**: ship it as a native library of its own (below), written
+  against `editor-package`, as `echo` and `acp` do. The editor no longer
+  compiles a package's Rust into its own archive: a package declaring an
+  `editorRustCrate` target is refused, with that reason.
 
 ### A native library
 

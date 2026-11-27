@@ -430,8 +430,10 @@ that holds the process's one process service provides it:
   attach cancelled while its consumer is held in a pull.
 - **Threads.** Each child keeps its waiter, two readers and its writer,
   and the consumer adds its own. For ACP, as built (acp-agents phase 4),
-  `acp-service`'s real connector (`Threads`, `packages/acp/rust/src/lib.rs`)
-  starts two a session: `acp-session`, which runs the protocol's connection
+  `acp-service`'s real connector (`Threads<S>`, `packages/acp/rust/src/lib.rs`),
+  which since `package-native-libraries` phase 5 takes the child over
+  through the stream source it holds, the package runtime
+  (`Threads<Runtime>`), starts two a session: `acp-session`, which runs the protocol's connection
   (the SDK's future under a plain `futures::executor::block_on`, no
   runtime) and writes every line the SDK sends straight through
   `ChildStreams::write`, so the child has one writer; and `acp-pull`, which
@@ -541,9 +543,9 @@ that holds the process's one process service provides it:
   `editor-service`'s statics. That echo's crate depends on nothing of the
   editor's is held by `deny.toml`'s entry for `editor-service`, which
   leaves it out of its wrappers (`mise run deny`; cargo-deny counts its
-  dev-dependencies too). A package crate still linked into the archive
-  (acp's) takes a child over through `editor_service::stream::take_over`
-  directly, as before.
+  dev-dependencies too). acp's library takes a child over the same way,
+  through the runtime (`Threads<Runtime>`); since `package-native-libraries`
+  phase 5 no package crate is linked into the archive.
 
 **The bound for ACP.** Claude Code's adapter sent a 27,490-byte line on its
 first prompt (its list of commands), and a tool call's update carries the

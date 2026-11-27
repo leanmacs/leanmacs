@@ -541,9 +541,9 @@ order; the set's name and the pin as given), the config base (`setBase`),
 the order packages register in (`requireOrderOf`, the walk
 `setPackages` makes), the `.olean` directories (`moduleDirectoriesOf`), the
 core's identity (`coreIdentityOf`), the build record (`buildRecordOf`),
-whether a set or a crate is
-in the repository (`isUnderRoot`, `outsideCrateRefusal?`, beside
-`rustSource`), the records of where the set and the core are
+whether a set is in the repository (`isUnderRoot`, beside `rustSource`),
+the refusal of a package still declaring `editorRustCrate`
+(`rustCrateRefusal`), the records of where the set and the core are
 (`setRecordText`, `coreDirRecordText`); the grammars' records and staged
 place (`grammarsRecordText`, `stagedGrammarsPlace`); what a bundle ships
 (`shipsLibraryNamed`, `builtOf`, `prebuiltRustFiles`, `shippedFileLine`,
@@ -2414,15 +2414,10 @@ is pinned on the models (`ModelTest.packageSetBuildChecks`):
    package, or requires it before a package, while that package names the
    core from git: Lake takes the git require, and would build a core from source that is not the one the
    editor links. The refusal comes after the resolve, which may already
-   have fetched that core; the manifest is authoritative only then. Step 5
+   have fetched that core; the manifest is authoritative only then. Step 4
    reuses the manifest this step read. `ModelTest.packageSetBuildChecks`
    holds the refusal (`lean/ModelTest/Editor/PackageSet/Build.lean`).
-3. **Rust**: `lake query :editorRustCrates`; a set that holds a package
-   declaring a Rust crate stops here, refused ("Who can build it"). No
-   Cargo is ever run. A package whose native code is a library of its own
-   (an `editorLibrary` target) adds no crate, so a set whose packages
-   declare only libraries passes with no Cargo.
-4. **Build and install**: `lake build :editorInstall` with
+3. **Build and install**: `lake build :editorInstall` with
    `EDITOR_INSTALL_DIR=<data>/editors/staging-<k>` and the environment of
    `editor.build`, its output streamed into the buffer `*package-build*`.
    The install stages and copies each package's library; a library target
@@ -2430,22 +2425,30 @@ is pinned on the models (`ModelTest.packageSetBuildChecks`):
    required to build <package>'s library, and none works here (<how>):
    …`, which the job reads off Lake's `error:` line (`missingTooling?`) into
    its failure line ("A package's library, staged and loaded, as built").
-5. **Record**: the new editor's `editor.core` is read, and
+   A package that still declares an `editorRustCrate` target stops it the
+   same way, with `<package> declares an `editorRustCrate` target, but the
+   editor no longer compiles a package's Rust into its own archive: …`
+   (`rustCrateRefused?`; "acp, ported, as built"). No Cargo of the set's
+   own is ever run: every set's editor links the core's archive, which a
+   user's set reuses as it is built (until phase 5 of
+   `package-native-libraries` a step before this one queried the set's
+   package crates).
+4. **Record**: the new editor's `editor.core` is read, and
    `editor.packages` written beside it: the requires as the reload read
    them, the pins read again after the resolve, and the set's name.
-6. **Probe**: `<staging>/editor --probe` must print `probe: ok` within
+5. **Probe**: `<staging>/editor --probe` must print `probe: ok` within
    10 s, which catches a bad link, a bad signature or an `initialize` that
    throws before anything is published.
-7. **Publish**: `/bin/mv <staging> <data>/editors/<core>/<n>`, atomic
+6. **Publish**: `/bin/mv <staging> <data>/editors/<core>/<n>`, atomic
    within one file system.
-8. **Prune**: this core's versions older than `n-1`, every other core's
+7. **Prune**: this core's versions older than `n-1`, every other core's
    directory, and leftover `staging-*`; the directory that holds the
    running executable is always kept, whichever core or version it is. An
    older version of this core can be the running one: a publish whose
    restart did not happen (refused, or the session not written), or whose
    new editor crashed so the launcher started the one before, leaves it
    running when the next build publishes.
-9. **Restart** into the new editor through the restore's restart
+8. **Restart** into the new editor through the restore's restart
    (`Editor.restart`), with the session handed over; with no state
    directory, "built `<exe>`; it starts at the next launch".
 
@@ -3247,9 +3250,15 @@ package may import it. Its module docs say where an addition goes.
 
 ## Rust in a package
 
-Status: **built** (`phase/packages/phase-11-rust-in-packages`). Third-party
-packages that hold Rust, built on a user's machine, are still packages
-phases 8 and 9's ("Who can build it", below).
+Status: **built** (`phase/packages/phase-11-rust-in-packages`), and **the
+per-set crate retired** in `package-native-libraries` phase 5: a package's
+Rust now ships as a library of its own, written against `editor-package`
+and loaded when the editor starts ("A package's library, staged and
+loaded, as built", "acp, ported, as built", below), and every set's editor
+links the core's archive alone. This section and the next keep the history
+of the archive generated from a set's package crates; what still holds is
+the glue and the binding (a package's glue, its `@[extern]` declarations,
+its Lean lakefile).
 
 A package may need code that exists as a Rust crate, as the agent client
 protocol does: the ACP client runs on the protocol's Rust SDK instead of
@@ -3264,6 +3273,14 @@ plain data and calls a Rust function of the C ABI, as the core's are
 (`tests/packages/echo/`) is the proof.
 
 ### One Rust archive per editor, generated from the set
+
+**Retired in `package-native-libraries` phase 5.** The facets below, the
+per-set crate, `setRustCrates` and `outsideCrateRefusal?` are gone from
+`lean/lakefile.lean`: the generated crate is the core's alone
+(`target/editor-rust/core/`, crate `editor-rust`, archive
+`target/release/libeditor_rust.a`, `rustlib`), and `linkAsEditor` links it
+(`coreArchive`) in every set. A package still declaring `editorRustCrate`
+is refused (`rustCrateRefusal`). What follows is how it was.
 
 The package-set build writes the executable's root module from the set's
 Lake packages ("The generated root", above). It writes a Rust crate the same
@@ -3831,9 +3848,11 @@ expansion), `stream` (`Child`'s `Send` and `Sync`), `package`
 **Left to later phases.** Phase 4 is done: `package!` takes `interface N;`
 and exports the declaration beside the init (`editor_package::declaration`,
 whose runtime is `REQUIRED`), and the editor refuses a library declaring
-another interface or a newer runtime. Phase 5: acp's port, which joins `editor-package`'s wrappers
-and leaves `editor-service`'s, its `Service` static replaced by one held
-in its state. Phase 6: the author guide's dependency line.
+another interface or a newer runtime. Phase 5 is done and needed nothing
+new of the wrapper: acp's port maps onto it as it stands ("acp, ported, as
+built"), joins `editor-package`'s wrappers and leaves `editor-service`'s,
+its `Service` static replaced by one held in its state. Phase 6: the author
+guide's dependency line.
 
 ### A package's library, staged and loaded, as built
 
@@ -3846,8 +3865,8 @@ directory; the editor refuses, before calling anything of it, a library
 declaring another interface or a newer runtime.
 
 **The target.** A package declares its library with one Lake target,
-`editorLibrary`, whose value is the library's absolute path, as it declares
-`editorRustCrate` (`libraryTargetName`). The core finds it by name in each
+`editorLibrary`, whose value is the library's absolute path
+(`libraryTargetName`). The core finds it by name in each
 package of the set (`setLibraries`, over `setPackages`), fetches it through
 the build's store, and reads its value through its own declaration's query
 format, so no type of the package's is named and no list is kept. The body
@@ -3955,7 +3974,7 @@ registered job, by its caption. A log entry saying the tool could not be
 run (`libraryToolMissing?`: Lean's `could not execute external process
 '<cmd>'`, which Lake 4.35's `proc` logs under `stderr:`, or Lake's own
 `failed to execute '<cmd>': <error>`) fails the staging with
-`libraryToolRequired`, in `cargoRequired`'s shape: "`<tool>` is required to
+`libraryToolRequired`: "`<tool>` is required to
 build `<package>`'s library, and none works here (`<how>`): install it (for
 cargo, with rustup from https://rustup.rs), or use the package's prebuilt
 library, as its documentation says, then :reload". The build job's
@@ -3968,14 +3987,13 @@ compile error, so it is reported that way. A tool run outside Lake's
 `proc` is reported only as the target's own failure; the guide says to use
 `proc`.
 
-**`editorRustCrate` until phase 5.** It stays for the crates in the
-repository (acp's). A package with an `editorLibrary` and no
-`editorRustCrate` adds nothing to `setRustCrates`, so a user's set stays
-`prebuilt` (`rustSource`) and no Cargo runs at `:reload`; from the
-installed app a prebuilt library is copied into
+**`editorRustCrate` until phase 5: done.** Phase 5 ported acp and retired
+the per-set crate, so no package's crate is compiled into an archive, and a
+package still declaring `editorRustCrate` is refused ("acp, ported, as
+built"). A user's set is `prebuilt` (`rustSource false`) and no Cargo runs
+at `:reload`; from the installed app a prebuilt library is copied into
 `<data>/editors/staging-<k>/libraries/` and published with its relative
-record. The refusal of a crate outside the repository points at a library
-of its own ("Who can build it").
+record.
 
 **What pins it.**
 
@@ -4013,20 +4031,143 @@ of its own ("Who can build it").
 - The literal install, on demand: `mise run library-install-check`
   (`docs/dev-practices/on-demand-checks.md`).
 
+### acp, ported, as built
+
+Status: **built** (`phase/package-native-libraries/phase-5-port-acp-to-library`).
+acp's Rust, the Agent Client Protocol client over the SDK
+([agent-hosting.md](agent-hosting.md)), ships as a library of its own, as
+echo's does, and the per-set Rust crate is retired: every set's editor
+links the core's archive alone.
+
+**The mapping.** Everything acp used of `editor-service` has a mirror in
+`editor-package` with the same names, variants and fields (`Completer`,
+`Service`, `stream::{ChildStreams, StreamSource, Ended, Pulled}`,
+`frame::Frames`, `RecordingCompleter`), so the port was a change of imports
+and four changes of shape; the wrapper gained nothing. `Worker`, the one
+thing phase 3 left unmirrored, was not needed: acp's threads are its own
+connector's.
+
+- **`Threads<S: StreamSource>`** takes the child over through the source it
+  holds: `Threads<Runtime>` in the library, so a child crosses as the
+  runtime's handle, pulled and written through the runtime's members. The
+  rest (a session thread and a pull thread a session, reaped at the next
+  start) is unchanged.
+- **No statics.** `rust/src/ffi.rs` is echo's shape: `Loaded { acp:
+  Acp<Service, Threads<Runtime>> }`, made by the init (`Loaded::new`, which
+  registers `acp` through the runtime), and `package! { interface 1; … }`
+  over `AcpFunctions` (`open`, `load`, `next`, `prompt`, `cancel_turn`,
+  `set_mode`, `answer`, `take`, `withdraw`, `flush`, `free`), each declared
+  with `functions!` and answering false or none before the init. The crate
+  has no `unsafe` (`#![deny(unsafe_code)]`).
+- **The glue** (`ffi/glue.c`) mirrors the table (`acp_table`,
+  `ACP_INTERFACE`), loads the library through the core
+  (`acp_glue_load_library`), and forwards every `acp_glue_*` through the
+  table; `Acp.Real`'s `builtin_initialize` loads it from the record beside
+  the executable (`Editor.PackageLibrary.staged "acp" "acp"`). The
+  session's load keeps its name (`acp_glue_load`, `Acp.Real.load`, through
+  the table's `load`); the library's load takes names of its own
+  (`loadLibrary…`).
+- **The tests** run on the wrapper's fakes: `src/tests.rs` on its
+  `RecordingCompleter`; `stream.rs`'s on `ScriptedChild`, each delivery
+  scripted as the core frames it (framing and the bound are the core's
+  stream contract); `tests/init.rs` on `FakeRuntime`; `tests/not_loaded.rs`
+  before any init. `src/session/tests.rs` and `tests/replay.rs` were
+  untouched.
+
+**The SDK inside the library.** acp stays a member of the root workspace,
+so the root lock pins its tree and the gate's Rust tasks cover it, but its
+dependencies are no longer in the core's archive. The root `deny.toml`
+names `acp-service` a wrapper of `editor-package` and not of
+`editor-service`, and the SDK's one wrapper; acp's own
+`packages/acp/rust/deny.toml`, run by `mise run deny` over its graph alone,
+allows the wrapper, the SDK, `futures`, `serde`, `serde_json` and their
+tree, and refuses every other crate, `editor-service`, `editor-ffi` and
+another package's crate among them. A bump of the SDK that changes its
+tree changes that list in the same commit.
+
+**The target's two forms, and the repository rule.** acp's `editorLibrary`
+answers the library already built in `lib/` for a set outside the
+repository, and builds the crate's `cdylib` with Cargo otherwise, the
+checkout's own sets among them even with `lib/` present
+(`acpLibraryForm`). A set is inside the repository when the directory two
+above acp holds a `Cargo.toml` and the workspace's root package is in it
+(`acpInRepository`): a config that requires acp from the checkout's own
+`packages/acp` has the `Cargo.toml`, so only the workspace's root says it
+is a user's. echo's target has no such rule, since echo's `lib/` exists
+only in copies outside the repository; acp's `lib/` is put inside the
+checkout by the install, and without the rule the gate would load a stale
+library after an edit to acp's Rust.
+
+**The install.** `mise run install -- --agents` builds acp's library with
+the developer's Cargo (the same command as the target's Cargo form) and
+places it in `packages/acp/lib/` (gitignored), copied beside it and renamed
+over it, before the app is replaced; then it adds `agents-api` and `acp` to
+the config's lakefile ahead of `editor-core`, which stays at the bundle, as
+`coreRefusal?` requires. The installed app's `:reload` copies the library
+into `<data>/editors/staging-<k>/libraries/acp/`, so the editor never loads
+it from the checkout, and runs no Cargo. Each install rebuilds the library
+and installs the app from the same checkout, so the core, acp's Lean, read
+from the checkout at `:reload`, and its library agree; after a `git pull`
+with no reinstall, a changed table is refused at load by the interface
+check, naming acp, and a Rust-only change waits for the next install, which
+the install's output and the docs say to run.
+
+**`editorRustCrate` is refused.** `setLibraries` refuses a package that
+still declares an `editorRustCrate` target, before any library is fetched,
+with `rustCrateRefusal`: "`<package>` declares an `editorRustCrate`
+target, but the editor no longer compiles a package's Rust into its own
+archive: ship it as a package library of its own, declared with an
+`editorLibrary` target and written against `editor-package`
+(docs/packages/writing-a-package.md, 'A native library')". The build job
+reads it off Lake's `error:` line (`rustCrateRefused?`, through
+`failureReason?`), so its failure line is `lake build exited with status 1:
+<sentence>`. With it went the build job's Rust step (`lake query
+:editorRustCrates`, `cargo --version`, `cargoRequired`), and from the
+lakefile `RustCrate`, `setRustCrates`, `outsideCrateRefusal?` and the facets
+`editorRustCrates`, `editorRustCrate`, `editorRust` and
+`editorRustSource`; `rustSource` now takes whether the set is in the
+repository alone, and `coreArchive` matches on it.
+
+**What pins it.**
+
+- The crate: `cargo test -p acp-service` (its unit tests, `tests/replay.rs`,
+  `tests/init.rs`, `tests/not_loaded.rs`); the bans, `mise run deny`.
+- The library reached only through the glue's table:
+  `AcpTest.Linked.contractChecks` (agents-api's contract, the session load
+  among its properties), `sessionChecks` (AC4 on a real child) and
+  `acpLoadChecks` (the load again, and another interface refused naming
+  acp), in acp's linked test, whose executable links no acp symbol;
+  echo's `echoProbeChecks` and acp's headless fixture, over the fixture
+  set's editor, which loads acp's library.
+- The forms: the `#guard`s on `acpLibraryForm` and `acpInRepository`.
+- The installed config: `AcpTest.Linked.acpInstalledSetChecks`, a config
+  laid out as the install leaves it (the editor's generated lakefile with
+  the two packages added by `:package-install`'s core-last edit, acp's
+  library in a copy's `lib/`, a stub `Cargo.toml` two above it), built with
+  the toolchain's `lake` and no cargo on `PATH`, its editor's probe passing
+  once acp's source is removed. On demand, the install itself:
+  "The agents packages, installed, on demand"
+  (`docs/dev-practices/on-demand-checks.md`).
+- The retirement: `ModelTest.packageSetBuildChecks` ("a set's build runs
+  no lake query and no cargo"); the refusal: its guard,
+  `packageSetBuildChecks`' refused-crate case, and echo's
+  `echoUserSetChecks` on real Lake.
+
 ### The service conventions as a crate of their own
 
 A package's crate runs work the way the core's services do
 ([rust-library.md](rust-library.md)): `start` with the caller's id, which
 never blocks; one completion event for each request, on the completion
 queue; `cancel`; and plain data only, never a call into Lean. Those
-conventions are the crate `editor-service`, which `editor-ffi` and every
-package crate linked into the editor's archive (acp's) depend on; a
-package whose Rust is a library of its own (echo's) reaches them through
-the package runtime instead, the package-facing contract ("The package
-runtime, as built", above), written against `editor-package`, which
-mirrors these conventions over the runtime ("The package crate wrapper, as
-built"). `editor-service` stays the convention only for
-the crates still linked into the archive:
+conventions are the crate `editor-service`, which `editor-ffi` and the
+core's crates linked into the editor's archive depend on. Since
+`package-native-libraries` phase 5 no package's crate is linked into the
+archive: each package's Rust is a library of its own (echo's, acp's), which
+reaches these conventions through the package runtime, the package-facing
+contract ("The package runtime, as built", above), written against
+`editor-package`, which mirrors them over the runtime ("The package crate
+wrapper, as built"). `editor-service` has no package crate left; it stays
+the convention for the core's crates:
 
 - `queue`: the two event queues, their events and the fake source, moved
   out of `editor-ffi`, which re-exports them. The editor holds one archive,
@@ -4042,11 +4183,15 @@ the crates still linked into the archive:
 - `buffer`: the plain-data buffers that cross the boundary, lent, borrowed
   and reclaimed; a package's crate exports its own `<pkg>_ffi_free`.
 
-It is the Rust counterpart of an interface package
-([extension-points.md](extension-points.md)): a package's crate depends on
-it, never on `editor-ffi` or on another package's crate.
+It was the Rust counterpart of an interface package
+([extension-points.md](extension-points.md)) while package crates were
+linked into the archive; `editor-package` is now.
 
-**The rule is held by cargo-deny over the generated crate.** The package
+**The rule was held by cargo-deny over the generated crate**, until phase
+5; now each package library's own allow list holds it, and the generated
+crate is the core's alone, whose `deny.toml` keeps `editor-ffi`'s one
+parent and the ban of `editor-release-std` (`docs/dev-practices/the-gate.md`,
+"The Rust bans check"). How it was: The package
 crates are members of the root workspace, so the root `deny.toml` already
 refuses an edge from one to any editor crate it has an entry for, and
 `editor-service`'s entry names the package crates linked into the
@@ -4191,23 +4336,28 @@ a native module either compiles it or fetches a prebuilt one.
   install the Xcode command line tools (`xcode-select --install`) or use
   the package's prebuilt binary (`missingTooling?`,
   `lean/Editor/PackageSet/Build.lean`).
-- **A user's set with no Rust crate never runs Cargo.** It links the core's
+- **A user's set never runs Cargo for the core.** It links the core's
   Rust archive as it is already built (`libeditor_rust.a`, with its record
   of system libraries `target/editor-rust/core/native-static-libs`): no
   `cargo fetch`, no `cargo rustc`, nothing written into a Cargo `target/`
-  (`rustSource` and `prebuiltRust` in `lean/lakefile.lean`; the facet
-  `:editorRustSource` says `prebuilt`). A set is a user's when it is
-  outside the repository; the checkout's own sets are built by Cargo, so a
-  change to the core's Rust is built.
-- **A Rust crate is supported, and needs the user's own Cargo**, installed
-  with rustup. The package-set build checks `cargo --version` only when the
-  set holds a package with a crate; when Cargo is missing or broken it
-  stops before building: "Cargo is required to build `<package>`'s Rust
-  crate `<crate>`, and none works here (`<how>`): install it from
-  https://rustup.rs, then :reload; this editor keeps running"
-  (`cargoRequired`, `lean/Editor/PackageSet/Build.lean`). This is git's
-  stance too: require the system tool, say so when it is needed, never
-  ship it.
+  (`rustSource false` and `prebuiltRust` in `lean/lakefile.lean`). A set
+  is a user's when it is outside the repository; the checkout's own sets
+  are built by Cargo, so a change to the core's Rust is built.
+- **A package's Rust is a library of its own** (since
+  `package-native-libraries` phase 5): no package's crate is compiled into
+  the editor's archive. A library already built runs no tool; one its
+  target builds needs the user's own Cargo, and its absence is said naming
+  the package and the tool ("A package's library, staged and loaded, as
+  built"). This is git's stance too: require the system tool, say so when
+  it is needed, never ship it. A package still declaring an
+  `editorRustCrate` target is refused: "`<package>` declares an
+  `editorRustCrate` target, but the editor no longer compiles a package's
+  Rust into its own archive: ship it as a package library of its own,
+  declared with an `editorLibrary` target and written against
+  `editor-package` (docs/packages/writing-a-package.md, 'A native
+  library')" (`rustCrateRefusal`; until phase 5, Cargo was required for a
+  set holding a crate, `cargoRequired`, and a crate outside the
+  repository was refused, `outsideCrateRefusal?`).
 - **Why not archives built ahead for each platform.** An editor links one
   Rust archive, so it holds one copy of Rust's standard library ("One Rust
   archive per editor"), so a package's crate cannot arrive as a prebuilt
@@ -4218,44 +4368,28 @@ a native module either compiles it or fetches a prebuilt one.
   time); the roadmap `package-native-libraries` takes it up, a package's
   glue keeping the binding and forwarding through the library's table, and
   its spike loads `echo`'s ("A library loaded when the editor runs, as
-  built"). Until its later phases stage a library into an install, a
-  package's Rust in the archive reaches an editor only by compiling the
-  generated crate on the user's machine, with Cargo.
+  built"). Since its phase 4 a library is staged into every install, and
+  since its phase 5 that is the only way a package's Rust reaches an
+  editor.
 
-**From the app, no Rust package builds.** A package crate is outside the
-bundle's "repository", `Contents/Resources/lean`, so the refusal below
-applies: a Rust package builds only from a checkout, with the user's own
-Cargo.
+**From the app, a package's Rust reaches the editor as its library.** The
+installed app's `:reload` stages each package's library, already built or
+built by the package's own target with the user's tooling, beside the new
+editor. `mise run install -- --agents` builds acp's library from the
+checkout into the package's `lib/`, so the config it leaves builds with no
+Cargo ("acp, ported, as built").
 
-**Built, and refused.** A user's set builds the package crates the editor's
-own Cargo workspace holds: every package crate under the repository, such
-as `acp`'s, whose dependencies the core's `Cargo.lock` pins. A
-crate whose manifest is outside the repository is refused by
-`setRustCrates`, so `:editorRustCrates` and the build stop early with:
-"`<package>`'s Rust crate `<crate>` is outside the editor's Cargo workspace
-(`<repo>`): a package outside the repository ships its native code as a
-library of its own, declared with an `editorLibrary` target
-(docs/packages/writing-a-package.md, 'A native library')" (until phase 4
-of `package-native-libraries` it said building a third party's Rust was
-not supported yet). Two pieces are missing for such a crate in the
-archive: its dependencies are not in the core's lock (the build is `cargo
-fetch --locked` then `--offline`), and `editor-service` has no published
-name for it to depend on.
+**Built, and refused, until phase 5.** A user's set built the package
+crates the editor's own Cargo workspace held (acp's), and refused one whose
+manifest was outside the repository (`outsideCrateRefusal?`), pointing at a
+library of its own. Both are gone with the per-set crate; a package
+declaring `editorRustCrate` is refused instead (`rustCrateRefusal`, pinned
+by the `#guard` beside it, by `ModelTest.packageSetBuildChecks` and by
+echo's `EchoTest.Linked.echoUserSetChecks` on real Lake).
 
-**A package's library needs no Cargo.** A package whose native code is a
-library of its own declares it with an `editorLibrary` target and no
-`editorRustCrate`, so it adds nothing to `setRustCrates`: a user's set
-stays `prebuilt` (`rustSource`), and no Cargo runs at `:reload`. An
-already-built library runs no tool at all; one the target builds needs the
-user's own tool, and its absence is said naming the package and the tool
-("A package's library, staged and loaded, as built"). Phase 6 rewrites
-this section.
-
-The refusal is `outsideCrateRefusal?` in `lean/lakefile.lean`, pinned by
-the `#guard`s beside it, and what a failed build says of missing tooling
-is `missingTooling?`, pinned by `ModelTest.packageSetBuildChecks`. That a
-set holding a C package links with no Cargo, and that its C answers, is
-not checked in the gate: a gap.
+What a failed build says of missing tooling is `missingTooling?`, pinned
+by `ModelTest.packageSetBuildChecks`. That a set holding a C package links
+with no Cargo, and that its C answers, is not checked in the gate: a gap.
 
 ## The module map
 
@@ -4429,19 +4563,18 @@ points it registers at and reads, and the names it declares or reaches.
 | `login-shell` | implementation | none | `EnvironmentApi.BaseSource` (and a default `environmentBase`) | none | declares no name; its setting, `LoginShell.timeLimit`, registers at the same point |
 
 Two first-party packages live under `packages/` and have no row, as they
-are not of the default set: the agents packages, opt-in and built with
-the user's own Cargo (owner decision, 2026-11-26; `packages/lakefile.toml`'s
-header). A user adds both to their own set, whose build asks for rustup's
-Cargo (`cargoRequired`, "Who can build it", below); loading a package's
-native library at run time instead is later work
-(rdm:task/packages-load-native-libraries-at-run-time), and `dlopen` stays
-set aside ("One Rust archive per editor, generated from the set"). The
-fixture set requires both, so the gate covers them.
+are not of the default set: the agents packages, opt-in (owner decision,
+2026-11-26; `packages/lakefile.toml`'s header), since the app's bundle
+stages no package's library yet. acp ships its Rust as a library of its
+own ("acp, ported, as built"): `mise run install -- --agents` builds it
+from the checkout into the package's `lib/` and adds both packages to a
+user's config, whose `:reload` then runs no Cargo. The fixture set requires
+both, so the gate covers them.
 
 | Package | Layer | Requires, beside the core | Extension points it registers at | Extension points it reads | Names it declares, or reaches |
 |---|---|---|---|---|---|
 | `agents-api` | interface | none | none | none | declares the project store `agents-table` (`AgentsApi.Table.store`) with the agent table's types and pure reducer, and the points `AgentsApi.Agent`, `AgentsApi.ConversationView` and `AgentsApi.PermissionPolicy`, each a choice by name (`AgentsApi.Agent.named`, `AgentsApi.ConversationView.named`, `AgentsApi.PermissionPolicy.named`, each an `Extension.named`; the policy's type admits only an offered option or "ask", and a theorem says so), the package service `agents` (`AgentsApi.serviceName`) with its vocabulary, its replies and their argument encoding (`AgentsApi/Arguments.lean`), the protocol's model and theorems, the service's fake, its contract and its fixture support |
-| `acp` | implementation | `agents-api`, `buffers-api` | `AgentsApi.Agent` (`claude-code`), `AgentsApi.ConversationView` (`default`), `AgentsApi.PermissionPolicy` (`default`, which asks), `BuffersApi.Closing` | `AgentsApi.Agent` (the session job, an `Extension.workJob`, and `agent-start`), `AgentsApi.ConversationView`, `AgentsApi.PermissionPolicy` (`agent-events`) | brings the service `agents` (`Package.services`) over its crate `acp-service`; registers the session commands `agent-start`, `agent-prompt`, `agent-answer`, `agent-cancel`, `agent-stop` and `agent-toggle`, the queue's `agent-queue` and `agent-queue-answer` and the agents list's `agent-list` and `agent-visit`, with nine ex names, the jobs `agent-session`, `agent-send`, `agent-audit` and `agent-stall`, the modes `agent-conversation`, `agent-permissions` and `agent-list`, and the codec of the project store `agents-table`; no package imports it |
+| `acp` | implementation | `agents-api`, `buffers-api` | `AgentsApi.Agent` (`claude-code`), `AgentsApi.ConversationView` (`default`), `AgentsApi.PermissionPolicy` (`default`, which asks), `BuffersApi.Closing` | `AgentsApi.Agent` (the session job, an `Extension.workJob`, and `agent-start`), `AgentsApi.ConversationView`, `AgentsApi.PermissionPolicy` (`agent-events`) | brings the service `agents` (`Package.services`) over its library `acp-service`, loaded when the editor starts; registers the session commands `agent-start`, `agent-prompt`, `agent-answer`, `agent-cancel`, `agent-stop` and `agent-toggle`, the queue's `agent-queue` and `agent-queue-answer` and the agents list's `agent-list` and `agent-visit`, with nine ex names, the jobs `agent-session`, `agent-send`, `agent-audit` and `agent-stall`, the modes `agent-conversation`, `agent-permissions` and `agent-list`, and the codec of the project store `agents-table`; no package imports it |
 
 This table and the one above are held to the tree
 ([structure.md](../../.agents/rules/structure.md), "Module map"): a change
