@@ -134,8 +134,11 @@
 //! its reason:
 //!
 //! - [`runtime`]: `Runtime::from_raw`, which takes the runtime the core
-//!   hands an init once its size is checked, and the one `Calls` impl
-//!   through which every member of a runtime is called.
+//!   hands an init once its size is checked; the one `Calls` impl through
+//!   which every member of a runtime is read, alone through its own place,
+//!   and called; and `Calls`' `Send` and `Sync`, since it holds the runtime
+//!   as a pointer, never a reference to the whole of a `PackageRuntime`
+//!   that an older core's runtime may end before.
 //! - [`buffer`]: [`Param::enter`](buffer::Param::enter), declared and
 //!   implemented, which reads a [`Bytes`] and enters an [`Out`] for the
 //!   call; [`Place::put`](buffer::Place::put); a [`Lent`]'s parts, its
@@ -153,7 +156,7 @@
 //!
 //! | Addition | Where | Pinned by |
 //! |---|---|---|
-//! | A new runtime member (a trailing member of `editor-package-runtime`, with phase 2's steps there and in `editor-package-library`) | A method on the type it concerns ([`Runtime`], [`Service`], [`stream::Child`]), which calls the member through `Calls` only after `runtime_has!` and answers its absent outcome on an older runtime; the same member in [`fake::FakeRuntime`]; its words in [`wire`] if it carries any | The method's unit test over [`fake::FakeRuntime`], and over [`fake::FakeRuntime::sized`] ending before it (the absent outcome); the fake's run of the runtime's contract, which gains the member's property (`editor-package-check/tests/contract.rs`) |
+//! | A new runtime member (a trailing member of `editor-package-runtime`, with phase 2's steps there and in `editor-package-library`) | A method on the type it concerns ([`Runtime`], [`Service`], [`stream::Child`]), which asks `runtime_has!` for the member and only then reads it through `Calls`' `member!` (alone through its own place, never through a reference to the whole runtime, which on an older core ends before the new member) and calls it, and answers its absent outcome on an older runtime; the same member in [`fake::FakeRuntime`]; its words in [`wire`] if it carries any | The method's unit test over [`fake::FakeRuntime`], and over [`fake::FakeRuntime::sized`] ending before it (the absent outcome); `runtime`'s test over a runtime of exactly [`REQUIRED`] bytes (`a_runtime_that_ends_at_buffer_free_is_called_through_every_member_and_no_further`), which the method joins; the fake's run of the runtime's contract, which gains the member's property (`editor-package-check/tests/contract.rs`) |
 //! | A new wrapper type for what crosses a package's table | [`buffer`], with its C shape in its docs, and its [`buffer::Param`] impl, which hands a declared function's body what it lends borrowed for the call alone, never a safe reader of its own | Its unit tests; `tests/functions.rs`, a function declared with [`functions!`] that takes it; and, when it crosses the runtime, `editor-package-check/tests/load.rs` over the real runtime |
 //! | A new type mirrored from `editor-service` | The module of the same name ([`frame`], [`stream`], [`service`]), the same name, variants and fields | Its unit tests here; `editor-package-check`'s conversion, which matches every variant |
 //! | Another way a child ends, or frames | A variant of [`stream::Ended`] or [`frame::Frames`], its words in [`wire::encode`] and [`wire::decode`] (both match every variant) | [`wire`]'s round trip, which lists every variant; `editor-package-check/tests/wire.rs`, both directions with the core |

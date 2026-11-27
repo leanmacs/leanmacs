@@ -250,6 +250,66 @@ fn an_unreadable_pull_delivers_a_failure() {
     assert_eq!(fake.outstanding(), 0, "its words handed back all the same");
 }
 
+/// A copy of `fake`'s runtime in an allocation of exactly [`REQUIRED`]
+/// bytes, its `size` saying so: the runtime of the oldest core a library
+/// can meet, with nothing behind `buffer_free`, however many members
+/// `PackageRuntime` has grown since. Kept for the process, memory only, as
+/// a fake is.
+#[expect(
+    unsafe_code,
+    reason = "lays a runtime out in an allocation of exactly the required length, shorter than `PackageRuntime` once a member is appended, as an older core hands one"
+)]
+fn oldest(fake: &'static FakeRuntime) -> *const PackageRuntime {
+    let layout = std::alloc::Layout::from_size_align(REQUIRED, align_of::<PackageRuntime>())
+        .expect("a runtime's layout");
+    // SAFETY: the layout is not zero-sized.
+    let bytes = unsafe { std::alloc::alloc(layout) };
+    assert!(!bytes.is_null(), "allocated");
+    let runtime = bytes.cast::<PackageRuntime>();
+    // SAFETY: the fake's runtime holds at least `REQUIRED` bytes and the
+    // allocation exactly that many, aligned for a runtime; `size` is the
+    // first member, inside it.
+    unsafe {
+        ptr::copy_nonoverlapping(ptr::from_ref(fake.raw()).cast::<u8>(), bytes, REQUIRED);
+        ptr::addr_of_mut!((*runtime).size).write(REQUIRED);
+    }
+    runtime
+}
+
+#[test]
+fn a_runtime_that_ends_at_buffer_free_is_called_through_every_member_and_no_further() {
+    let scripted = ScriptedSource::new();
+    let script = ScriptedChild::new(true).delivers(&["one"], None);
+    let number = scripted.add(script.clone());
+    let fake = FakeRuntime::over(Box::leak(Box::new(scripted))).leak();
+
+    #[expect(
+        unsafe_code,
+        reason = "hands the wrapper a runtime as a library's init is handed one"
+    )]
+    // SAFETY: the runtime holds exactly as many bytes as its size says and
+    // is kept for the process.
+    let runtime = unsafe { Runtime::from_raw(oldest(fake)) }.expect("long enough");
+
+    assert_eq!(runtime.size(), REQUIRED);
+    let service = runtime.register("old");
+    assert_eq!(service.id(), 1024);
+    assert!(service.complete(7));
+    assert!(service.post(3, "words"));
+    assert_eq!(fake.next_completion(), Some((1024, 7)));
+    assert_eq!(fake.next_event(), Some((1024, 3, "words".to_owned())));
+    let child = runtime.take_over(number).expect("taken over");
+    assert_eq!(child.pull(), delivered(&["one"], None));
+    assert_eq!(child.write(b"pong\n".to_vec()), Ok(()));
+    drop(child);
+    let lent = runtime.lend(b"lent");
+    assert_eq!(lent.as_bytes(), b"lent");
+    drop(lent);
+
+    assert_eq!(script.written(), [b"pong\n".to_vec()]);
+    assert_eq!(fake.outstanding(), 0, "every lent buffer handed back");
+}
+
 #[test]
 fn a_lent_core_buffer_is_handed_back_on_drop() {
     let fake = FakeRuntime::new().leak();
