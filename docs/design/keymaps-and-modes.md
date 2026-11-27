@@ -3823,7 +3823,8 @@ One pure function resolves what is active for a view, in precedence order:
 ```lean
 def Config.Registry.activeMaps (registry : Registry) (scheme : InputScheme)
     (state : EditorState) (view : ViewId) : List (Keymap scheme.Binding)
--- the open prompt's category, then minor modes, then the major mode, then global
+-- the open prompt's category, then the links mode where the buffer has links,
+-- then minor modes, then the major mode, then global
 ```
 
 As built. The global keymap is every owner's key bindings
@@ -3842,6 +3843,20 @@ walked after the active ones ("Which keymaps a key is looked up in").
   first, then the major mode's, then the global keymap (every owner's key
   bindings in no prompt category). A view with no window has the global
   keymap alone.
+- **The links mode** comes before the minor modes in a view whose buffer
+  has links (`Buffer.links`; `text-and-display.md`, "Followable spans, as
+  built"): the keymaps of the mode registered as `Links.modeName`
+  (`links`), after a prompt's category keymap. It fills `activate`,
+  `next-link` and `previous-link` (`lean/Editor/Links.lean`), so on a link
+  following takes precedence over a mode's own `activate`. Off a link
+  `link-follow` falls back to the buffer's own: it asks the registry which
+  command the buffer's modes fill `activate` with
+  (`RegistryRequest.roleCommand`, answered by `Registry.roleCommand` in
+  the same order, minor modes first, each lineage nearest first, never
+  the links mode) and runs it inside itself. With no mode of that name
+  registered, the package `link-commands` left out, it contributes
+  nothing and every mode behaves as before. Built by the rich text
+  display roadmap's phase 3.
 - **A prompt category's keymap comes first** for the open prompt's
   minibuffer view, when the prompt has a category
   (`Prompt.candidates.category`): `Registry.categoryKeymap`, every owner's

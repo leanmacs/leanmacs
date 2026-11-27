@@ -1499,13 +1499,15 @@ as built").
 **The decorations a scene carries** come from these sources, in this order
 (`lean/Editor/Loop.lean`, "Decorations"): for an excerpt buffer, its
 sources' buffers' spans, translated to each excerpt ("As built: showing
-excerpts"); a buffer's own spans, byte ranges each with a face that the
-buffer's owner sets (`Buffer.spans`, `lean/Editor/State.lean`,
+excerpts"); a buffer's links, each in the face `text.link` ("Followable
+spans, as built"); a buffer's own spans, byte ranges each with a face that
+the buffer's owner sets (`Buffer.spans`, `lean/Editor/State.lean`,
 "Buffers"), such as the compile mode's locations in a compilation buffer;
 then, over each tracked excerpt no scene has shown, a span in
 `review-unexamined` ("As built: the review buffer"); then the matches of
 the last search, in the face `search-match`. A later decoration is drawn
-over an earlier one, so a match is over a span, and the mark of what was
+over an earlier one, so a span is over a link, a match is over a span, and
+the mark of what was
 not examined is over the buffer's own spans. Each view but the minibuffer's covers the range from the
 start of its scroll anchor's row through as many text rows as it has
 display rows, and one more, which covers every visible row however the rows
@@ -1812,6 +1814,67 @@ theme in force is state of the reload reducer (`Config.State.themeName`,
 
 Not built: a face naming another as its base.
 
+### Followable spans, as built
+
+The rich text display roadmap's phase 3 built links: a byte range of a
+generated buffer's text that names a target, followed from the keyboard
+(`lean/Editor/Link.lean`, `lean/Editor/Links.lean`).
+
+- **A link is data on the buffer, beside its spans**, not a field of a
+  decoration: `Link` (`start`, `stop`, `target`) in `Buffer.links`, set by
+  `BufferId.setLinks` (the state request `setLinks`), which refuses
+  `noSuchBuffer`. A target is Lean data and never crosses into the scene;
+  `Decoration` is the scene's type, which blocks use too. Like spans and
+  stops, links are the owner's, and nothing moves them on an edit.
+- **A target** (`LinkTarget`) is a file location (an absolute path, a row
+  from 0 and a column in characters, as `Place.file` names a place), a URL,
+  a reference in a scheme (`rdm:task/x`: the scheme `rdm`, the rest
+  `task/x`) or a command with its arguments (an `Invocation`).
+- **Drawn in `text.link`.** Every view draws each link in its range as a
+  decoration in `text.link`, clipped as spans are, before the buffer's own
+  spans: a span over a link's bytes is drawn over the link face attribute
+  by attribute, so a compile-coloured location keeps its colour and the
+  link's underline still shows. The built-in theme underlines `text.link`
+  (phase 1).
+- **The links mode** (`Links.mode`, named `links`) fills `activate` with
+  `link-follow`, `next-link` with `link-next` and `previous-link` with
+  `link-previous`. Its keymaps go before the buffer's minor and major
+  modes' in any buffer that has links (`Config.Registry.activeMaps`), so
+  on a link following takes precedence over a mode's own `activate`.
+  Off a link `link-follow` runs the command the buffer's own modes fill
+  `activate` with (`RegistryRequest.roleCommand`), inside itself; with
+  none it says `link-follow: no link at the cursor`. In a buffer with
+  links whose mode fills no `activate`, `RET` off a link no longer reaches
+  the scheme's own `RET` (Vim's line down): generated buffers are
+  read-only lists, where that was accepted.
+- **Following each kind**: a location is gone to as a jump
+  (`Jumps.goTo`): the link's place is recorded and the file visited in the
+  same window, so `C-o` comes back to the link; a relative path is
+  refused, since the producer resolves paths. A URL that starts with a
+  scheme and holds no control character (`Link.urlScheme?`) is handed to
+  the job `url-open`, which asks the system's URL opener, a job service
+  since an open may block (`lean/Editor/UrlOpener.lean`;
+  `rust-library.md`, "Platform"); the job says a refusal in the echo area,
+  and only the window mode has the desktop's opener. A reference is
+  handed to the resolver registered for its scheme (`Links.Resolver`, a
+  choice extension point the core declares), and a scheme with none says
+  ``link-follow: nothing follows `<scheme>:` links``. A command is run
+  inside `link-follow` with the target's arguments.
+- **Moving**: `link-next` and `link-previous` put the cursor on the first
+  byte of the link that starts after or before it, so from inside a link
+  `link-previous` goes to its start. They do not wrap: at either end they
+  say there is no link that way and leave the cursor. The keys are the
+  roles': `M-n` and `M-p` in the test scheme, `] l` and `[ l` in the Vim
+  scheme.
+- **Registered by a package.** The core declares the names and holds the
+  decisions; the package `link-commands` registers them (`Links.setup`).
+  Leaving it out leaves link following out: links are still drawn, and a
+  mode keeps its own `activate`.
+- **Not built**: following with the mouse, links in a block, and moving
+  the compile and excerpt buffers onto links (each visits by a row lookup
+  of its own, `compile-goto-error` and `Jumps.visitLocated`; phase 7 moves
+  compile).
+
 ### Text is the only layout engine
 
 The library is a text display engine, not a GUI toolkit (decided
@@ -1819,10 +1882,10 @@ The library is a text display engine, not a GUI toolkit (decided
 cascade and no focus traversal. Everything shown is text, or a box that
 text layout places:
 
-- **A block is text**: a small piece of text with faces and clickable
-  spans, each span naming a command. It has no rows, columns or buttons of
-  its own. Built as text with faces ("Decorations", as built); clickable
-  spans are not built.
+- **A block is text**: a small piece of text with faces. It has no rows,
+  columns or buttons of its own. Built as text with faces ("Decorations",
+  as built). Followable spans are built for a buffer's text ("Followable
+  spans, as built") and not in a block, which the cursor cannot enter.
 - **Tables, lists and pickers** are text views over generated text.
 - **Columns are aligned with align-to stops** in text layout, the one
   primitive this adds (built by the rich text display roadmap's phase 2;
