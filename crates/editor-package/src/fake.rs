@@ -203,10 +203,23 @@ impl FakeRuntime {
     }
 
     /// This fake with its `size` saying `bytes`: smaller than the runtime,
-    /// for a library's refusal of a runtime too small. Its members stay,
-    /// but a library reads none past the size.
+    /// for a library's refusal of a runtime too small, or up to the newer
+    /// core's ([`FakeRuntime::later`]). Its members stay, but a library
+    /// reads none past the size.
+    ///
+    /// # Panics
+    ///
+    /// If `bytes` is more than the fake holds (the newer core's runtime,
+    /// its one member past the current ones included): a size larger than
+    /// the memory under it would have a library that checks a member's
+    /// presence by the size (`runtime_has!`) read past it, from safe code.
     #[must_use]
     pub fn sized(mut self, bytes: usize) -> Self {
+        assert!(
+            bytes <= size_of::<Later>(),
+            "a fake's size says no more than it holds: {bytes} bytes asked, {} held",
+            size_of::<Later>()
+        );
         self.runtime.runtime.size = bytes;
         self
     }
@@ -273,9 +286,9 @@ impl FakeRuntime {
             unsafe_code,
             reason = "calls a library's init as the core's load does, handing it this runtime and a writable place"
         )]
-        // SAFETY: the runtime lives for the process and is as large as its
-        // size says (a sized fake says less than it holds), and the table's
-        // place is writable.
+        // SAFETY: the runtime lives for the process and is at least as
+        // large as its size says (`sized` refuses a size larger than the
+        // `Later` it lives in), and the table's place is writable.
         let status = unsafe { init(self.raw(), &raw mut table) };
         (status, table)
     }

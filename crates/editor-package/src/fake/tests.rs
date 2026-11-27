@@ -153,6 +153,19 @@ fn a_later_fake_is_larger_and_a_sized_fake_says_its_size() {
     assert_eq!(Calls::over(later.raw()).register(b"x"), 1024);
 }
 
+#[test]
+fn a_fake_may_say_every_size_up_to_what_it_holds() {
+    let largest = FakeRuntime::new().sized(size_of::<Later>()).leak();
+
+    assert_eq!(largest.raw().size, size_of::<Later>());
+}
+
+#[test]
+#[should_panic(expected = "a fake's size says no more than it holds")]
+fn a_fake_refuses_a_size_larger_than_it_holds() {
+    let _ = FakeRuntime::new().sized(size_of::<Later>() + 1);
+}
+
 /// The runtime the init below was handed.
 static HANDED: AtomicPtr<PackageRuntime> = AtomicPtr::new(ptr::null_mut());
 

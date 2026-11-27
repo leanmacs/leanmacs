@@ -3703,7 +3703,9 @@ real `PackageRuntime` whose members act on state of its own behind
 ledger of what it lent (`outstanding`); and a source of children, a
 `ScriptedSource` by default (`over`). It starts no thread. `later()` embeds
 it in a larger struct with one more member, `sized(bytes)` makes its
-`size` say less, `leak()` keeps it for the process, and `init(init)` calls
+`size` say less (and panics on a size larger than that struct, so safe
+code cannot hand an init a runtime whose size covers memory it lacks),
+`leak()` keeps it for the process, and `init(init)` calls
 a library's init on it, so a package's test needs no `unsafe`. The
 runtime's contract stays `editor-package-library`'s and runs on the fake
 from `editor-package-check` (`tests/contract.rs`, current and later), its
