@@ -84,23 +84,30 @@ def journalDrained (drained : Task Bool) (guard : Editor.HangGuard := Editor.Hea
         s!"ffi-test: a hang: the journal had not drained {guard.ms} ms after it was asked; waiting for it"
   IO.wait drained
 
+/-- The variables the `window-host-direct` scenario hands the window mode,
+in the scenario's own `home`: `HOME` is `home` and every other variable,
+each `XDG_*` among them, is unset. A pure function, so that no variable of
+the process can reach it. -/
+def directVariables (home : System.FilePath) (name : String) : Option String :=
+  if name == "HOME" then some home.toString else none
+
 /-- What the `window-host-direct` scenario tells the window mode of the
 world, for the editor at `editorPath` (`Window.environmentAt`), in the
-scenario's own `home`: `HOME` is `home` and every `XDG_*` variable is
-unset, whatever the process's are, so its state, data and config
-directories lie under `home`, and a session the developer kept is never
-restored or written. -/
+scenario's own `home`, with its variables `directVariables`, whatever the
+process's are, so its state, data and config directories lie under
+`home`, and a session the developer kept is never restored or written. -/
 def directEnvironment (editorPath : String) (home : System.FilePath) :
     IO Editor.Window.Environment :=
   Editor.Window.environmentAt editorPath (readVariable := fun name =>
-    pure (if name == "HOME" then some home.toString else none))
+    pure (directVariables home name))
 
 /-- The checks of `journalDrained`, on a drain the check ends: with a guard of
 0, the drain is ended only from the hang report, so a wait that gave up at
 its guard is seen every run, with no sleep; and of `Window.Options.handedTo`,
 on the collaborators of the executable's host (`Headless.shippedOver`), made
-and never started; and of `directEnvironment`, on a home it names and never
-makes. -/
+and never started; of `Window.environmentAt`, on a reader of sentinels; and
+of `directVariables` and `directEnvironment`, on a home they name and never
+make. -/
 def windowRealChecks (_ : Unit) : List Check :=
   [{  name :=
         "a scenario's wait for the journal's drain has no deadline: a drain not ended at its guard is said as a hang once and still waited for, and the wait returns only once the drain has ended"
@@ -176,7 +183,36 @@ def windowRealChecks (_ : Unit) : List Check :=
             IO.eprintln
                 s!"ffi-test: the direct scenario's environment was {repr environment}, its state {repr options.stateDirectory} and data {repr options.data}"
             return false
-          return true }]
+          return true },
+    { name :=
+        "the window mode's environment takes each of its variables from the reader it is handed, and from nothing else (Window.environmentAt)"
+      run := do
+        -- Every variable has a sentinel of its own, so a variable read from
+        -- the process, or from another name, is seen whatever the runner's
+        -- variables are. The editor's path names no file, so nothing is read.
+        let sentinel (name : String) : Option String := some s!"/sentinel/{name}"
+        let environment ←
+          Editor.Window.environmentAt "/opt/leanmacs/bin/editor" (readVariable := fun name =>
+              pure (sentinel name))
+        unless
+          environment.xdgStateHome == sentinel "XDG_STATE_HOME" &&
+            environment.xdgDataHome == sentinel "XDG_DATA_HOME" &&
+            environment.xdgConfigHome == sentinel "XDG_CONFIG_HOME" &&
+            environment.home == sentinel "HOME" do
+          IO.eprintln s!"ffi-test: the environment read was {repr environment}"
+          return false
+        return true },
+    { name :=
+        "the window-host-direct scenario's variables are its own home's alone: HOME is its home and every XDG_* variable is unset (directVariables)"
+      run := do
+        let home : System.FilePath := "/scenario/home"
+        let read := directVariables home
+        let xdg := ["XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"]
+        unless read "HOME" == some home.toString && xdg.all (read · |>.isNone) do
+          IO.eprintln
+              s!"ffi-test: the direct variables were HOME={read "HOME"} {xdg.map fun name => (name, read name)}"
+          return false
+        return true }]
 
 /-- Whether the scripted window's record `asked` holds the shutdown's
 minimise before the close: the window records the close in its place among
