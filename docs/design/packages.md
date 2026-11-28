@@ -48,7 +48,7 @@ host registers one are in [lean-runtime.md](lean-runtime.md), "Packages".
 **No feature is in the core's Lake package** (`lean/lakefile.lean`, the
 package `editor-core`): it registers no `Package` and has no entry module
 ("A package's entry module", below). The default package set
-(`packages/lakefile.toml`) requires the core and twenty-eight default
+(`packages/lakefile.toml`) requires the core and twenty-nine default
 packages, in this order, each with the interface packages it requires:
 
 1. `ex` (`ex-api`, `buffers-api`, `shell-api`), `frame-commands`
@@ -78,7 +78,10 @@ packages, in this order, each with the interface packages it requires:
    over the same library, that roadmap's phase 3;
 7. `link-commands`, which follows a buffer's links and moves between them
    under names the core declares (`lean/Editor/Links.lean`), the
-   rich-text display roadmap's phase 3.
+   rich-text display roadmap's phase 3;
+8. `fold-commands`, which folds and unfolds a buffer's sections under
+   names the core declares (`lean/Editor/Folds.lean`), that roadmap's
+   phase 4.
 
 Each has a directory under `packages/`, as each of the eighteen interface
 packages has. "The module map", below, lists them with what each
@@ -4673,6 +4676,7 @@ points it registers at and reads, and the names it declares or reaches.
 | `mise` | implementation | none | `EnvironmentApi.DirectorySource` | none | declares no name; its setting, `Mise.executable`, registers at the same point |
 | `login-shell` | implementation | none | `EnvironmentApi.BaseSource` (and a default `environmentBase`) | none | declares no name; its setting, `LoginShell.timeLimit`, registers at the same point |
 | `link-commands` | implementation | none | none | `Editor.Links.Resolver` (through `Links.follow`) | registers under names the core declares (`lean/Editor/Links.lean`): `link-follow`, `link-next` and `link-previous`, the job `url-open` and the mode `links` |
+| `fold-commands` | implementation | none | none | none | registers under names the core declares (`lean/Editor/Folds.lean`): `fold-toggle` and the mode `folds` |
 
 Two first-party packages live under `packages/` and have no row, as they
 are not of the default set: the agents packages, opt-in (owner decision,

@@ -343,3 +343,14 @@ path = "login-shell"
 [[require]]
 name = "link-commands"
 path = "link-commands"
+
+# The fold commands: folding and unfolding the section under the cursor of
+# a buffer with foldable ranges (`fold-toggle`), and the folds mode, which
+# puts it on the `toggle` role (rich-text-display phase 4). The core
+# declares the names and holds every decision (lean/Editor/Folds.lean);
+# this package registers them. Leaving it out leaves toggling out: folds
+# are still drawn and still honoured by motion. It registers last, so no
+# earlier package's order moves.
+[[require]]
+name = "fold-commands"
+path = "fold-commands"

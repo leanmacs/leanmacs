@@ -1,0 +1,58 @@
+# The fold commands: folding and unfolding the section under the cursor of
+# a buffer whose owner declared foldable ranges (`fold-toggle`), and the
+# folds mode, which puts it on the `toggle` role and whose keymaps go after
+# the links mode's in a buffer with foldable ranges: a default package, a
+# Lake package outside the core that the default package set requires
+# (../lakefile.toml; docs/design/packages.md, "The package set and its
+# build"). The core declares the names and holds every decision
+# (lean/Editor/Folds.lean); this package registers them (`Folds.setup`), as
+# `link-commands` registers the link commands. The gate's package steps
+# build, test, lint and format-check it through the fixture set, which
+# requires the default set (tools/package-set.sh), and review holds what it
+# imports of the core to the rule in `.agents/rules/structure.md`.
+#
+# - `FoldCommands` is the package's library: `FoldCommands.lean`, its
+#   `setup`, `FoldCommands/Compiled.lean`, the `Package` value, and its
+#   entry module `FoldCommands/EditorPackage.lean`, which the package-set
+#   build reads. Its `globs` hold every module under `FoldCommands`, so the
+#   library's build reaches each one. It requires the core alone.
+# - `fold-commands-test` is its test driver (`lake test`): the tests that
+#   need no Rust library, rooted at `FoldCommandsTest/Model.lean`. It is no
+#   default target, as the core's `model-test` is not: `mise run lean`
+#   links with the system compiler, which this executable has no flags for.
+# - `FoldCommandsTest` holds the test modules.
+#
+# It has no headless fixture and no linked test of its own.
+#
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the three-layer rule (.agents/rules/structure.md) holds it to that.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/fold-commands update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages), and commit each lake-manifest.json.
+name = "fold-commands"
+testDriver = "«fold-commands-test»"
+defaultTargets = ["FoldCommands", "FoldCommandsTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/lintShared"]
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "FoldCommands"
+globs = ["FoldCommands.*"]
+
+[[lean_lib]]
+name = "FoldCommandsTest"
+globs = ["FoldCommandsTest.+"]
+
+[[lean_exe]]
+name = "fold-commands-test"
+root = "FoldCommandsTest.Model"
