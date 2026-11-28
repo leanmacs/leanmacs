@@ -89,14 +89,19 @@ pins and copy these queries, so their pins move in the same commit.
   languages in order, the `code` mode, and no command; and
   `grammarPackageChecks`, in
   [`LanguagesTest/Languages/Grammars.lean`](LanguagesTest/Languages/Grammars.lean):
-  what `languages-grammars` registers against a staged directory, its
-  refusal with none, and the entry module's two packages.
+  what `languages-grammars` registers against a staged directory (its
+  seven grammars, in order, with their policies), its refusal with none,
+  the entry module's two packages, and that a shipped language's tree waits
+  for its grammar's answer, so its file is drawn plain until then.
 - **The linked test**, [`LanguagesTest/Linked.lean`](LanguagesTest/Linked.lean),
   which the package steps build and run (`tools/package-set.sh`): the
-  default set's build staged the `yaml` library it compiled, the YAML
-  fixture (`tests/syntax/yaml/settings.yaml`) is drawn highlighted by it
-  over the real services, and a set whose package's grammar source does
-  not compile fails its build naming the package and the grammar.
+  default set's build staged every library it compiled, with the package's
+  queries; the YAML fixture (`tests/syntax/yaml/settings.yaml`), a `.rs`
+  file (`tests/syntax/rust/hello.rs`) and a Markdown paragraph's inline
+  markup (`tests/syntax/markdown/inline.md`) are drawn highlighted by the
+  package's grammars over the real services; and a set whose package's
+  grammar source does not compile fails its build naming the package and
+  the grammar.
 - It has no headless fixture of its own.
 
 ## Dropping it

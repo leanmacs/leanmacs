@@ -32,7 +32,10 @@ command take it (`Editor/Language/Grammar/Register.lean`), with no host:
 `declaredDrawn` registers declarations through the library's grammar
 registrations on a platform, reads the answers and resolves a language's
 tree as the core's command does, enters a text of the language with that
-tree on the real syntax tree binding, waits for the library to deliver its
+tree on the real syntax tree binding, each injected language with the tree
+the core's dispatch gives it over the languages handed in, so a declared
+grammar injected into it (Markdown's inline grammar, into Markdown) takes
+its declared queries, waits for the library to deliver its
 tree, and publishes a view of it to the real display over cells, whose
 frame text it returns, each run of the cells with its colours. A check
 compares the runs it expects.
@@ -76,16 +79,21 @@ def stagedGrammarsDirectory (editor : System.FilePath) (lake : String) :
 brought back: the answers read as the core's command reads them
 (`Language.Grammar.answersOf`), `language`'s tree resolved against them and
 the declarations `declared` (`Language.Grammar.treeOf`), and `text` entered
-with it as the `code` mode enters it. Refused when a sentence would be said
-or the language is left with no tree. -/
-def enteredDeclared (declared : List Language.Grammar) (language : Language) (text : TextId)
-    (replies : Array Language.Grammar.Reply) : EditorM Unit := do
+with it as the `code` mode enters it, each injected language with the tree
+the core's dispatch gives it (`Language.Grammar.injectedTreeOf`) over
+`languages`, the registered languages in precedence order, so a declared
+grammar's injected languages take their declared queries. Refused when a
+sentence would be said or the language is left with no tree. -/
+def enteredDeclared (declared : List Language.Grammar) (language : Language)
+    (languages : List Language) (text : TextId) (replies : Array Language.Grammar.Reply) :
+    EditorM Unit := do
   let (answers, sentences) ← Language.Grammar.answersOf {} 1 replies
   unless sentences.isEmpty do
     throw .noSuchText
   let some tree := Language.Grammar.treeOf declared answers 1 language.syntaxTree
     | throw .noSuchText
-  Highlight.enter Language.codeName text tree
+  Highlight.enter Language.codeName text tree (injected :=
+      Language.Grammar.injectedTreeOf declared answers 1 languages)
 
 /-- `declaredDrawn` is an inferred wait (`Editor/InferredWait.lean`): it
 hands on `Ffi.syntaxSettle`, the real syntax service's readout, so a check
@@ -103,15 +111,16 @@ def declaredDrawn.realHost : RealHost :=
 declarations `grammars` are registered on `platform` through `services`'
 grammar registrations by the core's job (`Language.Grammar.register`), and
 a text of `source`, entered with `language`'s tree resolved against the
-answers (`enteredDeclared`) on the real syntax tree binding, its tree
-delivered, is published in a view 160 by 64 scrolled to the byte `scroll`,
-the faces drawn as `theme` says. None when the job did not finish with its
-command, the text could not be made or entered, a sentence would be said,
-or the scene was not published. The library's reports of the parses are
-drained from the editor queue before the publish. -/
+answers (`enteredDeclared`), its injected languages' trees taken from
+`languages` (by default, `language` alone), on the real syntax tree binding,
+its tree delivered, is published in a view 160 by 64 scrolled to the byte
+`scroll`, the faces drawn as `theme` says. None when the job did not finish
+with its command, the text could not be made or entered, a sentence would
+be said, or the scene was not published. The library's reports of the
+parses are drained from the editor queue before the publish. -/
 def declaredDrawn (services : Services) (platform : String) (grammars : Array Language.Grammar)
-    (language : Language) (source : String) (theme : Theme) (scroll : Nat) : IO (Option String) :=
-  do
+    (language : Language) (source : String) (theme : Theme) (scroll : Nat)
+    (languages : List Language := [language]) : IO (Option String) := do
   let display ← Ffi.Display.newCells 8 16
   let shown ← RealDisplay.over display services.published.reader theme
   let made : EditorM TextId := createText source
@@ -119,7 +128,7 @@ def declaredDrawn (services : Services) (platform : String) (grammars : Array La
   let handle ←
     Job.spawn services.jobs
         (Work.of (fun _ => Language.Grammar.register platform grammars)
-          (enteredDeclared grammars.toList language text))
+          (enteredDeclared grammars.toList language languages text))
         (pure ())
   discard <| hangGuarded "the registration job's end" handle.outcome.result?
   let some (.finished command) ← handle.outcome? | return none

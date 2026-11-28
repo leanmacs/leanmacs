@@ -1,0 +1,4 @@
+// Hello
+fn main() {
+    let n = 42;
+}

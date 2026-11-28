@@ -23,9 +23,10 @@ with the process's one completion pump. Each test module mirrors the
 module it tests:
 
 - `realChecks` (`LanguagesTest/Linked/Languages/Grammars/Real.lean`): the
-  default set's build staged the grammar `yaml` it compiled from source,
-  and the YAML fixture is drawn highlighted by it over the real services
-  and display.
+  default set's build staged every grammar of the package it compiled from
+  source, with the package's queries, and the YAML fixture, a `.rs` file
+  and a Markdown paragraph's inline markup are drawn highlighted by the
+  package's grammars over the real services and display.
 - `sourceSetChecks` (`LanguagesTest/Linked/Languages/Grammars/Real/SourceSet.lean`):
   a set whose package's grammar source does not compile fails its build,
   naming the package and the grammar, built with the toolchain's `lake`.

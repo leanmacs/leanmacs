@@ -130,7 +130,7 @@ readout whose fake exists. Phase 3 marked each as its fake landed:
   Phase 5 of the roadmap `syntax-runtime-grammars` added three subjects.
   `Editor.Test.Linked.Grammar`, the kit's `declaredDrawn`, which settles
   the text it draws and is marked in turn, so its callers carry allows
-  (W90, W92, and W95, the `languages` package's grammar compiled from
+  (W90, W92, and W95, the `languages` package's grammars compiled from
   source). The kit's `settlingAttach`, moved there from contract-test's
   support with `drainedParsed` (which reads the library's queue and is a
   real-host `.service` mark, no wait), marked for the adapter's contract
@@ -277,7 +277,7 @@ under an `#[expect]` of its own, so the gate sees each ban bite.
 | W92 | `tests/grammar-set/ini-grammar/IniGrammarTest/Linked/IniGrammar/Real.lean`, `drawnCheck` (`declaredDrawn`) | d | syntax | real binding | Stays: a package's grammar file reaching the real loader and highlighter is the subject; the settle is on the check's own text's snapshot, in the wiring module, declared `.wiring` | `linter.inferredWait`; allowed at `drawnCheck` |  |
 | W93 | `crates/editor-package/src/stream/fake.rs`, the scripted child's tests (`a_scripted_pull_with_nothing_scripted_parks_until_a_delivery_or_a_cancel`, through `parked`), and the stream contract's grounds over it (`ScriptedSource`'s `Ground::wait_pulling`, and the runtime-over-fake ground in `src/runtime/tests.rs`): `ScriptedChild::wait_pulling(guard)`, the child's own reader parked in a pull with nothing to deliver | b | the scripted child | fake source | Stays: the fake's own subject, and its contract's grounds | Rust: `clippy::disallowed_methods`, `#[expect]` at the readout's own tests and the contract's grounds |  |
 | W94 | `crates/editor-package-check/tests/load.rs`, `a_package_declared_with_the_wrapper_loads_through_the_core_s_load_and_runs_on_the_process_s_runtime` (through `RealGround::wait_pulling`): `Observed::wait_parked(child, guard)`, the child's own reader parked at the test's gate in front of `FakeSource` | b | the process's stream source (provided once) | real runtime over `FakeSource` | Stays: the wrapper's stream contract's ground over the real runtime; outside the rule of the wiring set: the Rust adapters' tests (AC3) | review: the wait is test-local to that one test binary, through `editor_wait::wait_while`, so no path exists for clippy to ban |  |
-| W95 | `packages/languages/LanguagesTest/Linked/Languages/Grammars/Real.lean`, `drawnCheck` (`declaredDrawn`) | d | syntax | real binding | Stays: a grammar the set's build compiled from source reaching the real loader and highlighter is the subject; the settle is on the check's own text's snapshot, in the wiring module, declared `.wiring` | `linter.inferredWait`; allowed at `drawnCheck` |  |
+| W95 | `packages/languages/LanguagesTest/Linked/Languages/Grammars/Real.lean`, `drawnCheck`, `rustDrawnCheck` and `markdownInlineDrawnCheck` (`declaredDrawn`) | d | syntax | real binding | Stays: a grammar the set's build compiled from source reaching the real loader and highlighter is the subject; the settle is on the check's own text's snapshot, in the wiring module, declared `.wiring` | `linter.inferredWait`; allowed at each of the three |  |
 
 ## The flaky tasks
 
