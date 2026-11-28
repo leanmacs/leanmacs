@@ -77,7 +77,11 @@ def keepResult (buffer : BufferId) (result : Except Markdown.Refusal Unit) : Edi
 - `append`: the stream's next chunk, the chunk's index the value `chunk`
   of `stream`, appended to `stream`; the first edit's start since
   `revision` kept as `edited`;
-- `reply`: the empty document into a new buffer `reply`, with the root;
+- `append-unknown`: a chunk whose tail the model has no answer for,
+  appended to `stream`;
+- `append-absent`: an append to a buffer there is none of, kept on
+  `stream` as `absent`;
+- `reply`:the empty document into a new buffer `reply`, with the root;
 - `reply-append`: the reply's next chunk, the chunk's index the value
   `chunk` of `reply`, appended to `reply`;
 - `reply-whole`: `reply.md`, whole, into a new buffer `reply-whole`, with
@@ -132,6 +136,15 @@ def markdownViewCommands : List (String × Dispatched) :=
         discard <|
             stream.setValue "edited" (.nat ((patch.edits.map (·.old.start)).foldl min 1000000))
       return none),
+    ("append-unknown", fun _ => do
+      let some stream ← findBuffer "stream" | return none
+      keepResult stream (← stream.appendMarkdown "Nothing answers this tail.\n")
+      return none),
+    ("append-absent", fun _ => do
+      let some stream ← findBuffer "stream" | return none
+      let result ← (⟨99⟩ : BufferId).appendMarkdown "x"
+      discard <| stream.setValue "absent" (.str (refusalWords result))
+      return none),
     ("reply", fun call => do
       let some reply ← generated call "reply" | return none
       keepResult reply
@@ -163,7 +176,8 @@ def markdownDriver : Option TestDriver :=
           ("C-c x", invoke "render-absent"), ("C-c p", invoke "append-plain"),
           ("C-c t", invoke "table"), ("C-c w", invoke "whole"), ("C-c s", invoke "stream"),
           ("C-c a", invoke "append"), ("C-c e", invoke "reply"), ("C-c n", invoke "reply-append"),
-          ("C-c y", invoke "reply-whole")]
+          ("C-c y", invoke "reply-whole"), ("C-c k", invoke "append-unknown"),
+          ("C-c b", invoke "append-absent")]
         markdownViewCommands with
       registered := { languages := Language.shipped.toList } }
   let model := { editorModel with syntaxTree := { once := Support.Markdown.canned } }
@@ -270,7 +284,32 @@ def markdownViewChecks : List Check :=
           match rendered.map (markdownFed · "C-c x") with
           | none => false
           | some driver =>
-            markdownValue driver "doc" "absent" == some (.str "buffer noSuchBuffer") }]
+            markdownValue driver "doc" "absent" == some (.str "buffer noSuchBuffer") },
+    { name :=
+        "an append whose tail the syntax tree has no answer for is refused as parse unknownGrammar, and the buffer's text, spans, stops, links, folds and document are left as they were"
+      run :=
+        pure <|
+          let before := markdownDriver.map (markdownFed · "C-c s")
+          let after := markdownDriver.map (markdownFed · "C-c s C-c k")
+          let parts (driver : TestDriver) :=
+            (markdownBuffer driver "stream").map fun buffer =>
+              (markdownText driver buffer, buffer.spans, buffer.stops, buffer.links, buffer.folds,
+                buffer.markdown)
+          match before, after with
+          | some before, some after =>
+            markdownValue after "stream" "result" == some (.str "parse unknownGrammar") &&
+              (parts before).isSome &&
+              parts after == parts before &&
+              ((markdownBuffer after "stream").bind (·.markdown)).map (·.source) ==
+                some Support.Markdown.streamHead.source
+          | _, _ => false },
+    { name := "an append to a buffer there is none of is refused as buffer noSuchBuffer"
+      run :=
+        pure <|
+          match markdownDriver.map (markdownFed · "C-c s C-c b") with
+          | none => false
+          | some driver =>
+            markdownValue driver "stream" "absent" == some (.str "buffer noSuchBuffer") }]
 
 /-- `stream.md` rendered whole, its text. -/
 def streamText : String :=

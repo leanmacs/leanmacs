@@ -1454,7 +1454,9 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   one `renderMarkdown` of `view.md` sets the buffer's text, spans, links
   and folds to its description's and keeps the document, the next scene
   draws them, the rendered heading's face resolves larger than the body's,
-  and each refusal leaves the buffer as it was; `markdownTableViewChecks`, a
+  and each refusal leaves the buffer as it was, `renderMarkdown`'s and
+  `appendMarkdown`'s (a tail with no parse, an absent buffer, one never
+  rendered) alike; `markdownTableViewChecks`, a
   rendered table's stops at its measured columns, on the buffer and its
   view, and a table after other blocks at its cells' offsets in the whole
   text; `markdownAppendChecks`, `appendMarkdown` rendering only the tail's
