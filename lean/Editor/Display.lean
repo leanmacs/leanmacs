@@ -94,6 +94,20 @@ rule:
 - A block before the first covered line is drawn above the placeholder, and
   one before a later covered line is not drawn.
 
+## Wrap indents
+
+A view's wrap indents (`WrapIndent`, `View.indents`) say where the visual
+rows of the lines they cover start. Unlike folds they change no row's
+existence, only where a row's characters are, so no query is handed them:
+every binding lays a query of a snapshot out under the indents of the last
+scene published to it, the last view of that snapshot in it, and under none
+when that scene shows no view of it. The real binding keeps them with the
+frame it laid out (`crates/editor-layout/src/cache.rs`), the model and the
+recorder read them from the last scene (`Editor/Display/Model.lean`, "The
+layout rule"). So nothing that asks a query, evil's `j` and `k` or the
+follow, knows of indents: an x it is given back is the drawn x, the indent
+counted.
+
 Lean keeps no layout of its own: what wraps where, and how tall a row is, is
 asked here every time. Xi's experience is the reason
 (`docs/design/text-and-display.md`, "The scene").
