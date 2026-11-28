@@ -6,8 +6,8 @@ import Editor.SyntaxTree.Registration.Model
 
 A pure model of the syntax tree interface (`Editor/SyntaxTree.lean`). It
 knows one grammar of its own, `json` (`Editor/SyntaxTree/Model/Json.lean`),
-under each name it is told is compiled in (`compiled`), beside any
-registered at run time (`registry`), and the
+under each name registered at run time (`registry`), and compiles in
+none, as the library compiles in none; and the
 subset of the query language that `Editor/SyntaxTree/Model/Query.lean`
 states, and it parses at once: a question of captures is answered of the
 snapshot's own text, so the model answers `notParsed` only when a test
@@ -39,22 +39,15 @@ Its state has three parts:
 - `refreshAfter`: the refresh delay it was handed last. It parses at once,
   so every tree is exact and the delay changes no answer; it is what the
   editor's checks read.
-- `compiled`: the names of its compiled-in grammars, none by default, as the
-  library hides its compiled-in grammars from every test. Each is parsed as
-  JSON, ships the model's highlights (`highlights`) and nothing else, and is
-  overridden by a registration of its name. Only the checks of the two rules
-  that still read a compiled-in grammar set it: the core's shipped-query
-  fallback and a declaration that overrides a compiled-in name
-  (`Language.Grammar.compiledStays`). Phase 4 of the roadmap
-  `shipped-grammars-package` removes the field with those rules.
 - `registry`: the grammars registered at run time
   (`Editor/SyntaxTree/Registration/Model.lean`), empty by default. The model
   kits (`withTestGrammars`) hold `GrammarRegistry.testGrammars`, the six
   names the core's tests register from the cargo-built directory. The model
-  lists each registered name after the compiled ones, attaches and compiles for it,
-  and parses its texts as JSON, the one grammar it has; it ships no query
-  for a registered name, `json` included once a registration overrides it,
-  as the library ships none for a registered grammar. A test sets it; in a
+  lists the registered names alone, attaches and compiles for each, and
+  parses its texts as JSON, the one grammar it has; it ships no query for
+  any (`shippedQuery` answers `noShippedQuery` for a listed name and
+  `unknownGrammar` otherwise), as the library ships none: every grammar it
+  lists was registered from a library. A test sets it; in a
   driven run, the registry the job model's registrations end with is
   handed to it (the job's model answers a registration,
   `JobModel.grammars`).
@@ -65,11 +58,11 @@ Its state has three parts:
   before it, as the clipboard model is taken away
   (`ClipboardModel.available`).
 
-Its highlights query (`highlights`) is its own, in its query subset: the
-library's JSON one uses an alternation, which the model refuses as
-unsupported. It ships it for a compiled-in name alone; a check of a
-registered `json` that draws hands its language this query as the tree's
-`highlights`, as a grammar's own query would be handed.
+Its highlights query (`highlights`) is a query of JSON in its own subset:
+the library's JSON one uses an alternation, which the model refuses as
+unsupported. It ships it for no grammar; a check of a registered `json`
+that draws hands its language this query as the tree's `highlights`, as a
+grammar's own query would be handed.
 
 A request is checked in the order the real binding checks it: the
 snapshot and the query ids first, then whether the text is attached, the
@@ -110,11 +103,8 @@ structure SyntaxTreeModel where
   /-- The refresh delay `refreshAfter` handed it last, if any. The model
   parses at once, so it changes nothing it answers. -/
   refreshAfter : Option Nat := none
-  /-- The names of its compiled-in grammars, each parsed as JSON and
-  shipping the model's highlights; none by default. -/
-  compiled : Array String := #[]
-  /-- The grammars registered at run time: listed after `compiled`, attached and
-  compiled for, parsed as JSON, and shipping no query. -/
+  /-- The grammars registered at run time: listed, attached and compiled
+  for, parsed as JSON, and shipping no query. -/
   registry : GrammarRegistry := {}
   /-- Whether the tree of each text's last edit is delivered: when `false`,
   a question of captures is refused with `notParsed` after its other
@@ -128,19 +118,19 @@ def grammar : String :=
   "json"
 
 /-- The model the kits hold by default: the test grammars registered
-(`GrammarRegistry.testGrammars`), nothing compiled in. -/
+(`GrammarRegistry.testGrammars`). -/
 def withTestGrammars : SyntaxTreeModel :=
   { registry := GrammarRegistry.testGrammars }
 
-/-- The highlights query the model ships for each compiled-in name, in its
-own query subset. -/
+/-- A highlights query of JSON in the model's own query subset, which a
+check hands a tree as its own; the model ships it for no grammar. -/
 def highlights : String :=
   "(pair key: (_) @string.special.key)\n(string) @string\n(number) @number\n(null) @constant.builtin\n(true) @constant.builtin\n(false) @constant.builtin\n"
 
-/-- The grammars the model lists: the compiled-in names, then each
-registered name that is not among them. -/
+/-- The grammars the model lists: each registered name, as it compiles in
+none. -/
 def grammars (model : SyntaxTreeModel) : Array String :=
-  model.registry.grammars model.compiled
+  model.registry.grammars #[]
 
 /-- Whether the model lists `named`. -/
 def knows (model : SyntaxTreeModel) (named : String) : Bool :=
@@ -195,14 +185,11 @@ def detach (model : SyntaxTreeModel) (snapshot : SnapshotId) :
         languages := model.languages.filter (!model.sameText ·.1 snapshot)
         kept := model.kept.filter (!model.sameText ·.1 snapshot) })
 
-/-- `shippedQuery`: highlights alone, of a compiled-in name while no
-registration overrides it; a registered grammar ships none. -/
-def shippedQuery (model : SyntaxTreeModel) (named : String) (kind : QueryKind) :
+/-- `shippedQuery`: no query of any kind for a listed name, every one of
+which is registered, and `unknownGrammar` for any other. -/
+def shippedQuery (model : SyntaxTreeModel) (named : String) (_kind : QueryKind) :
     Except SyntaxTreeError String :=
-  if !model.knows named then .error .unknownGrammar
-  else
-    if model.registry.isRegistered named then .error .noShippedQuery
-    else if kind == .highlights then .ok highlights else .error .noShippedQuery
+  if model.knows named then .error .noShippedQuery else .error .unknownGrammar
 
 /-- The query `query` names, of the grammar `snapshot`'s text is parsed
 with: checked in the order the real binding checks it, the snapshot and

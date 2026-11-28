@@ -45,10 +45,10 @@ name, in order. -/
 def highlighters (driver : TestDriver) : Array (Array String) :=
   driver.model.syntaxTree.highlighted.map fun (_, _, faces) => faceNames faces
 
-/-- The faces the model's shipped highlights query is drawn in under the
-`lean` language's capture mapping. -/
-def shippedLeanFaces : Array String :=
-  #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
+/-- The faces of each language injected into the driver's syntax tree
+model's texts, by grammar name, in order. -/
+def injectedLanguages (driver : TestDriver) : Array (String × Array String) :=
+  driver.model.syntaxTree.languages.map fun (_, name, _, faces, _) => (name, faceNames faces)
 
 /-- The checks of the core's `register-grammars` job and its command
 (`Editor/Language/Grammar/Register.lean`), driven from the reducer's effect
@@ -77,6 +77,34 @@ def grammarRegisterChecks : List Check :=
               highlighters after == #[#["syntax.number"], #["syntax.number"]] &&
               answered.loop.state.echo == "" },
     { name :=
+        "a config that declares the grammars markdown and lean, the shipped languages' grammars, as languages-grammars does: a .md buffer with a lean fence opened before the job's command is attached with nothing and highlighted with nothing, and after it is attached with markdown, highlighted with its declared query, and its injected lean drawn in the faces of lean's declared query"
+      run :=
+        pure <|
+          let markdown := "/g/markdown/libtree-sitter-markdown.so"
+          let lean := "/g/lean/libtree-sitter-lean.so"
+          let setup : SetupM Unit := do
+            defineGrammar "markdown" markdown
+            defineGrammar "lean" lean
+          match
+            installedWith setup
+              #[(markdown, .exports #[("tree_sitter_markdown", .grammar)]),
+                (lean, .exports #[("tree_sitter_lean", .grammar)])]
+              #[("/g/markdown/queries/highlights.scm", "(string) @string"),
+                ("/g/markdown/queries/injections.scm", "(pair value: (string) @injection.content)"),
+                ("/g/lean/queries/highlights.scm", declaredHighlights)] with
+          | none => false
+          | some driver =>
+            let before := openedIn driver "/w/a.md"
+            let (answered, delivered) := before.finish 1
+            attachedGrammars before == #[] && highlighters before == #[] &&
+              injectedLanguages before == #[] &&
+              delivered.isSome &&
+              attachedGrammars answered == #["markdown"] &&
+              highlighters answered == #[#["syntax.string"]] &&
+              (injectedLanguages answered).filter (·.1 == "lean") ==
+                #[("lean", #["syntax.number"])] &&
+              answered.loop.state.echo == "" },
+    { name :=
         "a refused registration of the new grammar ini, its library not in the table, says in the echo area its name and the refusal, and a .ini buffer opened before or after the job's command stays open with no syntax tree"
       run :=
         pure <|
@@ -90,8 +118,7 @@ def grammarRegisterChecks : List Check :=
             let buffers (driver : TestDriver) : Array String :=
               driver.loop.state.buffers.filterMap (·.map (·.name))
             answered.loop.state.echo ==
-                Language.Grammar.said "ini" (.refused .notFound) (kept := false)
-                  (registeredBefore := false) &&
+                Language.Grammar.said "ini" (.refused .notFound) (kept := false) &&
               answered.loop.state.echo ==
                 "grammar `ini`: the grammar was refused: no file is at the grammar's path, so its languages have no syntax tree" &&
               attachedGrammars answered == #[] &&
@@ -100,26 +127,7 @@ def grammarRegisterChecks : List Check :=
               highlighters after == #[] &&
               buffers after == #["scratch", "/w/a.ini", "/w/b.ini"] },
     { name :=
-        "a refused registration of a declaration named lean says the compiled-in grammar stays, and a .lean buffer opened before or after the job's command keeps the compiled-in lean grammar and its shipped highlights"
-      run :=
-        -- Pins the refused registration over a compiled-in name (`Language.Grammar.compiledStays`), which phase 4 removes with the rule.
-        pure <|
-          match
-            installedWith (defineGrammar "lean" "/g/libtree-sitter-lean.so") #[] #[] (compiled :=
-              #["json", "lean"]) with
-          | none => false
-          | some driver =>
-            let before := openedIn driver "/w/A.lean"
-            let (answered, _) := before.finish 1
-            let after := openedIn answered "/w/B.lean"
-            answered.loop.state.echo ==
-                "grammar `lean`: the grammar was refused: no file is at the grammar's path, so the compiled-in grammar stays" &&
-              attachedGrammars answered == #["lean"] &&
-              highlighters answered == #[shippedLeanFaces] &&
-              attachedGrammars after == #["lean", "lean"] &&
-              highlighters after == #[shippedLeanFaces, shippedLeanFaces] },
-    { name :=
-        "a declared grammar named lean that registers replaces the compiled-in lean: a .lean buffer opened after the reload is attached with the registered lean and highlighted with the declared query, the shipped one no longer offered"
+        "a declared grammar named lean registers: a .lean buffer opened after the job's command is attached with the registered lean and highlighted with the declared query"
       run :=
         pure <|
           let library := "/g/libtree-sitter-lean.so"
@@ -131,11 +139,7 @@ def grammarRegisterChecks : List Check :=
           | some driver =>
             let (answered, _) := driver.finish 1
             let after := openedIn answered "/w/A.lean"
-            let shipped :=
-              (SyntaxTreeM.runModel (SyntaxTree.shippedQuery "lean" .highlights)
-                  after.model.syntaxTree).1
             attachedGrammars after == #["lean"] && highlighters after == #[#["syntax.number"]] &&
-              shipped matches .error .noShippedQuery &&
               (after.model.syntaxTree.registry.sourceOf? "lean").map (·.library) == some library },
     { name :=
         "a query file that cannot be read ships no query of its kind and is said in the echo area with the grammar and the file; the grammar is still registered"

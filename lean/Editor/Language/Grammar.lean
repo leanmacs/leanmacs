@@ -93,13 +93,14 @@ of the current config generation (`Editor/Language/Grammar/Answer.lean`):
 3. Declared and registered: the entry's tree with the queries read from
    the directory filled in where the entry gives none
    (`Queries.over`). The entry's own source wins over a file.
-4. Declared and refused, and the service still lists the name: compiled
-   in and never registered by this process, the entry's tree, unchanged,
-   so a `.lean` buffer keeps the compiled-in `lean`; registered earlier,
-   the entry's tree with the queries read at the name's last registration
-   filled in as in case 3 (`Answers.registeredQueries?`), since the
-   library still parses with that registration's grammar, which ships no
-   query of its own.
+4. Declared and refused, and the service still lists the name, which it
+   does only once something registered it (the library compiles in no
+   grammar): the entry's tree with the queries read at the name's last
+   registration by this process filled in as in case 3
+   (`Answers.registeredQueries?`), since the library still parses with
+   that registration's grammar, which ships no query of its own; the
+   entry's tree, unchanged, for a name this process never registered (one
+   a test registered before the editor started).
 5. Declared and refused, and the service does not list the name: no tree.
    The buffer stays open as plain text.
 
@@ -114,11 +115,11 @@ The highlighting of a buffer with injections gives each grammar the
 library lists an injected language (`Editor/Highlight.lean`, step 7). The
 dispatch hands it `injectedTreeOf`, which resolves the grammar's tree by
 `treeOf` above: the tree is that of the first entry of the language table,
-in precedence order (config's, then the compiled-in ones it did not
-replace), whose tree names the grammar, or the bare tree of the grammar
-when no entry names it, so a package grammar with no language entry still
-gets its declared queries. So an undeclared grammar keeps the entry's tree
-and the grammar's shipped queries under it; a declared, registered one
+in precedence order (config's, then the packages' it did not replace),
+whose tree names the grammar, or the bare tree of the grammar when no entry
+names it, so a package grammar with no language entry still gets its
+declared queries. So an undeclared grammar keeps the entry's tree, with
+the queries the entry gives; a declared, registered one
 takes the queries read from its directory, the entry's own source winning;
 and one with no answer yet, or refused and no longer listed, gives no
 injected language. A buffer whose fences go plain while an answer is
@@ -131,7 +132,7 @@ dispatch then injects again into every other highlighted buffer too
 `highlights.scm`, `injections.scm`, `indents.scm` and `textobjects.scm`,
 the names nvim-treesitter and Helix use, filling `highlights`,
 `injections`, `indents` and `textObjects`. A missing file ships no query of
-its kind, as a compiled-in grammar that ships none does; any other refusal
+its kind; any other refusal
 of the load ships none too, and is said (`unread`). Each is read under
 `queryLimit`.
 
@@ -139,11 +140,10 @@ of the load ships none too, and is said (`unread`). Each is read under
 
 One sentence for each refusal, joined by `; ` into one echo text:
 ``grammar `<name>`: <GrammarError.describe>, so <consequence>``, the
-consequence "the compiled-in grammar stays" when the service still lists
-the name and this process never registered it, "the grammar registered
-before stays" when it did (and its buffers keep the queries read then:
-case 4 above), and "its languages have no syntax tree"
-otherwise; and ``grammar `<name>`: <file>: <FileError.describe>`` for a
+consequence "the grammar registered before stays" when the service still
+lists the name, which it does only once something registered it (and its
+buffers keep the queries read then: case 4 above), and "its languages
+have no syntax tree" otherwise; and ``grammar `<name>`: <file>: <FileError.describe>`` for a
 query file that could not be read.
 
 ## Where an addition goes
@@ -412,13 +412,8 @@ def injectedTreeOf (declared : List Language.Grammar) (answers : Answers) (gener
   treeOf declared answers generation
     (((languages.find? (·.syntaxTree.grammar == grammar)).map (·.syntaxTree)).getD { grammar })
 
-/-- What a refusal leaves, when the service still lists the name and this
-process never registered it. -/
-def compiledStays : String :=
-  "the compiled-in grammar stays"
-
-/-- What a refusal leaves, when the service still lists the name and this
-process registered it before. -/
+/-- What a refusal leaves, when the service still lists the name: it was
+registered before, since the library compiles in no grammar. -/
 def registeredStays : String :=
   "the grammar registered before stays"
 
@@ -427,11 +422,9 @@ def noTree : String :=
   "its languages have no syntax tree"
 
 /-- The sentence that says the registration of `name` was refused with
-`error`, and what stays: `kept` when the service still lists the name, and
-`registeredBefore` when this process registered it before. -/
-def said (name : String) (error : GrammarError) (kept registeredBefore : Bool) : String :=
-  let consequence :=
-    if kept then if registeredBefore then registeredStays else compiledStays else noTree
+`error`, and what stays: `kept` when the service still lists the name. -/
+def said (name : String) (error : GrammarError) (kept : Bool) : String :=
+  let consequence := if kept then registeredStays else noTree
   s!"grammar `{name}`: {error.describe}, so {consequence}"
 
 /-- The sentence that says `grammar`'s query file `file` could not be read,

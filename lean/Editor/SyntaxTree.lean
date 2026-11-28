@@ -36,11 +36,13 @@ scheme's key grammar (`Editor/InputScheme.lean`).
 - **`release query`**: the query is not needed any more.
 - **`shippedQuery grammar kind`** answers the source of the query of `kind`
   that `grammar` is published with (`QueryKind.highlights`: its
-  `highlights.scm`; `injections`, `textObjects`, `indents`). Each
-  implementation ships its own: the library the grammar crate's, pinned
-  with it, or its own where the crate ships none, and the model its
-  highlights alone, in its own query subset. A caller compares only that it
-  compiles.
+  `highlights.scm`; `injections`, `textObjects`, `indents`). It stays on
+  the port, but no implementation ships one: the library compiles in no
+  grammar, and every grammar it lists was registered from a library whose
+  queries Lean reads beside it, so both the library and the model answer
+  `noShippedQuery` for a listed grammar and `unknownGrammar` otherwise. No
+  caller in the core asks it; removing it end to end is the task
+  `syntax-port-drop-shipped-query`.
 - **`highlight snapshot query faces`**: the text `snapshot` is of is drawn
   with `query`'s captures in `faces` from now on, one entry for each of its
   capture names, `none` for a capture that draws nothing, in place of any

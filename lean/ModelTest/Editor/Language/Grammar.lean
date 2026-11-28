@@ -119,16 +119,14 @@ def grammarDeclarationChecks : List Check :=
             injected {} languages "ini" == none &&
             injected (answered (.refused (.refused .notFound) false)) languages "ini" == none) },
     { name :=
-        "a refusal's sentence names the grammar, the error and what stays: the compiled-in grammar, the grammar registered before, or no syntax tree for its languages; a query file's refusal names the grammar, the file and the error"
+        "a refusal's sentence names the grammar, the error and what stays: the grammar registered before, when the service still lists the name, or no syntax tree for its languages; a query file's refusal names the grammar, the file and the error"
       run :=
         let error : GrammarError := .refused .notFound
         let ini := Language.Grammar.declare "ini" "/g/libini.so"
         pure
-          (Language.Grammar.said "lean" error (kept := true) (registeredBefore := false) ==
-              s!"grammar `lean`: {error.describe}, so the compiled-in grammar stays" &&
-            Language.Grammar.said "ini" error (kept := true) (registeredBefore := true) ==
+          (Language.Grammar.said "ini" error (kept := true) ==
               s!"grammar `ini`: {error.describe}, so the grammar registered before stays" &&
-            Language.Grammar.said "ini" error (kept := false) (registeredBefore := false) ==
+            Language.Grammar.said "ini" error (kept := false) ==
               s!"grammar `ini`: {error.describe}, so its languages have no syntax tree" &&
             Language.Grammar.unread ini "indents.scm" .denied ==
               s!"grammar `ini`: /g/queries/indents.scm: {FileError.denied.describe}") },

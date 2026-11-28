@@ -311,10 +311,9 @@ of blanks, the `ERROR` answer outside the subset, what the query subset
 refuses as unsupported, the contract biting on a model written here
 that answers a range with the whole text's captures, and a model whose
 trees a test says are not delivered refusing questions of captures with
-`notParsed`, a model given a registry listing, attaching and compiling
-for its registered grammars and shipping no query for them, and a model
-given `lean` as compiled in beside `json` listing and shipping its
-highlights for both until a registration of `lean` overrides it.
+`notParsed`, and a model given a registry listing its registered grammars
+alone, attaching and compiling for them and shipping no query of any kind
+for them, another name refused as unknown.
 `grammarRegistryChecks` pin the grammar registry's model
 (`Editor/SyntaxTree/Registration/Model.lean`): given a table, a
 registration, the override of the compiled-in `json`, the default policy,
@@ -1256,10 +1255,11 @@ names a scheme's key:
   the editor's models: a declared grammar registered, its highlights read
   from `queries/` beside its library, and a buffer of its language plain
   until the job's command and highlighted from it on, opened before or
-  after; a refused new grammar said, its buffers left plain; a refused
-  declaration of the compiled-in `lean` said to keep it, and its buffers
-  keeping it; a registered `lean` taking the compiled-in one's place; a
-  query file that cannot be read said, the grammar still registered; the
+  after; a Markdown buffer of the declared `markdown`, opened before the
+  command, plain until it and then highlighted, its declared `lean`
+  injected with the declared query, as at an editor's startup; a refused
+  new grammar said, its buffers left plain; a declared `lean` registered
+  and its buffers highlighted with the declared query; a query file that cannot be read said, the grammar still registered; the
   command of an older generation's job doing nothing over the answers of
   a later one; and a grammar registered by one install and refused by the
   next said to stay, its buffer highlighted again with the queries read
@@ -1287,8 +1287,10 @@ names a scheme's key:
   pure: the shipped default from the face vocabulary, the fallback of a
   dotted capture to its first component, and config's mapping over both;
 - `highlightEnterChecks`: a major mode with a syntax tree, on the editor's
-  models through the loop's dispatch: the text attached and highlighted in
-  the faces the rule gives, a mode's own query, a refusal said in the echo
+  models through the loop's dispatch: a tree that names no highlights
+  query asking the port nothing but a detach and said in the echo area,
+  the text attached and highlighted in the faces the rule gives, a mode's
+  own query, a refusal said in the echo
   area with the mode still set, a parent's syntax tree taken, and the text
   detached when a mode with none replaces it; and the steps after the
   highlights: injections, a language for the model's grammar, and the text
@@ -1298,8 +1300,8 @@ names a scheme's key:
   are given for grammars registered at run time, driven from a config's
   install through the `register-grammars` job's command: a config-declared
   grammar's highlights read from its query directory, a package grammar's
-  from the package's, a declaration overriding the compiled-in `lean`
-  drawn with the declared query, a language entry's own highlights
+  from the package's, a declaration of `lean` over the `lean` registered
+  before drawn with the declared query, a language entry's own highlights
   winning over the grammar's file, a declared grammar's injections query
   read from its directory, a Markdown buffer opened before the command
   injected into again by it, its overridden `lean` fence taking the

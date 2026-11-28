@@ -49,11 +49,19 @@ loop hands here as it hands any mode's.
    is exact. It is for every text, so a reload changes it from the next
    buffer whose mode is entered.
 
+Every query is the tree's own: a language entry's, or the one read from a
+declared grammar's directory (`Language.Grammar.treeOf`). The library
+compiles in no grammar and ships no query, so the port's `shippedQuery` is
+never asked (the task `syntax-port-drop-shipped-query`). A tree that names
+no highlights query runs none of the steps below, steps 0 and 1 included:
+the text is detached, as after a refusal, so nothing of the mode before is
+drawn, and ``highlights: `<mode>`: <noHighlights>`` is said in the echo
+area.
+
 Then, with a snapshot of the buffer's text (`TextId.withSnapshot`):
 
 1. `attach` the snapshot with the grammar;
-2. the query's source: the mode's own, or the grammar's shipped highlights
-   (`shippedQuery`);
+2. the query's source: the tree's highlights;
 3. `compile` it, and read its `captureNames`;
 4. `highlight` the snapshot with the query and `faces` of the mode's
    mapping;
@@ -64,28 +72,27 @@ is said in the echo area, ``highlights: `<mode>`: <refusal>``. The mode is
 still set and the command is not refused: a query of config's that does not
 compile keeps no buffer out of its mode.
 
-After highlights that succeeded, four more steps, each its query's source
-the mode's own or the grammar's shipped one:
+After highlights that succeeded, four more steps, each skipped when the
+tree names no query of its kind:
 
-6. **Injections.** The injections query (`noShippedQuery` skips steps 6
-   and 7): compiled, `inject`ed, released.
+6. **Injections.** The tree's injections query (none skips steps 6 and
+   7): compiled, `inject`ed, released.
 7. **Languages.** For each grammar the library has (`grammars`), an
    `injectLanguage` of its name: its highlights query, in the faces of the
    mode's mapping over its capture names (`faces`), so config's capture
    faces reach embedded code too, and its injections query, if it has one;
    both released after. For the mode's grammar both are the mode's own.
    For any other they are those of the tree `injected` gives for the
-   grammar's name, each the grammar's shipped one where the tree gives
-   none. The dispatch passes the resolved tree of the language entry
-   naming the grammar (`Language.Grammar.injectedTreeOf`,
+   grammar's name; a tree that names no highlights gives no language. The
+   dispatch passes the resolved tree of the language entry naming the
+   grammar (`Language.Grammar.injectedTreeOf`,
    `Editor/Language/Grammar.lean`): declared queries filled in, the
    entry's own winning, so a declared or package-shipped grammar's fences
-   are drawn with the queries read from its directory, and a compiled-in
-   grammar's entry that gives its own highlights uses them here too. A
-   grammar for which `injected` gives none (declared and awaiting its
-   answer, or refused and no longer listed) gives no language; once the
-   answer is recorded, injecting again (below) gives it one. With no
-   `injected`, each grammar's bare tree: its shipped queries. Names are
+   are drawn with the queries read from its directory. A grammar for which
+   `injected` gives none (declared and awaiting its answer, or refused and
+   no longer listed) gives no language; once the answer is recorded,
+   injecting again (below) gives it one. With no `injected`, each
+   grammar's bare tree, which names no query, so no language. Names are
    grammar names: an alias (`rs`) names nothing.
 8. **Text objects.** The text objects query: compiled, kept
    (`keep .textObjects`), released.
@@ -172,22 +179,10 @@ private def say (text : String) : EditorM Unit :=
 private def refreshDelay : EditorM (Option Nat) :=
   ExceptT.lift (Program.request (port := editorPort) (.registry .syntaxRefreshDelay))
 
-/-- The source of the query of `kind` a mode with `syntaxTree` uses: its
-own, `own`, or the one its grammar ships; `none` when it has none and the
-grammar ships none. -/
-def sourceOf (syntaxTree : Mode.SyntaxTree) (own : Option String) (kind : QueryKind) :
-    SyntaxTreeM (Option String) := do
-  match own with
-  | some source =>
-    return some source
-  | none =>
-    try
-      return some (← SyntaxTree.shippedQuery syntaxTree.grammar kind)
-    catch
-    | .noShippedQuery =>
-      return none
-    | refusal =>
-      throw refusal
+/-- What is said, after ``highlights: `<mode>`: ``, when a major mode's
+tree names no highlights query (the module docs). -/
+def noHighlights : String :=
+  "its tree names no highlights query"
 
 /-- `run` with `query`, compiled from `source` for `grammar`, released after
 it, whether `run` was refused or not. -/
@@ -208,17 +203,13 @@ name. -/
 def injections (snapshot : SnapshotId) (syntaxTree : Mode.SyntaxTree)
     (injected : String → Option Mode.SyntaxTree := fun grammar => some { grammar }) :
     SyntaxTreeM Unit := do
-  let some source ← sourceOf syntaxTree syntaxTree.injections .injections | return
+  let some source := syntaxTree.injections | return
   withQuery syntaxTree.grammar source fun query => SyntaxTree.inject snapshot query
   for grammar in ← SyntaxTree.grammars do
     let own := grammar == syntaxTree.grammar
     let some tree := if own then some syntaxTree else injected grammar | continue
-    let some highlights ← sourceOf tree tree.highlights .highlights | continue
-    let injections ←
-      if own then
-        pure (some source)
-      else
-        sourceOf tree tree.injections .injections
+    let some highlights := tree.highlights | continue
+    let injections := if own then some source else tree.injections
     withQuery grammar highlights fun query => do
         let names ← SyntaxTree.captureNames query
         let languageFaces := faces syntaxTree.captures names
@@ -230,10 +221,10 @@ def injections (snapshot : SnapshotId) (syntaxTree : Mode.SyntaxTree)
               SyntaxTree.injectLanguage snapshot grammar query languageFaces (some own)
 
 /-- Step 8 or 9 of the module docs: the text keeps its query of `kind`, from
-the mode's own source `own` or the grammar's shipped one. -/
+the tree's own source `own`; nothing when it has none. -/
 def keep (snapshot : SnapshotId) (syntaxTree : Mode.SyntaxTree) (own : Option String)
     (kind : QueryKind) : SyntaxTreeM Unit := do
-  let some source ← sourceOf syntaxTree own kind | return
+  let some source := own | return
   withQuery syntaxTree.grammar source fun query => SyntaxTree.keep snapshot kind query
 
 /-- Steps 6 to 9 of the module docs, after highlights that succeeded, each
@@ -271,23 +262,25 @@ def reinject (mode : String) (text : TextId) (syntaxTree : Mode.SyntaxTree)
 for its text `text` (the steps of the module docs): attached with the
 grammar, and highlighted with the query in the faces `faces` gives; or,
 refused, detached, so nothing of the mode before is drawn, and said in the
-echo area under the mode's name `mode`. Each injected language takes the
-tree `injected` gives for its grammar's name (step 7); by default, the bare
-tree of the grammar, so its shipped queries. Never refused itself. -/
+echo area under the mode's name `mode`. A tree that names no highlights
+is detached, asked nothing else, and says `noHighlights` under the mode's
+name. Each
+injected language takes the tree `injected` gives for its grammar's name
+(step 7); by default, the bare tree of the grammar, which names no query.
+Never refused itself. -/
 def enter (mode : String) (text : TextId) (syntaxTree : Mode.SyntaxTree)
     (injected : String → Option Mode.SyntaxTree := fun grammar => some { grammar }) :
     EditorM Unit := do
+  let some source := syntaxTree.highlights
+    |
+    do
+      text.withSnapshot fun snapshot => discard (SyntaxTree.lift (SyntaxTree.detach snapshot))
+      say s!"highlights: `{mode}`: {noHighlights}"
   let delay := (← refreshDelay).getD defaultRefreshDelay
   discard (SyntaxTree.lift (SyntaxTree.refreshAfter delay))
   text.withSnapshot fun snapshot => do
       let steps : SyntaxTreeM Unit := do
         SyntaxTree.attach snapshot syntaxTree.grammar
-        let source ←
-          match syntaxTree.highlights with
-          | some source =>
-            pure source
-          | none =>
-            SyntaxTree.shippedQuery syntaxTree.grammar .highlights
         let query ← SyntaxTree.compile syntaxTree.grammar source
         try
           let names ← SyntaxTree.captureNames query
@@ -310,18 +303,18 @@ def leave (text : TextId) : EditorM Unit :=
   text.withSnapshot fun snapshot => discard (SyntaxTree.lift (SyntaxTree.detach snapshot))
 
 /-- The faces `text` is drawn in under `syntaxTree`, as a readout: the
-captures over the whole text of its highlights query (the tree's own, or
-the grammar's shipped one), each capture's face by the tree's mapping
-(`faceOf`), with its range; a capture that draws nothing is left out. None
-when the text is not attached, or the grammar ships no highlights query and
-the tree gives none; any other refusal of the port is handed back. What
+captures over the whole text of the tree's highlights query, each
+capture's face by the tree's mapping (`faceOf`), with its range; a capture
+that draws nothing is left out. None when the text is not attached, or the
+tree names no highlights query; any other refusal of the port is handed
+back. What
 the headless mode's `highlights` prints (`Editor/Headless.lean`). -/
 def capturedFaces (text : TextId) (syntaxTree : Mode.SyntaxTree) :
     EditorM (Except SyntaxTreeError (Option (Array (FaceName × Nat × Nat)))) := do
   let length := (← text.read).utf8ByteSize
   text.withSnapshot fun snapshot => do
       let read : SyntaxTreeM (Option (Array (FaceName × Nat × Nat))) := do
-        let some source ← sourceOf syntaxTree syntaxTree.highlights .highlights | return none
+        let some source := syntaxTree.highlights | return none
         withQuery syntaxTree.grammar source fun query => do
             let names ← SyntaxTree.captureNames query
             let captures ← SyntaxTree.captures snapshot query 0 length

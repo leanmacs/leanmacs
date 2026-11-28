@@ -105,12 +105,10 @@ the end, and the syntax tree model then. `none` when the run was
 refused.
 
 The syntax tree model holds the test grammars registered
-(`SyntaxTreeModel.withTestGrammars`), nothing compiled in, unless
-`compiled` names grammars to compile in in their place: only the check of
-the core's shipped-query fallback does. -/
+(`SyntaxTreeModel.withTestGrammars`). -/
 def highlightedBy (modes : Array Mode) (steps : List String) (refreshDelay : Option Nat := none)
-    (languages : Array Language := #[]) (language : Option String := none)
-    (compiled : Array String := #[]) : Option (List String × Option String × SyntaxTreeModel) :=
+    (languages : Array Language := #[]) (language : Option String := none) :
+    Option (List String × Option String × SyntaxTreeModel) :=
   let registry :=
     { (enterRegistry.replaceModes .config modes).replaceLanguages .compiled languages with
       syntaxRefreshDelay := refreshDelay }
@@ -121,17 +119,7 @@ def highlightedBy (modes : Array Mode) (steps : List String) (refreshDelay : Opt
       state := (← Loop.run (enterKeys registry) state (entersMode ⟨1⟩ name) []).state
       echoes := echoes ++ [state.echo]
     return (echoes, state)
-  let model :=
-    if compiled.isEmpty then editorModel
-    else
-      { editorModel with
-        syntaxTree :=
-          { compiled
-            registry :=
-              {
-                registered :=
-                  GrammarRegistry.testGrammars.registered.filter (!compiled.contains ·.1) } } }
-  match program.runModel model with
+  match program.runModel editorModel with
   | (.ok (echoes, state), model) =>
     some (echoes, (state.buffer? ⟨1⟩).bind (·.major), model.syntaxTree)
   | (.error _, _) => none
@@ -142,21 +130,21 @@ models through the loop's dispatch: what the syntax tree model is asked and
 records. -/
 def highlightEnterChecks : List Check :=
   [{  name :=
-        "a tree that names no highlights query is drawn with its grammar's shipped query, a compiled-in grammar's; a registered grammar ships none, so the mode's text is left detached and the refusal said"
+        "a tree that names no highlights query asks the syntax tree port for no refresh delay, attach or query, leaves the text unattached and says highlights: `bare`: <Highlight.noHighlights>; entered over a mode that highlighted the text, it detaches it"
       run :=
-        -- Pins the core's shipped-query fallback (`Highlight.enter`, step 2), which phase 4 removes with the rule.
         pure <|
           let bare := parsedMode "bare" { grammar := "json" }
-          (match highlightedBy #[bare] ["bare"] (compiled := #["json"]) with
-            | some ([""], _, model) =>
-              model.attached.map (·.2) == #["json"] &&
-                highlightedFaces model ==
-                  some #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
-            | _ => false) &&
-            match highlightedBy #[bare] ["bare"] with
+          let said := s!"highlights: `bare`: {Highlight.noHighlights}"
+          Highlight.noHighlights == "its tree names no highlights query" &&
+            (match highlightedBy #[bare] ["bare"] with
             | some ([echo], _, model) =>
-              echo.startsWith "highlights: `bare`: " && model.attached.isEmpty &&
-                model.highlighted.isEmpty
+              echo == said && model.attached.isEmpty && model.highlighted.isEmpty &&
+                model.queries.isEmpty &&
+                model.refreshAfter == none
+            | _ => false) &&
+            match highlightedBy #[parsedMode "json", bare] ["json", "bare"] with
+            | some (["", echo], _, model) =>
+              echo == said && model.attached.isEmpty && model.highlighted.isEmpty
             | _ => false },
     { name :=
         "the code mode over a buffer whose language is json attaches its text with json and highlights it with the language's tree, the language's own query"
@@ -238,7 +226,8 @@ def highlightEnterChecks : List Check :=
       run :=
         pure <|
           let broken := parsedMode "broken" { grammar := "json", highlights := some "((" }
-          let cobol := parsedMode "cobol-mode" { grammar := "cobol" }
+          let cobol :=
+            parsedMode "cobol-mode" { grammar := "cobol", highlights := some "(number) @number" }
           (match highlightedBy #[broken] ["broken"] with
             | some ([echo], major, model) =>
               echo.startsWith "highlights: `broken`: the query is not one" &&
@@ -256,7 +245,8 @@ def highlightEnterChecks : List Check :=
       run :=
         pure <|
           let broken := parsedMode "broken" { grammar := "json", highlights := some "((" }
-          let cobol := parsedMode "cobol-mode" { grammar := "cobol" }
+          let cobol :=
+            parsedMode "cobol-mode" { grammar := "cobol", highlights := some "(number) @number" }
           let modes := #[parsedMode "json", broken, cobol]
           (match highlightedBy modes ["json", "cobol-mode"] with
             | some (["", echo], major, model) =>

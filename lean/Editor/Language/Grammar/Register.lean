@@ -42,8 +42,8 @@ port's error gains no constructor.
    into the text store, read and released), a missing file is no query of
    its kind, and any other refusal of a load is no query too and a
    sentence (`Language.Grammar.unread`). `SyntaxTree.grammars` is asked
-   once, so a refused name is known to be still listed (compiled in, or
-   registered before) or not; the refusal's sentence says which
+   once, so a refused name is known to be still listed (registered before:
+   the library compiles in no grammar) or not; the refusal's sentence says which
    (`Language.Grammar.said`). Every name registered is recorded among the
    names this process has registered, with the queries just read in place
    of any read at an earlier registration (`Answers.registered`), so a
@@ -142,7 +142,7 @@ def answersOf (previous : Answers) (generation : Nat) (replies : Array Reply) :
     | .error error =>
       let kept := known.contains name
       answers := answers.push (name, .refused error kept)
-      sentences := sentences.push (said name error kept (previous.registeredQueries? name).isSome)
+      sentences := sentences.push (said name error kept)
     | .ok loads =>
       let (queries, unreadSentences) ← queriesOf reply.grammar loads
       answers := answers.push (name, .registered queries)

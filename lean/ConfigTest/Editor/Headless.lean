@@ -1115,7 +1115,7 @@ def jobThrowsReportedFailedCheck (context : Context) : Check :=
 above it covers it alone. -/
 def jobCommandSetsModeCheck (context : Context) : Check :=
   { name :=
-      "a job's command that sets a mode with a syntax tree reaches the host's syntax tree: the refresh delay handed over, the text attached, the mode's own query compiled and its text highlighted in the default faces, and the grammar's injections, text objects and indents asked for, none of which a registered json ships"
+      "a job's command that sets a mode with a syntax tree reaches the host's syntax tree: the refresh delay handed over, the text attached, the mode's own query compiled and its text highlighted in the default faces, and nothing more, since its tree names no injections, text objects or indents"
     run :=
       -- Seen to bite once by hand: with `Running.ended` handing
       -- `Job.finishWith` no syntax tree, the job's command reaches
@@ -1136,9 +1136,8 @@ def jobCommandSetsModeCheck (context : Context) : Check :=
               #["refreshAfter 500", "attach json", "compile json", "captureNames",
                 -- The faces of the syntax model's json query's captures, which
                 -- the fake answers, in the shipped defaults.
-                "highlight syntax.string, syntax.string, syntax.number, syntax.constant", "release",
-                "shippedQuery json injections", "shippedQuery json textObjects",
-                "shippedQuery json indents"] &&
+                "highlight syntax.string, syntax.string, syntax.number, syntax.constant",
+                "release"] &&
             scene.any fun line =>
               line.startsWith "scene " && (line.splitOn "highlights:").length == 1 }
 

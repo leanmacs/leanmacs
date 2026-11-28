@@ -107,23 +107,16 @@ the test grammars registered (`GrammarRegistry.testGrammars`), its keys
 told the installed registry, and its jobs given `libraries` as the table
 grammars load from, over the same test grammars, and the files `files`,
 each a path and its text, and the directories `directories`. `none` when
-the install asked for no registration.
-
-`compiled` names grammars compiled into the syntax tree model instead of
-registered, none by default: only the check of a refused registration over
-a compiled-in name (`Language.Grammar.compiledStays`) passes it. Phase 4 of
-the roadmap `shipped-grammars-package` removes it with that rule. -/
+the install asked for no registration. -/
 def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
     (files : Array (String × String)) (directories : Array String := #[])
     (platform : String := checkedPlatform) (packages : Array Package := #[])
-    (grammarDirectories : List (String × System.FilePath) := []) (compiled : Array String := #[]) :
-    Option TestDriver := do
+    (grammarDirectories : List (String × System.FilePath) := []) : Option TestDriver := do
   let (state, generation, grammars) ←
     installOver (withPackages shippedState packages grammarDirectories) setup
   let keys : Loop.Keys TestScheme.scheme := { registered := state.registry.registered }
-  let registered : GrammarRegistry :=
-    { registered := GrammarRegistry.testGrammars.registered.filter (!compiled.contains ·.1) }
-  let model := { editorModel with syntaxTree := { compiled, registry := registered } }
+  let registered := GrammarRegistry.testGrammars
+  let model := { editorModel with syntaxTree := { registry := registered } }
   let fileModel :=
     files.foldl (fun model (path, text) => model.withFile path text.toUTF8)
       (directories.foldl (fun model (path : String) => model.withDirectory path) ({} : FileModel))

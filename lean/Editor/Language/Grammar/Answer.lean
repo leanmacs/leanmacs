@@ -50,7 +50,7 @@ inductive Language.Grammar.Answer where
   /-- It registered, and these are the queries read from its directory. -/
   | registered (queries : Language.Grammar.Queries)
   /-- It was refused with `error`; `kept` says whether the syntax service
-  still lists its name (compiled in, or registered before). -/
+  still lists its name (registered before). -/
   | refused (error : GrammarError) (kept : Bool)
   deriving DecidableEq, Repr
 

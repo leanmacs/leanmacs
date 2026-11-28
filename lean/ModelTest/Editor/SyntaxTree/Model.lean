@@ -134,7 +134,7 @@ def syntaxTreeChecks : List Check :=
           (SyntaxTreeM.runModel program { model with delivered := false }).1 matches .ok true &&
             (SyntaxTreeM.runModel delivered model).1 matches .ok 2 },
     { name :=
-        "a default syntax tree model lists no grammar and refuses json as unknown; given the test grammars it lists the six registered names, attaches and compiles for each and ships no query for any; given another registry it lists that alone"
+        "a default syntax tree model lists no grammar and refuses json as unknown, to attach and to ship a query; given the test grammars it lists the six registered names alone, attaches and compiles for each and ships no query of any kind for any, while another name is refused as unknown; given another registry it lists that alone"
       run :=
         pure <|
           let (model, ids) := syntaxTreeModelOf #["[1]"]
@@ -150,7 +150,10 @@ def syntaxTreeChecks : List Check :=
             return names.isEmpty &&
                 (←
                   SyntaxTreeContract.refusedWith .unknownGrammar
-                      (SyntaxTree.attach snapshot "json"))
+                      (SyntaxTree.attach snapshot "json")) &&
+                (←
+                  SyntaxTreeContract.refusedWith .unknownGrammar
+                      (SyntaxTree.shippedQuery "json" .highlights))
           let registered : SyntaxTreeM Bool := do
             let names ← SyntaxTree.grammars
             SyntaxTree.attach snapshot "rust"
@@ -158,10 +161,15 @@ def syntaxTreeChecks : List Check :=
             let found ← SyntaxTree.captures snapshot query 0 3
             let shipsNone ←
               names.allM fun name =>
-                  SyntaxTreeContract.refusedWith .noShippedQuery
-                    (SyntaxTree.shippedQuery name .highlights)
+                  [QueryKind.highlights, .injections, .textObjects, .indents].allM fun kind =>
+                    SyntaxTreeContract.refusedWith .noShippedQuery
+                      (SyntaxTree.shippedQuery name kind)
+            let unknown ←
+              SyntaxTreeContract.refusedWith .unknownGrammar
+                  (SyntaxTree.shippedQuery "python" .highlights)
             return names == GrammarRegistry.testGrammarNames.map (·.1) && found.size == 1 &&
-                shipsNone
+                shipsNone &&
+                unknown
           let pythonAlone : SyntaxTreeM Bool := do
             let names ← SyntaxTree.grammars
             SyntaxTree.attach snapshot "python"
@@ -172,49 +180,6 @@ def syntaxTreeChecks : List Check :=
           (SyntaxTreeM.runModel listsNone bare).1 matches .ok true &&
             (SyntaxTreeM.runModel registered model).1 matches .ok true &&
             (SyntaxTreeM.runModel pythonAlone { bare with registry := python }).1 matches
-              .ok true },
-    { name :=
-        "a syntax tree model given json and lean as compiled in lists both, attaches and compiles for each and ships its highlights for each; a registration of either overrides it and ships no query for it"
-      run :=
-        -- Pins the model's compiled-in names, the shipped query and the override by a registration, which phase 4 removes with the rule.
-        pure <|
-          let (model, ids) := syntaxTreeModelOf #["[1]"]
-          let snapshot := ids[0]?.getD ⟨0⟩
-          let compiled :=
-            { model with
-              compiled := #["json", "lean"], registry := {} }
-          let leanRegistered : GrammarRegistry :=
-            {
-              registered :=
-                #[("lean", { library := "/lib/lean.so", symbol := "tree_sitter_lean" }, .whole)] }
-          let jsonRegistered : GrammarRegistry :=
-            {
-              registered :=
-                #[("json", { library := "/lib/json.so", symbol := "tree_sitter_json" }, .whole)] }
-          let both : SyntaxTreeM Bool := do
-            let names ← SyntaxTree.grammars
-            SyntaxTree.attach snapshot "lean"
-            let query ← SyntaxTree.compile "lean" "(number) @n"
-            let found ← SyntaxTree.captures snapshot query 0 3
-            discard (SyntaxTree.compile "json" "(number) @n")
-            let leanShips ← SyntaxTree.shippedQuery "lean" .highlights
-            let jsonShips ← SyntaxTree.shippedQuery "json" .highlights
-            return names == #["json", "lean"] && found.size == 1 &&
-                leanShips == SyntaxTreeModel.highlights &&
-                jsonShips == SyntaxTreeModel.highlights
-          let overridden (name : String) : SyntaxTreeM Bool := do
-            let names ← SyntaxTree.grammars
-            SyntaxTree.attach snapshot name
-            return names == #["json", "lean"] &&
-                (←
-                  SyntaxTreeContract.refusedWith .noShippedQuery
-                      (SyntaxTree.shippedQuery name .highlights))
-          (SyntaxTreeM.runModel both compiled).1 matches .ok true &&
-            (SyntaxTreeM.runModel (overridden "lean")
-                  { compiled with registry := leanRegistered }).1 matches
-              .ok true &&
-            (SyntaxTreeM.runModel (overridden "json")
-                  { compiled with registry := jsonRegistered }).1 matches
               .ok true },
     { name := "every property of the syntax tree contract holds of the model"
       run := return (← syntaxTreeBroken SyntaxTreeModel.handle).isEmpty }]
