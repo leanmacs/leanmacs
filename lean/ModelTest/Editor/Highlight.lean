@@ -17,6 +17,7 @@ import Editor.State
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Model
 import Editor.SyntaxTree.Model.Query
+import Editor.Test.Files
 import Editor.Test.Models
 import Editor.Test.States
 import Editor.Text
@@ -83,9 +84,16 @@ def highlightFaceChecks : List Check :=
           (faceNames (Highlight.faces [("number", some ⟨"n"⟩)] #["string", "number", "label"]) ==
             #["syntax.string", "n", "-"]) }]
 
+/-- The tree of the model's JSON grammar drawn with the model's own
+highlights query (`SyntaxTreeModel.highlights`): `json` is a registered test
+grammar, which ships no query, so a tree hands its own, as a grammar's own
+query is handed. -/
+def drawnJsonTree : Mode.SyntaxTree :=
+  { grammar := "json", highlights := some SyntaxTreeModel.highlights }
+
 /-- A mode called `name` whose text is parsed and drawn as `syntaxTree`
-says. -/
-def parsedMode (name : String) (syntaxTree : Mode.SyntaxTree := { grammar := "json" }) : Mode :=
+says, `drawnJsonTree` unless given. -/
+def parsedMode (name : String) (syntaxTree : Mode.SyntaxTree := drawnJsonTree) : Mode :=
   { name, syntaxTree := some syntaxTree }
 
 /-- Sets each mode of `steps`, in turn, as the major mode of buffer 1
@@ -96,15 +104,13 @@ config's syntax refresh delay `refreshDelay`, the compiled languages
 the end, and the syntax tree model then. `none` when the run was
 refused.
 
-The syntax tree model has `json` compiled in, and no grammar registered:
-these checks pin the core's shipped-query fallback (a tree that names no
-highlights is drawn with its grammar's shipped query), which reads a
-compiled-in grammar, the one the editor's startup turns on. Phase 4 of the
-roadmap `shipped-grammars-package` removes the fallback with the compiled-in
-grammars, and this opt-in with it. -/
+The syntax tree model holds the test grammars registered
+(`SyntaxTreeModel.withTestGrammars`), nothing compiled in, unless
+`compiled` names grammars to compile in in their place: only the check of
+the core's shipped-query fallback does. -/
 def highlightedBy (modes : Array Mode) (steps : List String) (refreshDelay : Option Nat := none)
-    (languages : Array Language := #[]) (language : Option String := none) :
-    Option (List String × Option String × SyntaxTreeModel) :=
+    (languages : Array Language := #[]) (language : Option String := none)
+    (compiled : Array String := #[]) : Option (List String × Option String × SyntaxTreeModel) :=
   let registry :=
     { (enterRegistry.replaceModes .config modes).replaceLanguages .compiled languages with
       syntaxRefreshDelay := refreshDelay }
@@ -115,7 +121,16 @@ def highlightedBy (modes : Array Mode) (steps : List String) (refreshDelay : Opt
       state := (← Loop.run (enterKeys registry) state (entersMode ⟨1⟩ name) []).state
       echoes := echoes ++ [state.echo]
     return (echoes, state)
-  let model := { editorModel with syntaxTree := { compiled := #["json"] } }
+  let model :=
+    if compiled.isEmpty then editorModel
+    else
+      { editorModel with
+        syntaxTree :=
+          { compiled
+            registry :=
+              {
+                registered :=
+                  GrammarRegistry.testGrammars.registered.filter (!compiled.contains ·.1) } } }
   match program.runModel model with
   | (.ok (echoes, state), model) =>
     some (echoes, (state.buffer? ⟨1⟩).bind (·.major), model.syntaxTree)
@@ -127,14 +142,31 @@ models through the loop's dispatch: what the syntax tree model is asked and
 records. -/
 def highlightEnterChecks : List Check :=
   [{  name :=
-        "the code mode over a buffer whose language is json attaches its text with json and highlights it with the language's tree, the grammar's shipped query; the language's own query is compiled in its place when it has one"
+        "a tree that names no highlights query is drawn with its grammar's shipped query, a compiled-in grammar's; a registered grammar ships none, so the mode's text is left detached and the refusal said"
+      run :=
+        -- Pins the core's shipped-query fallback (`Highlight.enter`, step 2), which phase 4 removes with the rule.
+        pure <|
+          let bare := parsedMode "bare" { grammar := "json" }
+          (match highlightedBy #[bare] ["bare"] (compiled := #["json"]) with
+            | some ([""], _, model) =>
+              model.attached.map (·.2) == #["json"] &&
+                highlightedFaces model ==
+                  some #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
+            | _ => false) &&
+            match highlightedBy #[bare] ["bare"] with
+            | some ([echo], _, model) =>
+              echo.startsWith "highlights: `bare`: " && model.attached.isEmpty &&
+                model.highlighted.isEmpty
+            | _ => false },
+    { name :=
+        "the code mode over a buffer whose language is json attaches its text with json and highlights it with the language's tree, the language's own query"
       run :=
         pure <|
           let numbers :=
             { Language.json with
               syntaxTree := { grammar := "json", highlights := some "(number) @number" } }
           (match
-              highlightedBy Language.modes ["code"] (languages := #[Language.json]) (language :=
+              highlightedBy Language.modes ["code"] (languages := #[Test.modelJson]) (language :=
                 some "json") with
             | some (echoes, major, model) =>
               echoes == [""] && major == some "code" && model.attached.map (·.2) == #["json"] &&
@@ -152,7 +184,7 @@ def highlightEnterChecks : List Check :=
         pure <|
           [none, some "cobol"].all fun language =>
             match
-              highlightedBy Language.modes ["code"] (languages := #[Language.json]) (language :=
+              highlightedBy Language.modes ["code"] (languages := #[Test.modelJson]) (language :=
                 language) with
             | some (echoes, major, model) =>
               echoes == [""] && major == some "code" && model.attached.isEmpty &&
@@ -171,7 +203,7 @@ def highlightEnterChecks : List Check :=
             | some (_, _, model) => model.refreshAfter == some 250
             | none => false },
     { name :=
-        "a major mode with a syntax tree attaches its buffer's text and highlights it with the grammar's shipped query, each capture in its syntax face by the shipped default, and releases the query"
+        "a major mode with a syntax tree attaches its buffer's text and highlights it with its tree's query, each capture in its syntax face by the shipped default, and releases the query"
       run :=
         pure <|
           match highlightedBy #[parsedMode "json"] ["json"] with
@@ -185,14 +217,14 @@ def highlightEnterChecks : List Check :=
       run :=
         pure <|
           let mapped :=
-            parsedMode "json" { grammar := "json", captures := [("string", some ⟨"json-string"⟩)] }
+            parsedMode "json" { drawnJsonTree with captures := [("string", some ⟨"json-string"⟩)] }
           match highlightedBy #[mapped] ["json"] with
           | some (_, _, model) =>
             highlightedFaces model ==
               some #["json-string", "json-string", "syntax.number", "syntax.constant"]
           | none => false },
     { name :=
-        "a mode's own highlights query is compiled in place of the shipped one, a dotted capture falling to its first component and an unmapped one drawing nothing"
+        "a mode's own highlights query is compiled, a dotted capture falling to its first component and an unmapped one drawing nothing"
       run :=
         pure <|
           let own :=
@@ -241,13 +273,13 @@ def highlightEnterChecks : List Check :=
                 model.highlighted.isEmpty
             | _ => false },
     { name :=
-        "a mode with an injections source finds its text's injections with it, and gives a language for the model's grammar, its shipped highlights in the default faces and the mode's injections; every query is released"
+        "a mode with an injections source finds its text's injections with it, and gives a language for the model's grammar, its language's highlights in the default faces and the mode's injections; every query is released"
       run :=
         pure <|
           let injecting :=
             parsedMode "injecting"
-              { grammar := "json", injections := some "(pair value: (string) @injection.content)" }
-          match highlightedBy #[injecting] ["injecting"] with
+              { drawnJsonTree with injections := some "(pair value: (string) @injection.content)" }
+          match highlightedBy #[injecting] ["injecting"] (languages := #[Test.modelJson]) with
           | some ([""], _, model) =>
             model.injected.size == 1 &&
               model.languages.map
@@ -258,7 +290,7 @@ def highlightEnterChecks : List Check :=
               model.queries.all (·.isNone)
           | _ => false },
     { name :=
-        "a grammar that ships no injections, text objects or indents query records no injection, no language and no kept query"
+        "a tree that names no injections, text objects or indents query, of a grammar that ships none, records no injection, no language and no kept query"
       run :=
         pure <|
           match highlightedBy #[parsedMode "json"] ["json"] with
@@ -272,7 +304,8 @@ def highlightEnterChecks : List Check :=
         pure <|
           let keeping :=
             parsedMode "keeping"
-              { grammar := "json", textObjects := some "(object) @function.outer"
+              { drawnJsonTree with
+                textObjects := some "(object) @function.outer"
                 indents := some "(array) @indent.begin" }
           match highlightedBy #[keeping] ["keeping"] with
           | some ([""], _, model) =>
@@ -285,7 +318,9 @@ def highlightEnterChecks : List Check :=
       run :=
         pure <|
           let broken (injections textObjects indents : Option String) :=
-            parsedMode "broken" { grammar := "json", injections, textObjects, indents }
+            parsedMode "broken"
+              { drawnJsonTree with
+                injections, textObjects, indents }
           let said (mode : Mode) (start : String) : Bool :=
             match highlightedBy #[mode] ["broken"] with
             | some ([echo], major, model) =>
@@ -329,7 +364,7 @@ def highlightEnterChecks : List Check :=
       run :=
         pure <|
           match
-            highlightedBy Language.modes ["code", "listing"] (languages := #[Language.json])
+            highlightedBy Language.modes ["code", "listing"] (languages := #[Test.modelJson])
               (language := some "json") with
           | some (_, major, model) =>
             major == some "listing" && model.attached.isEmpty && model.highlighted.isEmpty
@@ -338,12 +373,16 @@ def highlightEnterChecks : List Check :=
 /-- The `setup` fragment that defines the language `markdown` of `*.md`
 with an injections query of its own: the syntax tree model parses every
 text as JSON and only records injections, so this stands in for Markdown's
-fence injections. -/
-def markdownWithFences : SetupM Unit :=
+fence injections. It and the language `json` it redefines are drawn with
+the model's own highlights query (`SyntaxTreeModel.highlights`): both are
+registered test grammars, which ship no query. -/
+def markdownWithFences : SetupM Unit := do
   defineLanguage
-    { name := "markdown", patterns := [.extension "md"]
-      syntaxTree :=
-        { grammar := "markdown", injections := some "(pair value: (string) @injection.content)" } }
+      { name := "markdown", patterns := [.extension "md"]
+        syntaxTree :=
+          { grammar := "markdown", highlights := some SyntaxTreeModel.highlights
+            injections := some "(pair value: (string) @injection.content)" } }
+  defineLanguage Test.modelJson
 
 /-- The injected languages the driver's syntax tree model records, each as
 its grammar's name and the names of the faces its highlights are drawn
@@ -359,18 +398,15 @@ def injectedInjections (driver : TestDriver) : Array (String × Bool) :=
 
 /-- The driver once a Markdown buffer `/w/a.md` has been opened after the
 command of the `register-grammars` job of a config whose `setup` is
-`markdownWithFences` and then `setup` (`installedWith`, with `markdown`
-compiled in beside `json` and `lean`); `none` when the install asked for
-no registration. The three are compiled in, not registered: these checks
-pin the shipped-query fallback a fence's language reads, and the override
-of a compiled-in name, which phase 4 of the roadmap
-`shipped-grammars-package` removes with this opt-in. -/
+`markdownWithFences` and then `setup` (`installedWith`, over the test
+grammars registered); `none` when the install asked for no
+registration. -/
 def markdownAfter (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
     (files : Array (String × String)) (packages : Array Package := #[])
     (grammarDirectories : List (String × System.FilePath) := []) : Option TestDriver := do
   let driver ←
     installedWith (markdownWithFences *> setup) libraries files (packages := packages)
-        (grammarDirectories := grammarDirectories) (compiled := #["json", "lean", "markdown"])
+        (grammarDirectories := grammarDirectories)
   let (answered, _) := driver.finish 1
   return openedIn answered "/w/a.md"
 
@@ -431,7 +467,7 @@ def highlightInjectedChecks : List Check :=
           | some languages => languages.filter (·.1 == "ini") == #[("ini", #["syntax.string"])]
           | none => false },
     { name :=
-        "a Markdown buffer opened after the job's command: a declaration overriding the compiled-in lean keeps a lean fence highlighted with the declared query"
+        "a Markdown buffer opened after the job's command: a declaration of lean, over the lean registered before, highlights a lean fence with the declared query"
       run :=
         pure <|
           let library := "/g/libtree-sitter-lean.so"
@@ -455,7 +491,7 @@ def highlightInjectedChecks : List Check :=
           | some languages => languages.filter (·.1 == "ini") == #[("ini", #["syntax.string"])]
           | none => false },
     { name :=
-        "a Markdown buffer opened after the job's command gives the injected ini the injections query read from the grammar's injections.scm, and the compiled-in json, which ships none, no injections query"
+        "a Markdown buffer opened after the job's command gives the injected ini the injections query read from the grammar's injections.scm, and json, whose language names none and which ships none, no injections query"
       run :=
         pure <|
           match
@@ -468,17 +504,14 @@ def highlightInjectedChecks : List Check :=
               injections.filter (·.1 == "json") == #[("json", false)]
           | none => false },
     { name :=
-        "a Markdown buffer opened before the job's command, while a declaration overriding the compiled-in lean awaits its answer, is injected into again by the command: its lean fence is then highlighted with the declared query, and the buffer is not detached"
+        "a Markdown buffer opened before the job's command, while a declaration of lean awaits its answer, is injected into again by the command: its lean fence is then highlighted with the declared query, and the buffer is not detached"
       run :=
         pure <|
           let library := "/g/libtree-sitter-lean.so"
-          -- Compiled in, for the override of a compiled-in lean and the
-          -- shipped-query fallback: phase 4 removes this opt-in with both.
           match
             installedWith (markdownWithFences *> defineGrammar "lean" library)
               #[(library, .exports #[("tree_sitter_lean", .grammar)])]
-              #[("/g/queries/highlights.scm", declaredHighlights)] (compiled :=
-              #["json", "lean", "markdown"]) with
+              #[("/g/queries/highlights.scm", declaredHighlights)] with
           | some driver =>
             let before := openedIn driver "/w/a.md"
             let (answered, delivered) := before.finish 1
@@ -514,12 +547,9 @@ def highlightInjectedChecks : List Check :=
         "a Markdown buffer given its mode through a window after the job's command gives its fences a language for the grammar config declared, its highlights read from the grammar's query directory"
       run :=
         pure <|
-          -- Compiled in, for the shipped-query fallback of the Markdown
-          -- host: phase 4 removes this opt-in with it.
           match
             installedWith (markdownWithFences *> declaresIni) iniLibrary
-              #[("/g/queries/highlights.scm", declaredHighlights)] (compiled :=
-              #["json", "lean", "markdown"]) with
+              #[("/g/queries/highlights.scm", declaredHighlights)] with
           | some driver =>
             let (answered, _) := driver.finish 1
             let shown := shownIn answered "/w/a.md"

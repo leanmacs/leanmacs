@@ -38,6 +38,7 @@ import Editor.Store
 import Editor.SyntaxTree.Model
 import Editor.TabBar
 import Editor.Test.Config
+import Editor.Test.Files
 import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Test.Modes
@@ -221,20 +222,13 @@ def declaredIni : Language.Grammar :=
 def iniLanguage : Language :=
   { name := "ini", patterns := [.extension "ini"], syntaxTree := { grammar := "ini" } }
 
-/-- The shipped language `json`, drawn with the syntax tree model's own
-highlights query: `json` is a registered test grammar, which ships no query,
-so its language hands its own, as a grammar's own query is handed. -/
-def drawnJson : Language :=
-  { Language.json with
-    syntaxTree := { Language.json.syntaxTree with highlights := some SyntaxTreeModel.highlights } }
-
 /-- The registry of the checks of a declared grammar's tree: the on-enter
 checks' modes with `modes` for config, the languages `json` and `ini`, the
 declaration of `ini`, and the config generation 1. -/
 def declaredRegistry (modes : Array Mode) : Config.Registry :=
   {
     ((enterRegistry.replaceModes .config modes).replaceLanguages .compiled
-          #[drawnJson, iniLanguage]).replaceGrammars
+          #[Test.modelJson, iniLanguage]).replaceGrammars
       .config #[declaredIni] with
     generation := 1 }
 

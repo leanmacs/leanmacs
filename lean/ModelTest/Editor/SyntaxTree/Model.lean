@@ -176,9 +176,7 @@ def syntaxTreeChecks : List Check :=
     { name :=
         "a syntax tree model given json and lean as compiled in lists both, attaches and compiles for each and ships its highlights for each; a registration of either overrides it and ships no query for it"
       run :=
-        -- The explicit opt-in to compiled-in names: the core's shipped-query
-        -- fallback and its override rule still read them, until phase 4 of
-        -- the roadmap `shipped-grammars-package` removes both and this check.
+        -- Pins the model's compiled-in names, the shipped query and the override by a registration, which phase 4 removes with the rule.
         pure <|
           let (model, ids) := syntaxTreeModelOf #["[1]"]
           let snapshot := ids[0]?.getD ⟨0⟩

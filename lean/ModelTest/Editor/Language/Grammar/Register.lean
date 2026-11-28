@@ -102,9 +102,7 @@ def grammarRegisterChecks : List Check :=
     { name :=
         "a refused registration of a declaration named lean says the compiled-in grammar stays, and a .lean buffer opened before or after the job's command keeps the compiled-in lean grammar and its shipped highlights"
       run :=
-        -- `lean` and `json` compiled in, the override rule's subject
-        -- (`Language.Grammar.compiledStays`): phase 4 of the roadmap
-        -- `shipped-grammars-package` removes the rule and this opt-in.
+        -- Pins the refused registration over a compiled-in name (`Language.Grammar.compiledStays`), which phase 4 removes with the rule.
         pure <|
           match
             installedWith (defineGrammar "lean" "/g/libtree-sitter-lean.so") #[] #[] (compiled :=

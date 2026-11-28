@@ -110,11 +110,9 @@ each a path and its text, and the directories `directories`. `none` when
 the install asked for no registration.
 
 `compiled` names grammars compiled into the syntax tree model instead of
-registered, none by default: only the checks of a declaration that
-overrides a compiled-in grammar (`Language.Grammar.compiledStays`) and of
-the shipped-query fallback a Markdown fence's language reads pass it.
-Phase 4 of the roadmap `shipped-grammars-package` removes it with those
-rules. -/
+registered, none by default: only the check of a refused registration over
+a compiled-in name (`Language.Grammar.compiledStays`) passes it. Phase 4 of
+the roadmap `shipped-grammars-package` removes it with that rule. -/
 def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
     (files : Array (String × String)) (directories : Array String := #[])
     (platform : String := checkedPlatform) (packages : Array Package := #[])
