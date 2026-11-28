@@ -17,6 +17,21 @@ to and the align-to stops its tables were measured into. Its description
 - **Rendered** (`Doc.rendered`) counts the block renders the document has
   had over its life.
 
+## The tail
+
+An append (`Doc.extend`) keeps every block but the last, parses the source
+from the last block's start with the appended text alone (`Doc.tail`), and
+renders only the blocks of that. Markdown's block structure before the
+start of the last top-level block cannot change on an append: a setext
+underline, a table's delimiter row, a lazy continuation, a list's next item
+and an unclosed fence each extend or change the last block alone. The
+document-wide parts (the heading folds, whose ranges an append can move,
+and the fold keys) are made from the pieces on every update and render
+nothing (`Description.ofPieces`). So the document an append makes
+describes what rendering its whole source does. `Doc.firstChanged` is
+where the two texts first differ: the rendered end of the last block they
+share.
+
 ## Which modules it may reach
 
 The editor's state keeps a buffer's document (`Buffer.markdown`,
@@ -99,6 +114,44 @@ def stops (doc : Doc) : Array AlignStop :=
     (fun stops (block, offset) =>
       stops ++ block.stops.map fun stop => { stop with offset := stop.offset + offset })
     #[]
+
+/-- Where the document's tail starts: its last block's source start, or 0
+for a document of no block. -/
+def tailStart (doc : Doc) : Nat :=
+  (doc.blocks.back?.map (·.start)).getD 0
+
+/-- What an append of `more` parses: the document's source from its last
+block's start on, and `more` ("The tail", in the module docs). -/
+def tail (doc : Doc) (more : String) : String :=
+  slice doc.source doc.tailStart doc.source.utf8ByteSize ++ more
+
+/-- `doc` with `more` appended ("The tail", in the module docs): every block
+but the last kept as it is, and the blocks of the tail, parsed into
+`tailLayers` (`tail`), rendered with the document's root and gap, a fence's
+captures in `faces`. -/
+def extend (doc : Doc) (more : String) (tailLayers : Array SyntaxTree.Layer)
+    (faces : String → String → Option FaceName := fun _ _ => none) : Doc :=
+  let options : Options := { root := doc.root, gap := doc.gap, faces }
+  let fresh := renderBlocks options (doc.tail more) tailLayers doc.tailStart
+  { doc with
+    source := doc.source ++ more
+    blocks := doc.blocks.pop ++ fresh
+    rendered := doc.rendered + fresh.size }
+
+/-- How many blocks `old` and `new` begin with alike. -/
+def kept (old new : Doc) : Nat :=
+  ((old.blocks.zip new.blocks).toList.takeWhile fun (a, b) => a == b).length
+
+/-- Where `new`'s rendered text first differs from `old`'s: the rendered
+offset the last block both begin with ends at, or 0 when they begin with
+none. Every byte of the two texts before it is the same. -/
+def firstChanged (old new : Doc) : Nat :=
+  match old.kept new with
+  | 0 => 0
+  | count =>
+    let pieces := new.pieces
+    ((offsetsOf pieces)[count - 1]?.getD 0) +
+      ((pieces[count - 1]?.map (·.text.utf8ByteSize)).getD 0)
 
 end Doc
 

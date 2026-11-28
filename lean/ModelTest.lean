@@ -1433,7 +1433,11 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   unlinked with no root; `markdownFoldChecks`, the exact foldable ranges of
   `folds.md`: each heading's to the next of the same or a higher level and
   each fence's over its rows, their keys and placeholders, every one
-  unfolded;
+  unfolded; `markdownStreamChecks`, `stream.md` streamed in chunks: each
+  append parses exactly its checked-in tail and renders only that tail's
+  blocks, counted by `Doc.rendered`, the document it ends with describes
+  the whole render, a kept heading's fold grows over the appended blocks,
+  and no byte before `Doc.firstChanged` changes;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1801,6 +1805,7 @@ def checks : List Check :=
     markdownTableChecks ++
     markdownLinkChecks ++
     markdownFoldChecks ++
+    markdownStreamChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++

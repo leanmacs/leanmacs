@@ -300,4 +300,84 @@ def markdownFoldChecks : List Check :=
               #["rust, 3 lines", "json, 1 line", "nosuch, 1 line", "rust, 1 line"] &&
             (code.folds.map (·.key)) == #["code 1", "code 2", "code 3", "code 4"] }]
 
+/-- How many top-level blocks `fixture`'s canned layers capture. -/
+def blockCount (fixture : Cases.Fixture) : Nat :=
+  ((Parsed.of fixture.layers).nodes.filter (·.name == Parsed.block)).size
+
+/-- The stream's tails, as checked in: what each append after the first
+chunk parses. -/
+def streamTails : Array Cases.Fixture :=
+  #[Support.Markdown.streamTail1, Support.Markdown.streamTail2, Support.Markdown.streamTail3]
+
+/-- The stream rendered: `stream-head.md` from its canned layers, then each
+later chunk appended with the canned layers of its tail; each document on
+the way, the first included, and the tail each append asked to parse. -/
+def streamed : Array Doc × Array String :=
+  let head :=
+    Markdown.render markdownOptions Support.Markdown.streamHead.source
+      Support.Markdown.streamHead.layers
+  ((Support.Markdown.streamChunks.extract 1 4).zip streamTails).foldl
+    (fun (docs, asked) (chunk, tail) =>
+      let doc := docs.back!
+      (docs.push (doc.extend chunk tail.layers markdownFaces), asked.push (doc.tail chunk)))
+    (#[head], #[])
+
+/-- The checks that an append re-renders only the changed tail
+(**criterion 7**), and that the document it makes describes the whole
+render. -/
+def markdownStreamChecks : List Check :=
+  let (docs, asked) := streamed
+  let whole :=
+    Markdown.render markdownOptions Support.Markdown.stream.source Support.Markdown.stream.layers
+  [{  name := "the stream's chunks make stream.md"
+      run :=
+        pure <|
+          String.join Support.Markdown.streamChunks.toList == Support.Markdown.stream.source &&
+            docs.back!.source == Support.Markdown.stream.source },
+    { name :=
+        "each append asks to parse exactly the stream's tail checked in for it: the last block so far and the chunk"
+      run := pure <| asked == streamTails.map (·.source) },
+    { name :=
+        "the head renders its two blocks, and each append renders only the two blocks of its tail, fewer than the whole document's five"
+      run :=
+        pure <|
+          docs.map (·.rendered) == #[2, 4, 6, 8] &&
+            -- The literals are each fixture's own block count, so a
+            -- refreshed fixture that changes one fails here.
+            blockCount Support.Markdown.streamHead == 2 &&
+            streamTails.all (blockCount · == 2) &&
+            blockCount Support.Markdown.stream == 5 &&
+            whole.rendered == 5 },
+    { name :=
+        "the document the appends make describes what rendering stream.md whole does, its relative link in the last chunk resolved against the root"
+      run :=
+        pure <|
+          docs.back!.description == whole.description &&
+            docs.back!.description.links ==
+              #[{ start := (over whole.description.text "the file").1
+                  stop := (over whole.description.text "the file").2
+                  target := .location (markdownRoot / "src/s.rs") 1 0 }] },
+    { name :=
+        "a heading in the kept prefix keeps its key, and its fold grows to cover the appended blocks"
+      run :=
+        pure <|
+          let first := docs[0]!.description.folds
+          let last := docs.back!.description.folds
+          first.map (·.key) == #["heading 1"] &&
+            (first[0]?.map (·.stop)) == some docs[0]!.description.text.utf8ByteSize &&
+            (last.find? (·.key == "heading 1")).map (·.stop) ==
+              some docs.back!.description.text.utf8ByteSize },
+    { name :=
+        "every byte of the text before the first changed offset is the same after an append, and the first changed offset is past the kept blocks"
+      run :=
+        pure <|
+          (docs.zip (docs.extract 1 docs.size)).all fun (old, new) =>
+            let changed := Doc.firstChanged old new
+            let oldText := old.description.text
+            let newText := new.description.text
+            changed > 0 && slice oldText 0 changed == slice newText 0 changed &&
+              changed ==
+                (offsetsOf new.pieces)[old.blocks.size - 2]! +
+                  new.pieces[old.blocks.size - 2]!.text.utf8ByteSize }]
+
 end ModelTest
