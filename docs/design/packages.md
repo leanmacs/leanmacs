@@ -379,13 +379,21 @@ regular files, the names nvim-treesitter and Helix use; a link would
 dangle in a staged or bundled copy.
 
 **From source.** A package may instead ship a grammar as pinned source,
-which the set's build compiles: the `languages` package ships all seven of
-its grammars so (`packages/languages/`, the package `languages-grammars`):
-`rust`, `json`, `markdown`, `markdown_inline`, `toml`, `lean` and `yaml`.
-The first six were compiled into the library until the shipped-grammars
-roadmap's phase 4, which moved them, their pins and their queries here;
-the library compiles in no grammar since, so every editor's grammars are
-packages'. Its lakefile
+which the set's build compiles: the `languages` package ships all
+seventeen of its grammars so (`packages/languages/`, the package
+`languages-grammars`). The former built-ins, `rust`, `json`, `markdown`,
+`markdown_inline`, `toml` and `lean`, were compiled into the library until
+the shipped-grammars roadmap's phase 4, which moved them, their pins and
+their queries here; the library compiles in no grammar since, so every
+editor's grammars are packages'. `yaml` came in phase 1. The popular
+languages, `java`, `swift`, `ruby`, `python`, `javascript`, `typescript`,
+`tsx`, `c`, `cpp` and `clojure_orchard`, came in phase 5, each from its
+crates.io crate as published, none vendored, each with no reparse policy
+(so reparsed whole) and with the language the package defines for it.
+The Clojure grammar is `clojure_orchard`, not `clojure`: its library
+exports `tree_sitter_clojure_orchard`, and a declaration's symbol must
+register its declared name, so the language `clojure` names that grammar.
+Its lakefile
 declares a Lake input file named `editorGrammarSources`
 (`grammarSourcesTargetName` in `lean/lakefile.lean`; a TOML lakefile holds
 it as `[[input_file]] name = "editorGrammarSources"`), whose path is the
@@ -394,7 +402,8 @@ it as `[[input_file]] name = "editorGrammarSources"`), whose path is the
 workspace crate `editor-grammar-build` with the grammars it declares, each
 a build-dependency it names (`Grammar::package("yaml",
 "tree-sitter-yaml")`), a subdirectory of one (`Grammar::package_in`, for
-`tree-sitter-md`'s two grammars, `markdown` and `markdown_inline`), or a
+`tree-sitter-md`'s two grammars, `markdown` and `markdown_inline`, and
+`tree-sitter-typescript`'s, `typescript` and `tsx`), or a
 directory (`Grammar::directory`, for `lean`, the vendored
 `vendor/tree-sitter-lean`, taken from the crate's directory). `editor-grammar-build`
 finds each grammar crate's directory with `cargo metadata` (the version
@@ -457,10 +466,17 @@ shipped branch, with no crate to build.
 
 **What compiling from source costs, and what was set aside.** A
 build-dependency's own build compiles its C once more, into an archive
-nothing links. The crates.io parsers together are about 11 MB of C (rust
-6.5 MB, markdown's two 2.1 MB and 2.3 MB, toml 0.13 MB, json 0.03 MB),
-against lean's 49 MB, which is why `lean` is a directory source and no
-dependency: no build compiles its archive. The test fixture
+nothing links. The former built-ins' crates.io parsers together are about
+11 MB of C (rust 6.5 MB, markdown's two 2.1 MB and 2.3 MB, toml 0.13 MB,
+json 0.03 MB), against lean's 49 MB, which is why `lean` is a directory
+source and no dependency: no build compiles its archive. The popular
+languages add about 87 MB of C (swift 23 MB, typescript's two 18 MB, cpp
+17 MB, ruby 15 MB, c 3.9 MB, python 3.5 MB, javascript 2.9 MB, java
+2.6 MB, clojure 0.8 MB), though a parser is mostly tables: each compiles
+in 0.2 to 1.9 s, at `-O0` and `-O3` alike (swift the slowest, cpp 0.65 s,
+ruby 0.5 s), about 5 s of CPU for one compile of all ten (each parser compiled
+alone while the phase was planned: an Apple M5 Max, Apple clang 21,
+2026-11-27). The test fixture
 `editor-syntax-fixture-grammars` takes the four crates.io grammars as
 build-dependencies too, with the same features (`tree-sitter-md` with its
 default features off in both), so in the dev profile Cargo builds one unit
@@ -481,6 +497,32 @@ Set aside:
 - **The core's tests depending on `languages-grammar-sources` for its
   libraries**, instead of the fixture crate: the core would then depend on
   a package.
+- **Skipping the wasted archives** of the popular languages' crates (phase
+  5): an unactivated optional dependency is not in the calling crate's
+  node of the resolve, through which `CargoMetadata` locates a grammar,
+  and the `cfg(any())` gate is refused above. Cargo builds those archives
+  in parallel, at the build-override's opt-level 0.
+- **Compiling the libraries in parallel inside `editor-grammar-build`**,
+  which builds one grammar after another: a change to that crate for about
+  5 s of the set's build on this machine.
+
+**What phase 5 measured** (2026-11-27, an Apple M5 Max of 18 cores, macOS
+on arm64, rustc 1.98.1, Apple clang 21.0.0, a machine with other work
+running at a load average of about 3): the grammar step, `cargo run
+--release --locked --quiet --manifest-path
+packages/languages/rust/Cargo.toml` into a fresh `CARGO_TARGET_DIR`, took
+6.55 s wall at the phase-4 head (`715ba969`, from a copy of its tree;
+7.09 s at a load of 4 to 5) and 14.72 s and 14.91 s with the ten, so about
+8 s more, each library compiled once at `OPT_LEVEL` 3, one after another.
+The staged directory `packages/.lake/build/grammars/languages/darwin-aarch64/`
+grew from 10,605,072 bytes (`du -sk`: 10,372 KiB, seven libraries) to
+25,611,888 (25,048 KiB, seventeen): swift's library is 4,251,016 bytes,
+cpp's 3,488,792, ruby's 2,150,568, tsx's 1,504,824 and typescript's
+1,455,328, the other five under 0.7 MB each. The install and the app
+bundle grow by the same 15 MB. In the dev and test profiles the crate is
+a workspace member, so `cargo build` and `cargo test --workspace` compile
+all seventeen libraries at opt-level 0 and the ten new archives, in
+parallel with the Rust crates.
 
 A user's set outside the repository can go stale: the built branch takes
 what the checkout last compiled, as `prebuiltRust` takes the last-built
@@ -4820,7 +4862,7 @@ points it registers at and reads, and the names it declares or reaches.
 | `binding-search` | implementation | `binding-search-api`, `minibuffer-api` | none | none | registers `binding-search-api`'s name; reaches `minibuffer-api`'s names |
 | `compile` | implementation | `minibuffer-api`, `compile-api`, `shell-api` | `Compile.Contribution` | `Compile.Contribution`, `Compile.ProjectCommands`, `FilesApi.Files` | registers the compile mode's commands and its six ex names; reaches `minibuffer-api`'s names and `shell-api`'s history |
 | `at-point` | implementation | `at-point-api`, `evil-api` | none | none | registers `at-point-api`'s names; reaches `insert-newline` and `insert-tab` by `evil-api`'s constants |
-| `languages` | implementation | none | `defineLanguage yaml` and the grammars `rust`, `json`, `markdown`, `markdown_inline`, `toml`, `lean` and `yaml` (package `languages-grammars`) | none | registers the `code` mode and the languages that ship |
+| `languages` | implementation | none | `defineLanguage` of `yaml`, `java`, `swift`, `ruby`, `python`, `javascript`, `typescript`, `tsx`, `c`, `cpp` and `clojure`, and the grammars `rust`, `json`, `markdown`, `markdown_inline`, `toml`, `lean`, `yaml`, `java`, `swift`, `ruby`, `python`, `javascript`, `typescript`, `tsx`, `c`, `cpp` and `clojure_orchard` (package `languages-grammars`) | none | registers the `code` mode and the languages that ship |
 | `mise` | implementation | none | `EnvironmentApi.DirectorySource` | none | declares no name; its setting, `Mise.executable`, registers at the same point |
 | `login-shell` | implementation | none | `EnvironmentApi.BaseSource` (and a default `environmentBase`) | none | declares no name; its setting, `LoginShell.timeLimit`, registers at the same point |
 

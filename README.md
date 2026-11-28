@@ -15,7 +15,8 @@ processes.
 
 - No mouse support.
 - Highlighting covers the languages the default package `languages`
-  ships: Rust, JSON, Markdown, TOML, Lean and YAML. A grammar comes from a
+  ships: Rust, JSON, Markdown, TOML, Lean, YAML, Java, Swift, Ruby,
+  Python, JavaScript, TypeScript (with TSX), C, C++ and Clojure. A grammar comes from a
   package, built from pinned source by the package set's build, with no
   change to the editor's library: adding one means adding a package (or a
   grammar to one) and rebuilding the set.

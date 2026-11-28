@@ -47,7 +47,7 @@ details:
   linter on and warnings errors, which runs Cargo for the Rust static
   library; the editor and fixture harness of the default set (`packages/`)
   and of the fixture set (`tests/packages/`), whose builds compile
-  `languages`' seven grammars from their pinned sources through Cargo, the
+  `languages`' seventeen grammars from their pinned sources through Cargo, the
   shipped languages' among them, since the library compiles in none
   (`editorGrammars`;
   [`packages.md`](../design/packages.md), "A package's grammars"), each

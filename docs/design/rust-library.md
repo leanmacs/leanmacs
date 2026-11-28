@@ -2250,6 +2250,28 @@ wall, 8.0 s user, 3.6 s system), and the seven libraries it staged under
 bytes (`du -sk`: 10,372 KiB), of which lean's is 8,309,016 and rust's
 1,158,872.
 
+The popular languages (the shipped-grammars-package roadmap's phase 5,
+measured on 2026-11-27 on the same machine and toolchain, with other work
+running at a load average of about 3) add ten grammars to that step. It
+took 6.55 s wall at the phase-4 head (`715ba969`, built from a copy of its
+tree) and 14.72 s and 14.91 s with the ten, about 8 s more, the libraries
+compiled one after another; the seventeen staged libraries total
+25,611,888 bytes (`du -sk`: 25,048 KiB), 15.0 MB more, swift's 4,251,016
+and cpp's 3,488,792 the largest of the new ones. Each grammar's queries
+compiled on the staged library, timed with a throwaway probe
+(`tree_sitter::Query::new`, the median of seven, release): the seven
+former highlights queries take 21 ms together and the ten new ones 153 ms,
+of which swift's is 104 ms, cpp's 12 ms, tsx's 10 ms, ruby's 9 ms and
+typescript's 9 ms, the rest under 5 ms; the new injections queries take
+2 to 4 ms each. `Highlight.enter`'s step 7 compiles every registered
+grammar's highlights query when a mode with injections is entered (a
+Markdown, Rust, Swift, JavaScript, TypeScript, TSX or C++ buffer) and again
+at each re-injection, so such an entry now compiles about 175 ms of
+queries on the editor thread where it compiled about 21 ms, under a
+quarter second; a Swift buffer compiles its own 104 ms query besides.
+Caching the compiled queries is the rdm task
+`syntax-injected-highlights-compiled-once`.
+
 Every test, Rust or Lean, registers the grammars it uses from
 `crates/editor-syntax-fixture-grammars`, a test-only crate whose build
 script compiles the six from the package's pins as shared libraries with
@@ -2657,6 +2679,29 @@ identifier draws in no face, in the default ink: as the built-in theme
 draws `syntax.variable`, though not the blue the Solarized themes give it. Keywords, literals and comments are unaffected. Lean's query is vendored
 with its grammar, from the same upstream commit, so it cannot drift from the
 grammar's node types.
+
+**The popular languages' queries meet the same rule** (the
+shipped-grammars-package roadmap's phase 5, 2026-11-27). Every query the
+tree-sitter org publishes for its grammars (java, ruby, python,
+javascript, c; typescript and tsx through JavaScript's file, cpp through
+C's) puts a catch-all `(identifier) @variable` among its first patterns,
+and swift's has `(simple_identifier) @variable` at its line 41: they are
+written for today's tree-sitter-highlight, where a node's later pattern
+wins. Under the earliest-pattern rule a mapped `variable` would win every
+identifier, so in `def f(x):` Python's `f`, captured `variable` by pattern
+0 and `function` by pattern 8, would never draw as a function. So each of
+those languages' entries (`packages/languages/Languages/Grammars.lean`)
+maps `variable` to nothing, as `lean`'s does, and its dotted `variable.*`
+captures fall back to that nothing: plain identifiers, parameters and
+`self` or `this` draw in the default ink, and the closer captures draw.
+The package's `pythonDrawnCheck` draws `f` in the function face over the
+real library, and fails with the mapping dropped. Other broad-first
+patterns stay as upstream wrote them (Python's capitalised
+`@constructor` before `@function` on a call), and no query is edited.
+An injected language is drawn with the host mode's mapping
+(`Highlight.injections`), so a Python fence in Markdown still draws its
+identifiers in `syntax.variable` (the rdm task
+`injected-language-own-captures`).
 
 **Which tree draws a snapshot** (`Session::highlights`), resolved once a
 frame and fixed for it, with the tree delivered last of revision M and a

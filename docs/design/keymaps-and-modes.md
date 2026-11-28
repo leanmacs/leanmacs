@@ -3664,6 +3664,18 @@ otherwise be a cycle).
   (`uv.lock`) is one line of config. `lean` draws its booleans as
   constants, its characters as strings and its namespaces as modules, three
   captures the vocabulary has no face for.
+- **The languages beyond the core's table** are the default package
+  `languages`' (`packages/languages/Languages/Grammars.lean`, its package
+  `languages-grammars`), which no core test reads: `yaml`, and since the
+  shipped-grammars-package roadmap's phase 5 `java`, `swift`, `ruby`
+  (with `Gemfile` and `Rakefile`), `python`, `javascript` (with `.jsx`),
+  `typescript`, `tsx`, `c` (with `.h`), `cpp` and `clojure` (whose grammar
+  is `clojure_orchard`, the name its library exports). Each maps its
+  query's captures as the core's entries do, `variable` to no face where
+  the query starts with a catch-all identifier pattern, so the earliest
+  pattern's rule lets the closer captures draw
+  ([rust-library.md](rust-library.md), "Highlights, as built"); the
+  package's README lists each language's files and grammar.
 - **The rule is pure and the core's** (`Language.forPath`). The table is in
   precedence order: config's entries, in the order config defined them,
   then the shipped ones config did not replace by name
