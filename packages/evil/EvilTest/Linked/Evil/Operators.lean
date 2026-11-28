@@ -102,8 +102,8 @@ private def withEvilIndentHost (context : HostContext) (grammars : TestGrammars)
   let mangled := mangledRust source indentKept
   withRealVimHost context grammars [("init.lean", indentText mangled)] fun session => do
       session.ask [.reload]
-      unless ← session.testGrammarsRegistered do
-        return false
+      if let .error why← session.testGrammarsRegistered then
+        throw (IO.userError why)
       check session source mangled
 
 /-- The view line after `load-<name>` and then the keys `keys`. -/

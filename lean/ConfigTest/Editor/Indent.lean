@@ -125,8 +125,8 @@ def withIndentHost (context : Context) (check : RealSession → String → Strin
   withRealSyntaxTestHost context context.testGrammars [("init.lean", reindentText mangled)]
       fun session => do
       session.ask [.reload]
-      unless ← session.testGrammarsRegistered do
-        return false
+      if let .error why← session.testGrammarsRegistered then
+        throw (IO.userError why)
       check session source mangled
 
 /-- The text the view shows after `load-<name>` and then the command

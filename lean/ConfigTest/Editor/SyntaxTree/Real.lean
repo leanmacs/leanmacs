@@ -1,4 +1,5 @@
 import ConfigTest.Editor.Headless
+import ConfigTest.Support.Shipped
 import Editor.InputScheme.Test
 import Editor.RealHost
 import Editor.Test.Linked.Services
@@ -261,9 +262,26 @@ def registerTestGrammarsRefusalCheck (context : Context) : Check :=
           | .ok () => "registered"
         saw (said == expected) s!"{said}, not {expected}" }
 
+-- inferred-waits W89: stays (A5: a real syntax host's registration of its test grammars over the library's syntax service, its subject)
+set_option linter.inferredWait false in
+/-- A check of `realSyntaxChecks`, a declaration of its own. -/
+def refusedTestGrammarsSaidCheck (context : Context) : Check :=
+  { name :=
+      "a real syntax host whose test grammars' directory holds no library ends its register-grammars job ok, and the wait for the test grammars' registration answers the refusal naming the grammar"
+    run :=
+      IO.FS.withTempDir fun empty =>
+        withRealSyntaxTestHost context { directory := empty } [] fun session => do
+          session.ask [.reload]
+          match ← session.testGrammarsRegistered with
+          | .error why =>
+            saw ((why.splitOn "grammar `json`: the grammar was refused:").length > 1) why
+          | .ok () =>
+            saw false "the wait answered the test grammars registered" }
+
 /-- The checks of the library's syntax service under a real host. -/
 def realSyntaxChecks (context : Context) : List Check :=
   [parseHighlightedTextLibraryCheck context, highlightsDirectiveCheck context,
-    realSyntaxStageCheck context, registerTestGrammarsRefusalCheck context]
+    realSyntaxStageCheck context, registerTestGrammarsRefusalCheck context,
+    refusedTestGrammarsSaidCheck context]
 
 end ConfigTest

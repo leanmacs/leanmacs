@@ -133,8 +133,8 @@ def withRealLanguageHost (context : HostContext) (grammars : TestGrammars) (more
     onRealStage stage fun host stage => do
         let session := RealSession.ofStage host directory stage
         session.ask [.reload]
-        unless ← session.testGrammarsRegistered do
-          return false
+        if let .error why← session.testGrammarsRegistered then
+          throw (IO.userError why)
         asked.set #[]
         check session asked
 

@@ -81,8 +81,8 @@ def treeObjectChecks (context : HostContext) (grammars : TestGrammars) : List Ch
         let rust ← grammars.tree "rust"
         withRealVimHost context grammars [("init.lean", rustObjectsConfig rust)] fun session => do
             session.ask [.reload]
-            unless ← session.testGrammarsRegistered do
-              return false
+            if let .error why← session.testGrammarsRegistered then
+              throw (IO.userError why)
             session.ask [.run "rust-buffer"]
             let before := lastViewLine (← session.sceneLines)
             session.typed "v a f"

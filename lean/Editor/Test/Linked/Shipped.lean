@@ -323,11 +323,23 @@ def withRealSyntaxHost (scheme : InputScheme) (context : HostContext) (grammars 
 
 /-- Waits until the host's `register-grammars` job has ended with its
 command (its line `job <n> register-grammars: ok`), which the first install
-of a host that declares the test grammars starts (`withRealSyntaxHost`): by
-then each is registered and the languages' trees resolve with their
-queries. An event the host's output reaches, with the hang guard as a guard
-against a hang only. -/
-def Session.testGrammarsRegistered (session : Session) : IO Bool :=
-  session.outputReaches fun lines => lines.any (·.endsWith s!" {Language.Grammar.jobName}: ok")
+of a host that declares the test grammars starts (`withRealSyntaxHost`),
+and then reads what the command said in the echo area. The job ends `ok`
+whether or not each registration was refused: the command records a
+refusal and says it there, ``grammar `<name>`: …``. So `.ok` once the
+command has run and said nothing of any test grammar, by when each is
+registered and the languages' trees resolve with their queries; otherwise
+why: the echo area's sentences, or that the command's line never came. An
+event the host's output reaches, with the hang guard as a guard against a
+hang only. -/
+def Session.testGrammarsRegistered (session : Session) : IO (Except String Unit) := do
+  let ended ←
+    session.outputReaches fun lines => lines.any (·.endsWith s!" {Language.Grammar.jobName}: ok")
+  unless ended do
+    return .error s!"the {Language.Grammar.jobName} job's command never came"
+  let echo ← session.echo
+  if TestGrammars.names.any fun (name, _) => (echo.splitOn s!"grammar `{name}`:").length > 1 then
+    return .error s!"the test grammars did not all register: {echo}"
+  return .ok ()
 
 end Editor.Test.Linked
