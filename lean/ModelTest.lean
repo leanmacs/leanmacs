@@ -1434,7 +1434,11 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   unlinked with no root; `markdownFoldChecks`, the exact foldable ranges of
   `folds.md`: each heading's to the next of the same or a higher level and
   each fence's over its rows, their keys and placeholders, every one
-  unfolded; `markdownStreamChecks`, `stream.md` streamed in chunks: each
+  unfolded; `markdownListChecks`, `lists.md`'s exact text, a nested item
+  two spaces in, a bullet as `•`, an ordered item's number kept, a quote's
+  `>` and a thematic break's markup gone, `text.list-marker` over each
+  marker alone and `text.quote` over the quote and the nested quote;
+  `markdownStreamChecks`, `stream.md` streamed in chunks: each
   append parses exactly its checked-in tail and renders only that tail's
   blocks, counted by `Doc.rendered`, the document it ends with describes
   the whole render, a kept heading's fold grows over the appended blocks,
@@ -1819,6 +1823,7 @@ def checks : List Check :=
     markdownTableChecks ++
     markdownLinkChecks ++
     markdownFoldChecks ++
+    markdownListChecks ++
     markdownStreamChecks ++
     markdownViewChecks ++
     markdownTableViewChecks ++

@@ -7,8 +7,8 @@ import ModelTest.Support.Markdown
 
 The model tests of the Markdown renderer (`Editor/Markdown/Doc.lean` and the
 modules it imports): `markdownProseChecks`, `markdownHeadingChecks`,
-`markdownTableChecks`, `markdownLinkChecks`, `markdownFoldChecks` and
-`markdownStreamChecks`. Each renders a fixture of `tests/markdown/` from its
+`markdownTableChecks`, `markdownLinkChecks`, `markdownFoldChecks`,
+`markdownListChecks` and `markdownStreamChecks`. Each renders a fixture of `tests/markdown/` from its
 canned layers (`ModelTest.Support.Markdown`) and asserts the exact rendered
 text and the span, link or fold over named substrings. The root module
 `ModelTest` runs them; its module doc says what each shows.
@@ -299,6 +299,44 @@ def markdownFoldChecks : List Check :=
           (code.folds.map (·.text)) ==
               #["rust, 3 lines", "json, 1 line", "nosuch, 1 line", "rust, 1 line"] &&
             (code.folds.map (·.key)) == #["code 1", "code 2", "code 3", "code 4"] }]
+
+/-- The checks of lists, block quotes and a thematic break rendered with
+their markup left out (**criterion 2**), over `lists.md`. -/
+def markdownListChecks : List Check :=
+  let lists := described Support.Markdown.lists
+  let text := lists.text
+  let markers :=
+    (lists.spans.filter (·.face == ⟨"text.list-marker"⟩)).map fun span => (span.start, span.stop)
+  [{  name :=
+        "lists.md renders an item a line, two spaces a nesting level, a bullet as •, an ordered item's own number, a quote's blocks without their > and a thematic break as ———"
+      run :=
+        pure <|
+          text ==
+              "• one\n• two\n  • two point one\n  • two point two\n• three\n\n1. first\n2. second\n\nA quote\n\nnested quote\n\n———" &&
+            !text.any (· == '>') &&
+            !text.any (· == '-') },
+    { name :=
+        "text.list-marker is over each item's marker alone, a nested item's after its indent, and over nothing else"
+      run :=
+        pure <|
+          let line (item : String) : Nat := (over text item).1
+          markers ==
+              #[overNth text "•" 0, overNth text "•" 1, overNth text "•" 2, overNth text "•" 3,
+                overNth text "•" 4, over text "1.", over text "2."] &&
+            (overNth text "•" 2).1 == line "  • two point one" + 2 &&
+            (overNth text "•" 3).1 == line "  • two point two" + 2 &&
+            (over text "1.").1 == line "1. first" },
+    { name :=
+        "text.quote is over the quote's blocks, the nested quote's too, and over nothing outside the quote"
+      run :=
+        pure <|
+          let quote := over text "A quote\n\nnested quote"
+          lists.spans.contains (span quote.1 quote.2 "text.quote") &&
+            lists.spans.contains
+              (span (over text "nested quote").1 (over text "nested quote").2 "text.quote") &&
+            untouchedBy lists "text.quote" (0, quote.1) &&
+            untouchedBy lists "text.quote" (over text "———") &&
+            coveredBy lists "text.prose" (over text "———") }]
 
 /-- How many top-level blocks `fixture`'s canned layers capture. -/
 def blockCount (fixture : Cases.Fixture) : Nat :=
