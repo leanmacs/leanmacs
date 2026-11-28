@@ -24,7 +24,9 @@ import ModelTest.Support.Elaborator
 Declared grammars as the model tests drive them: a config installed over
 the shipped languages and modes, with the work of the `register-grammars`
 registration its install asked for started on the loop's driver
-(`installedWith`, `installOver`); a package that ships a grammar
+(`installedWith`, `installOver`), or that of the packages' grammars alone
+asked for by a start with no config or a rejected reload (`startedWith`,
+over `rustPackage`, a stand-in for `languages-grammars`); a package that ships a grammar
 (`iniPackage`); the setups that declare one (`declaresIni`); the queries
 they read; and a buffer opened through a delivered command (`openedIn`).
 Its two users are the model tests of the job and its command
@@ -99,21 +101,16 @@ def installOver (state : ModelState) (setup : SetupM Unit) :
         | _ => none
   return (state, generation, grammars)
 
-/-- The loop's driver once a config whose `setup` is `setup` has been
-installed over a registry holding the shipped languages and modes, and
-the work of the registration its install asked for has been started
-(`Loop.Driver.startWork`): the driver runs on the editor's models with
-the test grammars registered (`GrammarRegistry.testGrammars`), its keys
-told the installed registry, and its jobs given `libraries` as the table
-grammars load from, over the same test grammars, and the files `files`,
-each a path and its text, and the directories `directories`. `none` when
-the install asked for no registration. -/
-def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
-    (files : Array (String × String)) (directories : Array String := #[])
-    (platform : String := checkedPlatform) (packages : Array Package := #[])
-    (grammarDirectories : List (String × System.FilePath) := []) : Option TestDriver := do
-  let (state, generation, grammars) ←
-    installOver (withPackages shippedState packages grammarDirectories) setup
+/-- The loop's driver over the reducer's state `state`, with the work of
+the registration of `grammars` for the generation `generation` started
+(`Loop.Driver.startWork`): the driver runs on the editor's models with the
+test grammars registered (`GrammarRegistry.testGrammars`), its keys told
+`state`'s registry, and its jobs given `libraries` as the table grammars
+load from, over the same test grammars, and the files `files`, each a path
+and its text, and the directories `directories`. -/
+def drivenOver (state : ModelState) (generation : Nat) (grammars : Array Language.Grammar)
+    (libraries : Array (String × GrammarRegistry.Library)) (files : Array (String × String))
+    (directories : Array String) (platform : String) : Option TestDriver := do
   let keys : Loop.Keys TestScheme.scheme := { registered := state.registry.registered }
   let registered := GrammarRegistry.testGrammars
   let model := { editorModel with syntaxTree := { registry := registered } }
@@ -127,6 +124,65 @@ def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarReg
       jobs := { grammars := { registered with libraries := some libraries }, files := fileModel } }
   return driver.startWork Language.Grammar.jobName
       (Language.Grammar.work platform generation grammars)
+
+/-- The loop's driver once a config whose `setup` is `setup` has been
+installed over a registry holding the shipped languages and modes, and
+the work of the registration its install asked for has been started
+(`drivenOver`). `none` when the install asked for no registration. -/
+def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
+    (files : Array (String × String)) (directories : Array String := #[])
+    (platform : String := checkedPlatform) (packages : Array Package := #[])
+    (grammarDirectories : List (String × System.FilePath) := []) : Option TestDriver := do
+  let (state, generation, grammars) ←
+    installOver (withPackages shippedState packages grammarDirectories) setup
+  drivenOver state generation grammars libraries files directories platform
+
+/-- The loop's driver once the reducer, over a registry holding the shipped
+languages and modes and `packages` registered, has been fed `events`, and
+the work of the last registration they asked for has been started
+(`drivenOver`): a start with no config (`Config.Event.withoutConfig`), or a
+reload that was rejected. `none` when they asked for no registration. -/
+def startedWith (events : List ModelEvent) (packages : Array Package)
+    (grammarDirectories : List (String × System.FilePath))
+    (libraries : Array (String × GrammarRegistry.Library)) (files : Array (String × String)) :
+    Option TestDriver := do
+  let (state, asked) :=
+    events.foldl
+      (fun (state, asked) event =>
+        let (state, effects) := Config.step state event
+        (state,
+          (effects.filterMap fun
+                | .registerGrammars generation grammars => some (generation, grammars)
+                | _ => none).back?.orElse
+            fun _ => asked))
+      (withPackages shippedState packages grammarDirectories, none)
+  let (generation, grammars) ← asked
+  drivenOver state generation grammars libraries files #[] checkedPlatform
+
+/-- The package `languages`' stand-in: the Lake package `languages`, whose
+package declares the grammar `rust` of the shipped language `rust` for
+macOS on Apple silicon alone, relative to its grammars directory, as
+`languages-grammars` declares it. -/
+def rustPackage : Package :=
+  { name := "languages-grammars", setup := pure ()
+    grammars :=
+      #[Language.Grammar.declarePerPlatform "rust"
+          [("darwin-aarch64", "darwin-aarch64/libtree-sitter-rust.so")] "queries/rust"]
+    lakePackage := some "languages" }
+
+/-- Where the checks stage `rustPackage`'s grammars directory. -/
+def rustStagedAt : List (String × System.FilePath) :=
+  [("languages", "/s/grammars/languages")]
+
+/-- The library `rustPackage`'s grammar loads from, as the checks' table
+holds it. -/
+def rustLibraries : Array (String × GrammarRegistry.Library) :=
+  #[("/s/grammars/languages/darwin-aarch64/libtree-sitter-rust.so",
+      .exports #[("tree_sitter_rust", .grammar)])]
+
+/-- `rustPackage`'s highlights query file and its text. -/
+def rustQueries : Array (String × String) :=
+  #[("/s/grammars/languages/queries/rust/highlights.scm", declaredHighlights)]
 
 /-- The driver once a delivered command has opened a buffer called `path`
 over a JSON text, recorded the language the registry's table chooses for

@@ -819,6 +819,10 @@ namespace Editor.Headless
 inductive Request where
   /-- Reload the config from its source. -/
   | reload
+  /-- Start with no config to load: the packages' grammars register alone
+  (`Config.Event.withoutConfig`), as the window mode's start with no config
+  does, and a headless run whose config directory does not exist. -/
+  | withoutConfig
   /-- Run the command called `name`. -/
   | run (name : String)
   /-- Print the commands, the texts and the stores. -/
@@ -1283,6 +1287,7 @@ def Signal.encode : Signal → UInt64 × String
   | .probe => (12, "")
   | .request .published => (13, "")
   | .request .highlights => (14, "")
+  | .request .withoutConfig => (15, "")
 
 /-- The signal an event's code and text stand for, if they stand for one. -/
 def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
@@ -1302,6 +1307,7 @@ def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
   | 12 => some .probe
   | 13 => some (.request .published)
   | 14 => some (.request .highlights)
+  | 15 => some (.request .withoutConfig)
   | _ => none
 
 mutual
@@ -2452,6 +2458,7 @@ does nothing. -/
 def request (collaborators : Collaborators β σ scheme) (running : Running β σ scheme) :
     Request → IO (Running β σ scheme)
   | .reload => running.reduce collaborators .requested
+  | .withoutConfig => running.reduce collaborators .withoutConfig
   | .run name => running.run collaborators { command := name }
   | .open path =>
     running.run collaborators { command := FileJobs.openFileCommand, arguments := [.str path] }
@@ -3768,6 +3775,13 @@ def resumed (script : Array Line) (resume : Nat) : Array Line :=
         (0, #[])
     kept
 
+/-- `script` as a run whose config directory exists (`configExists`) or not
+runs it: as it is, or after a start with no config at line 0, so the
+packages' grammars register alone (`Request.withoutConfig`), as the window
+mode starts with no config directory. -/
+def startedFrom (configExists : Bool) (script : Array Line) : Array Line :=
+  if configExists then script else #[⟨0, .request .withoutConfig⟩] ++ script
+
 /-- The directives of a script: one a line, with blank lines and lines that
 start with `#` skipped. Or what is wrong with the first line that is not a
 directive, after the number of that line: `line 3: …`. -/
@@ -4620,7 +4634,10 @@ registers, the base config is elaborated on (`Editor/Main.lean`, "The
 base") and the command line after
 `headless`: `editor headless [--render] [--generate] [<sysroot> <olean dir>]
 <config dir> <script file>`, read by `Headless.read` (`Editor/Headless/CommandLine.lean`).
-Registers `packages`, in order, loads the config in `configDir` with the real elaborator,
+Registers `packages`, in order, loads the config in `configDir` with the real elaborator
+(or, when `configDir` does not exist, starts with no config, so the
+packages' grammars register alone, before the script's first line:
+`startedFrom`),
 runs the script as `run` does, with the output on stdout, then shuts the
 library's process service down, which kills and reaps every child it
 started, quits the queues and exits explicitly: with status 0 when the script ran to its end or
@@ -4706,6 +4723,9 @@ def main (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Na
     catch error =>
       IO.eprintln s!"editor: cannot run the script {scriptPath}: {error}"
       return 1
+  -- With no config directory, the run starts with no config, as the window
+  -- mode does: the packages' grammars register alone (`startedFrom`).
+  let directives := startedFrom (← System.FilePath.isDir configDir) directives
   if drawn then
     if let .error reason← Ffi.renderHeadless then
       IO.eprintln s!"editor: the headless render session could not be started: {reason}"

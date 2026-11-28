@@ -409,13 +409,17 @@ inductive Start where
   | say (text : String)
   /-- Reload config. -/
   | reload
+  /-- Start with no config to load: the packages' grammars register alone
+  (`Config.Event.withoutConfig`). -/
+  | withoutConfig
   deriving DecidableEq, Repr
 
 /-- What the window mode posts before the first event, in order: the
 restore of the session, when there is a state directory; the open of the
 file, if one was given; then, with no state directory, that unsaved text is
 not journalled (`notJournalled`), and each of `said`; then a reload when
-`plan` loads config. With no file nothing is opened, and the loop shows its
+`plan` loads config, or, when it skips it, the start with no config, so
+the packages' grammars still register (`Config.Event.withoutConfig`). With no file nothing is opened, and the loop shows its
 one empty buffer. The restore comes first so that config's `setup` runs
 after it: the host holds what follows until it has finished. -/
 def Options.starts (options : Options) (plan : ConfigPlan) (said : Array String) : Array Start :=
@@ -428,7 +432,7 @@ def Options.starts (options : Options) (plan : ConfigPlan) (said : Array String)
   let reloads :=
     match plan with
     | .load _ => #[Start.reload]
-    | .skip _ => #[]
+    | .skip _ => #[Start.withoutConfig]
   restores ++ opens ++ unjournalled ++ said.map .say ++ reloads
 
 namespace Report

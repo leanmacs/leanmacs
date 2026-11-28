@@ -1034,8 +1034,12 @@ The config session's decisions are tested here too, with no elaborator:
   (no `lake`) is said once. An install puts config's grammar declarations
   in the registry, which tells the loop of them beside the languages that
   name them, and starts their registration for the new generation after
-  cancelling config's jobs and before its report; a rejected reload, and
-  an install that declares none, start none. A reload whose registry would
+  cancelling config's jobs and before its report; an install that
+  declares none starts none, and so does a rejected reload once a
+  registration has been asked for. A start with no config, and a first
+  reload that is rejected, start the registration of the packages'
+  grammars alone, once; a first reload that installs registers once, its
+  own table. A reload whose registry would
   name a base of a child's environment no source answers to, config's
   choice or a package's default, is rejected with an error that lists the
   bases, and the config loaded stays;
@@ -1257,7 +1261,10 @@ names a scheme's key:
   until the job's command and highlighted from it on, opened before or
   after; a Markdown buffer of the declared `markdown`, opened before the
   command, plain until it and then highlighted, its declared `lean`
-  injected with the declared query, as at an editor's startup; a refused
+  injected with the declared query, as at an editor's startup; a `.rs`
+  buffer of an editor started with no config, and of one whose first
+  reload is rejected, plain until the packages' grammars' job's command
+  and highlighted from it on; a refused
   new grammar said, its buffers left plain; a declared `lean` registered
   and its buffers highlighted with the declared query; a query file that cannot be read said, the grammar still registered; the
   command of an older generation's job doing nothing over the answers of

@@ -105,6 +105,34 @@ def grammarRegisterChecks : List Check :=
                 #[("lean", #["syntax.number"])] &&
               answered.loop.state.echo == "" },
     { name :=
+        "an editor that starts with no config to load registers the packages' grammars alone: a .rs buffer opened before the job's command is plain until it, and is then attached with the package's rust and highlighted with its query"
+      run :=
+        pure <|
+          match
+            startedWith [.withoutConfig] #[rustPackage] rustStagedAt rustLibraries rustQueries with
+          | none => false
+          | some driver =>
+            let before := openedIn driver "/w/main.rs"
+            let (answered, delivered) := before.finish 1
+            attachedGrammars before == #[] && highlighters before == #[] && delivered.isSome &&
+              attachedGrammars answered == #["rust"] &&
+              highlighters answered == #[#["syntax.number"]] &&
+              answered.loop.state.echo == "" },
+    { name :=
+        "an editor whose first reload is rejected registers the packages' grammars alone: a .rs buffer opened before the job's command is plain until it, and is then attached with the package's rust and highlighted with its query"
+      run :=
+        pure <|
+          match
+            startedWith [.requested, .finished (rejected "a")] #[rustPackage] rustStagedAt
+              rustLibraries rustQueries with
+          | none => false
+          | some driver =>
+            let before := openedIn driver "/w/main.rs"
+            let (answered, delivered) := before.finish 1
+            attachedGrammars before == #[] && highlighters before == #[] && delivered.isSome &&
+              attachedGrammars answered == #["rust"] &&
+              highlighters answered == #[#["syntax.number"]] },
+    { name :=
         "a refused registration of the new grammar ini, its library not in the table, says in the echo area its name and the refusal, and a .ini buffer opened before or after the job's command stays open with no syntax tree"
       run :=
         pure <|

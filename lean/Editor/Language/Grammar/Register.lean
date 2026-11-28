@@ -5,8 +5,10 @@ import Editor.Language.Grammar
 /-!
 # Registering config's grammars: the core's `register-grammars` job
 
-What an install's `registerGrammars` effect (`Editor/Config/Reload.lean`)
-starts: the core's own job (`Language.Grammar.work`), owned by `config`,
+What a `registerGrammars` effect (`Editor/Config/Reload.lean`) starts, an
+install's, or that of the packages' grammars alone at a start with no
+config or after a first reload that is rejected ("The packages' grammars
+with no config", there): the core's own job (`Language.Grammar.work`), owned by `config`,
 that registers each grammar of the registry's table and reads its query
 files, and the command it finishes with (`installed`), which records the
 answers, has the open buffers of those grammars' languages highlighted

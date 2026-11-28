@@ -82,8 +82,11 @@ def windowOptionChecks : List Check :=
           { options with launch := { restore := some "/s/session/session-2.json" } }
         pure
           ((parsed ["--state", "/s", "f"]).map (fun o => (named o).starts (.skip none) #[]) ==
-              some #[.restore (some "/s/session/session-2.json"), .open "/work/project/f"] &&
-            (parsed ["--state", "/s"]).map (·.starts (.skip none) #[]) == some #[.restore none]) },
+              some
+                #[.restore (some "/s/session/session-2.json"), .open "/work/project/f",
+                  .withoutConfig] &&
+            (parsed ["--state", "/s"]).map (·.starts (.skip none) #[]) ==
+              some #[.restore none, .withoutConfig]) },
     { name :=
         "the state directory is --state's, resolved against the working directory; else leanmacs under XDG_STATE_HOME, else under HOME's .local/state when that is unset or empty; and none when neither is set"
       run :=
@@ -379,14 +382,14 @@ def windowStartChecks : List Check :=
             without.map (·.starts (.load "/c") #["a"]) ==
               some #[.open "/work/project/f", .say Window.notJournalled, .say "a", .reload]) },
     { name :=
-        "the window mode started with no file opens nothing: it posts what it has to say and the reload, and no open; and the editor loop it starts holds one buffer, scratch, empty, with one window on it"
+        "the window mode started with no file opens nothing: it posts what it has to say and the reload, and no open, and one that loads no config posts the start with no config in the reload's place; and the editor loop it starts holds one buffer, scratch, empty, with one window on it"
       run :=
         let empty := (parsed []).map (·.starts (.load "/xdg/leanmacs") #["hi"])
         let withFile := (parsed [(inFiles "note.txt").toString]).map (·.starts (.skip none) #[])
         pure <|
           empty == some #[.restore none, .say "hi", .reload] &&
             (parsed ["f"]).map (·.starts (.skip none) #[]) ==
-              some #[.restore none, .open "/work/project/f"] &&
+              some #[.restore none, .open "/work/project/f", .withoutConfig] &&
             (parsed ["f"]).map (·.starts (.load "/c") #["a", "b"]) ==
               some #[.restore none, .open "/work/project/f", .say "a", .say "b", .reload] &&
             match empty.bind started, withFile.bind started with

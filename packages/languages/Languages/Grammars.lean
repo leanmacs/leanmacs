@@ -34,7 +34,9 @@ upstream and licence notice.
 
 A file of a shipped language opened before the core's `register-grammars`
 job has answered is drawn plain, then highlighted once the job's command
-runs (`Language.Grammar.treeOf`; `docs/design/keymaps-and-modes.md`,
+runs. The job runs at every editor's start: its first install's, or, with
+no config to load or a first reload that is rejected, that of the
+packages' grammars alone (`Config.Event.withoutConfig`) (`Language.Grammar.treeOf`; `docs/design/keymaps-and-modes.md`,
 "Declared grammars").
 
 **Why a package of its own.** A package that declares grammars is refused

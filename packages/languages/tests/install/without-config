@@ -1,0 +1,22 @@
+# The script the installed editor's headless mode runs in the on-demand
+# install check (packages/languages/rust/tests/default_install.rs) with NO
+# config directory: the path it is handed does not exist, and the script
+# asks for no reload. The run starts with no config, as the window mode
+# does with no config directory, so the packages' grammars register alone
+# (`Config.Event.withoutConfig`). It is run in a directory holding a copy of
+# the Rust fixture `hello.rs`, and its `highlights` line must be exactly the
+# one `expected` holds, as for `script`.
+
+# `:` opens the ex line and `e` opens the file, which opens in the code mode
+# with the shipped language `rust`. `join` waits for the load and the
+# registration, whichever ends last highlighting the buffer.
+key : Semicolon shift
+commit e hello.rs
+key <Enter> Enter -
+join
+
+# The scene, whose echo would say a refused registration of a grammar.
+scene
+
+# The faces the package's grammar `rust` draws the fixture in.
+highlights

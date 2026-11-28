@@ -44,8 +44,10 @@
 //! `docs/design/rust-library.md`, "Syntax, as built", "Measured").
 //!
 //! **The moment before.** Every editor registers its grammars at startup,
-//! through the core's `register-grammars` job, which starts at the first
-//! install of config. A file opened before the job's command runs is drawn
+//! through the core's `register-grammars` job: its first install of
+//! config's, or, with no config to load or a first reload that is
+//! rejected, that of the packages' grammars alone (`lean/Editor/Config/Reload.lean`,
+//! "The packages' grammars with no config"). A file opened before the job's command runs is drawn
 //! plain for that moment, then highlighted when the command records the
 //! answers (`docs/design/keymaps-and-modes.md`, "Declared grammars"). This
 //! is accepted.

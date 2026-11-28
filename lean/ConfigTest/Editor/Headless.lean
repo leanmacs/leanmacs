@@ -1502,6 +1502,15 @@ wait 2" with
             Headless.resumed script 2 == #[⟨5, .request .show⟩] &&
             Headless.resumed script 3 == #[] },
     { name :=
+        "a headless run whose config directory does not exist starts with no config, so the packages' grammars register alone, before its script's first line; one whose config directory exists runs its script as it is"
+      run :=
+        let script := #[⟨1, .request .reload⟩, ⟨2, .settle⟩]
+        pure
+          (Headless.startedFrom false script ==
+              #[⟨0, .request .withoutConfig⟩, ⟨1, .request .reload⟩, ⟨2, .settle⟩] &&
+            Headless.startedFrom true script == script &&
+            Headless.startedFrom false #[] == #[⟨0, .request .withoutConfig⟩]) },
+    { name :=
         "indexed and workspaces are directives with their lines' numbers, refused with anything after them as no directive, and the error message of a line that is no directive lists them"
       run :=
         pure <|

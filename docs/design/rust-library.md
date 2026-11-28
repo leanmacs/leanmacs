@@ -2190,10 +2190,18 @@ beside `yaml`:
   the adapter answers none (the task `syntax-port-drop-shipped-query`).
 
 *The moment before the grammars register.* Every editor registers its
-grammars at startup, through the core's `register-grammars` job of its
-first install. A file opened before the job's command runs is drawn plain
-for that moment, then highlighted when the command records the answers,
-its Markdown fences of a declared grammar included. This is accepted
+grammars at startup, through the core's `register-grammars` job: that of
+its first install, or, when there is no config to load (no config
+directory, no toolchain, no `.olean` record: the window mode's
+`ConfigPlan.skip`, a headless run whose config directory does not exist)
+or the first reload is rejected, the job of the packages' grammars alone,
+which the reload reducer asks for (`Config.Event.withoutConfig`,
+`State.packageGrammars`; `lean/Editor/Config/Reload.lean`, "The
+packages' grammars with no config"). A start that loads config and
+installs registers once, the install's. A file opened before the job's
+command runs is drawn plain for that moment, then highlighted when the
+command records the answers, its Markdown fences of a declared grammar
+included. This is accepted
 ([keymaps-and-modes.md](keymaps-and-modes.md), "Declared grammars").
 
 *The double compile of the crates.io grammars.* A build-dependency's own

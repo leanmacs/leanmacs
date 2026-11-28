@@ -7,8 +7,8 @@ with a language, whose text is parsed and drawn as its language says;
 source, compiled by the set's build. The editor's library compiles in no
 grammar, so a file of a shipped language is highlighted in an editor that
 holds this package once its grammars have registered, which the editor
-does at startup: a file opened before that is drawn plain for that moment,
-then highlighted.
+does at startup, with config or without: a file opened before that is
+drawn plain for that moment, then highlighted.
 
 Its design record is in [packages.md](../../docs/design/packages.md),
 "The default packages of the features-as-packages roadmap's phase 3", and
@@ -104,9 +104,10 @@ pins and copy these queries, so their pins move in the same commit.
   the grammar.
 - **The on-demand check**, [`rust/tests/default_install.rs`](rust/tests/default_install.rs)
   (`mise run languages-install-check`, never in the gate): the default set,
-  installed with no config, opens `tests/syntax/rust/hello.rs` highlighted
-  by the package's `rust` grammar, with `tests/install/`'s script, expected
-  line and empty config
+  installed, opens `tests/syntax/rust/hello.rs` highlighted by the
+  package's `rust` grammar, over an empty config reloaded (`tests/install/script`,
+  `tests/install/config/`) and with no config directory at all
+  (`tests/install/without-config`), each against `tests/install/expected`
   ([on-demand-checks.md](../../docs/dev-practices/on-demand-checks.md),
   "The default set's grammars, installed, on demand").
 - It has no headless fixture of its own.

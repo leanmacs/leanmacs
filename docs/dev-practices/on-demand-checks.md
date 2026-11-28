@@ -332,19 +332,24 @@ when that is unset). In a temporary directory it owns, it:
   `grammars/languages/<platform>/libtree-sitter-rust.<ext>` and wrote the
   line naming `languages` at `grammars/languages` in its `editor.grammars`;
 - runs the installed editor headless, in a directory holding a copy of
-  `tests/syntax/rust/hello.rs`, on `packages/languages/tests/install/script`:
-  `reload` and `settle` stand in for the window mode's first install, which
-  starts the core's `register-grammars` job; the file is opened with the
-  Vim scheme's keys (`:e hello.rs`); and `highlights` is asked. It holds the
-  `highlights` line to `packages/languages/tests/install/expected` and the
-  output to no refusal of any grammar.
+  `tests/syntax/rust/hello.rs`, twice. First over that config, on
+  `packages/languages/tests/install/script`, whose `reload` and `settle`
+  stand in for the window mode's first install, which starts the core's
+  `register-grammars` job. Then with no config directory at all, a path
+  never made, on `packages/languages/tests/install/without-config`, which
+  asks for no reload: the run starts with no config, as the window mode
+  does with no config directory, and the packages' grammars register
+  alone (`Config.Event.withoutConfig`). Each opens the file with the Vim
+  scheme's keys (`:e hello.rs`) and asks `highlights`; each run's
+  `highlights` line is held to `packages/languages/tests/install/expected`
+  and its output to no refusal of any grammar.
 
 It writes nothing outside its temporary directory but what the default
 set's and the core's builds would write in place, which `mise run lean`
 has already built; it takes about 7 s after that build (2026-11-27, macOS
 arm64). It ends `languages-install-check: the default set,
-installed with no config, highlights hello.rs with the languages package's
-grammar`.
+installed, highlights hello.rs with the languages package's grammar with an
+empty config and with no config directory`.
 
 It is not part of the gate (the operator's decision, 2026-11-26): an
 install is about 420 MB, and no gate step installs a set

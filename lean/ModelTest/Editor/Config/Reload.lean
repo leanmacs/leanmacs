@@ -51,6 +51,7 @@ import EnvironmentApi
 import EnvironmentApiTest.Fake
 import ModelTest.Check
 import ModelTest.Support.Elaborator
+import ModelTest.Support.Grammars
 
 /-!
 # Model tests: `Editor/Config/Reload.lean`
@@ -849,6 +850,44 @@ def reloadChecks : List Check :=
                 .report 1 true #[] 1 0] &&
             !rejecting.any (· matches .registerGrammars ..) &&
             !plain.any (· matches .registerGrammars ..)) },
+    { name :=
+        "a host that starts with no config to load registers the packages' grammars alone, once, for the packages' generation; with no package grammar it asks nothing"
+      run :=
+        let packaged := withPackages {} #[iniPackage] iniStagedAt
+        let (started, starting) := reduceFrom packaged [.withoutConfig]
+        let (_, again) := reduceFrom started [.withoutConfig]
+        let (_, bare) := reduce [.withoutConfig]
+        pure
+          (starting == #[.registerGrammars packaged.registry.generation #["ini"]] &&
+            again.isEmpty &&
+            bare.isEmpty) },
+    { name :=
+        "a first reload that is rejected registers the packages' grammars alone, after its report; a rejected one after it asks nothing more, and an install after that registers its own table for its generation"
+      run :=
+        let packaged := withPackages {} #[iniPackage] iniStagedAt
+        let (rejectedOnce, first) := reduceFrom packaged [.requested, .finished (rejected "a")]
+        let (rejectedTwice, second) :=
+          reduceFrom rejectedOnce [.requested, .finished (rejected "a")]
+        let (_, installing) :=
+          reduceFrom rejectedTwice [.requested, .finished (accepted ["a"] (greets "1"))]
+        pure
+          (first ==
+              #[.start none #[], .report 1 false #["a"] 0 0,
+                .registerGrammars packaged.registry.generation #["ini"]] &&
+            !second.any (· matches .registerGrammars ..) &&
+            installing.filter (· matches .registerGrammars ..) ==
+              #[.registerGrammars (packaged.registry.generation + 1) #["ini"]]) },
+    { name :=
+        "a first reload that installs registers the grammar table once, its own, and a start with no config after it asks nothing"
+      run :=
+        let packaged := withPackages {} #[iniPackage] iniStagedAt
+        let (loaded, installing) :=
+          reduceFrom packaged [.requested, .finished (accepted ["a"] (greets "1"))]
+        let (_, after) := reduceFrom loaded [.withoutConfig]
+        pure
+          (installing.filter (· matches .registerGrammars ..) ==
+              #[.registerGrammars (packaged.registry.generation + 1) #["ini"]] &&
+            after.isEmpty) },
     { name :=
         "an installed reload puts config's syntax refresh delay in the registry, which tells the loop of it; a rejected reload leaves it, and a config that sets none goes back to none"
       run :=

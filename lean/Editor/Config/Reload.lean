@@ -192,10 +192,23 @@ the model tests run it with outcomes built by hand
   set, after `cancelJobs config` and before its report. The host starts the
   core's job `register-grammars` for it, owned by `config`, so the next
   install cancels it before starting its own, and its command never runs
-  (`Editor/Language/Grammar/Register.lean`). A rejected outcome, and an
-  install with no grammar declared, start none: the recorded answers are of
-  an older generation, so none of them applies
-  (`Language.Grammar.treeOf`).
+  (`Editor/Language/Grammar/Register.lean`). An install with no grammar
+  declared starts none, and so does a rejected outcome once a registration
+  has been asked for: the recorded answers are of an older generation, so
+  none of them applies (`Language.Grammar.treeOf`).
+- **The packages' grammars with no config.** The library compiles in no
+  grammar, so a shipped language is highlighted only once the grammars its
+  package declares (`languages-grammars`) have registered. Until a
+  registration has been asked for (`grammarsAsked`), a start with no config
+  to load (`withoutConfig`, which the window mode feeds for its
+  `ConfigPlan.skip` and the headless mode for a config directory that does
+  not exist) and a rejected outcome each ask for the registry's grammar
+  table, the packages' declarations alone, for the packages' generation
+  (`packageGrammars`), after a rejected outcome's report. An install asks
+  for its own table and sets the flag, so a start that loads config, and
+  whose first reload installs, registers once; a later install registers
+  again, as every install does, after cancelling a registration still
+  running.
 - **The base is kept** from the first outcome that has it, accepted or not,
   and handed to every later job, so it is imported once.
 - **Every outcome is reported**, with its diagnostics.
@@ -378,6 +391,11 @@ structure State (β σ : Type) where
   /-- Whether what a reload had to say of the package set instead of
   building it has been said (`say`): it is said once. -/
   packagesSaid : Bool := false
+  /-- Whether a registration of the grammar table has been asked for
+  (`registerGrammars`): by an install, or for the packages' grammars alone,
+  at a start with no config to load or after a first reload that was
+  rejected ("The packages' grammars with no config", in the module docs). -/
+  grammarsAsked : Bool := false
 
 /-- What happened, as far as reloads go. -/
 inductive Event (β σ : Type) where
@@ -394,6 +412,10 @@ inductive Event (β σ : Type) where
   started it: the host says so as the job keyed `package-build` comes and
   goes. It has no effect. -/
   | packageBuild (inFlight : Bool)
+  /-- The host starts with no config to load (the window mode's
+  `ConfigPlan.skip`, a headless run whose config directory does not
+  exist): the packages' grammars are registered alone. -/
+  | withoutConfig
 
 /-- What the runtime is to do. -/
 inductive Effect (β σ : Type) where
@@ -552,6 +574,18 @@ def packagesAfter (state : State β σ) (facts : PackageSet.Facts) : State β σ
     if state.packagesSaid then (state, #[]) else ({ state with packagesSaid := true }, #[.say text])
   | .build order => ({ state with packageBuilding := true }, #[.buildPackages order])
 
+/-- The state once the packages' grammars alone are to be registered, and
+the effect that registers them: the registry's grammar table, which holds
+the packages' declarations alone while no config has installed, for its
+generation. Nothing when a registration has been asked for already, or the
+table is empty ("The packages' grammars with no config", in the module
+docs). -/
+def packageGrammars (state : State β σ) : State β σ × Array (Effect β σ) :=
+  let grammars := state.registry.grammarTable.toArray
+  if state.grammarsAsked || grammars.isEmpty then (state, #[])
+  else
+    ({ state with grammarsAsked := true }, #[.registerGrammars state.registry.generation grammars])
+
 end State
 
 /-- The reducer before the window's appearance is asked. -/
@@ -565,9 +599,15 @@ private def stepTheme {β σ : Type} (state : State β σ) : Event β σ → Sta
     let grammars := state.registry.grammarTable.toArray
     let registering :=
       if grammars.isEmpty then #[] else #[.registerGrammars state.registry.generation grammars]
-    let installed :=
-      if report.installed then #[.cancelJobs .config] ++ registering ++ #[.report report]
-      else #[.report report]
+    let (state, installed) :=
+      if report.installed then
+        ({ state with grammarsAsked := state.grammarsAsked || !registering.isEmpty },
+          #[.cancelJobs .config] ++ registering ++ #[.report report])
+      else
+        -- A first reload that is rejected leaves the packages' grammars
+        -- to register alone; a later one asks nothing more.
+        let (state, alone) := state.packageGrammars
+        (state, #[.report report] ++ alone)
     let (state, packages) := state.packagesAfter outcome.facts
     if state.pending then
       let (state, effects) := state.start
@@ -581,6 +621,7 @@ private def stepTheme {β σ : Type} (state : State β σ) : Event β σ → Sta
         windowOpen := true, appearance := none },
       #[])
   | .packageBuild inFlight => ({ state with packageBuilding := inFlight }, #[])
+  | .withoutConfig => state.packageGrammars
 
 /-- The reducer: the state after `event`, and the effects to perform. The
 window's appearance is asked last (`State.ask`), after whatever the event

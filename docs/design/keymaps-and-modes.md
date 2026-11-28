@@ -3762,14 +3762,18 @@ otherwise be a cycle).
     thread waits for none of it.
   - *The startup moment.* Every grammar is a declared one, the shipped
     languages' too (`languages-grammars`), so every editor registers its
-    grammars at startup, through the job of its first install: a file
+    grammars at startup, through the job of its first install, or, with
+    no config to load or a first reload that is rejected, the job of the
+    packages' grammars alone (`Config.Event.withoutConfig`,
+    `lean/Editor/Config/Reload.lean`): a file
     opened before the job's command runs (the window mode's file on its
     command line, say) is drawn plain for that moment, then highlighted by
     the command; a Markdown buffer's fences of a declared grammar are
     highlighted then too. This is accepted (the shipped-grammars-package
     roadmap's phase 4), and pinned by
-    `ModelTest.grammarRegisterChecks`' Markdown buffer opened before the
-    command.
+    `ModelTest.grammarRegisterChecks`: the Markdown buffer opened before the
+    command, and a `.rs` buffer of an editor started with no config, and of
+    one whose first reload is rejected.
   - *Overrides and refusals.* A declaration named as a grammar registered
     before (a package's, say) replaces it for buffers highlighted after the
     registration. A refusal is said in the echo area,

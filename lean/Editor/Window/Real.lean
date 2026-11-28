@@ -20,7 +20,7 @@ There is one editor loop; this module only wires it to a window:
 | Display | the recorder, in cells of 8 by 16 | the real binding over a display on the system's fonts, bound to the window (`Ffi.Display.newSystem`, `Ffi.Display.present`) |
 | Clipboard | the host's own | the system's (`Clipboard.Real.system`), or `Clipboard.unavailable` when it cannot be opened, which the echo area says once |
 | Syntax tree | the real binding over the library's syntax service (`Editor/SyntaxTree/Real.lean`), made once over the table of snapshots the loop's text binding publishes | the same |
-| Driver | the script | none: the open command with the file, when one was given, what the echo area has to say, and a reload when config is loaded at start, are posted before the first event (`Options.starts`), and the window's events are the input |
+| Driver | the script | none: the open command with the file, when one was given, what the echo area has to say, and a reload when config is loaded at start, or the start with no config when it is not, are posted before the first event (`Options.starts`), and the window's events are the input |
 
 - **The main thread.** `main` calls `Ffi.windowRun`, which blocks until the
   window has closed. When config is loaded at start it first waits for the
@@ -195,6 +195,7 @@ def Start.request : Start → Headless.Request
   | .open path => .open path
   | .say text => .say text
   | .reload => .reload
+  | .withoutConfig => .withoutConfig
 
 /-- The window mode's display over the snapshots `snapshots`: the host's
 display over the real binding over `display`, in the built-in theme, which

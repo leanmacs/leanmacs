@@ -29,11 +29,15 @@
 //!    `rust` library to `grammars/languages/<platform>/` and recorded the
 //!    package's grammars directory relative to it in `editor.grammars`;
 //! 3. runs the installed editor headless, in a directory holding a copy of
-//!    the Rust fixture `tests/syntax/rust/hello.rs`, on
-//!    `packages/languages/tests/install/script`, which opens the file with
-//!    the Vim scheme's keys, and compares its `highlights` line with
-//!    `packages/languages/tests/install/expected`'s, and that it says no
-//!    refusal of any grammar.
+//!    the Rust fixture `tests/syntax/rust/hello.rs`, twice: over that
+//!    config, on `packages/languages/tests/install/script`, which reloads
+//!    it; and with no config directory at all (a path never made) on
+//!    `packages/languages/tests/install/without-config`, which asks for no
+//!    reload, so the run starts with no config, as the window mode does
+//!    with none, and the packages' grammars register alone. Each script
+//!    opens the file with the Vim scheme's keys; each run's `highlights`
+//!    line is compared with `packages/languages/tests/install/expected`'s,
+//!    and each says no refusal of any grammar.
 //!
 //! Besides its temporary directory, it builds what the default set's and
 //! the core's builds would, in place, which `mise run lean` has built
@@ -190,33 +194,46 @@ fn the_default_set_installed_with_no_config_highlights_a_rust_file() {
         work.join("hello.rs"),
     )
     .expect("the Rust fixture");
-    let ran = succeeded(
-        "the installed editor's headless run",
-        Command::new(install.join("editor"))
-            .arg("headless")
-            .arg(&sysroot)
-            .arg(install.join("lib").join("lean"))
-            .arg(&config)
-            .arg(languages.join("tests").join("install").join("script"))
-            .current_dir(&work),
-    );
-    let printed = String::from_utf8(ran.stdout).expect("UTF-8");
     let expected = fs::read_to_string(languages.join("tests").join("install").join("expected"))
         .expect("the expected highlights");
-    let highlights: Vec<&str> = printed
-        .lines()
-        .filter(|line| line.starts_with("highlights "))
-        .collect();
-    assert_eq!(
-        highlights,
-        expected.lines().collect::<Vec<_>>(),
-        "the installed editor's highlights; it printed:\n{printed}"
-    );
+    // With the config whose root registers nothing, reloaded; then with no
+    // config directory at all, the path handed in never made, and no
+    // reload: the run starts with no config, as the window mode does.
+    let absent = tmp.join("no-config");
+    for (what, directory, script) in [
+        ("with an empty config, reloaded", &config, "script"),
+        ("with no config directory", &absent, "without-config"),
+    ] {
+        let ran = succeeded(
+            &format!("the installed editor's headless run {what}"),
+            Command::new(install.join("editor"))
+                .arg("headless")
+                .arg(&sysroot)
+                .arg(install.join("lib").join("lean"))
+                .arg(directory)
+                .arg(languages.join("tests").join("install").join(script))
+                .current_dir(&work),
+        );
+        let printed = String::from_utf8(ran.stdout).expect("UTF-8");
+        let highlights: Vec<&str> = printed
+            .lines()
+            .filter(|line| line.starts_with("highlights "))
+            .collect();
+        assert_eq!(
+            highlights,
+            expected.lines().collect::<Vec<_>>(),
+            "the installed editor's highlights {what}; it printed:\n{printed}"
+        );
+        assert!(
+            !printed.contains("grammar `"),
+            "a grammar's registration was refused {what}; it printed:\n{printed}"
+        );
+    }
     assert!(
-        !printed.contains("grammar `"),
-        "a grammar's registration was refused; it printed:\n{printed}"
+        !absent.exists(),
+        "the run with no config directory made none"
     );
     println!(
-        "languages-install-check: the default set, installed with no config, highlights hello.rs with the languages package's grammar"
+        "languages-install-check: the default set, installed, highlights hello.rs with the languages package's grammar with an empty config and with no config directory"
     );
 }
