@@ -59,8 +59,10 @@ grammar and file services, as `declaredDrawn` does, and finishes with a
 command on the real syntax tree that reads the replies as the core's
 command does (`Language.Grammar.answersOf`) and compiles, then releases,
 each query a registered grammar read (`Highlight.withQuery`). A grammar's
-problem is its refusal's sentence (`Language.Grammar.said`), a query file
-it could not read (`Language.Grammar.unread`), no highlights query, or a
+problem is its refusal's sentence (`Language.Grammar.said`), the sentences
+the core says of its query files' loads (`Language.Grammar.queriesOf`, so
+which refusal of a load is a problem stays the core's rule), no highlights
+query, or a
 query the library refuses to compile, naming its kind. The command writes
 its report into a text the helper made before spawning the job, which the
 helper reads back, since a job's command returns nothing. A package's
@@ -174,21 +176,17 @@ def declaredDrawn (services : Services) (platform : String) (grammars : Array La
   return some (← display.frameText)
 
 /-- What is wrong with the grammar of `reply`, which registered and read
-`queries`: a query file it could not read for another reason than a
-missing file (`Language.Grammar.unread`), no highlights query, or a query
-the real syntax tree refuses to compile, naming its kind; none when
-nothing is. Each query compiled is released. -/
+`queries`: the sentences the core says of its query files' loads
+(`Language.Grammar.queriesOf`, which decides which refusal of a load is
+one), joined by `; `; no highlights query; or a query the real syntax tree
+refuses to compile, naming its kind; none when nothing is. Each query
+compiled is released. -/
 def registeredProblem (reply : Language.Grammar.Reply) (queries : Language.Grammar.Queries) :
     EditorM (Option String) := do
   if let .ok loads := reply.outcome then
-    for (file, load) in loads do
-      match load with
-      | .error .notFound =>
-        pure ()
-      | .error error =>
-        return some (Language.Grammar.unread reply.grammar file error)
-      | .ok _ =>
-        pure ()
+    let (_, sentences) ← Language.Grammar.queriesOf reply.grammar loads
+    unless sentences.isEmpty do
+      return some ("; ".intercalate sentences.toList)
   if queries.highlights.isNone then
     return some "no highlights query"
   let sources : List (QueryKind × Option String) :=
