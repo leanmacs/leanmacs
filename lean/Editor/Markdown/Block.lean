@@ -232,7 +232,6 @@ partial def node (context : Context) (index : Nat) (depth : Nat) : Piece :=
 /-- The list item at `index`, a list `depth` levels deep: its indent, its
 marker, its task marker as its source, and its blocks one a line. -/
 partial def listItem (context : Context) (index : Nat) (depth : Nat) : Piece :=
-  let found := context.nodes[index]!
   let own (name : String) : Option Node :=
     (childrenOf context index (·.name == name))[0]?.map (context.nodes[·]!)
   let marker :=
@@ -250,7 +249,6 @@ partial def listItem (context : Context) (index : Nat) (depth : Nat) : Piece :=
       else node context child depth
   let body := Piece.join blocks "\n"
   let head := indent ++ marker ++ " " ++ task
-  let _ := found
   (Piece.after head body).under
     #[span indent.utf8ByteSize (indent.utf8ByteSize + marker.utf8ByteSize) "text.list-marker"]
 end
