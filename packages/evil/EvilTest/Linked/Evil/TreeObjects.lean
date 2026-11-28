@@ -247,11 +247,16 @@ def registeredGrammars.realHost : Editor.RealHost :=
 
 /-- Registers the test grammars of `grammars`' directory on the library's
 syntax service (`registerTestGrammars`), in a job on services over the
-process's one completion pump (`HostContext.fileWaits`): whether every one
-registered. For a check with no host, which draws with one. -/
+process's one completion pump (`HostContext.fileWaits`): `true` once every
+one registered, and otherwise it throws why, which the check's failure
+names. For a check with no host, which draws with one. -/
 def registeredGrammars (context : HostContext) (grammars : TestGrammars) : IO Bool := do
   let services ← Services.over (← context.fileWaits)
-  return (← registerTestGrammars grammars services.jobs) matches .ok ()
+  match ← registerTestGrammars grammars services.jobs with
+  | .ok () =>
+    return true
+  | .error why =>
+    throw (IO.userError s!"the test grammars did not register: {why}")
 
 /-- What only the real syntax tree binding shows of the tree's text objects
 over the fixtures in `syntaxFixtures` (the repository's `tests/syntax`), with

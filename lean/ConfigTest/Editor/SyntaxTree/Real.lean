@@ -52,11 +52,16 @@ def registeredTestGrammars.realHost : Editor.RealHost :=
 
 /-- Registers the test grammars of `context`'s directory on the library's
 syntax service (`registerTestGrammars`), in a job on services over the
-process's one completion pump (`HostContext.fileWaits`): whether every one
-registered. -/
+process's one completion pump (`HostContext.fileWaits`): `true` once every
+one registered, and otherwise it throws why, which the check's failure
+names (`saw`). -/
 def registeredTestGrammars (context : Context) : IO Bool := do
   let services ← Services.over (← context.fileWaits)
-  return (← registerTestGrammars context.testGrammars services.jobs) matches .ok ()
+  match ← registerTestGrammars context.testGrammars services.jobs with
+  | .ok () =>
+    return true
+  | .error why =>
+    saw false s!"the test grammars did not register: {why}"
 
 /-- The mark of `recordedStage`: it runs a real background service (`Editor/RealHost.lean`). -/
 def recordedStage.realHost : Editor.RealHost :=
@@ -238,9 +243,27 @@ def realSyntaxStageCheck (context : Context) : Check :=
             pure true
         saw refused "Stage.stepped took the real syntax host's stage" }
 
+/-- A check of `realSyntaxChecks`, a declaration of its own. -/
+def registerTestGrammarsRefusalCheck (context : Context) : Check :=
+  { name :=
+      "registering the test grammars from a directory that holds no library answers the first grammar's library, its symbol and the library's refusal"
+    run :=
+      IO.FS.withTempDir fun directory => do
+        let grammars : TestGrammars := { directory }
+        let services ← Services.over (← context.fileWaits)
+        let answer ← registerTestGrammars grammars services.jobs
+        let library := (grammars.library "json").toString
+        let expected :=
+          s!"{library} (tree_sitter_json): {(GrammarError.refused .notFound).describe}"
+        let said :=
+          match answer with
+          | .error why => why
+          | .ok () => "registered"
+        saw (said == expected) s!"{said}, not {expected}" }
+
 /-- The checks of the library's syntax service under a real host. -/
 def realSyntaxChecks (context : Context) : List Check :=
   [parseHighlightedTextLibraryCheck context, highlightsDirectiveCheck context,
-    realSyntaxStageCheck context]
+    realSyntaxStageCheck context, registerTestGrammarsRefusalCheck context]
 
 end ConfigTest

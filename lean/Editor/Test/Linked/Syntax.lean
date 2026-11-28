@@ -164,28 +164,37 @@ def registerTestGrammars.realHost : RealHost :=
   .service
 
 /-- Registers each grammar of `grammars`' directory on the library's syntax
-service, through the library's grammar registrations (`Grammar.register`)
-in a job on `services`, and waits for the job's end, by which every
-registration is answered and taken: for a check with no host, which then
-draws with a grammar the library hides compiled in. `.ok` once every one
-registered under its name; why not otherwise. -/
+service, in turn, through the library's grammar registrations
+(`Grammar.register`) in a job on `services`, and waits for the job's end,
+by which every registration is answered and taken: for a check with no
+host, which then draws with a grammar the library hides compiled in. `.ok`
+once every one registered under its name. Otherwise why, for the first that
+did not: its library, its symbol and the refusal, or the name it registered
+under in place of its own; or why the job did not finish. -/
 def registerTestGrammars (grammars : TestGrammars) (services : Job.Services) :
     IO (Except String Unit) := do
-  let job : JobM Bool :=
-    grammars.sources.allM fun source => do
+  let job : JobM String := do
+    for source in grammars.sources do
       match ← Grammar.register source with
       | .ok name =>
-        return name == source.name
-      | .error _ =>
-        return false
-  match ← runOnTimers services job with
-  | .finished true =>
+        if name != source.name then
+          return s!"{source.library} ({source.symbol}): registered as {name}, not {source.name}"
+      | .error error =>
+        return s!"{source.library} ({source.symbol}): {error.describe}"
+    return ""
+  let handle ← Job.spawn services (reporting fun _ => job) (pure ())
+  if (← Job.awaitWithin patience handle.outcome.result?).isNone then
+    handle.cancel
+    return .error s!"a hang: the registration job had not ended within {patience.ms} ms"
+  handle.settle
+  match (← handle.outcome?).map texts with
+  | some (.finished #[""]) =>
     return .ok ()
-  | .finished false =>
-    return .error "a test grammar was refused"
-  | .failed message =>
+  | some (.finished said) =>
+    return .error (" ".intercalate said.toList)
+  | some (.failed message) =>
     return .error message
-  | .cancelled =>
+  | _ =>
     return .error "the registration job was cancelled"
 
 /-- The mark of `testQueryCaptureNames`: it runs a real background service (`Editor/RealHost.lean`). -/
