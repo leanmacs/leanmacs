@@ -181,6 +181,8 @@ def appendMarkdown (id : BufferId) (more : String) : EditorM (Except Refusal Uni
     return .error (.parse refusal)
   | .ok layers =>
     let doc := old.extend more layers (facesOf table)
+    -- The tail's first block is at the old last block's index, and at 0
+    -- when the old document has no block, which `0 - 1` is on `Nat`.
     let doc ← measureFrom doc (old.blocks.size - 1)
     Markdown.apply id doc (Doc.firstChanged old doc)
 

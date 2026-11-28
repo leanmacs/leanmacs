@@ -22,9 +22,13 @@ exactly the layers checked in beside it.
 | `stream.md` | a whole streamed document: a heading, a paragraph, a fence, a table and a paragraph with a relative link |
 | `stream-head.md` | its first chunk, cut mid-paragraph: what the first render parses |
 | `stream-tail-1.md` ... `stream-tail-3.md` | the tails each later chunk has parsed: the last block so far and the chunk, cut inside an open fence the next chunk closes and in a table that gains a row |
+| `empty.md` | the empty document, of no block: what a reply streamed from nothing renders first |
+| `reply-head.md` | a reply's first chunk, one unfinished paragraph: what its first append to the empty render parses |
+| `reply.md` | the whole reply, the paragraph finished and a table after it: what the append to `reply-head.md`'s one block parses, its tail being the whole source |
 
-The stream's chunks are `ModelTest.Support.Markdown.streamChunks`; the tails
-are what `Markdown.Doc.tail` asks after each.
+The stream's chunks are `ModelTest.Support.Markdown.streamChunks`, and the
+reply's `replyChunks`; the tails are what `Markdown.Doc.tail` asks after
+each.
 
 ## Refreshing a layers file
 

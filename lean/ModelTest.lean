@@ -1444,7 +1444,10 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   append parses exactly its checked-in tail and renders only that tail's
   blocks, counted by `Doc.rendered`, the document it ends with describes
   the whole render, a kept heading's fold grows over the appended blocks,
-  and no byte before `Doc.firstChanged` changes;
+  and no byte before `Doc.firstChanged` changes; and `reply.md` streamed
+  from an empty render through one unfinished paragraph, each append
+  rendering only its tail's blocks from a first changed offset of 0, ending
+  with the whole render;
 - `markdownViewChecks`: the one core call that renders Markdown into a
   generated buffer (`Editor/Markdown/View.lean`), on the stepped loop over
   the models, the syntax tree model answering the fixtures' canned layers:
@@ -1458,7 +1461,9 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   blocks, rewriting no byte before the first changed offset, ending with
   the whole render's text, spans, links and stops (a relative link in a later
   chunk resolved against the first render's root), and keeping a toggled
-  fold of the prefix folded;
+  fold of the prefix folded; and a reply appended to an empty render, one
+  unfinished paragraph then the rest, ending with the text, spans, links
+  and stops a whole render of `reply.md` puts;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's

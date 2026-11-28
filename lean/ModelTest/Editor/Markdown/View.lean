@@ -76,7 +76,12 @@ def keepResult (buffer : BufferId) (result : Except Markdown.Refusal Unit) : Edi
   text's revision then kept as `revision`, and its first heading folded;
 - `append`: the stream's next chunk, the chunk's index the value `chunk`
   of `stream`, appended to `stream`; the first edit's start since
-  `revision` kept as `edited`. -/
+  `revision` kept as `edited`;
+- `reply`: the empty document into a new buffer `reply`, with the root;
+- `reply-append`: the reply's next chunk, the chunk's index the value
+  `chunk` of `reply`, appended to `reply`;
+- `reply-whole`: `reply.md`, whole, into a new buffer `reply-whole`, with
+  the root. -/
 def markdownViewCommands : List (String × Dispatched) :=
   [("render", fun call => do
       let some doc ← generated call "doc" | return none
@@ -126,6 +131,24 @@ def markdownViewCommands : List (String × Dispatched) :=
         let patch ← text.changesSince revision
         discard <|
             stream.setValue "edited" (.nat ((patch.edits.map (·.old.start)).foldl min 1000000))
+      return none),
+    ("reply", fun call => do
+      let some reply ← generated call "reply" | return none
+      keepResult reply
+          (← reply.renderMarkdown Support.Markdown.empty.source { root := some markdownRoot })
+      discard <| reply.setValue "chunk" (.nat 0)
+      return none),
+    ("reply-append", fun _ => do
+      let some reply ← findBuffer "reply" | return none
+      let some (.nat chunk) ← reply.value? "chunk" | return none
+      let some more := Support.Markdown.replyChunks[chunk]? | return none
+      keepResult reply (← reply.appendMarkdown more)
+      discard <| reply.setValue "chunk" (.nat (chunk + 1))
+      return none),
+    ("reply-whole", fun call => do
+      let some whole ← generated call "reply-whole" | return none
+      keepResult whole
+          (← whole.renderMarkdown Support.Markdown.reply.source { root := some markdownRoot })
       return none)]
 
 /-- A driver whose window shows an empty buffer, with each of
@@ -139,7 +162,8 @@ def markdownDriver : Option TestDriver :=
         [("C-c r", invoke "render"), ("C-c u", invoke "render-unknown"),
           ("C-c x", invoke "render-absent"), ("C-c p", invoke "append-plain"),
           ("C-c t", invoke "table"), ("C-c w", invoke "whole"), ("C-c s", invoke "stream"),
-          ("C-c a", invoke "append")]
+          ("C-c a", invoke "append"), ("C-c e", invoke "reply"), ("C-c n", invoke "reply-append"),
+          ("C-c y", invoke "reply-whole")]
         markdownViewCommands with
       registered := { languages := Language.shipped.toList } }
   let model := { editorModel with syntaxTree := { once := Support.Markdown.canned } }
@@ -352,6 +376,41 @@ def markdownAppendChecks : List Check :=
           | some driver =>
             (markdownBuffer driver "stream").map (·.stops) == some streamStops &&
               (markdownBuffer driver "stream").map (·.stops) ==
-                (markdownBuffer driver "whole").map (·.stops) }]
+                (markdownBuffer driver "whole").map (·.stops) },
+    { name :=
+        "after renderMarkdown of the empty document and appendMarkdown of a reply's first chunk, one unfinished paragraph, the buffer holds that paragraph alone, rendered once"
+      run :=
+        pure <|
+          match markdownDriver.map (markdownFed · "C-c e C-c n") with
+          | none => false
+          | some driver =>
+            let head :=
+              Markdown.render viewOptions Support.Markdown.replyHead.source
+                Support.Markdown.replyHead.layers
+            markdownValue driver "reply" "result" == some (.str "ok") &&
+              ((markdownBuffer driver "reply").bind (markdownText driver ·)) ==
+                some head.description.text &&
+              ((markdownBuffer driver "reply").bind (·.markdown)).map (·.rendered) == some 1 },
+    { name :=
+        "after every chunk of the reply is appended to the empty render, the buffer's text, spans, links and stops are those a fresh renderMarkdown of reply.md whole puts"
+      run :=
+        pure <|
+          match markdownDriver.map (markdownFed · "C-c e C-c n C-c n C-c y") with
+          | none => false
+          | some driver =>
+            match markdownBuffer driver "reply", markdownBuffer driver "reply-whole" with
+            | some reply, some whole =>
+              let description :=
+                (Markdown.render viewOptions Support.Markdown.reply.source
+                    Support.Markdown.reply.layers).description
+              markdownValue driver "reply" "result" == some (.str "ok") &&
+                markdownText driver reply == some description.text &&
+                markdownText driver whole == some description.text &&
+                reply.spans == whole.spans &&
+                reply.links == whole.links &&
+                !whole.stops.isEmpty &&
+                reply.stops == whole.stops &&
+                reply.markdown.map (·.rendered) == some 3
+            | _, _ => false }]
 
 end ModelTest

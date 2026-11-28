@@ -1,0 +1,4 @@
+[
+{"language":"markdown","depth":0,"ranges":[[0,30]],"names":["block","paragraph","code","code.indented","table","list","quote","break","html","definition","heading.1","heading.2","heading.3","heading.4","heading.5","heading.6","heading.content","hide","inline","code.language","code.content","table.header","table.delimiter","table.row","table.cell","list.item","list.bullet","list.number","task"],"captures":[[0,0,0,30],[1,1,0,30],[16,18,0,30]]},
+{"language":"markdown_inline","depth":1,"ranges":[[0,30]],"names":["emphasis","hide","strong","code-span","link","link.text","link.destination","link.title","autolink","autolink.email","image","image.description","escape","hard-break","html","reference","strike","entity"],"captures":[]}
+]

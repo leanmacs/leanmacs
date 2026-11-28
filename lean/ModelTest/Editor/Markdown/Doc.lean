@@ -373,6 +373,24 @@ def streamed : Array Doc × Array String :=
       (docs.push (doc.extend chunk tail.layers markdownFaces), asked.push (doc.tail chunk)))
     (#[head], #[])
 
+/-- The reply's tails, as checked in: what each append after the empty
+render parses, the whole source so far each time. -/
+def replyTails : Array Cases.Fixture :=
+  #[Support.Markdown.replyHead, Support.Markdown.reply]
+
+/-- A reply streamed from nothing: `empty.md` rendered from its canned
+layers, then each of the reply's chunks appended with the canned layers of
+its tail; each document on the way, the first included, and the tail each
+append asked to parse. -/
+def replied : Array Doc × Array String :=
+  let empty :=
+    Markdown.render markdownOptions Support.Markdown.empty.source Support.Markdown.empty.layers
+  (Support.Markdown.replyChunks.zip replyTails).foldl
+    (fun (docs, asked) (chunk, tail) =>
+      let doc := docs.back!
+      (docs.push (doc.extend chunk tail.layers markdownFaces), asked.push (doc.tail chunk)))
+    (#[empty], #[])
+
 /-- The checks that an append re-renders only the changed tail
 (**criterion 7**), and that the document it makes describes the whole
 render. -/
@@ -429,6 +447,41 @@ def markdownStreamChecks : List Check :=
             changed > 0 && slice oldText 0 changed == slice newText 0 changed &&
               changed ==
                 (offsetsOf new.pieces)[old.blocks.size - 2]! +
-                  new.pieces[old.blocks.size - 2]!.text.utf8ByteSize }]
+                  new.pieces[old.blocks.size - 2]!.text.utf8ByteSize },
+    { name :=
+        "from an empty render of no block, each append asks to parse the whole source so far: reply-head.md, one unfinished paragraph, then reply.md"
+      run :=
+        pure <|
+          let (docs, asked) := replied
+          docs[0]!.blocks.isEmpty && docs[0]!.description.text == "" &&
+            asked == replyTails.map (·.source) &&
+            String.join Support.Markdown.replyChunks.toList == Support.Markdown.reply.source },
+    { name :=
+        "an append to a document of no block renders only its tail's one block, and one to a document of one block only the two of its tail"
+      run :=
+        pure <|
+          let (docs, _) := replied
+          docs.map (·.rendered) == #[0, 1, 3] && blockCount Support.Markdown.empty == 0 &&
+            blockCount Support.Markdown.replyHead == 1 &&
+            blockCount Support.Markdown.reply == 2 },
+    { name :=
+        "an append to a document of no block or of one block keeps none of it, so the first changed offset is 0"
+      run :=
+        pure <|
+          let (docs, _) := replied
+          docs.size == 3 && Doc.firstChanged docs[0]! docs[1]! == 0 &&
+            Doc.firstChanged docs[1]! docs[2]! == 0 &&
+            Doc.kept docs[1]! docs[2]! == 0 },
+    { name :=
+        "the document the appends make from an empty render describes what rendering reply.md whole does"
+      run :=
+        pure <|
+          let (docs, _) := replied
+          let whole :=
+            Markdown.render markdownOptions Support.Markdown.reply.source
+              Support.Markdown.reply.layers
+          docs.back!.source == Support.Markdown.reply.source &&
+            docs.back!.description == whole.description &&
+            !whole.description.tables.isEmpty }]
 
 end ModelTest

@@ -138,12 +138,45 @@ def streamChunks : Array String :=
     "eamed() {}\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n",
     "| 3 | 4 |\n\nSee [the file](src/s.rs:2).\n"]
 
+/-- The layers file of `tests/markdown/empty.md`, as checked in. -/
+def emptyLayers : String :=
+  include_str "../../../tests/markdown/empty.layers.json"
+
+/-- `tests/markdown/empty.md`, the empty document, and its layers. -/
+def empty : Cases.Fixture :=
+  fixture "empty" (include_str "../../../tests/markdown/empty.md") emptyLayers
+
+/-- The layers file of `tests/markdown/reply-head.md`, as checked in. -/
+def replyHeadLayers : String :=
+  include_str "../../../tests/markdown/reply-head.layers.json"
+
+/-- `tests/markdown/reply-head.md` and its layers. -/
+def replyHead : Cases.Fixture :=
+  fixture "reply-head" (include_str "../../../tests/markdown/reply-head.md") replyHeadLayers
+
+/-- The layers file of `tests/markdown/reply.md`, as checked in. -/
+def replyLayers : String :=
+  include_str "../../../tests/markdown/reply.layers.json"
+
+/-- `tests/markdown/reply.md` and its layers. -/
+def reply : Cases.Fixture :=
+  fixture "reply" (include_str "../../../tests/markdown/reply.md") replyLayers
+
+/-- The chunks `tests/markdown/reply.md` arrives in after an empty render,
+in order: the first is `reply-head.md`, one unfinished paragraph; the
+second finishes it and adds a table. Each append's tail is the whole
+source so far, so the first asks `reply-head.md` and the second
+`reply.md`. -/
+def replyChunks : Array String :=
+  #[replyHead.source, "graph.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"]
+
 /-- Every fixture, with its layers file as checked in. -/
 def files : Array (Cases.Fixture × String) :=
   #[(prose, proseLayers), (headings, headingsLayers), (code, codeLayers), (table, tableLayers),
     (links, linksLayers), (folds, foldsLayers), (lists, listsLayers), (view, viewLayers),
     (stream, streamLayers), (streamHead, streamHeadLayers), (streamTail1, streamTail1Layers),
-    (streamTail2, streamTail2Layers), (streamTail3, streamTail3Layers)]
+    (streamTail2, streamTail2Layers), (streamTail3, streamTail3Layers), (empty, emptyLayers),
+    (replyHead, replyHeadLayers), (reply, replyLayers)]
 
 /-- Every fixture. -/
 def fixtures : Array Cases.Fixture :=

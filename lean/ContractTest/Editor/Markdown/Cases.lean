@@ -49,7 +49,13 @@ def markdownFixtureFiles : List (String × String × String) :=
     ("stream-tail-2", include_str "../../../../tests/markdown/stream-tail-2.md",
       include_str "../../../../tests/markdown/stream-tail-2.layers.json"),
     ("stream-tail-3", include_str "../../../../tests/markdown/stream-tail-3.md",
-      include_str "../../../../tests/markdown/stream-tail-3.layers.json")]
+      include_str "../../../../tests/markdown/stream-tail-3.layers.json"),
+    ("empty", include_str "../../../../tests/markdown/empty.md",
+      include_str "../../../../tests/markdown/empty.layers.json"),
+    ("reply-head", include_str "../../../../tests/markdown/reply-head.md",
+      include_str "../../../../tests/markdown/reply-head.layers.json"),
+    ("reply", include_str "../../../../tests/markdown/reply.md",
+      include_str "../../../../tests/markdown/reply.layers.json")]
 
 /-- One check a fixture: the real binding answers its text parsed once
 exactly its canned layers. When it does not, the library's answer is
