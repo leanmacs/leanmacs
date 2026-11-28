@@ -2202,6 +2202,66 @@ mod tests {
     }
 
     #[test]
+    fn a_language_of_a_text_parsed_once_whose_injections_do_not_compile_is_not_a_language_known() {
+        static NOTICES: Queue = Queue::new();
+        let service = Syntaxes::new(&NOTICES);
+        register(&service, &[MARKDOWN, MARKDOWN_INLINE, RUST, JSON]);
+        // The host's query compiles but its injections do not.
+        assert_eq!(
+            service
+                .parse_once(
+                    "{}",
+                    "json",
+                    &[once_source("json", "(number) @n", Some("(("))]
+                )
+                .err(),
+            Some(OnceStatus::NoHostQuery)
+        );
+        // A fence's language whose injections do not compile finds no
+        // layer of its own.
+        let languages = [
+            once_source("markdown", MARKDOWN.rendered.unwrap(), MARKDOWN.injections),
+            once_source(
+                "markdown_inline",
+                MARKDOWN_INLINE.rendered.unwrap(),
+                MARKDOWN_INLINE.injections,
+            ),
+            once_source("rust", RUST.highlights, Some("((")),
+        ];
+        let layers = service
+            .parse_once(
+                "Some *em*.\n\n```rust\nfn f() {}\n```\n",
+                "markdown",
+                &languages,
+            )
+            .unwrap();
+        let shape: Vec<(&str, u32)> = layers
+            .iter()
+            .map(|(layer, _)| (layer.language.as_str(), layer.depth))
+            .collect();
+        assert_eq!(shape, [("markdown", 0), ("markdown_inline", 1)]);
+    }
+
+    #[test]
+    fn a_text_parsed_once_with_two_languages_of_a_name_answers_with_the_first() {
+        static NOTICES: Queue = Queue::new();
+        let service = Syntaxes::new(&NOTICES);
+        register(&service, &[JSON]);
+        let layers = service
+            .parse_once(
+                "[1, \"a\"]",
+                "json",
+                &[
+                    once_source("json", "(number) @n", None),
+                    once_source("json", "(string) @s", None),
+                ],
+            )
+            .unwrap();
+        let names: Vec<&[String]> = layers.iter().map(|(_, names)| &names[..]).collect();
+        assert_eq!(names, [["n".to_owned()]]);
+    }
+
+    #[test]
     fn a_query_kept_for_a_text_parsed_once_is_not_used_once_its_grammar_is_registered_again() {
         static NOTICES: Queue = Queue::new();
         let service = Syntaxes::new(&NOTICES);
