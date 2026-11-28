@@ -1,0 +1,22 @@
+# The script the installed editor's headless mode runs in the on-demand
+# install check (packages/languages/rust/tests/default_install.rs) with NO
+# config directory, as `without-config` is, in a directory holding a copy
+# of the Python fixture `hello.py`. The run starts with no config, so the
+# packages' grammars register alone (`Config.Event.withoutConfig`), and its
+# `highlights` line must be exactly the one `expected-python` holds. The
+# `highlights` directive prints only the host's captures, so a Markdown
+# fence is not covered here: the gate's `pythonFenceDrawnCheck` covers it.
+
+# `:` opens the ex line and `e` opens the file, which opens in the code mode
+# with the package's language `python`. `join` waits for the load and the
+# registration, whichever ends last highlighting the buffer.
+key : Semicolon shift
+commit e hello.py
+key <Enter> Enter -
+join
+
+# The scene, whose echo would say a refused registration of a grammar.
+scene
+
+# The faces the package's grammar `python` draws the fixture in.
+highlights

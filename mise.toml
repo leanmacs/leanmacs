@@ -1349,7 +1349,7 @@ run = 'LEANMACS_SYSROOT="$(cd lean && lean --print-prefix)" cargo test --locked 
 # installed, on demand"). It needs the default set's editor, which `lean`
 # builds.
 [tasks.languages-install-check]
-description = "On demand, never part of ci: install the default set with no config into a temporary directory and see the installed editor, run headless, highlight a .rs file with the languages package's grammar (packages/languages/rust/tests/default_install.rs)"
+description = "On demand, never part of ci: install the default set with no config into a temporary directory and see the installed editor, run headless, highlight a .rs file and a .py file with the languages package's grammars (packages/languages/rust/tests/default_install.rs)"
 depends = ["lean"]
 run = 'LEANMACS_SYSROOT="$(cd lean && lean --print-prefix)" cargo test --locked -p languages-grammar-sources --test default_install -- --ignored --nocapture'
 

@@ -8,9 +8,9 @@
 //!
 //! The library compiles in no grammar, so a `.rs` file is highlighted only
 //! once the `languages` package's `rust` grammar, compiled by the set's
-//! build and copied by the install, has registered. This check shows that
-//! an editor installed from the default set does that with no config of
-//! the user's.
+//! build and copied by the install, has registered, and a `.py` file once
+//! its `python` grammar has. This check shows that an editor installed from
+//! the default set does that with no config of the user's.
 //!
 //! `LEANMACS_SYSROOT` names the Lean toolchain's directory; the test panics
 //! when it is unset, so a run that forgot it never passes. It needs the
@@ -28,16 +28,20 @@
 //!    `editor.build`, and reads back that the install copied the package's
 //!    `rust` library to `grammars/languages/<platform>/` and recorded the
 //!    package's grammars directory relative to it in `editor.grammars`;
-//! 3. runs the installed editor headless, in a directory holding a copy of
-//!    the Rust fixture `tests/syntax/rust/hello.rs`, twice: over that
-//!    config, on `packages/languages/tests/install/script`, which reloads
-//!    it; and with no config directory at all (a path never made) on
-//!    `packages/languages/tests/install/without-config`, which asks for no
-//!    reload, so the run starts with no config, as the window mode does
-//!    with none, and the packages' grammars register alone. Each script
-//!    opens the file with the Vim scheme's keys; each run's `highlights`
-//!    line is compared with `packages/languages/tests/install/expected`'s,
-//!    and each says no refusal of any grammar.
+//! 3. runs the installed editor headless, in a directory holding copies of
+//!    the Rust fixture `tests/syntax/rust/hello.rs` and the Python fixture
+//!    `tests/syntax/python/hello.py`, three times: over that config, on
+//!    `packages/languages/tests/install/script`, which reloads it and opens
+//!    `hello.rs`; and with no config directory at all (a path never made)
+//!    on `packages/languages/tests/install/without-config`, which opens
+//!    `hello.rs`, and on `without-config-python`, which opens `hello.py`,
+//!    each asking for no reload, so the run starts with no config, as the
+//!    window mode does with none, and the packages' grammars register
+//!    alone. Each script opens its file with the Vim scheme's keys; each
+//!    run's `highlights` line is compared with its expected file's under
+//!    `packages/languages/tests/install/` (`expected` for `hello.rs`,
+//!    `expected-python` for `hello.py`), and each says no refusal of any
+//!    grammar.
 //!
 //! Besides its temporary directory, it builds what the default set's and
 //! the core's builds would, in place, which `mise run lean` has built
@@ -102,7 +106,7 @@ fn succeeded(what: &str, command: &mut Command) -> Output {
     clippy::disallowed_methods,
     reason = "the on-demand install check lays a config and an install out in its own temporary directory and reads back what the real build and editor wrote there"
 )]
-fn the_default_set_installed_with_no_config_highlights_a_rust_file() {
+fn the_default_set_installed_with_no_config_highlights_a_rust_and_a_python_file() {
     let sysroot = PathBuf::from(
         std::env::var_os("LEANMACS_SYSROOT")
             .expect("LEANMACS_SYSROOT must name the Lean toolchain's directory"),
@@ -194,16 +198,41 @@ fn the_default_set_installed_with_no_config_highlights_a_rust_file() {
         work.join("hello.rs"),
     )
     .expect("the Rust fixture");
-    let expected = fs::read_to_string(languages.join("tests").join("install").join("expected"))
-        .expect("the expected highlights");
+    fs::copy(
+        root.join("tests")
+            .join("syntax")
+            .join("python")
+            .join("hello.py"),
+        work.join("hello.py"),
+    )
+    .expect("the Python fixture");
     // With the config whose root registers nothing, reloaded; then with no
     // config directory at all, the path handed in never made, and no
-    // reload: the run starts with no config, as the window mode does.
+    // reload: the run starts with no config, as the window mode does; and
+    // the same for the Python fixture.
     let absent = tmp.join("no-config");
-    for (what, directory, script) in [
-        ("with an empty config, reloaded", &config, "script"),
-        ("with no config directory", &absent, "without-config"),
+    for (what, directory, script, expected) in [
+        (
+            "with an empty config, reloaded",
+            &config,
+            "script",
+            "expected",
+        ),
+        (
+            "with no config directory",
+            &absent,
+            "without-config",
+            "expected",
+        ),
+        (
+            "on hello.py with no config directory",
+            &absent,
+            "without-config-python",
+            "expected-python",
+        ),
     ] {
+        let expected = fs::read_to_string(languages.join("tests").join("install").join(expected))
+            .expect("the expected highlights");
         let ran = succeeded(
             &format!("the installed editor's headless run {what}"),
             Command::new(install.join("editor"))
@@ -234,6 +263,6 @@ fn the_default_set_installed_with_no_config_highlights_a_rust_file() {
         "the run with no config directory made none"
     );
     println!(
-        "languages-install-check: the default set, installed, highlights hello.rs with the languages package's grammar with an empty config and with no config directory"
+        "languages-install-check: the default set, installed, highlights hello.rs with the languages package's grammar with an empty config and with no config directory, and hello.py with no config directory"
     );
 }

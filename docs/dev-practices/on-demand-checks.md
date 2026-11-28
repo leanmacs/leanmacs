@@ -331,8 +331,9 @@ when that is unset). In a temporary directory it owns, it:
   `editor.build`, and reads back that the install copied the package's
   `grammars/languages/<platform>/libtree-sitter-rust.<ext>` and wrote the
   line naming `languages` at `grammars/languages` in its `editor.grammars`;
-- runs the installed editor headless, in a directory holding a copy of
-  `tests/syntax/rust/hello.rs`, twice. First over that config, on
+- runs the installed editor headless, in a directory holding copies of
+  `tests/syntax/rust/hello.rs` and `tests/syntax/python/hello.py`, three
+  times. First over that config, on
   `packages/languages/tests/install/script`, whose `reload` and `settle`
   stand in for the window mode's first install, which starts the core's
   `register-grammars` job. Then with no config directory at all, a path
@@ -342,22 +343,30 @@ when that is unset). In a temporary directory it owns, it:
   alone (`Config.Event.withoutConfig`). Each opens the file with the Vim
   scheme's keys (`:e hello.rs`) and asks `highlights`; each run's
   `highlights` line is held to `packages/languages/tests/install/expected`
-  and its output to no refusal of any grammar.
+  and its output to no refusal of any grammar. Then, the same way with no
+  config directory, on `without-config-python`, which opens `hello.py`,
+  a file of the package's own language `python` (shipped-grammars-package
+  phase 5), its `highlights` line held to `expected-python`. The
+  `highlights` directive prints only the host's captures, so a Markdown
+  fence's injected language is not covered here; the gate's
+  `pythonFenceDrawnCheck` covers it.
 
 It writes nothing outside its temporary directory but what the default
 set's and the core's builds would write in place, which `mise run lean`
-has already built; it takes about 7 s after that build (2026-11-27, macOS
-arm64). It ends `languages-install-check: the default set,
-installed, highlights hello.rs with the languages package's grammar with an
-empty config and with no config directory`.
+has already built; it takes about 8 s after that build (2026-11-27, macOS
+arm64, with the third run). It ends `languages-install-check: the default
+set, installed, highlights hello.rs with the languages package's grammar
+with an empty config and with no config directory, and hello.py with no
+config directory`.
 
 It is not part of the gate (the operator's decision, 2026-11-26): an
 install is about 420 MB, and no gate step installs a set
 ([packages.md](../design/packages.md), "The install"). The gate covers the
 path through the languages package's wiring checks over the default set's
 build (`LanguagesTest.Linked.realChecks`, in `mise run ffi-test`: every
-grammar staged, a `.rs` file and a Markdown paragraph's inline markup
-drawn with the package's grammars), and the model checks of the
+grammar staged, every grammar registered with queries that compile, and a
+`.rs` file, a Markdown paragraph's inline markup, a `.py` file and a
+Markdown fence of Python drawn with the package's grammars), and the model checks of the
 declarations and of a shipped language's file drawn plain until the job's
 command. Run it after a change to the grammars `languages` ships, to its
 grammar-source crate, or to anything the check above names.
