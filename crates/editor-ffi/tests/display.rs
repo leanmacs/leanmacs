@@ -16,14 +16,14 @@ use std::slice;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_ffi::display::{
-    DisplayStatus, RawPicture, WireBlock, WireFace, WireField, WireFold, WireMark, WireScene,
-    WireView, editor_ffi_display_define, editor_ffi_display_frame_rows,
-    editor_ffi_display_frame_text, editor_ffi_display_free, editor_ffi_display_heights,
-    editor_ffi_display_live, editor_ffi_display_measure, editor_ffi_display_move,
-    editor_ffi_display_new_cells, editor_ffi_display_new_font, editor_ffi_display_picture,
-    editor_ffi_display_publish, editor_ffi_display_rows, editor_ffi_display_scene,
-    editor_ffi_display_spot, editor_ffi_picture_from_png, editor_ffi_picture_to_png, encode_blocks,
-    encode_definitions, encode_folds,
+    DisplayStatus, RawPicture, WireBlock, WireContinuation, WireFace, WireField, WireFold,
+    WireIndent, WireMark, WireScene, WireView, editor_ffi_display_define,
+    editor_ffi_display_frame_rows, editor_ffi_display_frame_text, editor_ffi_display_free,
+    editor_ffi_display_heights, editor_ffi_display_live, editor_ffi_display_measure,
+    editor_ffi_display_move, editor_ffi_display_new_cells, editor_ffi_display_new_font,
+    editor_ffi_display_picture, editor_ffi_display_publish, editor_ffi_display_rows,
+    editor_ffi_display_scene, editor_ffi_display_spot, editor_ffi_picture_from_png,
+    editor_ffi_picture_to_png, encode_blocks, encode_definitions, encode_folds,
 };
 use editor_ffi::document::{
     Document, RawText, ReplaceStatus, editor_ffi_document_free, editor_ffi_document_new,
@@ -39,8 +39,8 @@ use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::query::Around;
 use editor_layout::scene::{
-    AlignStop, Block, Cursor, CursorShape, Decoration, Fold, Padding, Rect, Scene, Size,
-    StatusField, TextKey, TextRef, View, ViewId,
+    AlignStop, Block, Continuation, Cursor, CursorShape, Decoration, Fold, Padding, Rect, Scene,
+    Size, StatusField, TextKey, TextRef, View, ViewId, WrapIndent,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -1140,6 +1140,7 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
             marks: vec![],
             stops: vec![],
             folds: vec![],
+            indents: vec![],
         }],
         echo_padding: 0,
         faces: None,
@@ -1662,6 +1663,7 @@ fn published_scene() -> (
             marks: vec![],
             stops: vec![],
             folds: vec![],
+            indents: vec![],
         }],
         ..WireScene::default()
     };
@@ -2189,6 +2191,84 @@ fn a_published_views_stops_place_its_cells_as_layout_places_them() {
         }],
         ..Scene::default()
     });
+    assert_eq!(frame_text(display), direct.describe());
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+}
+
+#[test]
+fn a_published_views_indents_start_its_lines_as_layout_starts_them() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    let text = "abcdefghijklmnop\n- qrstuvwxyzabc";
+    let document = document_new(text);
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let wire = WireScene {
+        size: [96, 64],
+        views: vec![WireView {
+            id: 3,
+            rect: [0, 0, 96, 64],
+            snapshot: Some(0),
+            indents: vec![
+                WireIndent {
+                    start: 0,
+                    stop: 1,
+                    first: 16,
+                    rest: WireContinuation::Points(24),
+                },
+                WireIndent {
+                    start: 17,
+                    stop: 17,
+                    first: 0,
+                    rest: WireContinuation::Lead(2),
+                },
+            ],
+            ..WireView::default()
+        }],
+        ..WireScene::default()
+    };
+    let (words, strings) = wire.encode();
+    assert!(publish(display, &words, &strings, &[snapshot]));
+    let direct = Layout::new(CellShaper::new(8.0, 16.0)).frame(&Scene {
+        size: Size {
+            width: 96,
+            height: 64,
+        },
+        views: vec![View {
+            id: ViewId(3),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                width: 96,
+                height: 64,
+            },
+            text: Some(TextRef::fixed(TextKey(0), Text::from(text).snapshot())),
+            indents: vec![
+                WrapIndent {
+                    start: 0,
+                    stop: 1,
+                    first: 16,
+                    rest: Continuation::Points(24),
+                },
+                WrapIndent {
+                    start: 17,
+                    stop: 17,
+                    first: 0,
+                    rest: Continuation::Lead(2),
+                },
+            ],
+            ..View::default()
+        }],
+        ..Scene::default()
+    });
+    // Each row wraps, so its continuation lines are where the indents
+    // put them.
+    assert!(direct.views[0].rows.len() > 2);
     assert_eq!(frame_text(display), direct.describe());
     // SAFETY: each handle is live and freed once.
     unsafe {

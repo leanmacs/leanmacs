@@ -8,20 +8,22 @@
 //! | Part | Words |
 //! |---|---|
 //! | The scene | its width and height; the focus's presence and view id; the echo's length; the echo's padding in whole points; the pending prefix's length; the preedit's presence and length; the title's length; the menu bar's presence (0 or 1), and when present its layout (`crate::menu`: the count of menus, each menu's title's length, role and items); the count of views; each view |
-//! | A view | its id; its rectangle's x, y, width and height; its snapshot's presence and index in the list of handles; its scroll marker's presence and number; the count of its selection markers and each one's number; its cursor's shape (0 block, 1 bar, 2 underline, 3 hollow) and its face's length; the count of its decorations and each one's start, stop and face's length; the count of its status fields and each one's text's length, face's length, side (0 left, 1 right) and padding in whole points; its status face's presence and length; its padding across, down and top and its gutter's width, in whole points; the count of its blocks and each block; the count of its gutter marks and each mark; the count of its align-to stops and each one's offset of the view's snapshot and x in whole points; the count of its folds and each fold |
+//! | A view | its id; its rectangle's x, y, width and height; its snapshot's presence and index in the list of handles; its scroll marker's presence and number; the count of its selection markers and each one's number; its cursor's shape (0 block, 1 bar, 2 underline, 3 hollow) and its face's length; the count of its decorations and each one's start, stop and face's length; the count of its status fields and each one's text's length, face's length, side (0 left, 1 right) and padding in whole points; its status face's presence and length; its padding across, down and top and its gutter's width, in whole points; the count of its blocks and each block; the count of its gutter marks and each mark; the count of its align-to stops and each one's offset of the view's snapshot and x in whole points; the count of its folds and each fold; the count of its wrap indents and each indent |
 //! | A block | the offset of the view's snapshot it is drawn before; its text's length; the count of its decorations and each one's start, stop and face's length, the offsets bytes of its text |
 //! | A fold | the start and the stop of its range, offsets of the view's snapshot; its placeholder's text's length; the count of its decorations and each one's start, stop and face's length, the offsets bytes of its text, as a block's |
 //! | A gutter mark | the start and the stop of its range, offsets of the view's snapshot; its text's length; its face's length |
+//! | A wrap indent | the start and the stop of its range, offsets of the view's snapshot; its first-line indent in whole points; its continuation's kind (0 points, 1 a lead) and its value, whole points or a count of bytes |
 //! | The dividers, after the last view | their count; each one's rectangle's x, y, width and height and its face's length |
 //! | The faces, after the last view | their presence (0: as last published); when present, the count of definitions and each definition |
 //! | A definition | its name's length; then, for each attribute in this order, a presence and its value, an absent value written as 0: the family's length; the size in 64ths of a point; the weight (1 to 1000); the slant (0 upright, 1 italic, 2 oblique); the foreground as `0xRRGGBBAA`; the background; the underline's style (0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed) followed by its colour's presence and colour; strike-through (0 or 1); the line height's kind (0 a multiple of the font's own in 64ths, 1 a length in 64ths of a point) followed by its value; the vertical padding in 64ths of a point |
 //!
-//! A view is at least 23 words, a block 3, a gutter mark 4, a stop 2, a
-//! fold 4, a divider 5, and a definition 24.
+//! A view is at least 25 words, a block 3, a gutter mark 4, a stop 2, a
+//! fold 4, a wrap indent 5, a divider 5, and a definition 24.
 //!
 //! A point is a logical one: a physical pixel at scale 1. A face's three
 //! lengths, a status field's padding, a view's padding, an align-to
-//! stop's x and the echo's padding cross as Lean states them, in points, and no scale crosses with them:
+//! stop's x, a wrap indent's points and the echo's padding cross as Lean
+//! states them, in points, and no scale crosses with them:
 //! layout multiplies them by the scale it has (`editor_layout::face`,
 //! "Units"; `editor_layout::frame`, "The padding"). Every other length of
 //! a scene, its size and each view's rectangle, is in physical pixels.
@@ -74,8 +76,10 @@
 //! status field's side that is none of those listed; a weight outside 1 to
 //! 1000; a strike-through that is neither 0 nor 1; and a colour, a size, a
 //! line height, a vertical padding, a status field's padding, a view's
-//! padding or gutter, an align-to stop's x, or the echo's padding no `u32`
-//! holds, which is refused, not cut down. The words of an
+//! padding or gutter, an align-to stop's x, a wrap indent's first-line or
+//! points continuation indent, or the echo's padding no `u32` holds, which
+//! is refused, not cut down; and a wrap indent's continuation kind that is
+//! neither 0 nor 1. The words of an
 //! absent attribute are not looked at. What the attributes mean and how
 //! definitions merge are layout's rules (`editor_layout::face`); this
 //! module only carries them.
@@ -93,8 +97,8 @@
 
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
-    AlignStop, Block, Cursor, CursorShape, Decoration, Divider, Fold, GutterMark, Padding, Rect,
-    Scene, Side, Size, StatusField, View, ViewId,
+    AlignStop, Block, Continuation, Cursor, CursorShape, Decoration, Divider, Fold, GutterMark,
+    Padding, Rect, Scene, Side, Size, StatusField, View, ViewId, WrapIndent,
 };
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
 use editor_platform::Menu;
@@ -139,6 +143,38 @@ pub struct WireView {
     pub stops: Vec<(u64, u32)>,
     /// Its folds.
     pub folds: Vec<WireFold>,
+    /// Its wrap indents.
+    pub indents: Vec<WireIndent>,
+}
+
+/// A wrap indent of a view as it crossed: its range's start and stop, its
+/// first-line indent in whole points, and its continuation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WireIndent {
+    /// Where its range starts in the view's snapshot.
+    pub start: u64,
+    /// Where it stops.
+    pub stop: u64,
+    /// Its first-line indent, in whole points.
+    pub first: u32,
+    /// Its continuation.
+    pub rest: WireContinuation,
+}
+
+/// A wrap indent's continuation as it crossed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WireContinuation {
+    /// Whole points from the start of the text row: kind 0.
+    Points(u32),
+    /// Where the row's first this many bytes end: kind 1.
+    Lead(u64),
+}
+
+impl Default for WireContinuation {
+    /// At the row's start.
+    fn default() -> Self {
+        Self::Points(0)
+    }
 }
 
 /// A fold of a view as it crossed: its range's start and stop, its
@@ -613,6 +649,24 @@ fn view(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireView> {
         stops.push((offset, narrow(words.word()?)?));
     }
     let folds = read_folds(words, texts)?;
+    // An indent is five words.
+    let count = words.count(5)?;
+    let mut indents = Vec::with_capacity(count);
+    for _ in 0..count {
+        let (start, stop) = (words.word()?, words.word()?);
+        let first = narrow(words.word()?)?;
+        let rest = match words.word()? {
+            0 => WireContinuation::Points(narrow(words.word()?)?),
+            1 => WireContinuation::Lead(words.word()?),
+            _ => return None,
+        };
+        indents.push(WireIndent {
+            start,
+            stop,
+            first,
+            rest,
+        });
+    }
     Some(WireView {
         id,
         rect,
@@ -629,6 +683,7 @@ fn view(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireView> {
         marks,
         stops,
         folds,
+        indents,
     })
 }
 
@@ -826,8 +881,8 @@ impl WireScene {
         } else {
             None
         };
-        // A view is at least twenty-two words.
-        let count = words.count(22)?;
+        // A view is at least twenty-five words.
+        let count = words.count(25)?;
         let views = (0..count)
             .map(|_| view(&mut words, &mut texts))
             .collect::<Option<_>>()?;
@@ -862,7 +917,7 @@ impl WireScene {
 
     /// The words and the string that spell this scene.
     pub fn encode(&self) -> (Vec<u8>, String) {
-        let mut words = Writer::with_capacity(12 + 23 * self.views.len());
+        let mut words = Writer::with_capacity(12 + 25 * self.views.len());
         let mut strings = String::new();
         /// Writes `text`'s length and adds it to the string.
         fn text(words: &mut Writer, strings: &mut String, text: &str) {
@@ -947,6 +1002,22 @@ impl WireScene {
                 words.word(u64::from(*x));
             }
             write_folds(&mut words, &mut strings, &view.folds);
+            words.size(view.indents.len());
+            for indent in &view.indents {
+                words.word(indent.start);
+                words.word(indent.stop);
+                words.word(u64::from(indent.first));
+                match indent.rest {
+                    WireContinuation::Points(x) => {
+                        words.word(0);
+                        words.word(u64::from(x));
+                    }
+                    WireContinuation::Lead(bytes) => {
+                        words.word(1);
+                        words.word(bytes);
+                    }
+                }
+            }
         }
         words.size(self.dividers.len());
         for divider in &self.dividers {
@@ -1045,7 +1116,21 @@ impl WireScene {
                         })
                         .collect(),
                     folds: layout_folds(&view.folds),
-                    indents: Vec::new(),
+                    indents: view
+                        .indents
+                        .iter()
+                        .map(|indent| WrapIndent {
+                            start: crate::words::size(indent.start),
+                            stop: crate::words::size(indent.stop),
+                            first: indent.first,
+                            rest: match indent.rest {
+                                WireContinuation::Points(x) => Continuation::Points(x),
+                                WireContinuation::Lead(bytes) => {
+                                    Continuation::Lead(crate::words::size(bytes))
+                                }
+                            },
+                        })
+                        .collect(),
                 }
             })
             .collect();
@@ -1094,14 +1179,16 @@ mod tests {
     use editor_platform::{Menu, Modifiers};
 
     use super::{
-        WireBlock, WireDivider, WireFace, WireField, WireFold, WireMark, WireScene, WireView,
-        decode_blocks, decode_definitions, decode_folds, encode_blocks, encode_definitions,
-        encode_folds, pixels,
+        WireBlock, WireContinuation, WireDivider, WireFace, WireField, WireFold, WireIndent,
+        WireMark, WireScene, WireView, decode_blocks, decode_definitions, decode_folds,
+        encode_blocks, encode_definitions, encode_folds, pixels,
     };
     use crate::document::Document;
     use crate::snapshot::Snapshot;
     use crate::words::tests::buffer;
-    use editor_layout::scene::{AlignStop, Block, Decoration, Fold, GutterMark};
+    use editor_layout::scene::{
+        AlignStop, Block, Continuation, Decoration, Fold, GutterMark, WrapIndent,
+    };
 
     /// A scene with every part present.
     fn full() -> WireScene {
@@ -1149,6 +1236,12 @@ mod tests {
                     text: "▸".to_owned(),
                     decorations: vec![(0, 3, "fold".to_owned())],
                 }],
+                indents: vec![WireIndent {
+                    start: 0,
+                    stop: 3,
+                    first: 16,
+                    rest: WireContinuation::Lead(2),
+                }],
             }],
             dividers: vec![WireDivider {
                 rect: [94, 0, 2, 80],
@@ -1174,6 +1267,7 @@ mod tests {
                 1, 2, 5, 1, 10, // one mark: its start, stop, text's and face's lengths
                 1, 3, 60, // one stop: its offset and its x in points
                 1, 1, 4, 3, 1, 0, 3, 4, // one fold: its range, text's length and decoration
+                1, 0, 3, 16, 1, 2, // one indent: its range, 16 points, and a lead of 2 bytes
                 1, 94, 0, 2, 80, 4, // one divider: its rectangle and its face's length
                 0, // no faces
             ])
@@ -1342,15 +1436,16 @@ mod tests {
         let (words, strings) = empty.encode();
         assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
         assert_eq!(WireScene::decode(&words, &strings), Some(empty));
-        // A view with nothing in it is its twenty-three words, its counts
-        // of blocks, of marks, of stops and of folds the last, between the
-        // scene's twelve and the dividers' count and the faces' presence.
+        // A view with nothing in it is its twenty-five words, its counts
+        // of blocks, of marks, of stops, of folds and of indents the last,
+        // between the scene's twelve and the dividers' count and the
+        // faces' presence.
         let bare = WireScene {
             views: vec![WireView::default()],
             ..WireScene::default()
         };
         let (words, strings) = bare.encode();
-        assert_eq!(words.len(), (12 + 24 + 2) * 8);
+        assert_eq!(words.len(), (12 + 25 + 2) * 8);
         assert_eq!(WireScene::decode(&words, &strings), Some(bare));
     }
 
@@ -1869,7 +1964,7 @@ mod tests {
         let view = &words[11..];
         assert_eq!(
             &view[17..],
-            [0, 0, 0, 0, 2, 0, 7, 1, 0, 7, 12, 5, 2, 0, 0, 0, 0, 0, 0]
+            [0, 0, 0, 0, 2, 0, 7, 1, 0, 7, 12, 5, 2, 0, 0, 0, 0, 0, 0, 0]
         );
         // In the string, after the status face: each block's text, then
         // its decorations' faces.
@@ -1911,7 +2006,7 @@ mod tests {
         // stop, text's length and face's length.
         let view = &words[11..];
         assert_eq!(&view[17..21], [0, 0, 0, 12]);
-        assert_eq!(&view[31..], [2, 0, 2, 1, 10, 4, 4, 1, 12, 0, 0, 0, 0]);
+        assert_eq!(&view[31..], [2, 0, 2, 1, 10, 4, 4, 1, 12, 0, 0, 0, 0, 0]);
         // In the string, after the blocks' texts: each mark's text, then
         // its face.
         assert!(strings.ends_with("é+diff.added-diff.removed"));
@@ -1954,10 +2049,10 @@ mod tests {
         let (bytes, strings) = scene.encode();
         let words = crate::words::tests::words_of(&bytes);
         // After the marks' count, the stops: their count, then each one's
-        // offset and x; then the folds' count, the dividers' count and the
-        // faces' presence.
+        // offset and x; then the folds' count, the indents' count, the
+        // dividers' count and the faces' presence.
         let view = &words[11..];
-        assert_eq!(&view[23..], [2, 4, 60, 9, u64::from(u32::MAX), 0, 0, 0]);
+        assert_eq!(&view[23..], [2, 4, 60, 9, u64::from(u32::MAX), 0, 0, 0, 0]);
         assert_eq!(WireScene::decode(&bytes, &strings), Some(scene.clone()));
         assert_eq!(
             scene.resolve(&[]).views[0].stops,
@@ -2017,10 +2112,10 @@ mod tests {
         let words = crate::words::tests::words_of(&bytes);
         // After the stops, the folds: the count, then each one's start,
         // stop, text's length and count of decorations, then each
-        // decoration's start, stop and face's length; then the dividers'
-        // count and the faces' presence.
+        // decoration's start, stop and face's length; then the indents'
+        // count, the dividers' count and the faces' presence.
         let view = &words[11..];
-        assert_eq!(&view[30..], [2, 0, 7, 7, 1, 0, 7, 12, 9, 9, 2, 0, 0, 0]);
+        assert_eq!(&view[30..], [2, 0, 7, 7, 1, 0, 7, 12, 9, 9, 2, 0, 0, 0, 0]);
         // In the string, after the marks': each fold's text, then its
         // decorations' faces.
         assert!(strings.ends_with("+diff.addedone.txtfold-summaryé"));
@@ -2051,6 +2146,75 @@ mod tests {
             WireScene::decode(&bytes, &strings[..strings.len() - 2]),
             None
         );
+    }
+
+    #[test]
+    fn a_views_indents_cross_after_its_folds_and_reach_layout() {
+        let indents = vec![
+            WireIndent {
+                start: 0,
+                stop: 9,
+                first: 16,
+                rest: WireContinuation::Points(u32::MAX),
+            },
+            WireIndent {
+                start: 4,
+                stop: 4,
+                first: u32::MAX,
+                rest: WireContinuation::Lead(3),
+            },
+        ];
+        let scene = WireScene {
+            views: vec![WireView {
+                folds: folds()[1..].to_vec(),
+                indents,
+                ..WireView::default()
+            }],
+            ..WireScene::default()
+        };
+        let (bytes, strings) = scene.encode();
+        let words = crate::words::tests::words_of(&bytes);
+        // After the folds, the indents: their count, then each one's start,
+        // stop, first-line indent, continuation kind and value; then the
+        // dividers' count and the faces' presence.
+        let view = &words[11..];
+        let largest = u64::from(u32::MAX);
+        assert_eq!(
+            &view[29..],
+            [2, 0, 9, 16, 0, largest, 4, 4, largest, 1, 3, 0, 0]
+        );
+        assert_eq!(WireScene::decode(&bytes, &strings), Some(scene.clone()));
+        assert_eq!(
+            scene.resolve(&[]).views[0].indents,
+            vec![
+                WrapIndent {
+                    start: 0,
+                    stop: 9,
+                    first: 16,
+                    rest: Continuation::Points(u32::MAX),
+                },
+                WrapIndent {
+                    start: 4,
+                    stop: 4,
+                    first: u32::MAX,
+                    rest: Continuation::Lead(3),
+                },
+            ]
+        );
+        // A first-line indent or a points continuation no u32 holds is
+        // refused, not cut down; so is a kind that is neither 0 nor 1.
+        for (at, word) in [(32, largest + 1), (34, largest + 1), (33, 2)] {
+            let mut wrong = words.clone();
+            wrong[11 + at] = word;
+            assert_eq!(
+                WireScene::decode(&buffer(&wrong), &strings),
+                None,
+                "at {at}"
+            );
+        }
+        // An indent short of its value spells no scene.
+        let short = &words[..11 + 39];
+        assert_eq!(WireScene::decode(&buffer(short), &strings), None);
     }
 
     #[test]

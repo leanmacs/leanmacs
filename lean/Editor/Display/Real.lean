@@ -25,7 +25,8 @@ document behind it, for its edit log, through the snapshot itself.
 **Publishing** sends the scene as words, one string and the snapshot
 handles its views show (`encode`; the layout is
 `crates/editor-ffi/src/display/wire.rs`'s), and the library lays it out and
-keeps the frame. A view's scroll anchor and selections go as their markers'
+keeps the frame, and with it each view's wrap indents, which its later
+queries lay a row out under (`indentWords`; no query is sent them). A view's scroll anchor and selections go as their markers'
 numbers, which the library reads in the document of the view's snapshot as
 it is when the scene arrives. The library cannot tell whose number it is
 given, so a view whose markers are not all of one text is sent with no
@@ -191,6 +192,23 @@ def foldWords (folds : Array Fold) : Array UInt64 × String :=
         (words, strings ++ fold.text))
     (#[folds.size.toUInt64], "")
 
+/-- `indents` as they cross to the library in a scene (the layout is
+`crates/editor-ffi/src/display/wire.rs`'s, a view's indents after its
+folds): their count, then for each its start, its stop, its first-line
+indent in whole points, its continuation's kind (0 points, 1 a lead) and
+its value. A number of points no `u32` holds is sent as the largest word,
+which the library refuses, as a stop's x is. -/
+def indentWords (indents : Array WrapIndent) : Array UInt64 :=
+  indents.foldl
+    (fun words indent =>
+      let words :=
+        words.push (RealTexts.word indent.start) |>.push (RealTexts.word indent.stop) |>.push
+          (paddingWord indent.first)
+      match indent.rest with
+      | .points x => words.push 0 |>.push (paddingWord x)
+      | .lead bytes => words.push 1 |>.push (RealTexts.word bytes))
+    #[indents.size.toUInt64]
+
 /-- The rows a view shows: `Display.rowsShown`'s answer. -/
 def rows (real : RealDisplay) (query : Display.RowsQuery) :
     IO (Except DisplayError (Array Display.Row)) := do
@@ -339,7 +357,9 @@ def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encod
   let (folds, foldText) := foldWords view.folds
   return {
       encoded with
-      words := encoded.words ++ padding ++ blocks ++ marks ++ stopWords view.stops ++ folds
+      words :=
+        encoded.words ++ padding ++ blocks ++ marks ++ stopWords view.stops ++ folds ++
+          indentWords view.indents
       strings := encoded.strings ++ blockText ++ markText ++ foldText }
 
 /-- The library's tag of a slant. -/

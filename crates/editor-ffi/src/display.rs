@@ -133,8 +133,9 @@ use crate::words::Writer;
 mod wire;
 
 pub use wire::{
-    WireBlock, WireFace, WireField, WireFold, WireMark, WireScene, WireView, decode_blocks,
-    decode_definitions, decode_folds, encode_blocks, encode_definitions, encode_folds,
+    WireBlock, WireContinuation, WireFace, WireField, WireFold, WireIndent, WireMark, WireScene,
+    WireView, decode_blocks, decode_definitions, decode_folds, encode_blocks, encode_definitions,
+    encode_folds,
 };
 
 /// How a display call ended, as it crosses the boundary.

@@ -538,6 +538,7 @@ fn a_published_scene_draws_the_highlights() {
             marks: vec![],
             stops: vec![],
             folds: vec![],
+            indents: vec![],
         }],
         faces: Some(vec![WireFace {
             name: "syntax.keyword".to_owned(),
@@ -981,6 +982,7 @@ fn a_published_scene_draws_a_fenced_rust_keyword() {
             marks: vec![],
             stops: vec![],
             folds: vec![],
+            indents: vec![],
         }],
         faces: Some(vec![WireFace {
             name: "syntax.keyword".to_owned(),

@@ -73,6 +73,18 @@ the last scene published, on its own thread, so painting never waits on Lean
   (`Buffer.stops`, set by `BufferId.setStops`), computed from widths the
   display measures (`Display.measure`, `Editor/Columns.lean`); the command
   loop copies them to every view of the buffer (`Loop.stopsOf`).
+- **An indent is where a row's lines start.** A view's wrap indents
+  (`View.indents`) each cover the rows of a range, by the fold rule, and say
+  where their visual lines start: the first `first` points right of the
+  start of the text row, and each later one at the continuation, either a
+  number of points or, the hanging form, where the row's first `n` bytes end
+  on its first line, which layout measures as it lays the row out
+  (`crates/editor-layout/src/align.rs`, "Wrap indents"). Of two over a row
+  the later listed wins. Which ones is the buffer's owner's
+  (`Buffer.indents`, set by `BufferId.setIndents`); the command loop copies
+  them to every view of the buffer (`Loop.indentsOf`). No query is handed
+  them: the display lays a row out under the last published scene's
+  (`Editor/Display.lean`).
 - **A fold is rows shown as one.** A view's folds (`View.folds`) are the
   ranges of its text drawn as one placeholder row each: the rows that hold a
   byte of the range (a line break is the row's it ends), or the row of its
@@ -188,6 +200,35 @@ structure AlignStop where
   and gutter) the cell starts, in whole points: layout multiplies it by the
   window's scale, as it does a padding. -/
   x : Nat
+  deriving DecidableEq, Repr
+
+/-- Where the later visual lines of a row under a wrap indent start. -/
+inductive ContinuationIndent where
+  /-- This many whole points right of the start of the text row. -/
+  | points (x : Nat)
+  /-- Where the row's first `bytes` bytes end on its first visual line: the
+  hanging form, which a list item's text continues under. A lead of no
+  byte, or at or past the row's end, hangs at the first-line indent. -/
+  | lead (bytes : Nat)
+  deriving DecidableEq, Repr
+
+/-- A wrap indent: where the visual lines of the rows of a range of a view's
+text start (`crates/editor-layout/src/scene.rs`, "Wrap indents"). It covers
+the rows that hold a byte of `[start, stop)`, a line break being the row's
+it ends, or the row of `start` when the range is empty, as a fold does.
+A covered row's first visual line starts `first` points right of the start
+of the text row and is broken at the room right of it; each later one
+starts at `rest`. An indent at or past the view's width is not applied.
+Points are multiplied by the window's scale, as a padding is. -/
+structure WrapIndent where
+  /-- A byte offset of the view's snapshot where the range starts. -/
+  start : Nat
+  /-- Where it stops, not included. -/
+  stop : Nat
+  /-- The first-line indent, in whole points. -/
+  first : Nat := 0
+  /-- Where each later visual line starts. -/
+  rest : ContinuationIndent := .points 0
   deriving DecidableEq, Repr
 
 /-- A fold: a range of a view's text drawn as one placeholder row
@@ -322,6 +363,10 @@ structure View where
   `Editor/Fold.lean`): outermost first, in order of start, none covering
   another's first row. None by default. -/
   folds : Array Fold := #[]
+  /-- Its wrap indents, its buffer's (`Buffer.indents`) whose ranges touch
+  the range its decorations are read over (`Loop.indentsOf`). None by
+  default. -/
+  indents : Array WrapIndent := #[]
   deriving DecidableEq, Repr
 
 /-- A divider: a strip of the frame between two tiled views, filled in the
