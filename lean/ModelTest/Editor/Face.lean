@@ -51,6 +51,15 @@ def faceChecks : List Check :=
             [⟨"text.code-span"⟩, ⟨"text.code-block"⟩].all fun (code : FaceName) =>
               (face code).family == some Face.monospaceFamily &&
                 ((face code).over prose).family == some Face.monospaceFamily) },
+    { name :=
+        "the built-in heading faces of levels 1, 2 and 3 are 24, 20 and 18 points, each larger than the default face, and those of levels 4 to 6 set no size"
+      run :=
+        let face := Theme.builtin.merged
+        let body := ((face ⟨"default"⟩).size.map (·.sixtyFourths)).getD 0
+        let sizes := (List.range 6).map fun level => (face ⟨s!"text.heading.{level + 1}"⟩).size
+        pure
+          (sizes == [some 24, some 20, some 18, none, none, none] &&
+            (sizes.take 3).all fun size => (size.map (·.sixtyFourths)).getD 0 > body) },
     { name := "the built-in default face's family is the monospace family"
       run := pure ((Theme.builtin.merged ⟨"default"⟩).family == some Face.monospaceFamily) },
     { name :=

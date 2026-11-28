@@ -102,6 +102,7 @@ import ModelTest.Editor.Links
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Markdown.Cases
+import ModelTest.Editor.Markdown.Doc
 import ModelTest.Editor.Markdown.Target
 import ModelTest.Editor.Marks
 import ModelTest.Editor.Marks.Follow
@@ -1416,6 +1417,14 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   scheme a URL, any other scheme a reference, `path:line[:column]` a
   location with its row and column from 0, a relative path resolved against
   the root and unlinked with none, and the token rule's edges;
+- `markdownProseChecks` and `markdownHeadingChecks`: the Markdown renderer
+  (`Editor/Markdown/Doc.lean` and the modules it imports) over the fixtures'
+  canned layers: the exact rendered text of `prose.md`, `code.md` and
+  `headings.md` with the markup left out, prose under `text.prose` and no
+  code-block byte under it, a fence's captures in their faces and an
+  unknown language's in `text.code-block` alone, a fence inside a list
+  item, each heading under its level's face, and emphasis, strong and a
+  code span under theirs;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1778,6 +1787,8 @@ def checks : List Check :=
     foldRegenerateChecks ++
     markdownCaseChecks ++
     markdownTargetChecks ++
+    markdownProseChecks ++
+    markdownHeadingChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++

@@ -24,7 +24,7 @@ import Editor.Job.SchedulerContract
 import Editor.Links
 import Editor.Main
 import Editor.Markdown.Cases
-import Editor.Markdown.Target
+import Editor.Markdown.Doc
 import Editor.PackageLibrary
 import Editor.SearchRoot
 import Editor.SyntaxTree.DeliveryContract
