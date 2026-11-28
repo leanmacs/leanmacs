@@ -1925,8 +1925,8 @@ core call (`lean/Editor/Markdown/`).
   | fenced code block | its content rows, the fence lines left out | `text.code-block` over them; its layer's captures in the faces config's language table gives them |
   | indented code block | its content rows | `text.code-block` |
   | table | the header row, then the body rows; the delimiter row and the pipes left out; cells joined by one space | `text.table-header` over the header cells |
-  | list | an item a line: two spaces a nesting level, then `•` (or the item's own number and `.` or `)`), a space and its blocks | `text.list-marker` over the marker |
-  | block quote | its blocks, the `>` markers left out | `text.quote` over them |
+  | list | an item a line: its marker, `•` (or the item's own number and `.` or `)`), a space and its blocks; continuation lines hang under the text after the marker; a nested list one indent step (16 points) in | `text.list-marker` over the marker |
+  | block quote | its blocks, the `>` markers left out; every line one step in a nesting level | `text.quote` over them |
   | thematic break | `———` | — |
 
   Inline, an emphasis, a strong emphasis and a code span lose their
@@ -1989,8 +1989,19 @@ core call (`lean/Editor/Markdown/`).
   highlights alone, so a mode's own highlights source is not used for it,
   and a grammar registered at run time, which ships none, draws its fences
   in `text.code-block` alone (rdm task `rendered-markdown-fence-highlights`).
-  Nested lists and quotes have no hanging or depth indent beyond a list's
-  two spaces a level: that is phase 6.
+- **Indents** (phase 6) are layout-free data on the piece, as links are,
+  and nothing is measured for them (`Piece.indents`, `Piece.indentedBy`;
+  "Display layers", as built, "Wrap indents"). A list item has no spaces
+  of indent: its blocks are one step in (`Options.indent`, 16 points, kept
+  on the document as the gap is), and its first row has a hanging indent
+  after its marker, space and task marker, which wins over the step on that
+  row. So a nested list's items are a step further in, each hanging under
+  its own text. A block quote's lines are a step in, first and
+  continuation alike, a nested quote's a step further: depth times the
+  step. The view writes the description's indents with its other parts
+  (`setIndents`). An item's later blocks (a second paragraph, a code block)
+  start a step in, not under its text, since a lead is measured on its own
+  row (rdm task `markdown-list-item-later-blocks-hang`).
 
 ### Text is the only layout engine
 
@@ -2007,6 +2018,11 @@ text layout places:
   rendered Markdown table is built through it: its rows are text, and its
   columns align-to stops measured when it is applied ("Rendered markdown,
   as built").
+- **Indented wrapping is the wrap layer's**: a wrap indent says where a
+  row's later visual lines start, in points or hanging under the text
+  after a leading span, and layout places them; nothing above it counts
+  spaces or measures a marker ("Display layers", as built, "Wrap
+  indents").
 - **Columns are aligned with align-to stops** in text layout, the one
   primitive this adds (built by the rich text display roadmap's phase 2;
   "Display layers", as built, "Align-to stops"). A stop (`AlignStop`, a
@@ -2167,6 +2183,70 @@ the same columns at other xs, or at another width, is broken and placed
 again without shaping. The shaper contract holds every adapter to lines
 that start at their left edge and hold their glyphs (`ORIGIN`), which the
 placing relies on.
+
+**Wrap indents** (the rich text display roadmap's phase 6) are not a layer
+either: like stops they are part of placing one segment's visual lines
+(`crates/editor-layout/src/align.rs`, "Wrap indents"; `src/indent.rs`).
+An indent (`WrapIndent`, a view's `indents`, from `Buffer.indents` set by
+`BufferId.setIndents`) covers the rows that hold a byte of its range, a
+line break being the row's it ends, or the row of its start when the range
+is empty, by the fold rule; an offset past the end is the end and one
+inside a character is moved back. Of two over a row the later listed wins.
+It gives a covered row's first visual line a first-line indent, in whole
+points, and its later lines a continuation: whole points, or the hanging
+form, a lead of `n` bytes, where the row's first `n` bytes end. Points are
+multiplied by the scale, as a stop's are. The first-line indent is a
+length only: one that started where its own leading span ends would
+depend on itself. Every row is placed by `align`, one with no stop as a
+single cell, so the arithmetic is in one function:
+
+- A covered row's first visual line starts at x `first` and is broken at
+  `width - first`; each later line starts at the continuation `C` and is
+  broken at `width - C`.
+- **The hanging form** cuts the row at its lead, as a stop cuts it: the
+  text after the leading span is placed where the span ends (the pen),
+  broken at the room right of it, and its later lines hang under it, so
+  the hang is where the span's own glyphs end whatever the font. A span
+  that reaches the width puts the text at `first` on the next line, and
+  that is its hang; a lead of no byte, or at or past the row's end, hangs
+  at `first`; a lead at a stop's column makes the stop place the cell, and
+  the hang is where that cell starts.
+- **An indent at or past the width is not applied**: that line starts at
+  x 0 and is broken at the whole width, as a stop past the width is broken
+  before, so no text goes right of the view.
+- With no width nothing breaks, and the line starts at `first`: the x a
+  move within an unwrapped line keeps is the drawn x.
+- **With stops** in the row, cell 0 starts at `first`, a cell moved down
+  by the overflow rule starts the next line at `C` and is broken at
+  `width - C`, a cell hanging under its stop keeps its stop's x, and a
+  stop's x is still from the start of the text row.
+- A composed line's glyph xs and width include its indent, so a cell, a
+  cursor, a selection and every query are at the drawn x; an x left of
+  the indent aims for the line's first character, and an empty covered
+  row's position is at `first`.
+- **Limits**: a row longer than a segment gives each later segment the
+  continuation for every line, and a hanging row's later segment hangs at
+  `first`, since a segment is laid out on its own. A tab still expands
+  from the row's start. A fold's placeholder and a block take no indent.
+
+The rows, spot and move queries lay a row out under the indents of the last
+frame that showed the text at its revision, kept in points beside its
+stops, so no caller of a query names them: evil's `j` and `k`, the follow
+and `Scroll.Area` are as they were. A query before a buffer's first frame
+sees none, as with stops. **Cache keys**: a lead is a cut, so another
+shapes the row again; pixel indents are placement, so other pixels break
+and place it again without shaping (`tests/counters.rs`). **The port**
+grows by one capability: `ShapedLine::break_lines_in` breaks a line's
+first visual line at one width and the rest at another, which a pixel
+indent whose first line and continuation differ needs and which no
+composition of single-width breaks gives; `break_lines` is its one-width
+form. The shaper contract holds every adapter to it (`INDENTED`), and
+Parley does it with its own breaker's per-line maximum. Shaping the rest
+of a row again after its first line was rejected: it would shape on every
+change of width. The display model (`lean/Editor/Display/Model.lean`)
+holds the rule in cells, reading the indents of the last scene published,
+and the display contract's "What indents are held to" holds the model, the
+real binding and the recorder to it.
 
 **Blocks are not a layer** (a departure, the excerpts roadmap's phase 3).
 The contract above says blocks would be a layer after the wrap layer, with
