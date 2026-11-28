@@ -37,7 +37,10 @@ query when the last reference to its handle goes.
   tag (`kindTag`).
 - **`parseOnce` is answered in the call**, on the asking thread: the
   library parses the text handed in, which no snapshot is of, and keeps
-  nothing but the shipped queries it compiled, by their source.
+  nothing but the queries it compiled from the sources handed in, each by
+  its grammar, the source the grammar was registered from and its own
+  source (`Syntaxes::once_query`, `crates/editor-ffi/src/syntax.rs`), so a
+  grammar registered again never meets a query compiled for the old one.
 - **`captures` and `capturesOf` never wait for a parse.** Each is answered
   from the tree the library last delivered, and refused with `notParsed`
   when that tree is not of the snapshot's revision. A caller asks again
