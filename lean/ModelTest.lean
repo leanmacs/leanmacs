@@ -132,6 +132,7 @@ import ModelTest.Editor.Restore.Restart
 import ModelTest.Editor.Restore.Run
 import ModelTest.Editor.Restore.Value
 import ModelTest.Editor.Restore.Workspaces
+import ModelTest.Editor.RichText
 import ModelTest.Editor.Scene
 import ModelTest.Editor.Scroll
 import ModelTest.Editor.SearchRoot
@@ -1475,6 +1476,14 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   buffer and its view, and, laid out by the display model under the scene
   published, a wrapped nested item continuing under its text and every row
   of a wrapped nested quote 32 points in;
+- `richTextChecks`: the rich-text description (`Editor/RichText.lean`),
+  pure: `shift` moving every offset of every part and no placeholder's own
+  span, `append` placing the second's parts past the first's text, and
+  `replaceFrom`'s prefix rule: the held text and each held part that lies
+  before the start kept, a part crossing the start and an empty part at it
+  taken from the description, a held fold whose key a taken fold has
+  dropped, the folds ordered by start, a start of 0 giving the description,
+  and the end of both texts keeping the held parts that end there;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1850,6 +1859,7 @@ def checks : List Check :=
     markdownTableViewChecks ++
     markdownAppendChecks ++
     markdownIndentViewChecks ++
+    richTextChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++

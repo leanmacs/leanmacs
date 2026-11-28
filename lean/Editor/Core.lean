@@ -25,6 +25,7 @@ import Editor.Main
 import Editor.Markdown.Cases
 import Editor.Markdown.View
 import Editor.PackageLibrary
+import Editor.RichText
 import Editor.SearchRoot
 import Editor.SyntaxTree.DeliveryContract
 import Editor.Test.AtPoint
