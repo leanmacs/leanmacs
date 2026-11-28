@@ -73,7 +73,16 @@ details:
   compile fails a set's build; and the grammar set's package's linked
   test, handed the
   grammar set's editor, the fixture grammar library Cargo builds and the
-  syntax fixtures. The install check of that package
+  syntax fixtures. Two test-only crates are built by Cargo for it, each
+  line building the one it needs and passing the path its binary prints:
+  `editor-syntax-fixture-ini`'s INI grammar library, `contract-test`'s
+  fourth argument and the grammar set's linked test's second; and
+  `editor-syntax-fixture-grammars`' directory of the six grammars the
+  syntax adapter compiles in, built as libraries with their queries beside
+  them, which the library hides from every test: `ffi-test`'s one
+  argument (after `wiring` for its wiring run), `contract-test`'s fifth,
+  `config-test`'s ninth, and every linked test's third, through
+  `tools/package-set.sh run`'s. The install check of that package
   (`mise run grammar-install-check`) is on demand, never here
   ([`on-demand-checks.md`](on-demand-checks.md)).
 - **`window-scenarios`**: each window scenario of `ffi-test`
@@ -102,8 +111,11 @@ at the first that fails:
 - `build`, in `lean`: the set's editor and fixture harness, then each
   package's default targets and its linked test's executable.
 - `fmt`, in `lean-fmt`: lean-fmt over each package.
-- `run`, in `ffi-test`: each package's linked test, in its directory, then
-  the set's fixture harness over its `tests/headless/`.
+- `run`, in `ffi-test`: each package's linked test, in its directory, with
+  the toolchain's directory, the core's `.olean` directory and the test
+  grammars' directory (`editor-syntax-fixture-grammars`, which a linked test
+  that draws with a real grammar declares or registers, and every other
+  ignores), then the set's fixture harness over its `tests/headless/`.
 
 The gate runs them over the fixture set, which requires the default set,
 so every default package is among them; `ffi-test` then runs the default
