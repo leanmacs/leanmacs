@@ -33,11 +33,13 @@ def markdownParseChecks : List Check :=
         let json : Mode.SyntaxTree := { grammar := "json", highlights := some "(number) @n" }
         let plain : Mode.SyntaxTree := { grammar := "toml" }
         pure
-          (languagesOf [rust, markdown, plain, json, { rust with highlights := some "(later) @l" },
+          (languagesOf
+                [rust, markdown, plain, json, { rust with highlights := some "(later) @l" },
                   inline] ==
               #[{ grammar := "markdown", query := "(section) @block"
                   injections :=
-                    some "(fenced_code_block) @injection.content\n(pipe_table_cell) @injection.content" },
+                    some
+                      "(fenced_code_block) @injection.content\n(pipe_table_cell) @injection.content" },
                 { grammar := "markdown_inline", query := "(emphasis) @emphasis"
                   injections := some "(html_tag) @injection.content" },
                 { grammar := "rust", query := "(identifier) @variable"

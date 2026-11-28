@@ -4,7 +4,6 @@ import Editor.Config.Registry
 import Editor.DisplayRules
 import Editor.Language
 import Editor.Language.IndentUnit
-import Editor.Mode
 import Editor.Scene
 import Editor.Workspace
 import ModelTest.Check

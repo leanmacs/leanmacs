@@ -132,8 +132,7 @@ def grammarDeclarationChecks : List Check :=
             syntaxTree := { grammar := "markdown", rendered := some "(own) @own" } }
         pure
           (Language.Grammar.queryFiles.contains ("rendered.scm", .rendered) &&
-            Language.Grammar.queryFiles.contains
-              ("rendered-injections.scm", .renderedInjections) &&
+            Language.Grammar.queryFiles.contains ("rendered-injections.scm", .renderedInjections) &&
             Language.Grammar.treeOf declared answers 2 { grammar := "markdown" } ==
               some
                 { grammar := "markdown", highlights := some "(document) @d"
@@ -144,9 +143,11 @@ def grammarDeclarationChecks : List Check :=
                 { grammar := "markdown", highlights := some "(document) @d"
                   rendered := some "(own) @own"
                   renderedInjections := some "(pipe_table_cell) @injection.content" } &&
-            (Language.Grammar.Queries.set {} .renderedInjections (some "(x) @x")).renderedInjections ==
+            (Language.Grammar.Queries.set {} .renderedInjections
+                  (some "(x) @x")).renderedInjections ==
               some "(x) @x" &&
-            (Language.Grammar.Queries.set {} .rendered (some "(x) @x")).rendered == some "(x) @x") },
+            (Language.Grammar.Queries.set {} .rendered (some "(x) @x")).rendered ==
+              some "(x) @x") },
     { name :=
         "a refusal's sentence names the grammar, the error and what stays: the grammar registered before, when the service still lists the name, or no syntax tree for its languages; a query file's refusal names the grammar, the file and the error"
       run :=

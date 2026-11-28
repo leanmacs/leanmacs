@@ -3,7 +3,6 @@ import Editor.Command.Model
 import Editor.Highlight
 import Editor.Indent
 import Editor.Language.IndentUnit
-import Editor.Mode
 import Editor.Program
 import Editor.Scene
 import Editor.SyntaxTree

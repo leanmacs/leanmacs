@@ -8,7 +8,6 @@ import Editor.Highlight
 import Editor.InferredWait
 import Editor.Job
 import Editor.Language.Grammar
-import Editor.Mode
 import Editor.Package
 import Editor.RealHost
 import Editor.Setup

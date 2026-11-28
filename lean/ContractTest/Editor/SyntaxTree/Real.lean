@@ -18,7 +18,6 @@ import Editor.Highlight
 import Editor.Indent
 import Editor.Language
 import Editor.Menu
-import Editor.Mode
 import Editor.Program
 import Editor.RealHost
 import Editor.Scene

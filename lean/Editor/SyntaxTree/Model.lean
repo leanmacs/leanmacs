@@ -337,8 +337,8 @@ checked in the order the real binding checks: the host grammar first
 (`unknownGrammar`), then its language and its query (`noQuery`). The model
 follows no injections, so the host layer is the answer. -/
 def parseOnce (model : SyntaxTreeModel) (source named : String)
-    (languages : Array SyntaxTree.OnceLanguage) :
-    Except SyntaxTreeError (Array SyntaxTree.Layer) := do
+    (languages : Array SyntaxTree.OnceLanguage) : Except SyntaxTreeError (Array SyntaxTree.Layer) :=
+  do
   if let some (_, _, layers) :=
       model.once.find? fun (grammar, text, _) => grammar == named && text == source then
     return layers
@@ -377,8 +377,7 @@ def handle : (request : SyntaxTreeRequest) → SyntaxTreeModel → request.Reply
   | .capturesOf snapshot kind first last, model =>
     (model.capturesOf snapshot kind first last, model)
   | .refreshAfter milliseconds, model => ((), { model with refreshAfter := some milliseconds })
-  | .parseOnce source named languages, model =>
-    (model.parseOnce source named languages, model)
+  | .parseOnce source named languages, model => (model.parseOnce source named languages, model)
 
 end SyntaxTreeModel
 

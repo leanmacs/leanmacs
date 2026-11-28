@@ -54,7 +54,8 @@ def languagesOf (trees : List Mode.SyntaxTree) : Array SyntaxTree.OnceLanguage :
   let markdown :=
     (first "markdown").bind fun tree =>
       tree.rendered.map fun query =>
-        { grammar := "markdown", query, injections := joined tree.injections tree.renderedInjections }
+        { grammar := "markdown", query,
+          injections := joined tree.injections tree.renderedInjections }
   let inline :=
     (first "markdown_inline").bind fun tree =>
       tree.rendered.map fun query =>
@@ -62,7 +63,8 @@ def languagesOf (trees : List Mode.SyntaxTree) : Array SyntaxTree.OnceLanguage :
   let (others, _) :=
     trees.foldl
       (fun ((kept : Array SyntaxTree.OnceLanguage), (seen : Array String)) tree =>
-        if tree.grammar == "markdown" || tree.grammar == "markdown_inline" ||
+        if
+            tree.grammar == "markdown" || tree.grammar == "markdown_inline" ||
               seen.contains tree.grammar then
           (kept, seen)
         else

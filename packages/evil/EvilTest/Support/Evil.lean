@@ -14,7 +14,6 @@ import Editor.Job
 import Editor.Language
 import Editor.Language.IndentUnit
 import Editor.Loop.Driver
-import Editor.Mode
 import Editor.ModeLine
 import Editor.Program
 import Editor.Scene

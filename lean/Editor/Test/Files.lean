@@ -12,7 +12,6 @@ import Editor.Language
 import Editor.Language.IndentUnit
 import Editor.Loop
 import Editor.Loop.Driver
-import Editor.Mode
 import Editor.ModeLine
 import Editor.Scene
 import Editor.State

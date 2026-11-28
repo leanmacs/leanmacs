@@ -26,7 +26,6 @@ import Editor.Job.Fake
 import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Job.Runner
-import Editor.Mode
 import Editor.Process
 import Editor.Program
 import Editor.Scene

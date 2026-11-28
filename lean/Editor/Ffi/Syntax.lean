@@ -648,8 +648,11 @@ calling thread. A status or words the decoder here cannot read are an `IO`
 error. -/
 def syntaxParseOnce (source host : String) (languages : Array (String × String × String)) :
     IO (Except SyntaxOnceRefusal (Array SyntaxOnceLayer)) := do
-  let strings := languages.foldl (fun spelled (grammar, query, injections) =>
-      spelled.push grammar |>.push query |>.push injections) #[]
+  let strings :=
+    languages.foldl
+      (fun spelled (grammar, query, injections) =>
+        spelled.push grammar |>.push query |>.push injections)
+      #[]
   let raw ← syntaxParseOnceRaw source host (lengthWords strings) (strings.foldl (· ++ ·) "")
   match raw.status with
   | 0 =>

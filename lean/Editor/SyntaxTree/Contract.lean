@@ -258,8 +258,8 @@ def properties : List Property :=
         holds := fun _ => do
           let shipsNone ←
             [QueryKind.highlights, .injections, .textObjects, .indents, .rendered,
-                  .renderedInjections].allM fun kind =>
-                refusedWith .noShippedQuery (SyntaxTree.shippedQuery json kind)
+                    .renderedInjections].allM
+                fun kind => refusedWith .noShippedQuery (SyntaxTree.shippedQuery json kind)
           return shipsNone &&
               (← refusedWith .unknownGrammar (SyntaxTree.shippedQuery "no-such" .highlights)) },
       { name := "a well-formed highlight is answered, and one of a text not attached is refused"
@@ -376,7 +376,8 @@ def properties : List Property :=
           "(O4) a language of a grammar that is not listed changes nothing a text parsed once answers"
         texts := #[]
         holds := fun _ => do
-          return (← SyntaxTree.parseOnce onceText json #[{ grammar := json, query := onceQuery }]) ==
+          return (←
+                SyntaxTree.parseOnce onceText json #[{ grammar := json, query := onceQuery }]) ==
               (←
                 SyntaxTree.parseOnce onceText json
                     #[{ grammar := "no-such", query := onceQuery },

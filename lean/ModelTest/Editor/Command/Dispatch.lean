@@ -565,7 +565,8 @@ def dispatchRegistryChecks : List Check :=
         let answers : Language.Grammar.Answers :=
           { generation := 1
             answers :=
-              #[("markdown_inline", .registered read), ("rust", .registered { highlights := some "(r) @r" })] }
+              #[("markdown_inline", .registered read),
+                ("rust", .registered { highlights := some "(r) @r" })] }
         let program : EditorM (Guarded (Option (List Mode.SyntaxTree)) × EditorState) := do
           (RegistryRequest.ask .languageTrees).dispatched registered
               { (← twoBuffers) with grammars := answers }

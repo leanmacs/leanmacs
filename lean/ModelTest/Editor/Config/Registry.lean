@@ -1025,15 +1025,18 @@ def registryChecks : List Check :=
           (numbers (registry.extensionsAt key) == #[1, 2, 3, 4] &&
             numbers (registry.configExtensionsAt key) == #[3, 4] &&
             numbers (registry.configExtensionsAt other) == #[9] &&
-            numbers (registry.registered.answer EditorState.none (.configExtensions key)) == #[3, 4] &&
-            numbers (registry.registered.answer EditorState.none (.extensions key)) == #[1, 2, 3, 4] &&
+            numbers (registry.registered.answer EditorState.none (.configExtensions key)) ==
+              #[3, 4] &&
+            numbers (registry.registered.answer EditorState.none (.extensions key)) ==
+              #[1, 2, 3, 4] &&
             numbers (RegistryRequest.bare (.configExtensions key)) == #[]) },
     { name :=
         "the loop is told the name of the base a host installs: config's choice when it made one, else the latest package's default, else inherited"
       run :=
         let defaulted : Config.Registry := { baseDefaults := #["first", "second"] }
         pure
-          (({} : Config.Registry).registered.answer EditorState.none .environmentBase == Process.inheritedName &&
+          (({} : Config.Registry).registered.answer EditorState.none .environmentBase ==
+              Process.inheritedName &&
             defaulted.registered.answer EditorState.none .environmentBase == "second" &&
             { defaulted with environmentBase := some "chosen" }.registered.answer EditorState.none
                 .environmentBase ==
