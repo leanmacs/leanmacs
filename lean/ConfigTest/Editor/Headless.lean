@@ -1511,6 +1511,19 @@ wait 2" with
             Headless.startedFrom true script == script &&
             Headless.startedFrom false #[] == #[⟨0, .request .withoutConfig⟩]) },
     { name :=
+        "a headless run with no config directory that a restart resumed still starts with no config: resuming past k restarteds keeps the start before the lines after the k-th"
+      run :=
+        let script :=
+          #[⟨1, .request .scene⟩, ⟨2, .restarted⟩, ⟨3, .settle⟩, ⟨4, .restarted⟩,
+            ⟨5, .request .show⟩]
+        let started := Headless.startedFrom false script
+        pure
+          (Headless.resumed started 1 ==
+              #[⟨0, .request .withoutConfig⟩, ⟨3, .settle⟩, ⟨4, .restarted⟩, ⟨5, .request .show⟩] &&
+            Headless.resumed started 2 == #[⟨0, .request .withoutConfig⟩, ⟨5, .request .show⟩] &&
+            Headless.resumed started 3 == #[⟨0, .request .withoutConfig⟩] &&
+            Headless.resumed (Headless.startedFrom true script) 2 == #[⟨5, .request .show⟩]) },
+    { name :=
         "indexed and workspaces are directives with their lines' numbers, refused with anything after them as no directive, and the error message of a line that is no directive lists them"
       run :=
         pure <|

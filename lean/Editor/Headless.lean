@@ -3763,14 +3763,16 @@ structure Line where
 
 /-- `script` as a run started with `--resume <resume>` runs it: from the line
 after its `resume`-th `restarted`, or whole for 0 ("Restarting", in the
-module docs). -/
+module docs). A line the run put before the script's own, numbered 0 (the
+start with no config, `startedFrom`), is no line of the script and is kept,
+so a restarted run with no config directory still starts with no config. -/
 def resumed (script : Array Line) (resume : Nat) : Array Line :=
   if resume == 0 then script
   else
     let (_, kept) :=
       script.foldl
         (fun (passed, kept) line =>
-          if passed ≥ resume then (passed, kept.push line)
+          if passed ≥ resume || line.number == 0 then (passed, kept.push line)
           else if line.directive matches .restarted _ then (passed + 1, kept) else (passed, kept))
         (0, #[])
     kept
@@ -3778,7 +3780,8 @@ def resumed (script : Array Line) (resume : Nat) : Array Line :=
 /-- `script` as a run whose config directory exists (`configExists`) or not
 runs it: as it is, or after a start with no config at line 0, so the
 packages' grammars register alone (`Request.withoutConfig`), as the window
-mode starts with no config directory. -/
+mode starts with no config directory. Line 0 is no line of the script, so
+`resumed` keeps it for a run a restart started. -/
 def startedFrom (configExists : Bool) (script : Array Line) : Array Line :=
   if configExists then script else #[⟨0, .request .withoutConfig⟩] ++ script
 
