@@ -27,32 +27,39 @@ def grammarPackageChecks : List Check :=
   let staged : System.FilePath := "/staged"
   let registered := Languages.Grammars.package.registered (some staged)
   [{  name :=
-        "registered against /staged, the languages-grammars package registers exactly the languages yaml (*.yaml, *.yml), java (*.java), swift (*.swift), ruby (*.rb, *.rake, *.gemspec, Gemfile, Rakefile), python (*.py, *.pyi), javascript (*.js, *.mjs, *.cjs, *.jsx), typescript (*.ts, *.mts, *.cts), tsx (*.tsx), c (*.c, *.h), cpp (*.cc, *.cpp, *.cxx, *.hpp, *.hxx, *.hh) and clojure (*.clj, *.cljs, *.cljc, *.edn), in that order, each naming the grammar of its name but clojure, which names clojure_orchard, and exactly the grammars rust, json, markdown, markdown_inline, toml, lean, yaml, java, swift, ruby, python, javascript, typescript, tsx, c, cpp and clojure_orchard, in that order, each per platform at /staged/<platform>/libtree-sitter-<name>.<ext> for darwin-aarch64, darwin-x86_64, linux-aarch64 and linux-x86_64, with symbol tree_sitter_<name> and its queries at /staged/queries/<name>, markdown_inline reparsed whole, yaml and the popular ten with no policy and the rest incrementally"
+        "registered against /staged, the languages-grammars package registers exactly the languages yaml (*.yaml, *.yml), java (*.java), swift (*.swift), ruby (*.rb, *.rake, *.gemspec, Gemfile, Rakefile), python (*.py, *.pyi), javascript (*.js, *.mjs, *.cjs, *.jsx), typescript (*.ts, *.mts, *.cts), tsx (*.tsx), c (*.c, *.h), cpp (*.cc, *.cpp, *.cxx, *.hpp, *.hxx, *.hh) and clojure (*.clj, *.cljs, *.cljc, *.edn), in that order, each naming the grammar of its name but clojure, which names clojure_orchard, with an indent of two spaces for ruby, javascript, typescript, tsx and clojure and the default four for the rest, and exactly the grammars rust, json, markdown, markdown_inline, toml, lean, yaml, java, swift, ruby, python, javascript, typescript, tsx, c, cpp and clojure_orchard, in that order, each per platform at /staged/<platform>/libtree-sitter-<name>.<ext> for darwin-aarch64, darwin-x86_64, linux-aarch64 and linux-x86_64, with symbol tree_sitter_<name> and its queries at /staged/queries/<name>, markdown_inline reparsed whole, yaml and the popular ten with no policy and the rest incrementally"
       run :=
         let names :=
           #["rust", "json", "markdown", "markdown_inline", "toml", "lean", "yaml", "java", "swift",
             "ruby", "python", "javascript", "typescript", "tsx", "c", "cpp", "clojure_orchard"]
-        let languages : Array (String × List Language.Pattern × String) :=
-          #[("yaml", [.extension "yaml", .extension "yml"], "yaml"),
-            ("java", [.extension "java"], "java"), ("swift", [.extension "swift"], "swift"),
+        let two : Language.IndentUnit := .spaces 2
+        let four := Language.IndentUnit.default
+        let languages : Array (String × List Language.Pattern × String × Language.IndentUnit) :=
+          #[("yaml", [.extension "yaml", .extension "yml"], "yaml", four),
+            ("java", [.extension "java"], "java", four),
+            ("swift", [.extension "swift"], "swift", four),
             ("ruby",
               [.extension "rb", .extension "rake", .extension "gemspec", .name "Gemfile",
                 .name "Rakefile"],
-              "ruby"),
-            ("python", [.extension "py", .extension "pyi"], "python"),
+              "ruby", two),
+            ("python", [.extension "py", .extension "pyi"], "python", four),
             ("javascript", [.extension "js", .extension "mjs", .extension "cjs", .extension "jsx"],
-              "javascript"),
-            ("typescript", [.extension "ts", .extension "mts", .extension "cts"], "typescript"),
-            ("tsx", [.extension "tsx"], "tsx"), ("c", [.extension "c", .extension "h"], "c"),
+              "javascript", two),
+            ("typescript", [.extension "ts", .extension "mts", .extension "cts"], "typescript",
+              two),
+            ("tsx", [.extension "tsx"], "tsx", two),
+            ("c", [.extension "c", .extension "h"], "c", four),
             ("cpp",
               [.extension "cc", .extension "cpp", .extension "cxx", .extension "hpp",
                 .extension "hxx", .extension "hh"],
-              "cpp"),
+              "cpp", four),
             ("clojure", [.extension "clj", .extension "cljs", .extension "cljc", .extension "edn"],
-              "clojure_orchard")]
+              "clojure_orchard", two)]
         pure
           (registered.languages.map
-                (fun language => (language.name, language.patterns, language.syntaxTree.grammar)) ==
+                (fun language =>
+                  (language.name, language.patterns, language.syntaxTree.grammar,
+                    language.indentUnit)) ==
               languages &&
             registered.grammars.map (·.name) == names &&
             registered.grammars.map (·.library) ==
