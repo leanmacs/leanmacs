@@ -861,7 +861,33 @@ def evilOperatorChecks : List Check :=
             let deleted := evilFed driver "d l"
             evilHistory driver == some (1, false) && evilHistory deleted == some (2, false) &&
               evilText deleted == some "ac" &&
-              evilText (evilUndone deleted) == some "abc" }]
+              evilText (evilUndone deleted) == some "abc" },
+    { name :=
+        "a line-wise operator takes a folded range its ends land in whole: d j and y j from the row above rows 2 to 4 folded take rows 1 to 4, d k from the row below takes rows 2 to 5, d d and y y on the placeholder take rows 2 to 4, 2 d d counts the fold as one line from above it and from it, and 2 d d on a fold that reaches the last line gives up"
+      run :=
+        pure <|
+          let middle : Foldable :=
+            { start := 8, stop := 19, key := "f", text := "[2-4]", folded := true }
+          let lastRows : Foldable :=
+            { start := 12, stop := 23, key := "f", text := "[3-5]", folded := true }
+          let fed (fixture typed : String) (fold : Foldable := middle) : Option EvilDriver :=
+            (foldedEvilDriver fixture #[fold]).map (evilFed · typed)
+          let left (fixture typed : String) : Option EvilEdited := (fed fixture typed).map evilLeft
+          let above := "ab0\n|ab1\nab2\nab3\nab4\nab5"
+          let on := "ab0\nab1\n|ab2\nab3\nab4\nab5"
+          let below := "ab0\nab1\nab2\nab3\nab4\n|ab5"
+          let fold := "ab2\nab3\nab4\n"
+          left above "d j" == some ⟨"ab0\n|ab5", linewise ("ab1\n" ++ fold), false, ""⟩ &&
+            (left above "y j").map (·.register) == some (linewise ("ab1\n" ++ fold)) &&
+            left below "d k" == some ⟨"ab0\n|ab1", linewise (fold ++ "ab5\n"), false, ""⟩ &&
+            left on "d d" == some ⟨"ab0\nab1\n|ab5", linewise fold, false, ""⟩ &&
+            (left on "y y").map (·.register) == some (linewise fold) &&
+            left above "2 d d" == some ⟨"ab0\n|ab5", linewise ("ab1\n" ++ fold), false, ""⟩ &&
+            left on "2 d d" == some ⟨"ab0\n|ab1", linewise (fold ++ "ab5\n"), false, ""⟩ &&
+            ((fed "ab0\nab1\nab2\n|ab3\nab4\nab5" "2 d d" lastRows).map fun driver =>
+                (evilText driver, (evilLeft driver).register,
+                  (evilLeft driver).echo.endsWith Evil.noLineBelow)) ==
+              some (some "ab0\nab1\nab2\nab3\nab4\nab5", none, true) }]
 
 /-- The oracle table's rows for the operators over a visual selection: a
 `v` selection is acted on through the cell under its head, and a `V`

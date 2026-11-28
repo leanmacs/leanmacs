@@ -2141,6 +2141,15 @@ its own faces (`crates/editor-layout/src/folds.rs`, `src/query.rs`,
     selection widens an end inside a shown fold to the fold's whole lines
     (the line shape) or to its start or its last line's end (the others,
     `Fold.cover`).
+  - *Line-wise operators* take a shown fold whole too: when the rows an
+    operator takes as whole lines start or end inside a shown fold, they
+    reach from the fold's first row or through its last (`Fold.cover`,
+    `packages/evil/Evil/Operators.lean`). So `dj` and `yj` from the row
+    above a fold take that row and the fold, `dk` from the row below takes
+    the fold and that row, and the doubled operator (`dd`, `yy`, `cc`) on a
+    placeholder takes the fold's rows, counting a fold as one line (`2dd`,
+    by `Fold.stepRows`) and, with a count above 1, giving up on a fold that
+    reaches the last line as it does on the last line.
   - *Jumps*: a motion that is a jump and does not fail (`/`, `?`, `n`, `N`,
     `*`, `#`, `G`, `gg`) unfolds every folded range whose rows hold the
     place it lands on, and so does a landing through the jump list (`C-o`,
