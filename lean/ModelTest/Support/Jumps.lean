@@ -191,13 +191,16 @@ def jumpsOf (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option (List Stri
   let window ← driver.loop.state.window? view
   return (window.jumps.list.entries.toList.map (placeText driver), window.jumps.list.index)
 
+/-- A buffer over `l0` to `l4` whose foldable ranges are `folds`, its cursor
+at 0. -/
+def foldedJumpStateOf (folds : Array Foldable) : TextM EditorState := do
+  let state ← barState "l0\nl1\nl2\nl3\nl4\n" 0
+  return { state with buffers := state.buffers.modify 0 (·.map ({ · with folds })) }
+
 /-- A buffer over `l0` to `l4` whose rows 1 to 3 are the folded range `f`,
 its cursor at 0. -/
-def foldedJumpState : TextM EditorState := do
-  let state ← barState "l0\nl1\nl2\nl3\nl4\n" 0
-  let folds : Array Foldable :=
-    #[{ start := 3, stop := 11, key := "f", text := "…", folded := true }]
-  return { state with buffers := state.buffers.modify 0 (·.map ({ · with folds })) }
+def foldedJumpState : TextM EditorState :=
+  foldedJumpStateOf #[{ start := 3, stop := 11, key := "f", text := "…", folded := true }]
 
 /-- Whether buffer 0's range `f` is folded, and the head of view 0's cursor,
 in the state a command runs on. -/

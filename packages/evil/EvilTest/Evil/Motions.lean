@@ -1029,6 +1029,19 @@ def evilSearchChecks : List Check :=
               evilFolded missed == some [true, true] &&
               evilShown missed == withBar plain 0 },
     { name :=
+        "an accepted search whose match lies inside two nested folded ranges unfolds both, the outer and the inner, and puts the cursor on the match's first byte"
+      run :=
+        pure <|
+          -- Rows 1 to 4 folded, and rows 2 to 3 inside them, the `baz` on row 3.
+          let text := "|x0\nfoo\nbar\nbaz 1\nqux\nend"
+          let folds : Array Foldable :=
+            #[{ start := 3, stop := 20, key := "outer", text := "[outer]", folded := true },
+              { start := 7, stop := 16, key := "inner", text := "[inner]", folded := true }]
+          let found := (foldedEvilDriver text folds).map (evilFed · "/ b a z RET")
+          found.bind evilFolded == some [false, false] &&
+            found.map evilShown == some (withBar (barred text).1 11) &&
+            found.bind evilSceneFolds == some [] },
+    { name :=
         "/ and ? (by invocation and by key, through the minibuffer), n, N, * and # move as Vim 9.1 documents for a literal pattern: from before, at and inside a match, cpo-c, across lines, with counts, wrapping with Vim's warning, not found with E486, n with no last search with E35, N keeping the direction, the empty pattern the last one, whole words for * and #, from the word's start, and a visual selection extended"
       run := searchRows searchMoveRows },
     { name :=

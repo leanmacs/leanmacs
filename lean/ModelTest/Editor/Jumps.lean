@@ -58,14 +58,32 @@ def foldedLanding : Option ((Bool × Nat) × (Bool × Nat)) :=
     return (placed, ← foldedJumpSeen)
   (dispatchedFrom program foldedJumpState).map (·.1)
 
+/-- On a buffer over `l0` to `l4` whose rows 1 to 3 are the folded range
+`outer` and rows 2 to 3 the folded range `inner` inside it: whether each is
+folded, in order, and the head of view 0's cursor, once, from 0,
+`Jumps.goHeld` has gone to a place held at 7, on row 2, which both cover. -/
+def nestedFoldedLanding : Option (List Bool × Nat) :=
+  let folds : Array Foldable :=
+    #[{ start := 3, stop := 11, key := "outer", text := "…", folded := true },
+      { start := 6, stop := 11, key := "inner", text := "…", folded := true }]
+  let program : EditorM (List Bool × Nat) := do
+    let marker ← (⟨0⟩ : TextId).mark (.anchor { offset := 7, bias := .after })
+    Jumps.goHeld ⟨0⟩ ⟨0⟩ marker false
+    let folded := (((← editorState).buffer? ⟨0⟩).map (·.folds.toList.map (·.folded))).getD []
+    return (folded, (← foldedJumpSeen).2)
+  (dispatchedFrom program (foldedJumpStateOf folds)).map (·.1)
+
 /-- The checks of recording, cleaning up, detaching and attaching the places
 of a window's jump list, on the loop's driver over the editor's models and
 the file model (`jumpDriver`), and of going to a held place inside a folded
-range. -/
+range and inside two nested ones. -/
 def jumpChecks : List Check :=
   [{  name :=
         "going to a held place inside a folded range unfolds the range and puts the cursor on the place, and placing the cursor there alone unfolds nothing"
       run := return foldedLanding == some ((true, 7), (false, 7)) },
+    { name :=
+        "going to a held place inside two nested folded ranges unfolds both, the outer and the inner, and puts the cursor on the place"
+      run := return nestedFoldedLanding == some ([false, false], 7) },
     { name :=
         "a record keeps the cursor's place as the last entry, the index one past the end, and as the previous-context mark"
       run :=
