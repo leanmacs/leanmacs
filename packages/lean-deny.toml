@@ -55,7 +55,7 @@ toolchain = ["external:Init", "external:Std", "external:Lean", "external:Lake"]
 linked-kit = ["mod:Editor.Test.Linked"]
 
 doubles = { select = [
-  "mod:Editor.Completion.Fake!", "mod:Editor.Job.Fake!",
+  "mod:Editor.Completion.Fake!", "mod:Editor.Job.Fake!", "mod:Editor.Markdown.Cases!",
   "mod:Editor.SyntaxTree.Fake!", "mod:Editor.Headless.Journal.Fake!", "mod:Editor.InputScheme.Test!",
   "mod:Editor.Loop.Driver!", "mod:Editor.Config.Packages!", "mod:Editor.Theme.Picture!",
   "mod:Editor.Test",

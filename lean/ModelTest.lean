@@ -101,6 +101,7 @@ import ModelTest.Editor.Link
 import ModelTest.Editor.Links
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
+import ModelTest.Editor.Markdown.Cases
 import ModelTest.Editor.Marks
 import ModelTest.Editor.Marks.Follow
 import ModelTest.Editor.Menu
@@ -1404,6 +1405,11 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   buffer's folded ranges reaching its view as placeholders the display
   model shows as one row each, and the range decorations are read over
   counting a fold as one row;
+- `markdownCaseChecks`: the Markdown fixtures under `tests/markdown/`
+  (`Editor/Markdown/Cases.lean`): each layers file decodes, round-trips
+  through `encode`, and the syntax tree model with the canned answers
+  answers each fixture's text its layers, the same layers
+  `ContractTest.markdownCaseChecks` holds the library to;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1764,6 +1770,7 @@ def checks : List Check :=
     foldChecks ++
     foldToggleChecks ++
     foldRegenerateChecks ++
+    markdownCaseChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++
