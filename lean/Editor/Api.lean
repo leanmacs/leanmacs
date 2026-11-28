@@ -1111,6 +1111,15 @@ def BufferId.setStops (id : BufferId) (stops : Array AlignStop) :
     EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.setStops id stops)
 
+/-- Sets the wrap indents of the buffer `id`, byte ranges of its text each
+with where the visual lines of the rows it covers start (`WrapIndent`,
+`Editor/Scene.lean`), which every view of it lays those rows out under
+(`Editor/State.lean`, "Buffers"). Refused with `noSuchBuffer` for a buffer
+there is none of. -/
+def BufferId.setIndents (id : BufferId) (indents : Array WrapIndent) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setIndents id indents)
+
 /-- Sets the links of the buffer `id`, byte ranges of its text each naming a
 target to follow (`Link`, `Editor/Link.lean`), which every view of it draws
 in the link face under its spans and the links mode follows

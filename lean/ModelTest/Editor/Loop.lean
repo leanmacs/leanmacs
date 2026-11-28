@@ -6014,6 +6014,69 @@ def stopChecks : List Check :=
             minibuffer.isSome && stopsOf minibuffer == some #[] &&
               stopsOf (some ⟨0⟩) == some #[stop 0 40, stop 5 40] }]
 
+/-- The wrap indents of the view `view` in the last scene `driver`
+published. -/
+def indentsOfScene (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option (Array WrapIndent) :=
+  driver.model.display.scenes.back?.bind fun scene =>
+    (scene.views.find? (·.id == view)).map (·.indents)
+
+/-- The checks of a view's wrap indents (`Editor/Loop.lean`, "Decorations"):
+a buffer's indents reach every view of it whose range they touch, in order
+and as they are, on the loop's driver over the editor's models and the
+display recorder, as the stop checks run. -/
+def indentChecks : List Check :=
+  -- Offset 600 is in row 86 of `decoratedText`, far below the rows the
+  -- view covers from the text's start; the third indent runs from the
+  -- first rows to past it.
+  let near : WrapIndent := { start := 0, stop := 5, first := 16, rest := .lead 2 }
+  let far : WrapIndent := { start := 600, stop := 610, rest := .points 32 }
+  let across : WrapIndent := { start := 5, stop := 700, first := 8, rest := .points 8 }
+  let indents := #[near, far, across]
+  let indented (state : EditorState) : EditorState :=
+    { state with buffers := state.buffers.map (·.map ({ · with indents })) }
+  let start (second : Option Nat) : TextM EditorState := do
+    match second with
+    | some second =>
+      return indented (← twoViewState decoratedText second)
+    | none =>
+      return indented (← decorationState decoratedText)
+  [{  name :=
+        "a buffer's indents reach its view as they are, those whose range touches the rows it covers, in order, and those wholly outside them are not sent"
+      run :=
+        pure <|
+          match
+            (decorationDriver decoratedText (some (start none))).map (keysFed · "<ArrowRight>") with
+          | none => false
+          | some driver => indentsOfScene driver == some #[near, across] },
+    { name := "a second view of the buffer has the indents that touch its own rows by the same rule"
+      run :=
+        pure <|
+          match
+            (decorationDriver decoratedText (some (start (some 560)))).map
+              (keysFed · "<ArrowRight>") with
+          | none => false
+          | some driver =>
+            indentsOfScene driver == some #[near, across] &&
+              indentsOfScene driver ⟨1⟩ == some #[far, across] },
+    { name := "the minibuffer's view has no indents, though its buffer has some, and a window's has"
+      run :=
+        pure <|
+          match (decorationDriver decoratedText).map (keysFed · "C-s f C-s a f o o") with
+          | none => false
+          | some asking =>
+            let state := indented asking.loop.state
+            let views := (asking.model.display.scenes.back?.map (·.views)).getD #[]
+            let indentsOf (id : Option ViewId) : Option (Array WrapIndent) := do
+              let view ← views.find? (some ·.id == id)
+              match (Loop.indentsOf state view).runModel asking.model.texts with
+              | (.ok found, _) =>
+                some found
+              | _ =>
+                none
+            let minibuffer := state.prompt.map (·.view)
+            minibuffer.isSome && indentsOf minibuffer == some #[] &&
+              indentsOf (some ⟨0⟩) == some #[near, across] }]
+
 /-- The byte offset where row `row` of `text` starts. -/
 def rowStartIn (text : String) (row : Nat) : Nat :=
   ((text.splitOn "\n").take row).foldl (fun offset line => offset + line.utf8ByteSize + 1) 0

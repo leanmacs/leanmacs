@@ -1185,6 +1185,14 @@ none. Layout places the cells of the rows they fall on at them
 row out under the stops of the last frame that showed the text at its
 revision, so they need none of their own.
 
+A view of a buffer with wrap indents (`Buffer.indents`) has those whose
+range touches the same range as its decorations (`View.indents`,
+`indentsOf`), in order and as they are: like stops, nothing moves them. The
+minibuffer's view has none. Layout starts the visual lines of the rows they
+cover where they say (`crates/editor-layout/src/align.rs`, "Wrap indents"),
+and the follow's queries lay a row out under the indents of the last frame
+that showed the text at its revision, as they do its stops.
+
 **Folds.** A view of a buffer with foldable ranges (`Buffer.folds`,
 `Editor/Fold.lean`) has its shown folds (`View.folds`, `views`): its
 folded ranges, outermost first, as the scene's placeholders
@@ -2032,14 +2040,30 @@ def stopsOf (state : EditorState) (view : View) : TextM (Array AlignStop) := do
   catch _ =>
     return #[]
 
+/-- The wrap indents of `view` in `state` ("Decorations", in the module
+docs): its buffer's indents whose range touches its range (starts before its
+stop, and stops at or after its start), in order; none for the minibuffer's
+view, and for a text that refuses. -/
+def indentsOf (state : EditorState) (view : View) : TextM (Array WrapIndent) := do
+  if state.prompt.map (·.view) == some view.id then
+    return #[]
+  let some target := state.target? view.id | return #[]
+  if target.buffer.indents.isEmpty then
+    return #[]
+  try
+    let some (start, stop) ← rangeOf state view | return #[]
+    return target.buffer.indents.filter fun indent => indent.start < stop && start ≤ indent.stop
+  catch _ =>
+    return #[]
+
 /-- `views` with their decorations (`decorationsOf`), their gutter marks
-(`marksOf`) and their align-to stops (`stopsOf`), each read with its scroll
-anchor where the follow left it. -/
+(`marksOf`), their align-to stops (`stopsOf`) and their wrap indents
+(`indentsOf`), each read with its scroll anchor where the follow left it. -/
 def decorated (state : EditorState) (views : Array View) : TextM (Array View) :=
   views.mapM fun view =>
     return { view with
         decorations := ← decorationsOf state view, marks := ← marksOf state view
-        stops := ← stopsOf state view }
+        stops := ← stopsOf state view, indents := ← indentsOf state view }
 
 /-- The face the dividers between tiled windows are drawn in, Emacs's
 `window-divider`: the divider is filled in its foreground. -/

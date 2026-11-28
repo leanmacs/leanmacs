@@ -818,6 +818,13 @@ candidate list with no typed text (`EditorState.keyHints`, a
   (`AlignStop`, `Editor/Scene.lean`). Like spans they are its owner's and
   nothing moves them on an edit: a generated buffer's owner writes its
   text, spans and stops together (`Editor/Columns.lean`).
+- A buffer may have **wrap indents** (`Buffer.indents`, set by
+  `setIndents`, which refuses `noSuchBuffer`): byte ranges of its text,
+  each with where the visual lines of the rows it covers start
+  (`WrapIndent`, `Editor/Scene.lean`). Every view of it lays those rows out
+  under them. Like spans and stops they are its owner's and nothing moves
+  them on an edit: a rendered document's owner writes its text and indents
+  together (`Editor/Markdown/View.lean`).
 - A buffer may have **links** (`Buffer.links`, set by `setLinks`, which
   refuses `noSuchBuffer`): byte ranges of its text, each naming a target to
   follow (`Link`, `Editor/Link.lean`). Every view of it draws them in the
@@ -1355,6 +1362,9 @@ structure Buffer where
   /-- Its align-to stops, set by its owner: where every view of it starts a
   cell of a row ("Buffers", in the module docs). -/
   stops : Array AlignStop := #[]
+  /-- Its wrap indents, set by its owner: where every view of it starts the
+  visual lines of the rows each covers ("Buffers", in the module docs). -/
+  indents : Array WrapIndent := #[]
   /-- Its links, set by its owner: byte ranges of its text each naming a
   target to follow ("Buffers", in the module docs). -/
   links : Array Link := #[]
@@ -3656,6 +3666,13 @@ with `noSuchBuffer` for a buffer there is none of. -/
 def setStops (id : BufferId) (stops : Array AlignStop) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with stops })) state
+
+/-- Sets the wrap indents of the buffer `id` to `indents`, in place of those
+it had ("Buffers", in the module docs). Refused, with the state unchanged,
+with `noSuchBuffer` for a buffer there is none of. -/
+def setIndents (id : BufferId) (indents : Array WrapIndent) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with indents })) state
 
 /-- Sets the links of the buffer `id` to `links`, in place of those it had
 ("Buffers", in the module docs). Refused, with the state unchanged, with

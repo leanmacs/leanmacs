@@ -1402,7 +1402,9 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   (`Editor/Columns.lean`), pure and on the display model, and a generated
   buffer's stops and spans reaching its view; `stopChecks`, beside the
   decoration checks, a buffer's stops reaching every view of it in its
-  range and none the minibuffer's; `linkDecorationChecks`, beside them, a
+  range and none the minibuffer's; `indentChecks`, beside them, a buffer's
+  wrap indents whose ranges touch a view's range reaching it, and none the
+  minibuffer's; `linkDecorationChecks`, beside them, a
   buffer's links drawn in `text.link` under its spans in the same range,
   and none in the minibuffer's view; `foldViewChecks`, beside them, a
   buffer's folded ranges reaching its view as placeholders the display
@@ -1817,6 +1819,7 @@ def checks : List Check :=
     faceVocabularyChecks ++
     searchDecorationChecks ++
     stopChecks ++
+    indentChecks ++
     foldViewChecks ++
     linkDecorationChecks ++
     columnsChecks ++

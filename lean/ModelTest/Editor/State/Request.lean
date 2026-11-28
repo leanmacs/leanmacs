@@ -42,6 +42,7 @@ def stateRequests : List StateRequest :=
     .setHistory ⟨0⟩ (UndoTree.new ⟨1⟩ 0), .setValue ⟨0⟩ "count" (.nat 1),
     .setValue ⟨9⟩ "count" .null, .setSpans ⟨0⟩ #[{ start := 0, stop := 1, face := ⟨"a"⟩ }],
     .setSpans ⟨9⟩ #[], .setStops ⟨0⟩ #[{ offset := 1, x := 40 }], .setStops ⟨9⟩ #[],
+    .setIndents ⟨0⟩ #[{ start := 0, stop := 1, first := 16, rest := .lead 2 }], .setIndents ⟨9⟩ #[],
     .setLinks ⟨0⟩ #[{ start := 0, stop := 1, target := .url "https://example.com" }],
     .setLinks ⟨9⟩ #[], .setFolds ⟨0⟩ #[{ start := 0, stop := 1, key := "a", text := "…" }],
     .setFolds ⟨9⟩ #[], .setFolded ⟨0⟩ "a" true, .setFolded ⟨9⟩ "a" false,
@@ -355,6 +356,25 @@ def stateRequestChecks : List Check :=
               (one.buffer? ⟨1⟩).map (·.stops) == some stops &&
               (one.buffer? ⟨0⟩).map (·.stops) == some #[] &&
               (two.buffer? ⟨1⟩).map (·.stops) == some #[] &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state },
+    { name :=
+        "a buffer's wrap indents are set, replacing those it had, and other buffers keep theirs; a buffer there is none of is refused with noSuchBuffer"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let indents : Array WrapIndent :=
+              #[{ start := 0, stop := 2, first := 16, rest := .points 32 },
+                { start := 1, stop := 1, rest := .lead 4 }]
+            let (set, one) := state.handle (.setIndents ⟨1⟩ indents)
+            let (_, two) := one.handle (.setIndents ⟨1⟩ #[])
+            let (absent, same) := state.handle (.setIndents ⟨9⟩ indents)
+            replied set == .inr () && (state.buffer? ⟨1⟩).map (·.indents) == some #[] &&
+              (one.buffer? ⟨1⟩).map (·.indents) == some indents &&
+              (one.buffer? ⟨0⟩).map (·.indents) == some #[] &&
+              (two.buffer? ⟨1⟩).map (·.indents) == some #[] &&
               replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
               same == state },
     { name :=

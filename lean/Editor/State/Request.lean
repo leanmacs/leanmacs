@@ -305,6 +305,8 @@ inductive StateRequest where
   | setSpans (id : BufferId) (spans : Array Decoration)
   /-- Set the align-to stops of the buffer `id`, in place of those it had. -/
   | setStops (id : BufferId) (stops : Array AlignStop)
+  /-- Set the wrap indents of the buffer `id`, in place of those it had. -/
+  | setIndents (id : BufferId) (indents : Array WrapIndent)
   /-- Set the links of the buffer `id`, in place of those it had. -/
   | setLinks (id : BufferId) (links : Array Link)
   /-- Declare the foldable ranges of the buffer `id`, keeping the state of
@@ -483,6 +485,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setReadOnly .. => Except BufferRefusal Unit
   | .setSpans .. => Except BufferRefusal Unit
   | .setStops .. => Except BufferRefusal Unit
+  | .setIndents .. => Except BufferRefusal Unit
   | .setLinks .. => Except BufferRefusal Unit
   | .setFolds .. => Except BufferRefusal Unit
   | .setMarkdown .. => Except BufferRefusal Unit
@@ -597,6 +600,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setReadOnly id on, state => state.setReadOnly id on
   | .setSpans id spans, state => state.setSpans id spans
   | .setStops id stops, state => state.setStops id stops
+  | .setIndents id indents, state => state.setIndents id indents
   | .setLinks id links, state => state.setLinks id links
   | .setFolds id declared, state => state.setFolds id declared
   | .setMarkdown id doc, state => state.setMarkdown id doc
