@@ -16,8 +16,11 @@ columns here, so every one of them lines up by one rule.
   points, as `Display.measure` answers them and as a stop's x is.
 - **A row is its cells joined by a separator** (a space by default), and
   the rows are joined by line feeds. Each cell after a row's first has a
-  stop at its first byte, at its column's x (`lay`); the first needs none,
-  since a row starts at 0.
+  stop at its first byte, at its column's x (`lay`, over `stopsAt`); the
+  first needs none, since a row starts at 0. A generator that lays its own
+  text out, as a rendered Markdown table does, measures its cells in their
+  own faces (`measureCells`) and puts the stops at its cells' offsets
+  (`stopsAt`).
 - **The separator is drawn in the gap.** Layout gives the gap before a
   stop to the character before it (`crates/editor-layout/src/align.rs`), so
   the separator is as wide as the gap, and the gap should be at least the
@@ -64,20 +67,29 @@ def placed (rows : Array (Array String)) (separator : String := " ") : String ×
       ("", #[], true)
   (text, offsets)
 
+/-- A stop at each cell's first byte after a row's first, `cells` the byte
+offsets of each row's cells, at its column's x in `starts`. A cell of a
+column `starts` has no x for has no stop. -/
+def stopsAt (cells : Array (Array Nat)) (starts : Array Nat) : Array AlignStop :=
+  cells.foldl
+    (fun stops row =>
+      (row.zipIdx.filterMap fun (offset, column) =>
+            if column == 0 then none else (starts[column]?.map fun x => { offset, x })).foldl
+        Array.push stops)
+    #[]
+
 /-- The text of `rows` of cells laid out in columns at `starts` (`placed`),
 and a stop at the first byte of each cell after a row's first, at its
-column's x. A cell of a column `starts` has no x for has no stop. -/
+column's x (`stopsAt`). -/
 def lay (rows : Array (Array String)) (starts : Array Nat) (separator : String := " ") :
     String × Array AlignStop :=
   let (text, offsets) := placed rows separator
-  let stops :=
-    offsets.foldl
-      (fun stops cells =>
-        (cells.zipIdx.filterMap fun (offset, column) =>
-              if column == 0 then none else (starts[column]?.map fun x => { offset, x })).foldl
-          Array.push stops)
-      #[]
-  (text, stops)
+  (text, stopsAt offsets starts)
+
+/-- How wide each cell of `rows` is, each laid out in its own faces
+(`Display.measure`), row by row: what `starts` takes. -/
+def measureCells (rows : Array (Array Display.MeasureQuery)) : DisplayM (Array (Array Nat)) :=
+  rows.mapM (·.mapM Display.measure)
 
 /-- The text, the stops and the decorations of `rows` of cells, each in its
 face over the default face when it names one, laid out in columns: each

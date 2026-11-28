@@ -18,6 +18,7 @@ exactly the layers checked in beside it.
 | `links.md` | inline links to a URL, an `rdm:` reference, an absolute `path:line` and a relative `path:line:column`; an autolink, an email autolink, a bare URL, a `path:line` in prose and in a code span, an image, and a reference link with its definition |
 | `folds.md` | headings of levels 1, 2, 3, 2 and 1, and two fences |
 | `lists.md` | a bullet list with a nested list, an ordered list, a block quote with a nested quote, and a thematic break |
+| `view.md` | a heading, a paragraph with emphasis, a link and a `path:line`, and a fence: what the rendered view's checks write into a buffer |
 | `stream.md` | a whole streamed document: a heading, a paragraph, a fence, a table and a paragraph with a relative link |
 | `stream-head.md` | its first chunk, cut mid-paragraph: what the first render parses |
 | `stream-tail-1.md` ... `stream-tail-3.md` | the tails each later chunk has parsed: the last block so far and the chunk, cut inside an open fence the next chunk closes and in a table that gains a row |

@@ -104,6 +104,7 @@ import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Markdown.Cases
 import ModelTest.Editor.Markdown.Doc
 import ModelTest.Editor.Markdown.Target
+import ModelTest.Editor.Markdown.View
 import ModelTest.Editor.Marks
 import ModelTest.Editor.Marks.Follow
 import ModelTest.Editor.Menu
@@ -1438,6 +1439,19 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   blocks, counted by `Doc.rendered`, the document it ends with describes
   the whole render, a kept heading's fold grows over the appended blocks,
   and no byte before `Doc.firstChanged` changes;
+- `markdownViewChecks`: the one core call that renders Markdown into a
+  generated buffer (`Editor/Markdown/View.lean`), on the stepped loop over
+  the models, the syntax tree model answering the fixtures' canned layers:
+  one `renderMarkdown` of `view.md` sets the buffer's text, spans, links
+  and folds to its description's and keeps the document, the next scene
+  draws them, the rendered heading's face resolves larger than the body's,
+  and each refusal leaves the buffer as it was; `markdownTableViewChecks`, a
+  rendered table's stops at its measured columns, on the buffer and its
+  view; `markdownAppendChecks`, `appendMarkdown` rendering only the tail's
+  blocks, rewriting no byte before the first changed offset, ending with
+  the whole render's text, spans and links (a relative link in a later
+  chunk resolved against the first render's root), and keeping a toggled
+  fold of the prefix folded;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1806,6 +1820,9 @@ def checks : List Check :=
     markdownLinkChecks ++
     markdownFoldChecks ++
     markdownStreamChecks ++
+    markdownViewChecks ++
+    markdownTableViewChecks ++
+    markdownAppendChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++

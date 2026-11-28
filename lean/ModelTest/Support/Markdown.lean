@@ -82,6 +82,14 @@ def listsLayers : String :=
 def lists : Cases.Fixture :=
   fixture "lists" (include_str "../../../tests/markdown/lists.md") listsLayers
 
+/-- The layers file of `tests/markdown/view.md`, as checked in. -/
+def viewLayers : String :=
+  include_str "../../../tests/markdown/view.layers.json"
+
+/-- `tests/markdown/view.md` and its layers. -/
+def view : Cases.Fixture :=
+  fixture "view" (include_str "../../../tests/markdown/view.md") viewLayers
+
 /-- The layers file of `tests/markdown/stream.md`, as checked in. -/
 def streamLayers : String :=
   include_str "../../../tests/markdown/stream.layers.json"
@@ -133,8 +141,8 @@ def streamChunks : Array String :=
 /-- Every fixture, with its layers file as checked in. -/
 def files : Array (Cases.Fixture × String) :=
   #[(prose, proseLayers), (headings, headingsLayers), (code, codeLayers), (table, tableLayers),
-    (links, linksLayers), (folds, foldsLayers), (lists, listsLayers), (stream, streamLayers),
-    (streamHead, streamHeadLayers), (streamTail1, streamTail1Layers),
+    (links, linksLayers), (folds, foldsLayers), (lists, listsLayers), (view, viewLayers),
+    (stream, streamLayers), (streamHead, streamHeadLayers), (streamTail1, streamTail1Layers),
     (streamTail2, streamTail2Layers), (streamTail3, streamTail3Layers)]
 
 /-- Every fixture. -/

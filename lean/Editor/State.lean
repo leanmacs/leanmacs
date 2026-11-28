@@ -12,6 +12,7 @@ import Editor.JumpList
 import Editor.Language.Grammar.Answer
 import Editor.Layout
 import Editor.Link
+import Editor.Markdown.Doc
 import Editor.Marks
 import Editor.PackageSet.Running
 import Editor.Restore.Kept
@@ -832,6 +833,12 @@ candidate list with no typed text (`EditorState.keyHints`, a
   changes no text, so the text's content and revision stay as they were.
   Like spans and links they are its owner's and nothing moves them on an
   edit.
+- A buffer may have a **rendered Markdown document** (`Buffer.markdown`,
+  set by `setMarkdown`, which refuses `noSuchBuffer`): the document its
+  text, spans, stops, links and folds were rendered from
+  (`Editor/Markdown/View.lean`), kept so an append renders only its tail.
+  Like the parts it made it is its owner's: an owner that also writes the
+  text by hand renders the document again.
 - A buffer may have a **gutter** (`Buffer.gutter`, set by `setGutter`,
   which refuses `noSuchBuffer`): marks, each a byte range of its text at
   the gutter's revision with a short text and a face, which every window
@@ -1354,6 +1361,9 @@ structure Buffer where
   /-- Its foldable ranges, declared by its owner, each with whether it is
   folded now ("Buffers", in the module docs). -/
   folds : Array Foldable := #[]
+  /-- The rendered Markdown document its text and parts were made from, if
+  any ("Buffers", in the module docs). -/
+  markdown : Option Markdown.Doc := none
   /-- For an excerpt buffer, what its edits reached ("Excerpt buffers", in
   the module docs); `none` for any other buffer. -/
   excerpts : Option Buffer.Excerpts := none
@@ -3663,6 +3673,13 @@ def setFolds (id : BufferId) (declared : Array Foldable) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with folds := Fold.merge buffer.folds declared }))
     state
+
+/-- Sets the rendered Markdown document of the buffer `id` to `doc`, in
+place of any it had ("Buffers", in the module docs). Refused, with the
+state unchanged, with `noSuchBuffer` for a buffer there is none of. -/
+def setMarkdown (id : BufferId) (doc : Option Markdown.Doc) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with markdown := doc })) state
 
 /-- Folds (`folded`) or unfolds the foldable range of the buffer `id` whose
 key is `key`; a key no range has changes nothing. The text is not touched

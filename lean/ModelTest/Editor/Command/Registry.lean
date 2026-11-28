@@ -32,6 +32,7 @@ def registryRequestChecks : List Check :=
             RegistryRequest.bare .syntaxRefreshDelay == none &&
             RegistryRequest.bare (.languageOf "/p/main.rs") == none &&
             RegistryRequest.bare (.indentUnitOf "rust") == none &&
+            RegistryRequest.bare .languageCaptures == none &&
             (RegistryRequest.bare (.categorySources "buffer")).isEmpty &&
             (RegistryRequest.bare (.atPointSources (some "notes") #["one"] .key)).isEmpty &&
             (RegistryRequest.bare (.atPointSources none #[] .key)).isEmpty &&

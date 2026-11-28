@@ -26,6 +26,7 @@ import Editor.Language.Grammar
 import Editor.Language.Grammar.Answer
 import Editor.Layout
 import Editor.Loop
+import Editor.Markdown.View
 import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
@@ -544,6 +545,27 @@ def dispatchRegistryChecks : List Check :=
           match (program.runModel editorModel).1 with
           | .ok (.finished answer, _) => answer == (some "rust", none)
           | _ => false },
+    { name :=
+        "a dispatched command that asks for the language table's captures is answered each of the loop's languages, config's over the shipped ones, as its grammar and its capture overrides; a view reads the shipped table where no loop runs it"
+      run :=
+        let table :=
+          [{ Language.toml with syntaxTree := { grammar := "toml", captures := [("x", none)] } },
+            Language.rust]
+        let program :
+          EditorM
+            (Guarded (Option (List (String × List (String × Option FaceName)))) × EditorState) :=
+          do
+          (RegistryRequest.ask .languageCaptures).dispatched { languages := table } (← twoBuffers)
+        let bare : EditorM (List (String × List (String × Option FaceName))) :=
+          Markdown.languageTable
+        pure <|
+          (match (program.runModel editorModel).1 with
+            | .ok (.finished answer, _) => answer == some [("toml", [("x", none)]), ("rust", [])]
+            | _ => false) &&
+            (bare.runModel editorModel).1.toOption ==
+              some
+                (Language.shipped.toList.map fun language =>
+                  (language.syntaxTree.grammar, language.syntaxTree.captures)) },
     { name :=
         "a dispatched command that asks for a language's indent unit is answered the unit of the loop's entry of that name, the first in the table, or none; and a target's unit is its buffer's language's, or four spaces for a buffer with no language or one the table has no entry of"
       run :=

@@ -70,6 +70,12 @@ def columnsChecks : List Check :=
         pure <|
           Columns.lay #[#["é", "x"], #["ab", "😀", "z"]] #[0, 10, 20] ==
             ("é x\nab 😀 z", #[columnStop 3 10, columnStop 8 10, columnStop 13 20]) },
+    { name :=
+        "stopsAt puts a stop at each row's later cells' offsets, at their columns' x, the first cell of a row none, and a column with no x none"
+      run :=
+        pure <|
+          Columns.stopsAt #[#[0, 4, 9], #[12, 15]] #[0, 30] ==
+            #[columnStop 4 30, columnStop 15 30] },
     { name := "a column `starts` has no x for gives its cells no stop"
       run := pure ((Columns.lay #[#["a", "b", "c"]] #[0, 10]).2 == #[columnStop 2 10]) },
     { name :=

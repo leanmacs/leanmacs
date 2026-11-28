@@ -38,6 +38,8 @@ def markdownFixtureFiles : List (String × String × String) :=
       include_str "../../../../tests/markdown/folds.layers.json"),
     ("lists", include_str "../../../../tests/markdown/lists.md",
       include_str "../../../../tests/markdown/lists.layers.json"),
+    ("view", include_str "../../../../tests/markdown/view.md",
+      include_str "../../../../tests/markdown/view.layers.json"),
     ("stream", include_str "../../../../tests/markdown/stream.md",
       include_str "../../../../tests/markdown/stream.layers.json"),
     ("stream-head", include_str "../../../../tests/markdown/stream-head.md",

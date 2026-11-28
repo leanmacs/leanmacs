@@ -239,6 +239,10 @@ from the next command.
     of that name in the table (config's entries first), or `none`; `=` and
     the commands that open a line ask (`Target.indentUnit`,
     `Editor/Api.lean`);
+  - each language's grammar and capture overrides (`languageCaptures`):
+    the loop's table (`Loop.Registered.languages`), config's entries over
+    the shipped ones; a rendered Markdown view asks, for the faces it draws
+    a fence's captures in (`Editor/Markdown/View.lean`);
   - whether a job is registered (`hasJob`, from `Loop.Registered.jobs`, as
     a start is checked): `prompt` asks it of a source that answers later;
   - which sources a category has (`categorySources`, filled from
@@ -628,6 +632,10 @@ def Loop.Registered.answer (registered : Loop.Registered) :
   | .syntaxRefreshDelay => registered.syntaxRefreshDelay
   | .languageOf path => (Language.forPath registered.languages path).map (·.name)
   | .indentUnitOf language => (registered.languages.find? (·.name == language)).map (·.indentUnit)
+  | .languageCaptures =>
+    some
+      (registered.languages.map fun language =>
+        (language.syntaxTree.grammar, language.syntaxTree.captures))
   | .hasJob name => registered.jobs name
   | .categorySources category => registered.categorySources category
   | .atPointSources major minors occasion =>

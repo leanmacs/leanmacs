@@ -310,6 +310,9 @@ inductive StateRequest where
   /-- Declare the foldable ranges of the buffer `id`, keeping the state of
   each whose key survives. -/
   | setFolds (id : BufferId) (declared : Array Foldable)
+  /-- Set the rendered Markdown document of the buffer `id`, or take it
+  away. -/
+  | setMarkdown (id : BufferId) (doc : Option Markdown.Doc)
   /-- Fold or unfold the foldable range of the buffer `id` keyed `key`. -/
   | setFolded (id : BufferId) (key : String) (folded : Bool)
   /-- Set the gutter of the buffer `id`, or take it away. -/
@@ -482,6 +485,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setStops .. => Except BufferRefusal Unit
   | .setLinks .. => Except BufferRefusal Unit
   | .setFolds .. => Except BufferRefusal Unit
+  | .setMarkdown .. => Except BufferRefusal Unit
   | .setFolded .. => Except BufferRefusal Unit
   | .setGutter .. => Except BufferRefusal Unit
   | .gutter _ => Unit
@@ -595,6 +599,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setStops id stops, state => state.setStops id stops
   | .setLinks id links, state => state.setLinks id links
   | .setFolds id declared, state => state.setFolds id declared
+  | .setMarkdown id doc, state => state.setMarkdown id doc
   | .setFolded id key folded, state => state.setFolded id key folded
   | .setGutter id gutter, state => state.setGutter id gutter
   | .gutter change, state => ((), state.changeGutter change)

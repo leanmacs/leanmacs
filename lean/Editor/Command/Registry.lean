@@ -71,6 +71,12 @@ request of the editor's port (`EditorRequest.registry`,
 - `languageOf` is answered the name of the language the table chooses for
   a path (`Language.forPath`), and `indentUnitOf` the unit of the table's
   first entry of a name.
+- `languageCaptures` is answered each language of the table, config's
+  entries over the shipped ones, as its grammar's name and its captures'
+  face overrides (`Mode.SyntaxTree.captures`): what a rendered Markdown
+  view draws a fence's captures with (`Editor/Markdown/View.lean`). It is
+  plain data, since this module sits below `Editor.Language`; `none` where
+  no loop runs the command, which a caller reads as the shipped table.
 - `hasJob` is answered whether a job is registered under a name, as a
   start is checked.
 - `categorySources` is answered the names of the completion sources
@@ -146,6 +152,9 @@ inductive RegistryRequest where
   /-- The indent unit of the language called `language`, from the
   registry's table. -/
   | indentUnitOf (language : String)
+  /-- Each language of the registry's table, as its grammar's name and its
+  captures' face overrides. -/
+  | languageCaptures
   /-- Whether a job is registered under `name`. -/
   | hasJob (name : String)
   /-- Which completion sources are registered in `category`, by name, in
@@ -191,6 +200,7 @@ abbrev RegistryRequest.Reply : RegistryRequest → Type
   | .syntaxRefreshDelay => Option Nat
   | .languageOf _ => Option String
   | .indentUnitOf _ => Option Language.IndentUnit
+  | .languageCaptures => Option (List (String × List (String × Option FaceName)))
   | .hasJob _ => Bool
   | .categorySources _ => Array String
   | .atPointSources .. => Array String
@@ -216,6 +226,7 @@ def RegistryRequest.bare : (request : RegistryRequest) → request.Reply
   | .syntaxRefreshDelay => none
   | .languageOf _ => none
   | .indentUnitOf _ => none
+  | .languageCaptures => none
   | .hasJob _ => true
   | .categorySources _ => #[]
   | .atPointSources .. => #[]

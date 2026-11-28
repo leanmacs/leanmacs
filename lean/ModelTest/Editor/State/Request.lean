@@ -45,16 +45,16 @@ def stateRequests : List StateRequest :=
     .setLinks ⟨0⟩ #[{ start := 0, stop := 1, target := .url "https://example.com" }],
     .setLinks ⟨9⟩ #[], .setFolds ⟨0⟩ #[{ start := 0, stop := 1, key := "a", text := "…" }],
     .setFolds ⟨9⟩ #[], .setFolded ⟨0⟩ "a" true, .setFolded ⟨9⟩ "a" false,
-    .setMajorMode ⟨0⟩ "listing", .setMajorMode ⟨9⟩ "listing", .addMinorMode ⟨1⟩ "one",
-    .removeMinorMode ⟨1⟩ "one", .split ⟨0⟩ (marker 0 8) (marker 0 9),
-    .split ⟨1⟩ (marker 1 8) (marker 1 9), .split ⟨0⟩ (marker 1 8) (marker 0 9),
-    .split ⟨9⟩ (marker 0 8) (marker 0 9), .removeWindow ⟨1⟩, .removeWindow ⟨9⟩, .focus ⟨1⟩,
-    .focus ⟨9⟩, .show ⟨0⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .show ⟨0⟩ ⟨9⟩ (marker 2 0) (marker 2 1),
-    .show ⟨0⟩ ⟨2⟩ (marker 0 0) (marker 2 1), .show ⟨9⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .message "hi",
-    .startJob "count" [.nat 1], .startJob "count" [.nat 1] (some "k"), .cancelJob "k",
-    .attachFile ⟨2⟩ notePath noteStamp .crlf, .attachFile ⟨9⟩ notePath noteStamp .lf,
-    .beginSave ⟨0⟩ ⟨4⟩ ⟨0⟩, .beginSave ⟨9⟩ ⟨4⟩ ⟨0⟩, .endSave ⟨0⟩ ⟨4⟩ (some noteStamp),
-    .endSave ⟨9⟩ ⟨4⟩ none,
+    .setMarkdown ⟨0⟩ (some { source := "# a" }), .setMarkdown ⟨9⟩ none, .setMajorMode ⟨0⟩ "listing",
+    .setMajorMode ⟨9⟩ "listing", .addMinorMode ⟨1⟩ "one", .removeMinorMode ⟨1⟩ "one",
+    .split ⟨0⟩ (marker 0 8) (marker 0 9), .split ⟨1⟩ (marker 1 8) (marker 1 9),
+    .split ⟨0⟩ (marker 1 8) (marker 0 9), .split ⟨9⟩ (marker 0 8) (marker 0 9), .removeWindow ⟨1⟩,
+    .removeWindow ⟨9⟩, .focus ⟨1⟩, .focus ⟨9⟩, .show ⟨0⟩ ⟨2⟩ (marker 2 0) (marker 2 1),
+    .show ⟨0⟩ ⟨9⟩ (marker 2 0) (marker 2 1), .show ⟨0⟩ ⟨2⟩ (marker 0 0) (marker 2 1),
+    .show ⟨9⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .message "hi", .startJob "count" [.nat 1],
+    .startJob "count" [.nat 1] (some "k"), .cancelJob "k", .attachFile ⟨2⟩ notePath noteStamp .crlf,
+    .attachFile ⟨9⟩ notePath noteStamp .lf, .beginSave ⟨0⟩ ⟨4⟩ ⟨0⟩, .beginSave ⟨9⟩ ⟨4⟩ ⟨0⟩,
+    .endSave ⟨0⟩ ⟨4⟩ (some noteStamp), .endSave ⟨9⟩ ⟨4⟩ none,
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 8 0) (marker 8 1),
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
     .closePrompt none, .closePrompt (some "typed"),
@@ -374,6 +374,23 @@ def stateRequestChecks : List Check :=
               (one.buffer? ⟨1⟩).map (·.links) == some links &&
               (one.buffer? ⟨0⟩).map (·.links) == some #[] &&
               (two.buffer? ⟨1⟩).map (·.links) == some #[] &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state },
+    { name :=
+        "a buffer's rendered Markdown document is set, replacing any it had, and taken away, other buffers keeping none; a buffer there is none of is refused with noSuchBuffer"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let doc : Markdown.Doc := { source := "# One\n", rendered := 1 }
+            let (set, one) := state.handle (.setMarkdown ⟨1⟩ (some doc))
+            let (_, two) := one.handle (.setMarkdown ⟨1⟩ none)
+            let (absent, same) := state.handle (.setMarkdown ⟨9⟩ (some doc))
+            replied set == .inr () && (state.buffer? ⟨1⟩).map (·.markdown) == some none &&
+              (one.buffer? ⟨1⟩).map (·.markdown) == some (some doc) &&
+              (one.buffer? ⟨0⟩).map (·.markdown) == some none &&
+              (two.buffer? ⟨1⟩).map (·.markdown) == some none &&
               replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
               same == state },
     { name :=
