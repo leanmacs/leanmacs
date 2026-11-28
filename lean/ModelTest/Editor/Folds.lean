@@ -15,6 +15,7 @@ import Editor.Test.Loop
 import Editor.Test.Models
 import Editor.Test.Prompts
 import ModelTest.Check
+import ModelTest.Support.Inside
 
 /-!
 # Model tests: `Editor/Folds.lean`
@@ -26,7 +27,9 @@ registered as the package `fold-commands` registers them, with the commands
 of the checks: `fill` makes the buffer `sections` of `foldText` with
 `foldRanges` declared and its major mode `sections`, which fills `toggle`
 with `section-toggle` (it says `toggled`), and shows it; `fill-bare` makes
-the buffer `bare` of the same text and ranges and no mode; `fill-two` and
+the buffer `bare` of the same text and ranges and no mode; `fill-self`
+makes the buffer `self` of the same text and ranges and its major mode
+`self-toggle`, which fills `toggle` with `fold-toggle` itself; `fill-two` and
 `regenerate` declare and redeclare the ranges of the regeneration check;
 and `at` puts the cursor at the byte its argument names. The active keymaps
 are the registry's (`Config.Registry.activeMaps`), so the `toggle` role's
@@ -60,6 +63,11 @@ def foldRanges : Array Foldable :=
 def foldSections : Mode :=
   { name := "sections", roles := [(Role.toggle, "section-toggle")] }
 
+/-- The mode `self-toggle`, which fills `toggle` with `fold-toggle`
+itself. -/
+def foldSelfToggle : Mode :=
+  { name := "self-toggle", roles := [(Role.toggle, Folds.toggleName)] }
+
 /-- The text of the regeneration check before it regenerates: `a` at row 1,
 `b` at row 3. -/
 def foldTwoText : String :=
@@ -89,6 +97,7 @@ def foldsTestPackage : Package :=
       Folds.setup
       commandWith "fill" (fillFolded "sections" foldText foldRanges (some foldSections.name))
       commandWith "fill-bare" (fillFolded "bare" foldText foldRanges none)
+      commandWith "fill-self" (fillFolded "self" foldText foldRanges (some foldSelfToggle.name))
       commandWith "fill-two"
           (fillFolded "two" foldTwoText
             #[{ start := 2, stop := 4, key := "a", text := "[a]", folded := true },
@@ -110,7 +119,8 @@ def foldsTestPackage : Package :=
           match call.arguments with
           | [.nat offset] => Jumps.placeCursor call.target.window.id offset
           | _ => pure ()
-      defineMode foldSections }
+      defineMode foldSections
+      defineMode foldSelfToggle }
 
 /-- The driver of the fold checks over the test package's registry, on a
 buffer that holds `foldText`; `none` if making the state was refused. -/
@@ -210,7 +220,30 @@ def foldToggleChecks : List Check :=
             (foldAt 0 "fill-bare").map (fun driver => (foldToggled driver).loop.state.echo) ==
               some "fold-toggle: no fold at the cursor" &&
             (foldAt 0).bind (fun driver => foldStates (foldToggled driver)) ==
-              some (foldRanges.toList.map fun range => (range.key, range.folded)) }]
+              some (foldRanges.toList.map fun range => (range.key, range.folded)) },
+    { name :=
+        "off every foldable range in a buffer whose own mode fills toggle with fold-toggle, toggle says there is no fold at the cursor, and does not run fold-toggle again"
+      run :=
+        pure <|
+          let said := "fold-toggle: no fold at the cursor"
+          match foldAt 0 "fill-self" with
+          | none => false
+          | some off =>
+            match off.loop.state.target? ⟨0⟩ with
+            | none => false
+            | some target =>
+              -- `fold-toggle` run by hand first, a command it runs inside
+              -- itself recorded and not run: were it to run itself again,
+              -- that fails here, where pressing the key would never come
+              -- back. Only once it does not is the key pressed.
+              match ranInside 100 off #[] (Folds.toggle { target }).run with
+              | none => false
+              | some (ran, toggled) =>
+                if ran.isEmpty && toggled.loop.state.echo == said then
+                  (foldToggled off).loop.state.echo == said &&
+                    foldStates (foldToggled off) ==
+                      some (foldRanges.toList.map fun range => (range.key, range.folded))
+                else false }]
 
 /-- The checks of declaring a buffer's foldable ranges again
 (`Editor/Fold.lean`, "Declaring again keeps the toggles"), on the fold

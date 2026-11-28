@@ -1391,8 +1391,9 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   (`Editor/Folds.lean`) on a hosted driver over the core's `Folds.setup`:
   a folded range unfolded and an unfolded one folded by the `toggle` role's
   key with the text and its revision unchanged, nested ranges unfolded
-  outer first, the buffer's own `toggle` off every range, and a
-  regeneration keeping each surviving key's toggled state;
+  outer first, the buffer's own `toggle` off every range, a mode of the
+  buffer's own that fills `toggle` with `fold-toggle` itself not running
+  it again, and a regeneration keeping each surviving key's toggled state;
 - `columnsChecks`: the column arithmetic of align-to stops
   (`Editor/Columns.lean`), pure and on the display model, and a generated
   buffer's stops and spans reaching its view; `stopChecks`, beside the

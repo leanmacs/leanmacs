@@ -1,10 +1,10 @@
-import Editor.Command.Dispatch
 import Editor.Link
 import Editor.Links
 import Editor.Role
 import Editor.Test.Driver
 import Editor.Test.Prompts
 import ModelTest.Check
+import ModelTest.Support.Inside
 import ModelTest.Support.Jumps
 import ModelTest.Support.Links
 
@@ -28,27 +28,6 @@ def linkUrl : String :=
 /-- The names of the jobs `driver` holds that have not finished. -/
 def pendingNames (driver : TestDriver) : Array String :=
   driver.pending.map (·.name)
-
-/-- `program` run in `driver`'s editor, its requests answered as the loop
-answers them (the registry's questions from what the loop was told is
-registered, the state's from its state, the rest from its models), except
-that a command it runs inside itself is not run: its name is added to
-`ran` and it is answered as run. The names it ran and the driver after its
-last request; `none` once it has made `fuel` requests. -/
-def ranInside {α : Type} :
-    Nat → TestDriver → Array String → Program editorPort α → Option (Array String × TestDriver)
-  | 0, _, _, _ => none
-  | _ + 1, driver, ran, .done _ => some (ran, driver)
-  | fuel + 1, driver, ran, .step (.control (.runCommand name _)) next =>
-    ranInside fuel driver (ran.push name) (next true)
-  | fuel + 1, driver, ran, .step (.registry request) next =>
-    ranInside fuel driver ran (next (driver.keys.registered.answer request))
-  | fuel + 1, driver, ran, .step (.state request) next =>
-    let (reply, state) := driver.loop.state.handle request
-    ranInside fuel { driver with loop := { driver.loop with state } } ran (next reply)
-  | fuel + 1, driver, ran, .step request next =>
-    let (reply, model) := driver.model.handle request
-    ranInside fuel { driver with model } ran (next reply)
 
 /-- The checks of following a link (`Editor/Links.lean`, "Following" and
 "Each kind of target"), on the link checks' driver, `activate`'s key pressed
