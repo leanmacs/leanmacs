@@ -13,11 +13,18 @@ publish = false
 # nothing links. In the dev profile that archive is the very unit the test
 # fixture `editor-syntax-fixture-grammars` builds for its own build script,
 # since both take the grammar at the same pin and features; in release it
-# is compiled at the build-override's opt-level 0 and wasted. The crates.io
-# grammars are about 11 MB of C together; the vendored Lean grammar, 49 MB,
-# is no dependency at all but a directory the build script compiles
+# is compiled at the build-override's opt-level 0 and wasted. Cargo runs
+# those builds in parallel; the build script compiles each library once
+# more, at `OPT_LEVEL`, one grammar after another. The crates.io grammars
+# are about 99 MB of C together, most of it the popular languages' (swift
+# 23 MB, typescript and tsx 18 MB, cpp 17 MB, ruby 15 MB), though a parser
+# is mostly tables and compiles in under 2 s; the vendored Lean grammar,
+# 49 MB, is no dependency at all but a directory the build script compiles
 # (`build.rs`), so no build compiles its archive (docs/design/packages.md,
-# "A package's grammars", "From source"). Each grammar added here gets its
+# "A package's grammars", "From source", which records the set's build
+# time and the staged size, and the two savings set aside: skipping the
+# wasted archives, and compiling the libraries in parallel). Each grammar
+# added here gets its
 # line in this crate's `deny.toml` and in the grammars table of the
 # package's README.md.
 #
@@ -158,6 +165,114 @@ tree-sitter-toml-ng = { version = "=0.7.0" }
 # `tree-sitter-language ^0.1`, already locked. MIT, used unmodified; its
 # notice travels with the library at `grammars/licenses/tree-sitter-yaml`.
 tree-sitter-yaml = { version = "=0.7.2" }
+# The popular languages (the shipped-grammars roadmap's phase 5): java,
+# swift, ruby, python, javascript, typescript and tsx, c, cpp and
+# clojure_orchard, each looked at on crates.io on 2026-11-27 and each the
+# newest release then. Each depends on `tree-sitter-language ^0.1` alone
+# (normal) and on `cc` (build), both already locked, so none has a
+# `tree-sitter` normal dependency (its `tree-sitter` is a dev-dependency)
+# and none can clash with the pinned library over `links = "tree-sitter"`.
+# Each ships a generated `parser.c`, any external scanner is a `scanner.c`,
+# and each loads into the pinned tree-sitter (0.27.2), so none is vendored:
+# each builds as published, and is used unmodified.
+#
+# Each declares no reparse policy, so it is reparsed whole each round, as
+# `yaml` is: each former built-in's `incremental` was earned by a sweep of
+# incremental reparses against fresh parses (above), and a sweep each is
+# the rdm task `languages-reparse-policies`. Whole is always correct; its
+# cost is a whole parse on the syntax worker each round.
+#
+# Each ships its highlights query, copied to `grammars/queries/<name>/`
+# byte for byte or, where the grammar's own `tree-sitter.json` names
+# several files, joined from them in its order with nothing between
+# (`packages/languages/README.md` names the parts). Locals and tags are
+# never shipped: the editor reads only highlights, injections, indents and
+# text objects (`Language.Grammar.queryFiles`). No grammar here ships an
+# indents or text-objects query in the editor's names, so none ships one.
+#
+# The grammar `java`: the tree-sitter org's Java grammar, 0.23.5, released
+# 2024-12-21. ABI 14. MIT; its crate ships no `LICENSE`: the notice at
+# `grammars/licenses/tree-sitter-java` is upstream's, at the tag
+# `v0.23.5`. It ships `highlights.scm`.
+tree-sitter-java = { version = "=0.23.5" }
+# The grammar `swift`: alex-pinkus's Swift grammar, the one nvim, Helix
+# and Zed use, 0.7.4, released 2026-10-04. ABI 15. MIT; the notice at
+# `grammars/licenses/tree-sitter-swift` is the crate's `LICENSE`. The crate
+# also holds a `node_modules/` of four `LICENSE` files and a `Cargo.lock`,
+# neither compiled nor shipped. It ships `highlights.scm` and
+# `injections.scm`. Its `indents.scm` is nvim-treesitter's rule
+# (`@indent.end`, `@indent.dedent`, `@indent.auto`, `#set!
+# indent.immediate`), not the five names `Editor/Indent.lean` reads with
+# rules of its own, so half-read it would indent wrongly; its
+# `textobjects.scm` is Helix's names (`@function.around`,
+# `@function.inside`), which the editor's text objects do not read; its
+# folds, outline and locals are read by nothing. None of them ships.
+tree-sitter-swift = { version = "=0.7.4" }
+# The grammar `ruby`: the tree-sitter org's Ruby grammar, 0.23.1, released
+# 2024-11-11. ABI 14. MIT; its crate ships no `LICENSE`: the notice at
+# `grammars/licenses/tree-sitter-ruby` is upstream's, at the tag
+# `v0.23.1`. It ships `highlights.scm`.
+tree-sitter-ruby = { version = "=0.23.1" }
+# The grammar `python`: the tree-sitter org's Python grammar, 0.25.0,
+# released 2025-09-11. ABI 15. MIT; the notice at
+# `grammars/licenses/tree-sitter-python` is the crate's `LICENSE`. It ships
+# `highlights.scm`.
+tree-sitter-python = { version = "=0.25.0" }
+# The grammar `javascript`, which covers `.jsx` too: the tree-sitter org's
+# JavaScript grammar, 0.25.0, released 2025-09-01. ABI 15. MIT; the notice
+# at `grammars/licenses/tree-sitter-javascript` is the crate's `LICENSE`.
+# It ships `injections.scm` and a `highlights.scm` joined from the crate's
+# `highlights.scm`, `highlights-jsx.scm` and `highlights-params.scm`, its
+# `tree-sitter.json`'s order. Its `highlights.scm` and `injections.scm` are
+# parts of the TypeScript grammars' queries too.
+tree-sitter-javascript = { version = "=0.25.0" }
+# The grammars `typescript` and `tsx`: the tree-sitter org's TypeScript
+# grammars, 0.23.2, released 2024-11-11. ABI 14. MIT; its crate ships no
+# `LICENSE`: the notice at `grammars/licenses/tree-sitter-typescript` is
+# upstream's, at the tag `v0.23.2`. The crate holds both grammars, each in
+# a subdirectory of its own (`typescript/`, `tsx/`), and the build script
+# compiles each (`Grammar::package_in`); each scanner includes
+# `../../common/scanner.h`, which resolves beside them. Each ships a
+# `highlights.scm` joined in the order of upstream's `tree-sitter.json` at
+# `v0.23.2`: TypeScript's `highlights.scm`, then JavaScript's (for `tsx`,
+# its `highlights-jsx.scm` first); and JavaScript's `injections.scm`, as
+# that config names. Upstream names a `^0.23.1` JavaScript peer; the parts
+# are the 0.25.0 we ship, and they compile against both grammars.
+#
+# Looked at and set aside: `tree-sitter-typescript-next` 0.25.4, a third
+# party's republish (28 downloads, 2026-11-25), not the tree-sitter org's
+# crate.
+tree-sitter-typescript = { version = "=0.23.2" }
+# The grammar `c`: the tree-sitter org's C grammar, 0.24.2, released
+# 2026-04-22. ABI 15. MIT; the notice at `grammars/licenses/tree-sitter-c`
+# is the crate's `LICENSE`. It ships `highlights.scm`, which is the first
+# part of `cpp`'s too.
+tree-sitter-c = { version = "=0.24.2" }
+# The grammar `cpp`: the tree-sitter org's C++ grammar, 0.23.4, released
+# 2024-11-11. ABI 14. MIT; its crate ships no `LICENSE`: the notice at
+# `grammars/licenses/tree-sitter-cpp` is upstream's, at the tag `v0.23.4`.
+# It ships `injections.scm` and a `highlights.scm` joined, in its
+# `tree-sitter.json`'s order, from `tree-sitter-c` 0.24.2's
+# `highlights.scm` and its own.
+tree-sitter-cpp = { version = "=0.23.4" }
+# The grammar `clojure_orchard`, for the language `clojure`:
+# grammar-orchard's Clojure grammar, sogaiu's archived `tree-sitter-clojure`
+# continued, 0.2.9, released 2026-10-29. ABI 14. CC0-1.0, a public-domain
+# dedication; the notice at `grammars/licenses/tree-sitter-clojure-orchard`
+# is the crate's `LICENSE`. It ships `highlights.scm`. Its library exports
+# `tree_sitter_clojure_orchard`, and a declaration's symbol must register
+# its declared name, so the grammar is `clojure_orchard` and its language
+# `clojure` names it.
+#
+# Looked at on 2026-11-27 and set aside:
+#
+# - `tree-sitter-clojure` 0.1.0, a personal fork (`jerielverissimo`): a
+#   normal dependency on `tree-sitter ^0.25.6`, which cannot coexist with
+#   the pinned 0.27.2 (both `links = "tree-sitter"`).
+# - Vendoring sogaiu's archived `tree-sitter-clojure`, for the symbol
+#   `tree_sitter_clojure`: the crates.io continuation builds as published,
+#   and a grammar is vendored only when it does not.
+tree-sitter-clojure-orchard = { version = "=0.2.9" }
 
 [dev-dependencies]
 # The temporary directory the on-demand install check

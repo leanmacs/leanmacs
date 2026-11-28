@@ -6,7 +6,7 @@
 //! directory `vendor/tree-sitter-lean`, taken from this crate's directory,
 //! and no dependency (`Cargo.toml` says why). A grammar added here is a
 //! source there and a declaration in `Languages/Grammars.lean`, in the same
-//! order.
+//! order: the former built-ins, `yaml`, then the popular languages.
 
 use editor_grammar_build::{Grammar, build};
 
@@ -23,5 +23,15 @@ fn main() {
         Grammar::package("toml", "tree-sitter-toml-ng"),
         Grammar::directory("lean", "../../../vendor/tree-sitter-lean"),
         Grammar::package("yaml", "tree-sitter-yaml"),
+        Grammar::package("java", "tree-sitter-java"),
+        Grammar::package("swift", "tree-sitter-swift"),
+        Grammar::package("ruby", "tree-sitter-ruby"),
+        Grammar::package("python", "tree-sitter-python"),
+        Grammar::package("javascript", "tree-sitter-javascript"),
+        Grammar::package_in("typescript", "tree-sitter-typescript", "typescript"),
+        Grammar::package_in("tsx", "tree-sitter-typescript", "tsx"),
+        Grammar::package("c", "tree-sitter-c"),
+        Grammar::package("cpp", "tree-sitter-cpp"),
+        Grammar::package("clojure_orchard", "tree-sitter-clojure-orchard"),
     ]);
 }
