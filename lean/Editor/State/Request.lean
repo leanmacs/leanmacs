@@ -312,6 +312,12 @@ inductive StateRequest where
   /-- Declare the foldable ranges of the buffer `id`, keeping the state of
   each whose key survives. -/
   | setFolds (id : BufferId) (declared : Array Foldable)
+  /-- Write the parts of the buffer `id` from the rich-text description
+  `rich`, from the byte `start` on, by the prefix rule. -/
+  | setRichText (id : BufferId) (rich : RichText) (start : Nat)
+  /-- Append the parts of the rich-text description `tail`, moved `offset`
+  bytes on, to those of the buffer `id`. -/
+  | appendRichText (id : BufferId) (tail : RichText) (offset : Nat)
   /-- Set the rendered Markdown document of the buffer `id`, or take it
   away. -/
   | setMarkdown (id : BufferId) (doc : Option Markdown.Doc)
@@ -488,6 +494,8 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setIndents .. => Except BufferRefusal Unit
   | .setLinks .. => Except BufferRefusal Unit
   | .setFolds .. => Except BufferRefusal Unit
+  | .setRichText .. => Except BufferRefusal Unit
+  | .appendRichText .. => Except BufferRefusal Unit
   | .setMarkdown .. => Except BufferRefusal Unit
   | .setFolded .. => Except BufferRefusal Unit
   | .setGutter .. => Except BufferRefusal Unit
@@ -603,6 +611,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setIndents id indents, state => state.setIndents id indents
   | .setLinks id links, state => state.setLinks id links
   | .setFolds id declared, state => state.setFolds id declared
+  | .setRichText id rich start, state => state.setRichText id rich start
+  | .appendRichText id tail offset, state => state.appendRichText id tail offset
   | .setMarkdown id doc, state => state.setMarkdown id doc
   | .setFolded id key folded, state => state.setFolded id key folded
   | .setGutter id gutter, state => state.setGutter id gutter

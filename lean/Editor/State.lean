@@ -16,6 +16,7 @@ import Editor.Markdown.Doc
 import Editor.Marks
 import Editor.PackageSet.Running
 import Editor.Restore.Kept
+import Editor.RichText
 import Editor.Scene
 import Editor.State.Outbox
 import Editor.TabBar
@@ -840,6 +841,17 @@ candidate list with no typed text (`EditorState.keyHints`, a
   changes no text, so the text's content and revision stay as they were.
   Like spans and links they are its owner's and nothing moves them on an
   edit.
+- A buffer's **parts may be written together from a rich-text
+  description** (`RichText`, `Editor/RichText.lean`; `setRichText` and
+  `appendRichText`, each refusing `noSuchBuffer`): its spans, stops, links,
+  foldable ranges and wrap indents at once, while its owner writes the text
+  through the text port. `setRichText` keeps each part that lies before the
+  start it is given and takes the rest from the description (the prefix
+  rule, `RichText.replaceFrom`); `appendRichText` lists the tail's parts,
+  moved past the text's end, after the buffer's own. Each fold whose key
+  survives keeps its state (`Fold.merge`), and both drop a rendered
+  document, so the document a buffer holds is the one its parts were last
+  written from.
 - A buffer may have a **rendered Markdown document** (`Buffer.markdown`,
   set by `setMarkdown`, which refuses `noSuchBuffer`): the document its
   text, spans, stops, links and folds were rendered from
@@ -3689,6 +3701,46 @@ for a buffer there is none of. -/
 def setFolds (id : BufferId) (declared : Array Foldable) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with folds := Fold.merge buffer.folds declared }))
+    state
+
+/-- The parts of `buffer` as a rich-text description with no text: the
+text is the text port's. -/
+private def partsOf (buffer : Buffer) : RichText :=
+  { spans := buffer.spans, stops := buffer.stops, links := buffer.links, folds := buffer.folds
+    indents := buffer.indents }
+
+/-- `buffer` with its five parts those of `rich`, each fold keeping the state
+of the one of its key the buffer had (`Fold.merge`), and no rendered
+document. -/
+private def withParts (buffer : Buffer) (rich : RichText) : Buffer :=
+  { buffer with
+    spans := rich.spans, stops := rich.stops, links := rich.links
+    folds := Fold.merge buffer.folds rich.folds, indents := rich.indents, markdown := none }
+
+/-- Writes the parts of the buffer `id` from `rich` from the byte `start` on,
+by the prefix rule (`RichText.replaceFrom`): each part of the buffer's that
+lies before `start` is kept, and the rest are `rich`'s; each fold whose key
+survives keeps its state, and the rendered document is dropped ("Buffers",
+in the module docs). The text is the text port's, which the caller writes.
+Refused, with the state unchanged, with `noSuchBuffer` for a buffer there is
+none of. -/
+def setRichText (id : BufferId) (rich : RichText) (start : Nat) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id
+    (fun buffer =>
+      ((), withParts buffer (RichText.replaceFrom (partsOf buffer) start { rich with text := "" })))
+    state
+
+/-- Appends the parts of `tail`, moved `offset` bytes on, to those of the
+buffer `id`, after its own: each fold whose key survives keeps its state,
+and the rendered document is dropped ("Buffers", in the module docs). The
+text is the text port's, which the caller extends. Refused, with the state
+unchanged, with `noSuchBuffer` for a buffer there is none of. -/
+def appendRichText (id : BufferId) (tail : RichText) (offset : Nat) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id
+    (fun buffer =>
+      ((), withParts buffer ((partsOf buffer).concat ({ tail with text := "" }.shift offset))))
     state
 
 /-- Sets the rendered Markdown document of the buffer `id` to `doc`, in

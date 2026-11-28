@@ -567,6 +567,12 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   row once due, with no input row, gives way to an open prompt, grows and
   never shrinks while open, and a delay of another generation that
   changes nothing;
+- `richTextStateChecks`: a buffer's parts written from a rich-text
+  description (`Editor/State.lean`, "Buffers"), pure: `setRichText` setting
+  the five parts by the prefix rule over the buffer's own and clearing its
+  rendered document, a toggled fold whose key is declared again staying
+  folded, `appendRichText` appending the tail's parts past the offset, and
+  both refusing `noSuchBuffer` with the buffers unchanged;
 - `laterChecks`, `completionJobChecks` and `laterLoopChecks`: sources that
   answer later (`Editor/Completion/Later.lean`), their orders and batches
   as arguments and their jobs on the job model; the reconciler of a
@@ -1821,6 +1827,7 @@ def checks : List Check :=
     atPointContractChecks ++
     atPointStateChecks ++
     keyHintStateChecks ++
+    richTextStateChecks ++
     atPointLoopChecks ++
     atPointAskChecks ++
     atPointByItselfChecks ++
