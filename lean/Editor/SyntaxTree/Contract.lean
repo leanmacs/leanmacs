@@ -58,6 +58,24 @@ the library has:
 A runner waits for a snapshot's tree before it forwards a `captures` or a
 `capturesOf`.
 
+## What a text parsed once answers
+
+`parseOnce` is asked of `json` alone, which ships no injections, so its
+answer is its host layer:
+
+- (O1) a text parsed once with `json`'s highlights answers one layer, at
+  depth 0 over the whole text, whose names and captures are what
+  `captureNames` and the whole text's `captures` answer for the same
+  shipped source compiled and asked of an attached snapshot of the text;
+- (O2) a host grammar that is not listed is refused `unknownGrammar`;
+- (O3) a host the kinds do not name, or name with a kind it ships none of
+  (`injections`), is refused `noShippedQuery`;
+- (O4) a pair of a grammar that is not listed changes nothing of O1's
+  answer.
+
+What a Markdown text parsed once answers is the library's, held to the
+checked-in fixtures by `ContractTest.markdownCaseChecks`.
+
 The cases are the library's own answers, read from the library when the
 cases were written; the model is written to the rule, and the contract
 holds the two together.
@@ -145,6 +163,10 @@ def cases : List (String × String × String × Array (Nat × Nat × Nat × Nat)
     ("a comment in the query", "[1]", "; a comment\n(number) @n", #[(0, 0, 1, 2)]),
     ("a node captured by itself and as a child, outer first", "{\"a\": {\"b\": 2}}",
       "(object (pair) @p) @o", #[(0, 1, 0, 15), (0, 0, 1, 14), (0, 1, 6, 14), (0, 0, 7, 13)])]
+
+/-- The text the properties of a text parsed once parse. -/
+def onceText : String :=
+  "{\"a\": [1, true, null], \"b\": \"s\"}"
 
 /-- The ranges of a text `length` bytes long that the range rule is asked
 of: empty at each end and in the middle, the whole text, its first and last
@@ -318,6 +340,42 @@ def properties : List Property :=
           SyntaxTree.refreshAfter 500
           return before == #[(0, 0, 1, 2), (0, 0, 4, 5)] &&
               (← rows snapshot "(number) @n" 0 6) == before },
+      { name :=
+          "(O1) a text parsed once with json's highlights answers its host layer alone, over the whole text, with the names and the captures the shipped source answers of an attached snapshot of it"
+        texts := #[onceText]
+        holds := fun snapshots => do
+          let snapshot := nth snapshots 0
+          let layers ← SyntaxTree.parseOnce onceText json #[(json, .highlights)]
+          SyntaxTree.attach snapshot json
+          let shipped ← SyntaxTree.compile json (← SyntaxTree.shippedQuery json .highlights)
+          let names ← SyntaxTree.captureNames shipped
+          let captures ← SyntaxTree.captures snapshot shipped 0 onceText.utf8ByteSize
+          SyntaxTree.release shipped
+          return layers ==
+                #[{ language := json, depth := 0, ranges := #[(0, onceText.utf8ByteSize)], names
+                    captures }] &&
+              !captures.isEmpty },
+      { name := "(O2) a text parsed once with a host grammar that is not listed is refused"
+        texts := #[]
+        holds := fun _ =>
+          refusedWith .unknownGrammar
+            (SyntaxTree.parseOnce onceText "no-such" #[(json, .highlights)]) },
+      { name :=
+          "(O3) a text parsed once with a host the kinds do not name, or name with a kind it ships none of, is refused"
+        texts := #[]
+        holds := fun _ => do
+          return (← refusedWith .noShippedQuery (SyntaxTree.parseOnce onceText json #[])) &&
+              (←
+                refusedWith .noShippedQuery
+                    (SyntaxTree.parseOnce onceText json #[(json, .injections)])) },
+      { name :=
+          "(O4) a pair of a grammar that is not listed changes nothing a text parsed once answers"
+        texts := #[]
+        holds := fun _ => do
+          return (← SyntaxTree.parseOnce onceText json #[(json, .highlights)]) ==
+              (←
+                SyntaxTree.parseOnce onceText json
+                    #[("no-such", .highlights), (json, .highlights)]) },
       { name := "a highlight with a released query is refused"
         texts := #["[1]"]
         holds := fun snapshots => do

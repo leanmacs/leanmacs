@@ -16,6 +16,9 @@ it holds each delivery until the check steps it.
   that is attached. Until it is stepped, `captures` and `capturesOf` of
   that text are refused `notParsed`, through the model's own
   `delivered := false`, after every check the real binding makes first.
+- A text parsed once (`parseOnce`) makes no delivery pending: the library
+  answers it in the call, and the fake forwards it to the model as every
+  question.
 - `step` delivers the oldest pending delivery, then calls `post` once, on
   the caller's thread: a host check's maker posts a `parsed` event there
   (`Stage.fakeSyntaxService`, `Editor/Test/Linked/Host.lean`).

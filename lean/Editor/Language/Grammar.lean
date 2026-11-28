@@ -354,6 +354,9 @@ def Queries.set (queries : Queries) (kind : QueryKind) (source : Option String) 
   | .injections => { queries with injections := source }
   | .textObjects => { queries with textObjects := source }
   | .indents => { queries with indents := source }
+  -- A declared grammar reads no `rendered.scm`: only Markdown's rendered
+  -- view asks the kind, of the library's own queries.
+  | .rendered => queries
 
 /-- `tree` with the read queries filled in where it gives no source of its
 own: the entry's own source wins over a file. -/

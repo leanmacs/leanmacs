@@ -54,6 +54,14 @@ Its state has three parts:
   driven run, the registry the job model's registrations end with is
   handed to it (the job's model answers a registration,
   `JobModel.grammars`).
+- `once`: canned answers of `parseOnce`, by host grammar and source, for
+  a grammar the model cannot parse (Markdown): each is answered as stored,
+  whatever `kinds` holds. A test of a rendered view sets them from the
+  checked-in fixtures (`tests/markdown/`), which the contract holds to the
+  library's answers (`ContractTest.markdownCaseChecks`). For its own
+  grammars the model computes `parseOnce`: the host layer alone, answered
+  with its shipped highlights when `kinds` names it with `highlights`,
+  since it ships no injections.
 - `delivered`: whether the tree of each text's last edit is delivered. It
   starts `true`. A test sets it `false` to see what a command does when
   keys come faster than a reparse: `captures` and `capturesOf` are then
@@ -116,6 +124,9 @@ structure SyntaxTreeModel where
   a question of captures is refused with `notParsed` after its other
   checks. -/
   delivered : Bool := true
+  /-- The canned answers of `parseOnce`, by host grammar and source, each
+  answered as stored. -/
+  once : Array (String × String × Array SyntaxTree.Layer) := #[]
 
 namespace SyntaxTreeModel
 
@@ -321,6 +332,28 @@ def captures (model : SyntaxTreeModel) (snapshot : SnapshotId) (query : QueryId)
     throw .notParsed
   return compiled.captures (Json.parse text) first last
 
+/-- `parseOnce`: a canned answer as stored; else, for a grammar the model
+lists, the host layer over the whole text answered with its shipped
+highlights, which `kinds` must name for it, checked in the order the real
+binding checks: the host grammar first, then its pair. -/
+def parseOnce (model : SyntaxTreeModel) (source named : String)
+    (kinds : Array (String × QueryKind)) : Except SyntaxTreeError (Array SyntaxTree.Layer) := do
+  if let some (_, _, layers) :=
+      model.once.find? fun (grammar, text, _) => grammar == named && text == source then
+    return layers
+  if !model.knows named then
+    throw .unknownGrammar
+  let some (_, kind) := kinds.find? (·.1 == named) | throw .noShippedQuery
+  let shipped ← model.shippedQuery named kind
+  match Query.compile shipped with
+  | .error _ =>
+    throw .noShippedQuery
+  | .ok compiled =>
+    let stop := source.utf8ByteSize
+    return #[{
+          language := named, depth := 0, ranges := #[(0, stop)], names := compiled.names
+          captures := compiled.captures (Json.parse source) 0 stop }]
+
 /-- Answers `request` from the model as it is. -/
 def handle : (request : SyntaxTreeRequest) → SyntaxTreeModel → request.Reply × SyntaxTreeModel
   | .grammars, model => (model.grammars, model)
@@ -344,6 +377,7 @@ def handle : (request : SyntaxTreeRequest) → SyntaxTreeModel → request.Reply
   | .capturesOf snapshot kind first last, model =>
     (model.capturesOf snapshot kind first last, model)
   | .refreshAfter milliseconds, model => ((), { model with refreshAfter := some milliseconds })
+  | .parseOnce source named kinds, model => (model.parseOnce source named kinds, model)
 
 end SyntaxTreeModel
 

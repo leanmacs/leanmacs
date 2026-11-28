@@ -200,6 +200,22 @@ def syntaxTreeChecks : List Check :=
             (SyntaxTreeM.runModel overridden { compiled with registry := leanRegistered }).1 matches
               .ok true &&
             (SyntaxTreeM.runModel SyntaxTree.grammars model).1.toOption == some #["json"] },
+    { name :=
+        "a canned answer of a text parsed once is answered as stored whatever the kinds hold, and a source with no answer of a grammar the model cannot parse is refused as an unknown grammar"
+      run :=
+        pure <|
+          let layer : SyntaxTree.Layer :=
+            { language := "markdown", depth := 0, ranges := #[(0, 2)], names := #["block"]
+              captures := #[{ pattern := 0, capture := 0, start := 0, stop := 2 }] }
+          let model : SyntaxTreeModel := { once := #[("markdown", "x\n", #[layer])] }
+          (SyntaxTreeM.runModel (SyntaxTree.parseOnce "x\n" "markdown" #[]) model).1.toOption ==
+              some #[layer] &&
+            (SyntaxTreeM.runModel (SyntaxTree.parseOnce "x\n" "markdown" #[("markdown", .rendered)])
+                  model).1.toOption ==
+              some #[layer] &&
+            (SyntaxTreeM.runModel (SyntaxTree.parseOnce "y\n" "markdown" #[("markdown", .rendered)])
+                  model).1 matches
+              .error .unknownGrammar },
     { name := "every property of the syntax tree contract holds of the model"
       run := return (← syntaxTreeBroken SyntaxTreeModel.handle).isEmpty }]
 

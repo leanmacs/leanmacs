@@ -955,6 +955,13 @@ uint64_t editor_ffi_syntax_kept_names(const editor_ffi_snapshot *snapshot,
 void editor_ffi_syntax_kept_captures(const editor_ffi_snapshot *snapshot,
                                      uint8_t kind, size_t start, size_t end,
                                      editor_ffi_raw_words *out);
+void editor_ffi_syntax_parse_once(const uint8_t *source, size_t source_len,
+                                  const uint8_t *host, size_t host_len,
+                                  const uint8_t *words, size_t words_len,
+                                  const uint8_t *strings, size_t strings_len,
+                                  const uint8_t *kinds, size_t kinds_len,
+                                  editor_ffi_raw_words *out,
+                                  editor_ffi_raw_strings *names);
 
 static lean_external_class *syntax_query_class;
 static pthread_once_t syntax_query_class_once = PTHREAD_ONCE_INIT;
@@ -1199,6 +1206,29 @@ lean_obj_res editor_glue_syntax_kept_captures(b_lean_obj_arg snapshot,
   editor_ffi_syntax_kept_captures(lean_get_external_data(snapshot), kind, start,
                                   stop, &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.syntaxParseOnceRaw : @& String → @& String → @& ByteArray →
+// @& String → @& ByteArray → IO RawOnce`. The parse runs on this thread.
+lean_obj_res editor_glue_syntax_parse_once(b_lean_obj_arg source,
+                                           b_lean_obj_arg host,
+                                           b_lean_obj_arg words,
+                                           b_lean_obj_arg strings,
+                                           b_lean_obj_arg kinds) {
+  editor_ffi_raw_words raw;
+  editor_ffi_raw_strings names;
+  editor_ffi_syntax_parse_once(
+      string_bytes(source), string_len(source), string_bytes(host),
+      string_len(host), byte_array_bytes(words), byte_array_len(words),
+      string_bytes(strings), string_len(strings), byte_array_bytes(kinds),
+      byte_array_len(kinds), &raw, &names);
+  // `RawOnce`: the object fields `words` and `strings`, then `status`.
+  lean_object *once = lean_alloc_ctor(0, 2, sizeof(uint64_t));
+  lean_ctor_set(once, 0, byte_array_copy(raw.words, raw.len));
+  lean_ctor_set(once, 1, raw_strings_take(names));
+  lean_ctor_set_uint64(once, uint64_field(2, 0), raw.status);
+  editor_ffi_text_free(raw.words, raw.len);
+  return lean_io_result_mk_ok(once);
 }
 
 // `Editor.Ffi.syntaxSettle : @& Snapshot → UInt64 → IO Bool`

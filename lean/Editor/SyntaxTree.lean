@@ -62,6 +62,23 @@ scheme's key grammar (`Editor/InputScheme.lean`).
 - **`capturesOf snapshot kind start stop`** answers the capture names of the
   query the text keeps of `kind` and its captures in the range, as
   `captures` answers them (`Kept`).
+- **`parseOnce source grammar kinds`** answers the layers of `source`,
+  a text handed in, not one a snapshot is of, parsed once, whole, with
+  `grammar`: the host first, at depth 0 over the whole text, then each
+  layer its grammar's injections find, down to the library's bound, by
+  depth and then by start. Each pair of `kinds` is a language known, by
+  its grammar's name, answered with that grammar's shipped query of the
+  kind; a layer is answered with its query's capture names and its
+  captures over the hull of its ranges (`Layer`). A pair whose grammar
+  the service lacks, or that ships no such query, is not a language
+  known, and its layers are not found. A host asked with `rendered` finds
+  its layers with the grammar's rendered injections, where it ships them
+  (Markdown's: each table cell is an inline layer too). It keeps nothing
+  and is answered on the asking thread: what a rendered view of a
+  generated text asks (`Editor/Markdown/Parse.lean`). It is refused
+  `unknownGrammar` for a host grammar the service lacks, and
+  `noShippedQuery` when `kinds` does not name the host, or names it with a
+  kind it does not ship.
 - **`refreshAfter milliseconds`**: texts parsed incrementally are parsed
   whole once they have gone `milliseconds` unchanged after an edit, from
   now on, for every text. An edit's tree is the incremental reparse, which
@@ -135,15 +152,19 @@ inductive QueryKind where
   | textObjects
   /-- Which nodes indent the rows they hold: `indents.scm`. -/
   | indents
+  /-- Which nodes a rendered view reads: its blocks, its spans and the
+  markup it leaves out: `rendered.scm`. -/
+  | rendered
   deriving DecidableEq, Repr
 
 /-- The kind's name, as a user reads it: `highlights`, `injections`,
-`textObjects`, `indents`. -/
+`textObjects`, `indents`, `rendered`. -/
 def QueryKind.name : QueryKind → String
   | .highlights => "highlights"
   | .injections => "injections"
   | .textObjects => "textObjects"
   | .indents => "indents"
+  | .rendered => "rendered"
 
 /-- The name of a compiled query the syntax service holds. It is plain data,
 so a request can carry it. -/
@@ -243,6 +264,25 @@ structure Kept where
   captures : Array Capture
   deriving DecidableEq, Repr
 
+/-- A layer of a text parsed once (`parseOnce`), the host included: its
+language, how deep it is, the ranges of the text it is of, and its
+language's query's capture names and its captures over them. -/
+structure Layer where
+  /-- The language's name, as the pair that named it gave it. -/
+  language : String
+  /-- How deep it is: 0 for the host, 1 for an injection of the host's. -/
+  depth : Nat
+  /-- The ranges of the text it is of, each a start and a stop, sorted and
+  apart. -/
+  ranges : Array (Nat × Nat)
+  /-- Its query's capture names, which a capture names one of by its
+  index. -/
+  names : Array String
+  /-- Its query's captures over the hull of its ranges, each once, in the
+  order `captures` answers. -/
+  captures : Array Capture
+  deriving DecidableEq, Repr
+
 end SyntaxTree
 
 /-- What may be asked of the syntax service. -/
@@ -284,6 +324,10 @@ inductive SyntaxTreeRequest where
   /-- Parse a text whole once it has gone `milliseconds` unchanged after an
   edit, from now on, for every text. -/
   | refreshAfter (milliseconds : Nat)
+  /-- The layers of `source` parsed once with `grammar`, each language a
+  pair of `kinds` names answered with its grammar's shipped query of the
+  kind. -/
+  | parseOnce (source grammar : String) (kinds : Array (String × QueryKind))
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request. -/
@@ -302,6 +346,7 @@ def SyntaxTreeRequest.Reply : SyntaxTreeRequest → Type
   | .keep _ _ _ => Except SyntaxTreeError Unit
   | .capturesOf _ _ _ _ => Except SyntaxTreeError SyntaxTree.Kept
   | .refreshAfter _ => Unit
+  | .parseOnce _ _ _ => Except SyntaxTreeError (Array SyntaxTree.Layer)
 
 /-- The syntax tree port: `SyntaxTreeRequest` and the reply to each request. -/
 abbrev syntaxTreePort : Port :=
@@ -407,6 +452,17 @@ refused. -/
 def refreshAfter (milliseconds : Nat) : SyntaxTreeM Unit :=
   ExceptT.lift (Program.request (port := syntaxTreePort) (.refreshAfter milliseconds))
 
+/-- The layers of `source` parsed once, whole, with `grammar`: the host
+first, then each layer by depth and start, each language a pair of `kinds`
+names answered with its grammar's shipped query of the kind ("The
+requests", in the module docs). It keeps nothing and is answered on the
+asking thread. Refused with `unknownGrammar` for a host grammar the service
+lacks, and `noShippedQuery` when `kinds` does not name the host, or names
+it with a kind it does not ship. -/
+def parseOnce (source grammar : String) (kinds : Array (String × QueryKind)) :
+    SyntaxTreeM (Array Layer) :=
+  ExceptT.mk (Program.request (port := syntaxTreePort) (.parseOnce source grammar kinds))
+
 /-- Whether a node over `start`..`stop` is in the range `first`..`last`: it
 shares a byte with it, or, when the node or the range is empty, it starts
 within it, its ends included. The Rust core's `query::overlaps`. -/
@@ -433,7 +489,8 @@ end SyntaxTree
 grammars, so an attach and a compile are refused with `unknownGrammar`, as
 is a shipped query; it holds no query, so a question of one, an injection, a
 language, a keep and a question of a kept query are refused with
-`noSuchQuery`; and a detach, a release and a refresh delay do nothing. What a command run
+`noSuchQuery`; a text parsed once is refused with `unknownGrammar`; and a
+detach, a release and a refresh delay do nothing. What a command run
 where no host handed one in reaches (`EditorM.runReal`,
 `Editor/Command/Real.lean`). -/
 def SyntaxTree.none : SyntaxTreeHandler
@@ -451,6 +508,7 @@ def SyntaxTree.none : SyntaxTreeHandler
   | .keep _ _ _ => pure (.error .noSuchQuery)
   | .capturesOf _ _ _ _ => pure (.error .noSuchQuery)
   | .refreshAfter _ => pure ()
+  | .parseOnce _ _ _ => pure (.error .unknownGrammar)
 
 /-- Runs a syntax tree program against `handler`: its result, or the refusal
 it failed with. -/
