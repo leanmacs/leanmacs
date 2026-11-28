@@ -31,6 +31,9 @@ and links at offsets of that text. Pure.
 - A link's text links to what its destination names (`targetOf`), an
   image's description to what its source names, an autolink's address to
   itself, and an email autolink's to `mailto:` and the address.
+- An image in a link's text (a badge, `[![CI](badge.svg)](https://ci)`)
+  is not linked itself: the text has one target, the link's own
+  destination, never the image's source.
 - A bare URL or `path:line` in the rendered text (`references`) is a link
   too, unless it overlaps one of the above.
 
@@ -136,9 +139,14 @@ offsets by `renderedAt`; then the bare references of `text` that overlap none of
 them; in order of start. -/
 def linksOf (root : Option System.FilePath) (source : String) (nodes : Array Node)
     (renderedAt : Nat → Nat) (text : String) : Array Link :=
+  -- A link's own destination, not that of an image in its text.
   let destination (outer : Node) : Option LinkTarget := do
-    let found ← inside nodes outer "link.destination"
+    let images := (Parsed.all nodes outer "image").filter (· != outer)
+    let found ←
+      (Parsed.all nodes outer "link.destination").find? fun node => !images.any (node.within ·)
     targetOf root (slice source found.start found.stop)
+  let inLink (node : Node) : Bool :=
+    nodes.any fun outer => outer.name == "link" && node.within outer
   let linked (outer : Node) (shown : String) : Option Link := do
     let text ← inside nodes outer shown
     let target ← destination outer
@@ -150,7 +158,7 @@ def linksOf (root : Option System.FilePath) (source : String) (nodes : Array Nod
     nodes.filterMap fun node =>
       match node.name with
       | "link" => linked node "link.text"
-      | "image" => linked node "image.description"
+      | "image" => if inLink node then none else linked node "image.description"
       | "autolink" =>
         some
           { start := renderedAt node.start, stop := renderedAt node.stop

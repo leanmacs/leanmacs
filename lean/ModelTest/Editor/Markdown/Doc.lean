@@ -199,7 +199,7 @@ def markdownLinkChecks : List Check :=
       run :=
         pure <|
           links.text ==
-            "An inline link, a task, an absolute file and a relative one.\n\nAn autolink https://auto.example, an email me@example.com and a bare https://bare.example/path. too.\n\nSee src/a.rs:12 and src/b.rs:3 for more.\n\nAn image the logo and a [reference][ref] link.\n\n[ref]: https://ref.example" },
+            "An inline link, a task, an absolute file and a relative one.\n\nAn autolink https://auto.example, an email me@example.com and a bare https://bare.example/path. too.\n\nSee src/a.rs:12 and src/b.rs:3 for more.\n\nAn image the logo and a [reference][ref] link.\n\nA badge CI links to its build.\n\n[ref]: https://ref.example" },
     { name := "an inline link to a URL links its text to the URL"
       run :=
         pure <| markdownLinkOver links "inline link" == some (.url "https://example.com/page") },
@@ -236,6 +236,13 @@ def markdownLinkChecks : List Check :=
         pure <|
           markdownLinkOver links "the logo" ==
             some (.location (markdownRoot / "images/logo.png") 0 0) },
+    { name :=
+        "an image in a link's text links its description to the link's destination alone, not to the image's source"
+      run :=
+        pure <|
+          let (start, stop) := over links.text "CI"
+          markdownLinkOver links "CI" == some (.url "https://ci.example.com") &&
+            (links.links.filter fun link => link.start < stop && start < link.stop).size == 1 },
     { name := "a reference link is left as its source and not linked, nor is its definition"
       run :=
         pure <|
@@ -244,13 +251,13 @@ def markdownLinkChecks : List Check :=
           start < stop &&
             links.links.all fun link =>
               link.stop ≤ start || stop ≤ link.start && link.stop ≤ defined },
-    { name := "the links are exactly these ten, in order of start"
+    { name := "the links are exactly these eleven, in order of start"
       run :=
         pure <|
-          links.links.size == 10 &&
+          links.links.size == 11 &&
             (links.links.map (·.start)) == (links.links.map (·.start)).qsort (· < ·) },
     { name :=
-        "with no root a relative link and a relative path:line are not linked, and an absolute one still is"
+        "with no root a relative link and a relative path:line are not linked, and an absolute one and a badge's URL still are"
       run :=
         pure <|
           let rootless :=
@@ -259,6 +266,7 @@ def markdownLinkChecks : List Check :=
           markdownLinkOver rootless "relative one" == none &&
             markdownLinkOver rootless "src/a.rs:12" == none &&
             markdownLinkOver rootless "the logo" == none &&
+            markdownLinkOver rootless "CI" == some (.url "https://ci.example.com") &&
             markdownLinkOver rootless "absolute file" == some (.location "/etc/hosts" 2 0) }]
 
 /-- The checks of the foldable ranges a rendered document declares

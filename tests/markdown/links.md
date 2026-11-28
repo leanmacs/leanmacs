@@ -8,4 +8,6 @@ See src/a.rs:12 and `src/b.rs:3` for more.
 
 An image ![the logo](images/logo.png) and a [reference][ref] link.
 
+A badge [![CI](badge.svg)](https://ci.example.com) links to its build.
+
 [ref]: https://ref.example

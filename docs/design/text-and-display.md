@@ -1979,7 +1979,8 @@ core call (`lean/Editor/Markdown/`).
   on the editor thread, as the request is answered on the thread that asks
   (an open question, `rust-library.md`).
 - **What it does not render.** An image shows its description, linked to
-  its source, never the image. HTML shows as its source: an HTML block in
+  its source, never the image; an image in a link's text (a badge) is not
+  linked itself, so the text links to the link's destination alone. HTML shows as its source: an HTML block in
   `text.code-block`, inline HTML as prose. Reference-style links (and their
   definitions), entities, strikethrough and task-list markers are shown as
   their source (rdm task `rendered-markdown-unrendered-constructs`). GFM's

@@ -15,7 +15,7 @@ exactly the layers checked in beside it.
 | `headings.md` | ATX headings of levels 1 to 6 and a setext heading of each level |
 | `code.md` | a `rust` fence, a `json` fence, a fence in a language no grammar has, an indented block, and a fence inside a list item |
 | `table.md` | a header, three body rows, one of them with a missing cell, and a code span in a cell |
-| `links.md` | inline links to a URL, an `rdm:` reference, an absolute `path:line` and a relative `path:line:column`; an autolink, an email autolink, a bare URL, a `path:line` in prose and in a code span, an image, and a reference link with its definition |
+| `links.md` | inline links to a URL, an `rdm:` reference, an absolute `path:line` and a relative `path:line:column`; an autolink, an email autolink, a bare URL, a `path:line` in prose and in a code span, an image, an image inside a link (a badge), and a reference link with its definition |
 | `folds.md` | headings of levels 1, 2, 3, 2 and 1, and three fences, the last of them empty |
 | `lists.md` | a bullet list with a nested list, an ordered list, a block quote with a nested quote, and a thematic break |
 | `view.md` | a heading, a paragraph with emphasis, a link and a `path:line`, and a fence: what the rendered view's checks write into a buffer |

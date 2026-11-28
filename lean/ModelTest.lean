@@ -1431,7 +1431,8 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   `text.table-header` and a cell's code span rendered; `markdownLinkChecks`,
   each kind of link in `links.md` over its text with its exact target, the
   bare URL and the `path:line` in prose and in a code span, an image linked
-  to its source, a reference link left as its source, and a relative one
+  to its source, an image in a link's text linked to the link's destination
+  alone, a reference link left as its source, and a relative one
   unlinked with no root; `markdownFoldChecks`, the exact foldable ranges of
   `folds.md`: each heading's to the next of the same or a higher level and
   each fence's over its rows, an empty fence's over its empty row, their
