@@ -1424,7 +1424,13 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   code-block byte under it, a fence's captures in their faces and an
   unknown language's in `text.code-block` alone, a fence inside a list
   item, each heading under its level's face, and emphasis, strong and a
-  code span under theirs;
+  code span under theirs; `markdownTableChecks`, a table's rows and cells
+  with the pipes and the delimiter row gone, its header under
+  `text.table-header` and a cell's code span rendered; `markdownLinkChecks`,
+  each kind of link in `links.md` over its text with its exact target, the
+  bare URL and the `path:line` in prose and in a code span, an image linked
+  to its source, a reference link left as its source, and a relative one
+  unlinked with no root;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1789,6 +1795,8 @@ def checks : List Check :=
     markdownTargetChecks ++
     markdownProseChecks ++
     markdownHeadingChecks ++
+    markdownTableChecks ++
+    markdownLinkChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++

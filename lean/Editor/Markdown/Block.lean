@@ -162,6 +162,41 @@ def indented (context : Context) (node : Node) : Piece :=
   let text := "\n".intercalate rows
   { text, spans := #[span 0 text.utf8ByteSize "text.code-block"] }
 
+/-- `pieces` joined by `separator`, and the range each takes in the
+joined text. -/
+def joinedWithRanges (pieces : Array Piece) (separator : String) : Piece × Array (Nat × Nat) :=
+  let joined := Piece.join pieces separator
+  let (ranges, _) :=
+    pieces.foldl
+      (fun (ranges, start) piece =>
+        let stop := start + piece.text.utf8ByteSize
+        (ranges.push (start, stop), stop + separator.utf8ByteSize))
+      (#[], 0)
+  (joined, ranges)
+
+/-- A table over `node`: its header row, then its body rows, a row a line,
+each cell rendered from its inline layer and the cells of a row joined by
+one space; the header's cells drawn in `text.table-header`. The delimiter
+row and the pipes are left out, and a missing cell is absent. -/
+def table (context : Context) (node : Node) : Piece :=
+  let rows :=
+    context.nodes.filter fun found =>
+      (found.name == "table.header" || found.name == "table.row") && found.within node
+  let rendered :=
+    rows.map fun row =>
+      let cells :=
+        (Parsed.all context.nodes row "table.cell").map fun cell =>
+          let piece := inline context cell.start cell.stop
+          if row.name == "table.header" then
+            piece.under #[span 0 piece.text.utf8ByteSize "text.table-header"]
+          else piece
+      joinedWithRanges cells " "
+  let (joined, starts) := joinedWithRanges (rendered.map (·.1)) "\n"
+  let cells :=
+    (rendered.zip starts).map fun ((_, ranges), (start, _)) =>
+      ranges.map fun (first, last) => (first + start, last + start)
+  { joined with tables := #[{ rows := cells }] ++ joined.tables }
+
 /-- `node`'s source, its blanks at the end left out. -/
 def source (context : Context) (node : Node) : String :=
   trimEnd (slice context.source node.start node.stop)
@@ -185,6 +220,7 @@ partial def node (context : Context) (index : Nat) (depth : Nat) : Piece :=
     let blocks := childrenOf context index isBlock
     let joined := Piece.join (blocks.map fun child => node context child depth) blockSeparator
     joined.under #[span 0 joined.text.utf8ByteSize "text.quote"]
+  | "table" => table context found
   | "break" => { text := "———" }
   | "html" =>
     let text := source context found

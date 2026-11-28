@@ -155,4 +155,110 @@ def markdownHeadingChecks : List Check :=
           over prose.text "*star*" != (0, 0) && over prose.text "<b>HTML</b>" != (0, 0) &&
             untouchedBy prose "text.emphasis" (over prose.text "*star*") }]
 
+/-- The checks of a table rendered into rows of cells (the pure half of
+**criterion 4**; `markdownTableViewChecks` measures them into stops). -/
+def markdownTableChecks : List Check :=
+  let table := described Support.Markdown.table
+  [{  name :=
+        "table.md renders its header row and its body rows, a row a line, the delimiter row and the pipes gone, cells joined by one space"
+      run := pure <| table.text == "Name Value\na 1\nbb two\nccc" },
+    { name := "the table's cells are its description's table, row by row, the missing cell absent"
+      run :=
+        pure <|
+          table.tables ==
+              #[{
+                  rows :=
+                    #[#[(0, 4), (5, 10)], #[(11, 12), (13, 14)], #[(15, 17), (18, 21)],
+                      #[(22, 25)]] }] &&
+            over table.text "Name" == (0, 4) &&
+            over table.text "two" == (18, 21) },
+    { name := "the header's cells are under text.table-header, and no body cell is"
+      run :=
+        pure <|
+          coveredBy table "text.table-header" (over table.text "Name") &&
+            coveredBy table "text.table-header" (over table.text "Value") &&
+            untouchedBy table "text.table-header" (11, 25) },
+    { name :=
+        "a cell holding a code span renders it from its inline layer, its backticks gone and its text under text.code-span"
+      run :=
+        pure <|
+          coveredBy table "text.code-span" (over table.text "two") && !table.text.any (· == '`') }]
+
+/-- The link `description` has over the first place `needle` is in its
+text, if one is exactly over it. -/
+def markdownLinkOver (description : Description) (needle : String) : Option LinkTarget :=
+  let (start, stop) := over description.text needle
+  (description.links.find? fun link => link.start == start && link.stop == stop).map (·.target)
+
+/-- The checks of links and `path:line` references rendered as followable
+spans with their targets (**criterion 5**). -/
+def markdownLinkChecks : List Check :=
+  let links := described Support.Markdown.links
+  [{  name :=
+        "links.md renders each link's text alone, an autolink's address without its angles, and a reference link as its source"
+      run :=
+        pure <|
+          links.text ==
+            "An inline link, a task, an absolute file and a relative one.\n\nAn autolink https://auto.example, an email me@example.com and a bare https://bare.example/path. too.\n\nSee src/a.rs:12 and src/b.rs:3 for more.\n\nAn image the logo and a [reference][ref] link.\n\n[ref]: https://ref.example" },
+    { name := "an inline link to a URL links its text to the URL"
+      run :=
+        pure <| markdownLinkOver links "inline link" == some (.url "https://example.com/page") },
+    { name := "an inline link to an rdm: reference links its text to the reference in its scheme"
+      run := pure <| markdownLinkOver links "task" == some (.reference "rdm" "task/x") },
+    { name := "an inline link to an absolute path:line links to its row"
+      run := pure <| markdownLinkOver links "absolute file" == some (.location "/etc/hosts" 2 0) },
+    { name :=
+        "an inline link to a relative path:line:column links to its row and column under the root"
+      run :=
+        pure <|
+          markdownLinkOver links "relative one" ==
+            some (.location (markdownRoot / "src/main.rs") 11 4) },
+    { name := "an autolink links its address, and an email autolink its address as mailto:"
+      run :=
+        pure <|
+          markdownLinkOver links "https://auto.example" == some (.url "https://auto.example") &&
+            markdownLinkOver links "me@example.com" == some (.url "mailto:me@example.com") },
+    { name := "a bare URL in prose links to itself, its trailing full stop left out"
+      run :=
+        pure <|
+          markdownLinkOver links "https://bare.example/path" ==
+            some (.url "https://bare.example/path") },
+    { name := "a path:line in prose and one in a code span each link to its row under the root"
+      run :=
+        pure <|
+          markdownLinkOver links "src/a.rs:12" ==
+              some (.location (markdownRoot / "src/a.rs") 11 0) &&
+            markdownLinkOver links "src/b.rs:3" ==
+              some (.location (markdownRoot / "src/b.rs") 2 0) &&
+            coveredBy links "text.code-span" (over links.text "src/b.rs:3") },
+    { name := "an image shows its description, linked to its source"
+      run :=
+        pure <|
+          markdownLinkOver links "the logo" ==
+            some (.location (markdownRoot / "images/logo.png") 0 0) },
+    { name := "a reference link is left as its source and not linked, nor is its definition"
+      run :=
+        pure <|
+          let (start, stop) := over links.text "[reference][ref]"
+          let (defined, _) := over links.text "[ref]: https://ref.example"
+          start < stop &&
+            links.links.all fun link =>
+              link.stop ≤ start || stop ≤ link.start && link.stop ≤ defined },
+    { name := "the links are exactly these ten, in order of start"
+      run :=
+        pure <|
+          links.links.size == 10 &&
+            (links.links.map (·.start)) == (links.links.map (·.start)).qsort (· < ·) },
+    { name :=
+        "with no root a relative link and a relative path:line are not linked, and an absolute one still is"
+      run :=
+        pure <|
+          let rootless :=
+            (Markdown.render {} Support.Markdown.links.source
+                Support.Markdown.links.layers).description
+          markdownLinkOver rootless "relative one" == none &&
+            markdownLinkOver rootless "src/a.rs:12" == none &&
+            markdownLinkOver rootless "the logo" == none &&
+            markdownLinkOver rootless "absolute file" == some (.location "/etc/hosts" 2 0) }]
+
 end ModelTest
