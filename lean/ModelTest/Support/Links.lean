@@ -9,7 +9,6 @@ import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Package
 import Editor.Test.Driver
-import Editor.Test.Editing
 import Editor.Test.Files
 import Editor.Test.Hosted
 import Editor.Test.Loop
@@ -34,6 +33,9 @@ is visited through, and the commands of the checks:
   mode, and shows it;
 - `fill-self` makes a buffer `self` of the same text and links, its major
   mode `self-follow`, and shows it;
+- `fill-folded` makes a buffer `folded`, `foldedLinksText`, with a link on
+  each of its three rows' words, its middle row a folded range, and its
+  major mode `listing`, and shows it;
 - `listing` fills `activate` with `listing-visit`, which says `visited`;
 - `self-follow` fills `activate` with `link-follow` itself;
 - `say` says its string argument; `at` puts the cursor at the byte its
@@ -93,6 +95,17 @@ def movesLinks : Array Link :=
   #[(2, 5, "one"), (8, 11, "two"), (14, 19, "three")].map fun (start, stop, word) =>
     { start, stop, target := .command { command := "say", arguments := [.str word] } }
 
+/-- The text of the buffer `folded`: three rows, each a letter and a word,
+the words linked: `one` (bytes 2 to 5), `two` (8 to 11), on the row a
+folded range covers, and `three` (14 to 19). -/
+def foldedLinksText : String :=
+  "a one\nb two\nc three\n"
+
+/-- The links of the buffer `folded`. -/
+def foldedLinks : Array Link :=
+  #[(2, 5, "one"), (8, 11, "two"), (14, 19, "three")].map fun (start, stop, word) =>
+    { start, stop, target := .command { command := "say", arguments := [.str word] } }
+
 /-- Makes the buffer `name` of `text` with `links`, read-only, shows it in
 the call's window and sets its major mode `major`, when given. -/
 def fillLinked (name text : String) (links : Array Link) (major : Option String) (call : Call) :
@@ -124,6 +137,14 @@ def linksTestPackage : Package :=
           fillLinked "links" linkBuffer.1 linkBuffer.2 (some linkListing.name) call
       commandWith "fill-moves" (fillLinked "moves" movesText movesLinks none)
       commandWith "fill-self" (fillLinked "self" movesText movesLinks (some linkSelfFollow.name))
+      commandWith "fill-folded" fun call => do
+          fillLinked "folded" foldedLinksText foldedLinks (some linkListing.name) call
+          -- The window shows the buffer just made.
+          let state ← editorState
+          if let some window := state.window? call.target.window.id then
+            discard <|
+                window.buffer.setFolds
+                  #[{ start := 6, stop := 11, key := "middle", text := "[two]", folded := true }]
       commandWith "listing-visit" fun _ => message "visited"
       commandWith "say" fun call =>
           match call.arguments with

@@ -140,6 +140,15 @@ def linkFollowChecks : List Check :=
           (activatedOn "reference").map linkEcho == some "resolved abc" &&
             (activatedOn "nope").map linkEcho ==
               some "link-follow: nothing follows `nope:` links" },
+    { name :=
+        "activate on a link inside a folded range does not follow it: the link is hidden, so the buffer's own activate runs"
+      run :=
+        pure <|
+          (linkDriver.map fun driver =>
+              linkEcho
+                (linkPressed (linkRan (linkRan driver "fill-folded") "at" [.nat 8])
+                  (rolePresses Role.activate))) ==
+            some "visited" },
     { name := "activate on a command no one registered says there is no such command"
       run := pure <| (activatedOn "ghost").map linkEcho == some "ghost: no such command" },
     { name :=
@@ -219,6 +228,15 @@ def linkMoveChecks : List Check :=
       run :=
         pure <|
           (onMoves 3).bind (linkHead <| linkPressed · next) == some 8 &&
-            (onMoves 9).bind (linkHead <| linkPressed · previous) == some 8 }]
+            (onMoves 9).bind (linkHead <| linkPressed · previous) == some 8 },
+    { name :=
+        "next-link and previous-link pass over a link inside a folded range, to the first link after it and the last before it"
+      run :=
+        pure <|
+          let onFolded (offset : Nat) : Option TestDriver :=
+            linkDriver.map fun driver => linkRan (linkRan driver "fill-folded") "at" [.nat offset]
+          (onFolded 2).bind (linkHead <| linkPressed · next) == some 14 &&
+            (onFolded 14).bind (linkHead <| linkPressed · previous) == some 2 &&
+            (onFolded 0).bind (linkHead <| linkPressed · next) == some 2 }]
 
 end ModelTest

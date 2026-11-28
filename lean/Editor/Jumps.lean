@@ -39,10 +39,12 @@ commands, going to a place in a closed file, is the upper module's
 - **Going to a held place** (`goHeld`): in the window's own buffer the
   cursor is put on the place; in another, the window shows that buffer
   first. With `line`, the cursor goes to the first non-blank of the place's
-  line.
+  line. A folded range whose rows hold the place is unfolded
+  (`BufferId.reveal`, `docs/design/text-and-display.md`, "Folds, as
+  built"), so `C-o`, `C-i` and a mark landing inside a fold show it.
 - **Placing the cursor** (`placeCursor`, `offsetOn`): one bar at an
   offset, with the selection's shape kept, or at the first non-blank of
-  the offset's line. Going to a held place places it so, and so does a
+  the offset's line; it unfolds nothing. Going to a held place places it so, and so does a
   visit of a file (`Files.placeAt`, `packages/files/Files.lean`), at its point.
 - **Detach** (`detach`): before a buffer is closed, every place held in it,
   in every window's jumps and in the global marks, becomes a place in its
@@ -200,14 +202,17 @@ def offsetOn (text : TextId) (offset : Nat) (line : Bool) : TextM Nat :=
 
 /-- Puts the cursor of `view` on the place held by `marker` in `buffer`,
 showing `buffer` in the window first when it shows another; with `line`, on
-the first non-blank of the place's line. Nothing when the window cannot
-show the buffer. -/
+the first non-blank of the place's line; and unfolds every folded range of
+`buffer` whose rows hold the place (`BufferId.reveal`). Nothing when the
+window cannot show the buffer. -/
 def goHeld (view : ViewId) (buffer : BufferId) (marker : MarkerId) (line : Bool) : EditorM Unit :=
   do
   let some window := (← editorState).window? view | return
   if window.buffer != buffer then
     let .ok () ← view.show buffer | return
-  placeCursor view (← offsetOn marker.text (← Marks.offsetOf marker) line)
+  let offset ← offsetOn marker.text (← Marks.offsetOf marker) line
+  placeCursor view offset
+  buffer.reveal offset
 
 /-- Detaches the places held in the buffer `id` ("Detach", in the module
 docs): in every window's jumps and in the global marks, each becomes a

@@ -57,6 +57,7 @@ import ModelTest.Editor.FileJobs
 import ModelTest.Editor.FileWatch.Model
 import ModelTest.Editor.Floating
 import ModelTest.Editor.Fold
+import ModelTest.Editor.Folds
 import ModelTest.Editor.Fuzzy.Contract
 import ModelTest.Editor.Fuzzy.Model
 import ModelTest.Editor.Grep.Model
@@ -1386,6 +1387,12 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   (`Editor/Fold.lean`): a declaration merged by key, the shown folds of
   nested and overlapping ranges, a step of rows over shown folds, the range
   a toggle acts on, and the rows a range covers through the text model;
+  `foldToggleChecks` and `foldRegenerateChecks`, `fold-toggle`
+  (`Editor/Folds.lean`) on a hosted driver over the core's `Folds.setup`:
+  a folded range unfolded and an unfolded one folded by the `toggle` role's
+  key with the text and its revision unchanged, nested ranges unfolded
+  outer first, the buffer's own `toggle` off every range, and a
+  regeneration keeping each surviving key's toggled state;
 - `columnsChecks`: the column arithmetic of align-to stops
   (`Editor/Columns.lean`), pure and on the display model, and a generated
   buffer's stops and spans reaching its view; `stopChecks`, beside the
@@ -1754,6 +1761,8 @@ def checks : List Check :=
     linkFollowChecks ++
     linkMoveChecks ++
     foldChecks ++
+    foldToggleChecks ++
+    foldRegenerateChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++

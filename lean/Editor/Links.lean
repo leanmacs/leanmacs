@@ -53,6 +53,11 @@ own `activate`.
   wrap: at the last link `link-next` says `link-next: no link after the
   cursor` and leaves the cursor, and `link-previous` does the same at the
   first.
+- **A link inside a shown fold is hidden** (`shownLinks`): a link whose
+  start a shown fold's rows hold (`BufferId.shownFolds`) is passed over by
+  `link-next` and `link-previous`, and is not followed, so `link-follow` on
+  a placeholder runs the buffer's own `activate`
+  (`docs/design/text-and-display.md`, "Folds, as built").
 
 ## Where an addition goes
 
@@ -137,11 +142,24 @@ def headOf (call : Call) : EditorM (Option Nat) := do
   let selection ← call.target.selection
   return selection.ranges[selection.primary]?.map (·.head)
 
+/-- The links of the call's buffer that no shown fold hides: those whose
+start no shown fold's rows hold ("A link inside a shown fold is hidden", in
+the module docs). -/
+def shownLinks (call : Call) : EditorM (Array Link) := do
+  let buffer := call.target.buffer
+  let shown ← call.target.window.buffer.shownFolds
+  if shown.isEmpty then
+    return buffer.links
+  let size ← buffer.text.byteLength
+  buffer.links.filterM fun link => do
+      return (Fold.cover shown (← Fold.rowOf buffer.text size link.start)).isNone
+
 /-- `link-follow`: follows the link at the cursor, or, off a link, runs the
 command the buffer's own modes fill `activate` with ("Following", in the
 module docs). -/
 def follow (call : Call) : EditorM Unit := do
-  let link := (← headOf call).bind (Link.at? call.target.buffer.links)
+  let links ← shownLinks call
+  let link := (← headOf call).bind (Link.at? links)
   match link with
   | some link =>
     followTarget call link.target
@@ -162,7 +180,7 @@ def follow (call : Call) : EditorM Unit := do
 after it, or says there is none ("Moving", in the module docs). -/
 def next (call : Call) : EditorM Unit := do
   let some head ← headOf call | return
-  match Link.after call.target.buffer.links head with
+  match Link.after (← shownLinks call) head with
   | some link =>
     Jumps.placeCursor call.target.window.id link.start
   | none =>
@@ -172,7 +190,7 @@ def next (call : Call) : EditorM Unit := do
 starts before it, or says there is none ("Moving", in the module docs). -/
 def previous (call : Call) : EditorM Unit := do
   let some head ← headOf call | return
-  match Link.before call.target.buffer.links head with
+  match Link.before (← shownLinks call) head with
   | some link =>
     Jumps.placeCursor call.target.window.id link.start
   | none =>

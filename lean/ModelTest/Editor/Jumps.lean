@@ -45,11 +45,28 @@ def deletedRows (first last : Nat) (keepFirst : Bool := false) :
     return (buffer.marks.toList.map (·.1), decided, (state.globalMark? 'A').isSome)
   (dispatchedFrom program start).map (·.1)
 
+/-- On `foldedJumpState`: what `foldedJumpSeen` reads once `Jumps.placeCursor`
+has put the cursor at 7, inside the folded range, and once, from 0,
+`Jumps.goHeld` has gone to a place held at 7. -/
+def foldedLanding : Option ((Bool × Nat) × (Bool × Nat)) :=
+  let program : EditorM ((Bool × Nat) × (Bool × Nat)) := do
+    Jumps.placeCursor ⟨0⟩ 7
+    let placed ← foldedJumpSeen
+    let marker ← (⟨0⟩ : TextId).mark (.anchor { offset := 7, bias := .after })
+    Jumps.placeCursor ⟨0⟩ 0
+    Jumps.goHeld ⟨0⟩ ⟨0⟩ marker false
+    return (placed, ← foldedJumpSeen)
+  (dispatchedFrom program foldedJumpState).map (·.1)
+
 /-- The checks of recording, cleaning up, detaching and attaching the places
 of a window's jump list, on the loop's driver over the editor's models and
-the file model (`jumpDriver`). -/
+the file model (`jumpDriver`), and of going to a held place inside a folded
+range. -/
 def jumpChecks : List Check :=
   [{  name :=
+        "going to a held place inside a folded range unfolds the range and puts the cursor on the place, and placing the cursor there alone unfolds nothing"
+      run := return foldedLanding == some ((true, 7), (false, 7)) },
+    { name :=
         "a record keeps the cursor's place as the last entry, the index one past the end, and as the previous-context mark"
       run :=
         return (jumpedFrom "C-j 2 C-j r").map (fun driver => (jumpsOf driver, previousOf driver)) ==

@@ -155,17 +155,20 @@ is used in its place until a reload drops it.
   (`leaders`): a derived mode's own role wins, and a role it does not fill
   falls to the nearest parent that fills it.
 - **The active keymaps of a view** (`activeMaps`) are, for a buffer with
-  links, the links mode's (`Links.modeName`, `Editor/Links.lean`), then its
-  buffer's minor modes', the one added last first, then its major mode's,
-  then the global keymap (`keymap`). A buffer with no links, or a registry
-  with no links mode (the package that registers it left out), leaves the
-  links mode out. A name no mode is registered under contributes
+  links, the links mode's (`Links.modeName`, `Editor/Links.lean`), then, for
+  a buffer with foldable ranges, the folds mode's (`Folds.modeName`,
+  `Editor/Folds.lean`), then its buffer's minor modes', the one added last
+  first, then its major mode's, then the global keymap (`keymap`). A buffer
+  with no links, or a registry with no links mode (the package that
+  registers it left out), leaves the links mode out, and the same holds of
+  foldable ranges and the folds mode. A name no mode is registered under contributes
   nothing, and a view with no window has the global keymap alone. The host
   makes them for each key, so a reload's modes hold from the next key.
 - **The command a buffer's modes fill a role with** (`roleCommand`) is read
   in the same order as the keymaps, minor modes first, each lineage nearest
-  first, and never from the links mode: the links mode's `activate` runs
-  it off a link (`Editor/Links.lean`).
+  first, and never from the links mode or the folds mode: the links mode's
+  `activate` runs it off a link (`Editor/Links.lean`), and the folds mode's
+  `toggle` off a foldable range (`Editor/Folds.lean`).
 - **Setting a buffer's major mode** is a command's request
   (`ViewId.setMajorMode`, `Editor/Api.lean`), which the loop that runs the
   command answers (`Editor/Command/Dispatch.lean`). What the loop is told
@@ -1298,7 +1301,8 @@ def modeKeymaps (registry : Registry) (scheme : InputScheme) (name : String) :
 order: for the open prompt's minibuffer view, when the prompt has a
 category, that category's keymap (`categoryKeymap`); then, when the
 view's buffer has links, the links mode's (`Links.modeName`), none when no
-mode of that name is registered; then the keymaps of
+mode of that name is registered; then, when it has foldable ranges, the
+folds mode's (`Folds.modeName`), likewise; then the keymaps of
 each minor mode of the view's buffer, the one added last first, then its
 major mode's, then the global keymap of every owner's key bindings in no
 category (`keymap`). A view with no window has the global keymap alone. -/
@@ -1319,16 +1323,20 @@ def activeMaps (registry : Registry) (scheme : InputScheme) (state : EditorState
     -- its name registered it contributes nothing.
     let links :=
       if target.buffer.links.isEmpty then [] else registry.modeKeymaps scheme Links.modeName
+    -- The folds mode goes next for a buffer with foldable ranges, likewise.
+    let folds :=
+      if target.buffer.folds.isEmpty then [] else registry.modeKeymaps scheme Folds.modeName
     let minors := target.buffer.minors.toList.flatMap (registry.modeKeymaps scheme)
     let major := (target.buffer.major.map (registry.modeKeymaps scheme)).getD []
-    category ++ links ++ minors ++ major ++ [global]
+    category ++ links ++ folds ++ minors ++ major ++ [global]
 
 /-- The command the modes of a buffer whose major mode is `major` and whose
 minor modes are `minors`, the one added last first, fill `role` with: the
 first over each minor mode's lineage, then over the major mode's, each
 nearest first, the order the active keymaps resolve the role's keys in
-(`activeMaps`). The links mode is never asked, so a command that runs in its
-place reaches the buffer's own. `none` when no mode fills `role`. -/
+(`activeMaps`). The links mode and the folds mode are never asked, so a
+command that runs in their place reaches the buffer's own. `none` when no
+mode fills `role`. -/
 def roleCommand (registry : Registry) (major : Option String) (minors : Array String)
     (role : Role) : Option String :=
   let ofMode (name : String) : Option String :=

@@ -6,6 +6,7 @@ import Editor.Loop
 import Editor.Loop.Driver
 import Editor.State
 import Editor.Test.Driver
+import Editor.Test.Editing
 import Editor.Test.Files
 import Editor.Test.Keys
 import Editor.Test.Loop
@@ -20,7 +21,9 @@ The driver of the jump checks, over the test scheme, the editor's models
 and the file model, with keys that record, edit, open and close, written
 over the core's API: the kit's opener opens a file, and stand-ins written
 here switch and close; and what a check reads of a window's jump list and
-cursor, written as text. The core's `ModelTest/Editor/Jumps.lean` runs on
+cursor, written as text; and a state whose buffer has a folded range, with
+what a check of a landing inside it reads (`foldedJumpState`,
+`foldedJumpSeen`). The core's `ModelTest/Editor/Jumps.lean` runs on
 its driver; the files feature's support (`ModelTest/Support/JumpsGo.lean`)
 binds the same keys to the real commands, for `ModelTest/Editor/Jumps/Go.lean`
 and `packages/evil/EvilTest/Evil/Marks.lean`. It holds no checks of its own.
@@ -187,6 +190,21 @@ writes it, and its index. -/
 def jumpsOf (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option (List String × Nat) := do
   let window ← driver.loop.state.window? view
   return (window.jumps.list.entries.toList.map (placeText driver), window.jumps.list.index)
+
+/-- A buffer over `l0` to `l4` whose rows 1 to 3 are the folded range `f`,
+its cursor at 0. -/
+def foldedJumpState : TextM EditorState := do
+  let state ← barState "l0\nl1\nl2\nl3\nl4\n" 0
+  let folds : Array Foldable :=
+    #[{ start := 3, stop := 11, key := "f", text := "…", folded := true }]
+  return { state with buffers := state.buffers.modify 0 (·.map ({ · with folds })) }
+
+/-- Whether buffer 0's range `f` is folded, and the head of view 0's cursor,
+in the state a command runs on. -/
+def foldedJumpSeen : EditorM (Bool × Nat) := do
+  let folded := ((← editorState).buffer? ⟨0⟩).any fun buffer => buffer.folds.any (·.folded)
+  let .ok selection ← (⟨0⟩ : ViewId).selection | return (folded, 0)
+  return (folded, (selection.ranges[0]?.map (·.head)).getD 0)
 
 /-- The previous-context mark of the view `view` of `driver`, as `placeText`
 writes it. -/

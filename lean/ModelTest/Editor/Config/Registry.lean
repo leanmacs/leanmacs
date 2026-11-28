@@ -16,6 +16,7 @@ import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.Extension
 import Editor.Face
+import Editor.Fold
 import Editor.Fuzzy
 import Editor.Fuzzy.Model
 import Editor.InputScheme
@@ -1178,6 +1179,43 @@ def modeRegistryChecks : List Check :=
               activeLookup links state ⟨0⟩ Role.activate == .bound (filled "major" Role.activate) &&
               activeLookup modeRegistry (linked state) ⟨0⟩ Role.activate ==
                 .bound (filled "major" Role.activate) },
+    { name :=
+        "in a buffer with foldable ranges the folds mode's keymaps go after the links mode's and before its minor and major modes', and with no foldable range, or no folds mode registered, not at all; the command a role is filled with never comes from the folds mode"
+      run :=
+        let both :=
+          modeRegistry.replaceModes .config
+            #[filling Links.modeName [Role.activate],
+              filling Folds.modeName [Role.toggle, Role.activate, Role.nextItem]]
+        let folding (links : Bool) (state : EditorState) : EditorState :=
+          { state with
+            buffers :=
+              state.buffers.modify 0
+                (·.map fun buffer =>
+                  { buffer with
+                    folds := #[{ start := 0, stop := 1, key := "k", text := "…" }]
+                    links :=
+                      if links then
+                        #[{ start := 0, stop := 1, target := .command { command := "x" } }]
+                      else #[] }) }
+        pure <|
+          match onTextModel (withModes "major" ["m1"]) with
+          | none => false
+          | some state =>
+            activeLookup both (folding true state) ⟨0⟩ Role.activate ==
+                .bound (filled Links.modeName Role.activate) &&
+              activeLookup both (folding false state) ⟨0⟩ Role.activate ==
+                .bound (filled Folds.modeName Role.activate) &&
+              activeLookup both (folding true state) ⟨0⟩ Role.toggle ==
+                .bound (filled Folds.modeName Role.toggle) &&
+              activeLookup both (folding true state) ⟨0⟩ Role.nextItem ==
+                .bound (filled Folds.modeName Role.nextItem) &&
+              activeLookup both state ⟨0⟩ Role.nextItem == .bound (filled "m1" Role.nextItem) &&
+              activeLookup both state ⟨0⟩ Role.activate == .bound (filled "major" Role.activate) &&
+              activeLookup modeRegistry (folding false state) ⟨0⟩ Role.nextItem ==
+                .bound (filled "m1" Role.nextItem) &&
+              both.roleCommand (some "major") #["m1"] Role.toggle == none &&
+              both.roleCommand (some "major") #["m1"] Role.nextItem ==
+                some (filled "m1" Role.nextItem).command },
     { name :=
         "the command a buffer's modes fill a role with is a minor mode's, the last added first, over the major mode's, a derived mode's over its parent's, never the links mode's, and none when no mode fills it"
       run :=

@@ -10,6 +10,7 @@ import Editor.Completion.StyleContract
 import Editor.Config.Elaborator.Contract
 import Editor.Config.Elaborator.Model
 import Editor.Display.Contract
+import Editor.Folds
 import Editor.Headless.Journal.Contract
 import Editor.Headless.Queue.Contract
 import Editor.Indent
