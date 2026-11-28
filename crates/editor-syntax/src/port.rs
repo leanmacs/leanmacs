@@ -150,15 +150,19 @@ pub enum QueryKind {
     TextObjects,
     /// Which nodes indent the rows they hold: `indents.scm`.
     Indents,
+    /// Which nodes a rendered view reads: its blocks, its spans and the
+    /// markup it leaves out: `rendered.scm`.
+    Rendered,
 }
 
 impl QueryKind {
     /// Every kind.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Highlights,
         Self::Injections,
         Self::TextObjects,
         Self::Indents,
+        Self::Rendered,
     ];
 }
 

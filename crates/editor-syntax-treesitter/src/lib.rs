@@ -75,14 +75,25 @@
 //! otherwise be drawn in the code-span face. The block query captures a
 //! link reference definition's title the same way.
 //!
-//! | Grammar | Reparse | Highlights | Injections | Text objects | Indents |
-//! |---|---|---|---|---|---|
-//! | `json` | incremental | the crate's | none | none | none |
-//! | `rust` | incremental | the crate's | the crate's | `queries/rust/textobjects.scm` | `queries/rust/indents.scm` |
-//! | `markdown` | incremental | `queries/markdown/highlights.scm` | the crate's, of its block grammar | none | none |
-//! | `markdown_inline` | whole | `queries/markdown_inline/highlights.scm` | the crate's, of its inline grammar | none | none |
-//! | `toml` | incremental | the crate's | none | none | none |
-//! | `lean` | incremental | upstream's, vendored with the grammar | none | none | none |
+//! | Grammar | Reparse | Highlights | Injections | Text objects | Indents | Rendered |
+//! |---|---|---|---|---|---|---|
+//! | `json` | incremental | the crate's | none | none | none | none |
+//! | `rust` | incremental | the crate's | the crate's | `queries/rust/textobjects.scm` | `queries/rust/indents.scm` | none |
+//! | `markdown` | incremental | `queries/markdown/highlights.scm` | the crate's, of its block grammar | none | none | `queries/markdown/rendered.scm` |
+//! | `markdown_inline` | whole | `queries/markdown_inline/highlights.scm` | the crate's, of its inline grammar | none | none | `queries/markdown_inline/rendered.scm` |
+//! | `toml` | incremental | the crate's | none | none | none | none |
+//! | `lean` | incremental | upstream's, vendored with the grammar | none | none | none | none |
+//!
+//! **The rendered queries** are this repository's, a query kind of their
+//! own (`QueryKind::Rendered`), as the Rust indents and text objects are:
+//! which nodes a rendered view of a Markdown text reads, its blocks, its
+//! spans and the markup it leaves out. Each opens with a comment naming the
+//! Lean module that reads its captures (`lean/Editor/Markdown/Parsed.lean`),
+//! and `tests/rendered.rs` pins them on the real grammars. A text parsed
+//! once for a rendered view finds its layers with
+//! [`TreeSitter::rendered_injections`] in place of the block grammar's
+//! shipped injections: those, then `queries/markdown/rendered-injections.scm`,
+//! which makes each table cell an inline layer too.
 //!
 //! **The reparse policy** (`editor_syntax::ReparsePolicy`) is declared in
 //! the table and pinned by each grammar's corpus in `tests/contract.rs`.
@@ -167,7 +178,9 @@
 //! fixture library: a new grammar, one that overrides `json` (after which
 //! `json` ships none of the compiled-in queries and is reparsed by the
 //! source's policy), and one source for each refusal; and pins that a
-//! loaded grammar outlives the syntax it was registered on. `native`'s unit
+//! loaded grammar outlives the syntax it was registered on.
+//! `tests/rendered.rs` pins what the rendered queries capture on the real
+//! Markdown grammars, and the rendered injections. `native`'s unit
 //! tests pin the ABI range with version numbers and the refusal of a
 //! relative path. The unit tests here pin what the contract does not ask:
 //! a Rust function's name captured by a field, a predicate that reads text
@@ -235,6 +248,25 @@ impl TreeSitter {
         }
         grammar(name).map(|grammar| (grammar.language)())
     }
+
+    /// The injections query a text of the grammar `name` parsed once for a
+    /// rendered view finds its layers with, in place of the grammar's
+    /// shipped injections: for `markdown` alone, the block grammar crate's
+    /// injections followed by `queries/markdown/rendered-injections.scm`,
+    /// which makes each table cell an inline layer too. `None` for any
+    /// other grammar, and for a registered one, which ships no query, a
+    /// compiled-in name it replaces included. A document's session keeps
+    /// the shipped injections.
+    pub fn rendered_injections(&self, name: &GrammarName) -> Option<String> {
+        if name.as_str() != "markdown" || self.registry().get(name).is_some() {
+            return None;
+        }
+        Some(format!(
+            "{}\n{}",
+            tree_sitter_md::INJECTION_QUERY_BLOCK,
+            include_str!("../queries/markdown/rendered-injections.scm")
+        ))
+    }
 }
 
 /// How to make a grammar's language.
@@ -289,6 +321,10 @@ const GRAMMARS: [Grammar; 6] = [
                 include_str!("../queries/markdown/highlights.scm"),
             ),
             (QueryKind::Injections, tree_sitter_md::INJECTION_QUERY_BLOCK),
+            (
+                QueryKind::Rendered,
+                include_str!("../queries/markdown/rendered.scm"),
+            ),
         ],
     },
     Grammar {
@@ -305,6 +341,10 @@ const GRAMMARS: [Grammar; 6] = [
             (
                 QueryKind::Injections,
                 tree_sitter_md::INJECTION_QUERY_INLINE,
+            ),
+            (
+                QueryKind::Rendered,
+                include_str!("../queries/markdown_inline/rendered.scm"),
             ),
         ],
     },

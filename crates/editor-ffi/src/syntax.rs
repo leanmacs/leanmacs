@@ -127,7 +127,7 @@
 //!   `editor_ffi_fuzzy_rank`'s candidates; the empty string stands for
 //!   none.
 //! - **A shipped query out**: its source in a [`RawText`], with the status
-//!   as the function's result; a kind crosses as a `u8` tag
+//!   as the function's result; a kind crosses as a `u8` tag, 0 to 4
 //!   ([`query_kind_of`]).
 //! - **A language in** ([`editor_ffi_syntax_inject_language`]): its name
 //!   as a string, its highlights query's handle and faces in the layout of
@@ -325,14 +325,15 @@ impl From<KeptRefusal> for KeptStatus {
 }
 
 /// The kind of query `tag` stands for: 0 is [`QueryKind::Highlights`], 1
-/// [`QueryKind::Injections`], 2 [`QueryKind::TextObjects`] and 3
-/// [`QueryKind::Indents`].
+/// [`QueryKind::Injections`], 2 [`QueryKind::TextObjects`], 3
+/// [`QueryKind::Indents`] and 4 [`QueryKind::Rendered`].
 pub const fn query_kind_of(tag: u8) -> Option<QueryKind> {
     match tag {
         0 => Some(QueryKind::Highlights),
         1 => Some(QueryKind::Injections),
         2 => Some(QueryKind::TextObjects),
         3 => Some(QueryKind::Indents),
+        4 => Some(QueryKind::Rendered),
         _ => None,
     }
 }
@@ -1549,12 +1550,13 @@ mod tests {
         ];
         assert_eq!(shipped.map(|status| status as u64), [0, 1, 2]);
         assert_eq!(
-            [0, 1, 2, 3, 4].map(query_kind_of),
+            [0, 1, 2, 3, 4, 5].map(query_kind_of),
             [
                 Some(QueryKind::Highlights),
                 Some(QueryKind::Injections),
                 Some(QueryKind::TextObjects),
                 Some(QueryKind::Indents),
+                Some(QueryKind::Rendered),
                 None
             ]
         );
