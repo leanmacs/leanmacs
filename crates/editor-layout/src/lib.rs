@@ -87,6 +87,15 @@
 //!   spot and move queries taking the column off as the frame does, and
 //!   mark rows kept apart from text rows ([`frame`], "The gutter";
 //!   `tests/gutter.rs`);
+//! - folds: which rows a view's folds cover and which of them show, and
+//!   the mapping of a position to a fold point and back ([`folds`]); a
+//!   fold drawn as one unbroken placeholder row in its own faces, holding
+//!   every position of its rows at x 0, the rows, move and spot queries
+//!   counting it as one line, a cursor and a selection on it, and the
+//!   blocks and gutter marks beside it ([`query`], "Folds";
+//!   `tests/folds.rs`); that folding and unfolding shapes the placeholder
+//!   alone (`tests/counters.rs`); and the round trip of a position
+//!   through the fold layer (`tests/layers.rs`);
 //! - align-to stops: a row cut at its stops into cells, each shaped on its
 //!   own and placed at its stop or after the cell before it, a stop at or
 //!   past the width breaking the row before its cell, which starts the
@@ -111,6 +120,7 @@ mod blocks;
 pub mod cache;
 pub mod decoration;
 pub mod face;
+pub mod folds;
 pub mod frame;
 pub mod layer;
 pub mod line;
@@ -124,8 +134,9 @@ pub mod wrap;
 use std::collections::HashMap;
 use std::ops::Range;
 
-use crate::blocks::{BlockLayout, Blocks, ViewBlocks};
+use crate::blocks::{BlockLayout, Blocks, ViewBeside, ViewBlocks, ViewFolds};
 use crate::cache::{Counters, StatusKept, Texts, state};
+use crate::folds::FoldSnapshot;
 use editor_text::Text;
 
 use crate::decoration::{
@@ -133,8 +144,10 @@ use crate::decoration::{
 };
 use crate::face::{FaceDef, SELECTION_FACE};
 use crate::line::font_runs;
-use crate::query::{Moved, QueryError, RowRange, Shown, Spot, Walker, relative_stops};
-use crate::scene::{Block, Decoration, Padding, TextKey, TextRef, ViewId};
+use crate::query::{
+    Around, Beside, Moved, QueryError, RowRange, Shown, Spot, Walker, relative_stops,
+};
+use crate::scene::{Decoration, Padding, TextKey, TextRef, ViewId};
 use crate::shaper::{FontId, ShapeInput, ShapedLine, Shaper};
 use crate::tabs::{DEFAULT_TAB_WIDTH, boundary_at_or_before, expand, row_content, segment_count};
 use crate::wrap::Outcome;
@@ -297,13 +310,14 @@ impl<S: Shaper> Layout<S> {
         padding: Padding,
         anchor: usize,
     ) -> Result<Vec<RowRange>, QueryError> {
-        self.rows_shown_with_blocks(text, width, height, padding, anchor, &[])
+        self.rows_shown_with_blocks(text, width, height, padding, anchor, Around::default())
     }
 
-    /// [`Layout::rows_shown`] in a view with `blocks` between its rows:
-    /// the text rows it shows, each block line counted among the lines
-    /// that fit by the rule the frame shows them by ([`query`], "Blocks").
-    /// With no block it is [`Layout::rows_shown`].
+    /// [`Layout::rows_shown`] in a view with `around`'s blocks between its
+    /// rows and its folds: the text rows it shows, each block line counted
+    /// among the lines that fit by the rule the frame shows them by, and
+    /// each shown fold one row ([`query`], "Blocks" and "Folds"). With no
+    /// block and no fold it is [`Layout::rows_shown`].
     pub fn rows_shown_with_blocks(
         &mut self,
         text: &TextRef,
@@ -311,12 +325,12 @@ impl<S: Shaper> Layout<S> {
         height: f32,
         padding: Padding,
         anchor: usize,
-        blocks: &[Block],
+        around: Around<'_>,
     ) -> Result<Vec<RowRange>, QueryError> {
         let width = self.text_width(width, padding);
         let height = self.text_height(height, padding);
-        self.query(text, width, blocks, |walker, above| {
-            let shown = walker.shown(height, anchor, above)?;
+        self.query(text, width, around, |walker, beside| {
+            let shown = walker.shown(height, anchor, beside)?;
             Ok(shown
                 .into_iter()
                 .filter_map(|shown| match shown {
@@ -348,13 +362,28 @@ impl<S: Shaper> Layout<S> {
             across,
             ..Padding::default()
         };
-        self.lines_from_padded(text, width, padding, position, lines, goal)
+        self.lines_from_padded(
+            text,
+            width,
+            padding,
+            position,
+            lines,
+            goal,
+            Around::default(),
+        )
     }
 
     /// [`Layout::lines_from`] in a view whose content is inset by
-    /// `padding`: the width it wraps at is `width` less twice
-    /// [`Layout::padding_pixels`] of `across` and once of `gutter`, as the
-    /// frame's. The padding down is not looked at: a move takes no height.
+    /// `padding`, with `around`'s folds: the width it wraps at is `width`
+    /// less twice [`Layout::padding_pixels`] of `across` and once of
+    /// `gutter`, as the frame's, and each shown fold is one line, landed on
+    /// at its start ([`query`], "Folds"). The padding down is not looked
+    /// at: a move takes no height. Nor are `around`'s blocks: a block holds
+    /// no position.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a view's geometry, its folds and the move, each an input of where the move lands"
+    )]
     pub fn lines_from_padded(
         &mut self,
         text: &TextRef,
@@ -363,9 +392,14 @@ impl<S: Shaper> Layout<S> {
         position: usize,
         lines: i64,
         goal: Option<f32>,
+        around: Around<'_>,
     ) -> Result<Moved, QueryError> {
         let width = self.text_width(width, padding);
-        self.query(text, width, &[], |walker, _| {
+        let folds = Around {
+            blocks: &[],
+            folds: around.folds,
+        };
+        self.query(text, width, folds, |walker, _| {
             walker.lines_from(position, lines, goal)
         })
     }
@@ -390,16 +424,25 @@ impl<S: Shaper> Layout<S> {
         anchor: usize,
         position: usize,
     ) -> Result<Option<Spot>, QueryError> {
-        self.spot_with_blocks(text, width, height, padding, anchor, position, &[])
+        self.spot_with_blocks(
+            text,
+            width,
+            height,
+            padding,
+            anchor,
+            position,
+            Around::default(),
+        )
     }
 
-    /// [`Layout::spot`] in a view with `blocks` between its rows: a
-    /// position below a block is lower by the block's lines, each at the
-    /// height the frame draws it at ([`query`], "Blocks"). With no block
-    /// it is [`Layout::spot`].
+    /// [`Layout::spot`] in a view with `around`'s blocks between its rows
+    /// and its folds: a position below a block is lower by the block's
+    /// lines, each at the height the frame draws it at, and a position a
+    /// fold covers is at its placeholder's x 0 ([`query`], "Blocks" and
+    /// "Folds"). With no block and no fold it is [`Layout::spot`].
     #[expect(
         clippy::too_many_arguments,
-        reason = "a view's geometry, its blocks and the position, each an input of where the position is drawn"
+        reason = "a view's geometry, its blocks and folds and the position, each an input of where the position is drawn"
     )]
     pub fn spot_with_blocks(
         &mut self,
@@ -409,15 +452,15 @@ impl<S: Shaper> Layout<S> {
         padding: Padding,
         anchor: usize,
         position: usize,
-        blocks: &[Block],
+        around: Around<'_>,
     ) -> Result<Option<Spot>, QueryError> {
         let left = self.text_left(padding);
         let down = self.first_row(padding);
         let width = self.text_width(width, padding);
         let height = self.text_height(height, padding);
-        self.query(text, width, blocks, |walker, above| {
+        self.query(text, width, around, |walker, beside| {
             Ok(walker
-                .spot(height, anchor, position, above)?
+                .spot(height, anchor, position, beside)?
                 .map(|spot| Spot {
                     x: left + spot.x,
                     y: down + spot.y,
@@ -515,18 +558,20 @@ impl<S: Shaper> Layout<S> {
     /// Runs `ask` on a walker over what is kept of `text` at `width`, with
     /// the text's own spans resolved for its snapshot, as the frame of that
     /// snapshot resolves them, under the selections and decorations of the
-    /// last frame that showed it, in the faces as they are now, and with
-    /// the lines of `blocks` before each row (the walk's `above`), and
-    /// counts the work.
+    /// last frame that showed it, in the faces as they are now, with the
+    /// lines of `around`'s blocks before each row and its folds shown
+    /// (the walk's `beside`), and counts the work.
     fn query<T>(
         &mut self,
         text: &TextRef,
         width: f32,
-        blocks: &[Block],
-        ask: impl FnOnce(&mut Walker<'_, S>, &mut dyn FnMut(usize) -> Vec<Shown>) -> T,
+        around: Around<'_>,
+        ask: impl FnOnce(&mut Walker<'_, S>, &mut dyn Beside) -> T,
     ) -> T {
         let own = TextSpansSource::of(&mut self.styles, text);
-        let mut view_blocks = ViewBlocks::new(blocks, &text.snapshot, &mut self.styles);
+        let mut view_blocks = ViewBlocks::new(around.blocks, &text.snapshot, &mut self.styles);
+        let mut view_folds = ViewFolds::new(around.folds, &mut self.styles);
+        let folds = FoldSnapshot::new(&text.snapshot, around.folds);
         let scale = self.scale();
         let mut state = state(&mut self.texts, text, self.tab_width, Some(width));
         let state = &mut *state;
@@ -560,12 +605,17 @@ impl<S: Shaper> Layout<S> {
             width,
             counters: &mut self.counters,
         };
-        let mut above = |row| view_blocks.above(row, &mut block_layout);
+        let mut beside = ViewBeside {
+            blocks: &mut view_blocks,
+            folds: &mut view_folds,
+            layout: &mut block_layout,
+        };
         let mut seen: HashMap<(usize, usize), Outcome> = HashMap::new();
         let answer = ask(
             &mut Walker {
                 shaper,
                 wrap: &mut state.wrap,
+                folds: &folds,
                 base,
                 fonts: &fonts,
                 stops: &stops_of,
@@ -573,7 +623,7 @@ impl<S: Shaper> Layout<S> {
                     seen.entry((row, segment)).or_insert(outcome);
                 },
             },
-            &mut above,
+            &mut beside,
         );
         self.counters.add(&seen);
         answer

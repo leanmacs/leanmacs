@@ -11,6 +11,7 @@
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Paint};
 use editor_layout::frame::{FrameRow, ViewFrame};
+use editor_layout::query::Around;
 use editor_layout::scene::{
     Cursor, GutterMark, Padding, Rect, Scene, TextKey, TextRef, View, ViewId,
 };
@@ -232,7 +233,7 @@ fn the_rows_spot_and_move_queries_take_the_gutter_off_as_the_frame_does() {
     // A move wraps at the same width: from 5, the second cell of the
     // second visual line, one line down is the second cell of the third.
     let moved = layout
-        .lines_from_padded(&reference, 60.0, padding, 5, 1, None)
+        .lines_from_padded(&reference, 60.0, padding, 5, 1, None, Around::default())
         .unwrap();
     assert_eq!(moved.position, 9);
 }

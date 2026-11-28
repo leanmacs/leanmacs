@@ -13,9 +13,10 @@ use editor_layout::Layout;
 use editor_layout::cache::Counters;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::frame::Frame;
+use editor_layout::query::Around;
 use editor_layout::scene::{
-    AlignStop, Block, Changes, Cursor, Decoration, Padding, Rect, Scene, StatusField, TextKey,
-    TextRef, View, ViewId,
+    AlignStop, Block, Changes, Cursor, Decoration, Fold, Padding, Rect, Scene, StatusField,
+    TextKey, TextRef, View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -85,6 +86,7 @@ fn scene_rows(text: &TextRef, width: u32, cursor: usize, rows: u32) -> Scene {
             blocks: vec![],
             marks: vec![],
             stops: vec![],
+            folds: vec![],
         }],
         ..Scene::default()
     }
@@ -878,10 +880,79 @@ fn a_frame_that_shows_the_same_blocks_again_shapes_none_of_them() {
     let asked = counted(&mut layout, |layout| {
         let blocks = scene_with_blocks(&text, &headers).views.remove(0).blocks;
         layout
-            .rows_shown_with_blocks(&text, 400.0, 640.0, Padding::default(), 0, &blocks)
+            .rows_shown_with_blocks(
+                &text,
+                400.0,
+                640.0,
+                Padding::default(),
+                0,
+                Around {
+                    blocks: &blocks,
+                    folds: &[],
+                },
+            )
             .unwrap();
     });
     assert_eq!(asked.shaped, 0);
+}
+
+/// [`scene`], with rows 5 to 9 folded under one placeholder when
+/// `folded`.
+fn scene_with_fold(text: &TextRef, folded: bool) -> Scene {
+    let mut scene = scene(text, 400, 0);
+    if folded {
+        scene.views[0].folds = vec![Fold {
+            start: text.snapshot.row_range(5).unwrap().start,
+            stop: text.snapshot.row_range(9).unwrap().end,
+            text: "… 5 rows".to_owned(),
+            decorations: vec![],
+        }];
+    }
+    scene
+}
+
+#[test]
+fn folding_shapes_the_placeholder_alone_and_showing_it_again_shapes_nothing() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    let unfolded = counted(&mut layout, |layout| {
+        layout.frame(&scene_with_fold(&text, false));
+    });
+    assert_eq!(unfolded, count(20, 20, 0));
+    // Folding shapes the placeholder and no row of the text: the fifteen
+    // rows it leaves are reused.
+    let folded = counted(&mut layout, |layout| {
+        layout.frame(&scene_with_fold(&text, true));
+    });
+    assert_eq!(folded, count(1, 1, 15));
+    // Shown again, the placeholder is kept.
+    let again = counted(&mut layout, |layout| {
+        layout.frame(&scene_with_fold(&text, true));
+    });
+    assert_eq!(again, count(0, 0, 16));
+    // And a query with the fold lays out nothing either.
+    let asked = counted(&mut layout, |layout| {
+        let folds = scene_with_fold(&text, true).views.remove(0).folds;
+        layout
+            .rows_shown_with_blocks(
+                &text,
+                400.0,
+                640.0,
+                Padding::default(),
+                0,
+                Around {
+                    blocks: &[],
+                    folds: &folds,
+                },
+            )
+            .unwrap();
+    });
+    assert_eq!(asked.shaped, 0);
+    // Unfolding shapes no row: the hidden ones were kept.
+    let back = counted(&mut layout, |layout| {
+        layout.frame(&scene_with_fold(&text, false));
+    });
+    assert_eq!(back, count(0, 0, 20));
 }
 
 #[test]

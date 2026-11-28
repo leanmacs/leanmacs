@@ -109,7 +109,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use editor_layout::Layout;
 use editor_layout::face::FaceDef;
 use editor_layout::frame::{Frame, Heights};
-use editor_layout::query::{Moved, QueryError, RowRange, Spot};
+use editor_layout::query::{Around, Moved, QueryError, RowRange, Spot};
 use editor_layout::scene::{
     Block, Changes, Decoration, Padding, Scene, TextKey, TextRef, TextSpans,
 };
@@ -283,7 +283,8 @@ where
         anchor: usize,
         blocks: &[Block],
     ) -> Result<Vec<RowRange>, QueryError> {
-        Layout::rows_shown_with_blocks(self, text, width, height, padding, anchor, blocks)
+        let around = Around { blocks, folds: &[] };
+        Layout::rows_shown_with_blocks(self, text, width, height, padding, anchor, around)
     }
 
     fn lines_from(
@@ -295,7 +296,16 @@ where
         lines: i64,
         goal: Option<f32>,
     ) -> Result<Moved, QueryError> {
-        Layout::lines_from_padded(self, text, width, padding, position, lines, goal)
+        Layout::lines_from_padded(
+            self,
+            text,
+            width,
+            padding,
+            position,
+            lines,
+            goal,
+            Around::default(),
+        )
     }
 
     fn spot(
@@ -308,7 +318,8 @@ where
         position: usize,
         blocks: &[Block],
     ) -> Result<Option<Spot>, QueryError> {
-        Layout::spot_with_blocks(self, text, width, height, padding, anchor, position, blocks)
+        let around = Around { blocks, folds: &[] };
+        Layout::spot_with_blocks(self, text, width, height, padding, anchor, position, around)
     }
 
     fn heights(&mut self) -> Heights {

@@ -72,6 +72,22 @@
 //! at its revision, by the rule they read the decorations by
 //! ([`cache`](crate::cache)).
 //!
+//! # A fold
+//!
+//! A view's [`Fold`]s are ranges of its text shown as one placeholder row:
+//! a summary line in place of the rows it hides. Lean chooses which ranges
+//! are folded and hands a view only the ones it shows. A fold is whole
+//! rows: it covers each buffer row its range `[start, stop)` has a byte
+//! in, a line break being the row's it ends, or the row that holds `start`
+//! when the range is empty; its offsets are moved back to a character
+//! boundary, and past the text's end to the end, as a block's are. Those
+//! rows are drawn as one row of the fold's `text`, in its decorations over
+//! the default face, laid out unbroken and clipped at the view's edge. The
+//! row holds every position of the rows it covers, each at its x 0, and
+//! a move that lands on it lands at the first covered row's start. A fold
+//! whose first row an earlier one covers is not shown
+//! ([`folds`](crate::folds)).
+//!
 //! # Where an addition goes
 //!
 //! A new field of Lean's scene is a field here, decoded by the binding.
@@ -183,6 +199,22 @@ pub struct Block {
     pub text: String,
     /// Spans of `text` drawn in a face: the block's own faces, over the
     /// default face. `start` and `stop` are bytes of `text`.
+    pub decorations: Vec<Decoration>,
+}
+
+/// A fold: the rows of a range of a view's text shown as one placeholder
+/// row (module docs, "A fold").
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Fold {
+    /// A byte offset of the view's snapshot where its range starts.
+    pub start: usize,
+    /// Where it stops, not included. A range of no byte covers the row
+    /// that holds `start`.
+    pub stop: usize,
+    /// What its placeholder row says. Only its first line is drawn.
+    pub text: String,
+    /// Spans of `text` drawn in a face, over the default face. `start` and
+    /// `stop` are bytes of `text`.
     pub decorations: Vec<Decoration>,
 }
 
@@ -603,6 +635,9 @@ pub struct View {
     /// Its align-to stops (module docs, "Align-to stops"); none by
     /// default.
     pub stops: Vec<AlignStop>,
+    /// Its folds, the ranges of its text shown as one placeholder row each
+    /// (module docs, "A fold"); none by default.
+    pub folds: Vec<Fold>,
 }
 
 /// A divider: a strip of the frame between two tiled views, filled in the

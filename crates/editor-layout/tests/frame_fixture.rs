@@ -195,6 +195,7 @@ fn scene() -> Scene {
                 blocks: vec![],
                 marks: vec![],
                 stops: vec![],
+                folds: vec![],
             },
             View {
                 id: ViewId(2),
@@ -218,6 +219,7 @@ fn scene() -> Scene {
                 blocks: vec![],
                 marks: vec![],
                 stops: vec![],
+                folds: vec![],
             },
         ],
         focused: Some(ViewId(1)),

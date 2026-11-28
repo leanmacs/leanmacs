@@ -927,6 +927,8 @@ impl WireScene {
                             x: *x,
                         })
                         .collect(),
+                    // Folds do not cross yet.
+                    folds: Vec::new(),
                 }
             })
             .collect();

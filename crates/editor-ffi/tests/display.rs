@@ -36,6 +36,7 @@ use editor_ffi::snapshot::{
 use editor_ffi::text::editor_ffi_text_free;
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
+use editor_layout::query::Around;
 use editor_layout::scene::{
     AlignStop, Block, Cursor, CursorShape, Decoration, Padding, Rect, Scene, Size, StatusField,
     TextKey, TextRef, View, ViewId,
@@ -432,7 +433,10 @@ fn the_rows_and_a_spot_with_blocks_answer_as_layout_does_through_c() {
                 height as f32,
                 Padding::default(),
                 anchor,
-                &blocks,
+                Around {
+                    blocks: &blocks,
+                    folds: &[],
+                },
             )
             .unwrap()
             .into_iter()
@@ -446,7 +450,18 @@ fn the_rows_and_a_spot_with_blocks_answer_as_layout_does_through_c() {
     }
     // `alpha` is below two block rows and two text rows.
     let expected = layout
-        .spot_with_blocks(&direct, 320.0, 128.0, Padding::default(), 0, 6, &blocks)
+        .spot_with_blocks(
+            &direct,
+            320.0,
+            128.0,
+            Padding::default(),
+            0,
+            6,
+            Around {
+                blocks: &blocks,
+                folds: &[],
+            },
+        )
         .unwrap()
         .unwrap();
     assert_eq!(expected.y, 64.0);
@@ -592,7 +607,7 @@ fn the_rows_a_spot_and_a_move_take_a_views_gutter_off_through_c() {
         Ok(Some((spot.x as u64, spot.y as u64, 16)))
     );
     let moved = layout
-        .lines_from_padded(&direct, 64.0, padding, 1, 1, None)
+        .lines_from_padded(&direct, 64.0, padding, 1, 1, None, Around::default())
         .unwrap();
     assert_eq!(
         moved_guttered(display, snapshot, 64, (4, 16), 1, 1, None),

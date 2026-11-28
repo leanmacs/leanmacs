@@ -41,7 +41,7 @@
 //!
 //! # Blocks
 //!
-//! A view's blocks ([`Block`](crate::scene::Block)) are rows of text of
+//! A view's blocks ([`Block`]) are rows of text of
 //! their own between the rows of its text, laid out as a small text of
 //! their own at the view's text width, in their own faces. They are
 //! placed by this rule, which the rows query, the spot and the frame all
@@ -66,6 +66,27 @@
 //!   goes, as without blocks: the move query takes none, and counts the
 //!   visual lines of the text alone.
 //!
+//! # Folds
+//!
+//! A view's folds ([`Fold`]) show the rows of a range as one placeholder
+//! row, by the fold layer's rule ([`folds`](crate::folds), "The rule"),
+//! which the rows query, the move, the spot and the frame all walk by:
+//!
+//! - **The placeholder is one visual line** in place of every visual line
+//!   of the rows the fold covers, laid out unbroken from its own text in
+//!   its own faces, and counted among the lines that fit at its height,
+//!   at least [`LEAST_ROW_HEIGHT`]. The rows it hides are not laid out.
+//! - **It holds every position of those rows**, each at its x 0. A walk
+//!   from an anchor inside a fold starts at its placeholder.
+//! - **In the rows answer** it is the fold's start (its first row's start)
+//!   up to the end of its last row's content.
+//! - **A move** steps over it as one line, and one that lands on it lands
+//!   at the fold's start and passes its goal back unchanged.
+//! - **A spot** of any position it holds is its row at x 0, and a spot
+//!   below it is lower by its height alone.
+//! - **Blocks** before its first covered row are drawn above it; blocks
+//!   before a later covered row are not drawn.
+//!
 //! A refusal is [`QueryError::BadPosition`] for an offset that is not a
 //! position of the text. An unknown snapshot is the binding's refusal:
 //! layout is handed a snapshot or nothing.
@@ -75,7 +96,9 @@ use std::sync::Arc;
 
 use editor_text::Snapshot;
 
+use crate::folds::{FoldSnapshot, ShownFold};
 use crate::line::LineEntry;
+use crate::scene::{Block, Fold};
 use crate::shaper::{FontId, Shaper};
 use crate::tabs::{row_content, segment_of, segment_range};
 use crate::wrap::{Outcome, WrapLayer};
@@ -93,6 +116,17 @@ pub struct RowRange {
     pub start: usize,
     /// The byte offset where its characters stop.
     pub stop: usize,
+}
+
+/// What a query is asked with around a view's text: its blocks and its
+/// folds (module docs, "Blocks" and "Folds"). A move reads only the folds:
+/// a block holds no position.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Around<'a> {
+    /// The view's blocks.
+    pub blocks: &'a [Block],
+    /// The view's folds.
+    pub folds: &'a [Fold],
 }
 
 /// Where a move went.
@@ -164,6 +198,16 @@ impl Shown {
     }
 }
 
+/// What a walk asks of what is laid out beside a view's text: the lines of
+/// the blocks before a buffer row, and how tall a fold's placeholder is.
+pub(crate) trait Beside {
+    /// The lines of the blocks before buffer row `row`, in order.
+    fn above(&mut self, row: usize) -> Vec<Shown>;
+    /// How tall the placeholder of the view's fold `fold` (its index among
+    /// the view's folds) is drawn.
+    fn placeholder(&mut self, fold: usize) -> f32;
+}
+
 /// Walks the visual lines of one text, laying out each segment it reaches
 /// in a wrap layer, and reports how it got each one.
 pub(crate) struct Walker<'a, S: Shaper> {
@@ -171,6 +215,8 @@ pub(crate) struct Walker<'a, S: Shaper> {
     pub shaper: &'a S,
     /// The text's wrap layer.
     pub wrap: &'a mut WrapLayer<S::Shaped>,
+    /// The text's shown folds (module docs, "Folds").
+    pub folds: &'a FoldSnapshot,
     /// The base font: the font of every byte `fonts` gives no span for.
     pub base: FontId,
     /// The spans of a segment's bytes (absolute) in a font other than the
@@ -217,6 +263,35 @@ impl<S: Shaper> Walker<'_, S> {
             .map_or(0, |range| range.start)
     }
 
+    /// The shown fold whose placeholder `visual` is, if it is one.
+    pub fn placeholder(&self, visual: Visual) -> Option<ShownFold> {
+        self.folds.fold_covering_row(visual.row).copied()
+    }
+
+    /// The placeholder line of `fold`.
+    fn placeholder_line(fold: &ShownFold) -> Visual {
+        Visual {
+            row: fold.first,
+            segment: 0,
+            line: 0,
+        }
+    }
+
+    /// The last visual line of buffer row `row`, or the placeholder of the
+    /// fold that covers it.
+    fn last_of_row(&mut self, row: usize) -> Option<Visual> {
+        if let Some(fold) = self.folds.fold_covering_row(row) {
+            return Some(Self::placeholder_line(fold));
+        }
+        let segment = self.wrap.segments(row)? - 1;
+        let lines = self.entry(row, segment)?.lines().len();
+        Some(Visual {
+            row,
+            segment,
+            line: lines - 1,
+        })
+    }
+
     /// The visual line that holds the position `offset`, and the x of it.
     pub fn locate(&mut self, offset: usize) -> Result<(Visual, f32), QueryError> {
         let snapshot = self.snapshot();
@@ -227,6 +302,9 @@ impl<S: Shaper> Walker<'_, S> {
             .offset_to_point(offset)
             .ok_or(QueryError::BadPosition)?
             .row;
+        if let Some(fold) = self.folds.fold_covering_row(row) {
+            return Ok((Self::placeholder_line(fold), 0.0));
+        }
         let content = row_content(&snapshot, row).ok_or(QueryError::BadPosition)?;
         let segment = segment_of(&snapshot, &content, offset);
         let entry = self.entry(row, segment).ok_or(QueryError::BadPosition)?;
@@ -237,6 +315,14 @@ impl<S: Shaper> Walker<'_, S> {
 
     /// The visual line after `visual`, if there is one.
     pub fn next(&mut self, visual: Visual) -> Option<Visual> {
+        if let Some(fold) = self.placeholder(visual) {
+            let row = fold.last + 1;
+            return (row < self.wrap.tabs().buffer().row_count()).then_some(Visual {
+                row,
+                segment: 0,
+                line: 0,
+            });
+        }
         let entry = self.entry(visual.row, visual.segment)?;
         if visual.line + 1 < entry.lines().len() {
             return Some(Visual {
@@ -260,6 +346,12 @@ impl<S: Shaper> Walker<'_, S> {
 
     /// The visual line before `visual`, if there is one.
     pub fn previous(&mut self, visual: Visual) -> Option<Visual> {
+        if let Some(fold) = self.placeholder(visual) {
+            return fold
+                .first
+                .checked_sub(1)
+                .and_then(|row| self.last_of_row(row));
+        }
         if visual.line > 0 {
             return Some(Visual {
                 line: visual.line - 1,
@@ -269,7 +361,7 @@ impl<S: Shaper> Walker<'_, S> {
         let (row, segment) = if visual.segment > 0 {
             (visual.row, visual.segment - 1)
         } else if visual.row > 0 {
-            (visual.row - 1, self.wrap.segments(visual.row - 1)? - 1)
+            return self.last_of_row(visual.row - 1);
         } else {
             return None;
         };
@@ -283,6 +375,12 @@ impl<S: Shaper> Walker<'_, S> {
 
     /// The bytes of `visual`, without its line break.
     pub fn range(&mut self, visual: Visual) -> RowRange {
+        if let Some(fold) = self.placeholder(visual) {
+            return RowRange {
+                start: fold.start,
+                stop: fold.stop,
+            };
+        }
         let start = self.row_start(visual.row);
         let bytes = self
             .entry(visual.row, visual.segment)
@@ -294,8 +392,11 @@ impl<S: Shaper> Walker<'_, S> {
         }
     }
 
-    /// How tall `visual` is.
-    pub fn height(&mut self, visual: Visual) -> f32 {
+    /// How tall `visual` is, a placeholder as `beside` says.
+    pub fn height(&mut self, visual: Visual, beside: &mut dyn Beside) -> f32 {
+        if let Some(fold) = self.placeholder(visual) {
+            return beside.placeholder(fold.index);
+        }
         self.entry(visual.row, visual.segment)
             .and_then(|entry| entry.lines().get(visual.line).map(|line| line.height))
             .unwrap_or(0.0)
@@ -303,15 +404,16 @@ impl<S: Shaper> Walker<'_, S> {
 
     /// The visual lines from the one that holds `anchor` and the block
     /// lines above them, as many as fit `height` pixels whole, fewer at
-    /// the end of the text, top to bottom (module docs, "Blocks").
-    /// `above` gives the lines of the blocks before a buffer row, in
-    /// order, and is asked only for the rows the walk reaches the first
-    /// line of. Each line counts as at least [`LEAST_ROW_HEIGHT`].
+    /// the end of the text, top to bottom (module docs, "Blocks" and
+    /// "Folds"). `beside` gives the lines of the blocks before a buffer
+    /// row, in order, asked only for the rows the walk reaches the first
+    /// line of, and the height of each placeholder reached. Each line
+    /// counts as at least [`LEAST_ROW_HEIGHT`].
     pub fn shown(
         &mut self,
         height: f32,
         anchor: usize,
-        above: &mut dyn FnMut(usize) -> Vec<Shown>,
+        beside: &mut dyn Beside,
     ) -> Result<Vec<Shown>, QueryError> {
         let (mut visual, _) = self.locate(anchor)?;
         let mut shown = Vec::new();
@@ -319,12 +421,12 @@ impl<S: Shaper> Walker<'_, S> {
         let mut first = true;
         loop {
             let mut blocks = if visual.segment == 0 && visual.line == 0 {
-                above(visual.row)
+                beside.above(visual.row)
             } else {
                 Vec::new()
             };
             // `max` gives the least height for a height that is no number.
-            let tall = self.height(visual).max(LEAST_ROW_HEIGHT);
+            let tall = self.height(visual, beside).max(LEAST_ROW_HEIGHT);
             let blocks_tall: f32 = blocks.iter().map(Shown::counted).sum();
             // False when either side is no number, which stops the walk.
             let fits = used + blocks_tall + tall <= height;
@@ -355,8 +457,8 @@ impl<S: Shaper> Walker<'_, S> {
     }
 
     /// Where `position` is among the visual lines from the one that holds
-    /// `anchor` that fit `height` pixels whole, with the block lines
-    /// `above` gives ([`Walker::shown`]): the x of it in its line, the y of
+    /// `anchor` that fit `height` pixels whole, with what `beside` gives
+    /// ([`Walker::shown`]): the x of it in its line, the y of
     /// its line's top below the first line shown, each line, a block's
     /// included, counted at the height it is drawn at, and its line's
     /// height. None when the rows shown do not hold it.
@@ -365,14 +467,14 @@ impl<S: Shaper> Walker<'_, S> {
         height: f32,
         anchor: usize,
         position: usize,
-        above: &mut dyn FnMut(usize) -> Vec<Shown>,
+        beside: &mut dyn Beside,
     ) -> Result<Option<Spot>, QueryError> {
         let (target, x) = self.locate(position)?;
         let mut y = 0.0;
-        for shown in self.shown(height, anchor, above)? {
+        for shown in self.shown(height, anchor, beside)? {
             let tall = match shown {
                 Shown::Text(visual) => {
-                    let tall = self.height(visual);
+                    let tall = self.height(visual, beside);
                     if visual == target {
                         return Ok(Some(Spot { x, y, height: tall }));
                     }
@@ -386,7 +488,8 @@ impl<S: Shaper> Walker<'_, S> {
     }
 
     /// The position `lines` visual lines from `position`, aiming for
-    /// `goal`, or for the position's own x when there is none.
+    /// `goal`, or for the position's own x when there is none. A
+    /// placeholder landed on answers its fold's start.
     pub fn lines_from(
         &mut self,
         position: usize,
@@ -405,6 +508,12 @@ impl<S: Shaper> Walker<'_, S> {
                 Some(next) => visual = next,
                 None => break,
             }
+        }
+        if let Some(fold) = self.placeholder(visual) {
+            return Ok(Moved {
+                position: fold.start,
+                goal,
+            });
         }
         let entry = self
             .entry(visual.row, visual.segment)
