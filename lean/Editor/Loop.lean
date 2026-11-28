@@ -1188,7 +1188,7 @@ revision, so they need none of their own.
 **Folds.** A view of a buffer with foldable ranges (`Buffer.folds`,
 `Editor/Fold.lean`) has its shown folds (`View.folds`, `views`): its
 folded ranges, outermost first, as the scene's placeholders
-(`Fold.shown`), none for the minibuffer's view. The follow asks the display
+(`EditorState.viewFolds`), none for the minibuffer's view. The follow asks the display
 with them (`follow`), so a folded range counts as one row there, and the
 range a view's decorations, marks and stops are read over counts a shown
 fold as one row too (`rangeOf`, `Fold.stepRows`), so a view showing a fold
@@ -1914,13 +1914,7 @@ def views (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
       let blocks ← ExcerptView.blocksOf target.buffer snapshot
       -- The buffer's shown folds, so every view of it draws its folded
       -- ranges as placeholders and the follow asks with them.
-      let folds ←
-        if state.prompt.map (·.view) == some id then
-          pure #[]
-        else
-          do
-            let covered ← Fold.coveredOf text target.buffer.folds
-            pure ((Fold.shown covered).map (·.1.toFold))
+      let folds ← state.viewFolds id
       views :=
         views.push
           { id, rect, snapshot, scroll := target.window.scroll,
@@ -1951,7 +1945,7 @@ def rangeOf (state : EditorState) (view : View) : TextM (Option (Nat × Nat)) :=
   let some target := state.target? view.id | return none
   let .anchor anchor ← target.buffer.text.marker view.scroll | return none
   let snapshot := view.snapshot
-  let shown := Fold.shown (← Fold.coveredOf target.buffer.text target.buffer.folds)
+  let shown ← state.shownFoldsOf view.id
   let count ← snapshot.rowCount
   -- An anchor in a fold shows from the fold's first row.
   let row := Fold.stepRows shown (← snapshot.pointOf anchor.offset).row 0 (count - 1) true

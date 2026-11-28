@@ -1156,8 +1156,8 @@ def BufferId.reveal (id : BufferId) (offset : Nat) : EditorM Unit := do
   unless buffer.folds.any (·.folded) do
     return
   let row ← Fold.rowOf buffer.text (← buffer.text.byteLength) offset
-  for (range, first, last) in ← id.foldsCovered do
-    if range.folded && first ≤ row && row ≤ last then
+  for (range, _) in Fold.covering (← id.foldsCovered) row do
+    if range.folded then
       discard <| id.setFolded range.key false
 
 /-- Sets the gutter of the buffer `id`, marks at a revision of its text that
@@ -2063,12 +2063,12 @@ def scrollTo (target : Target) (offset : Nat) : TextM Unit :=
 
 /-- Runs `run` with what the display is asked about `target`'s view with
 (`Scroll.Area`): a snapshot of its buffer's text, taken here, the view's
-rectangle in the frame, its blocks, read of that snapshot, and its buffer's
-shown folds, so a scroll command asks the rows the view shows with its
-blocks and folds counted. The snapshot is released when `run` has
-ended, also when it was refused, and its refusal is then thrown: that is
-`TextId.withSnapshot` (`Editor/Command.lean`), and this is the rectangle's
-lookup and it. `none`, with nothing taken and nothing run, for a view that
+rectangle in the frame, its blocks, read of that snapshot, and its folds as
+the scene has them (`EditorState.viewFolds`), so a scroll command asks the
+rows the view shows with its blocks and folds counted. The snapshot is
+released when `run` has ended, also when it was refused, and its refusal
+is then thrown: that is `TextId.withSnapshot` (`Editor/Command.lean`), and
+this is the rectangle's lookup and it. `none`, with nothing taken and nothing run, for a view that
 is not laid out (`EditorState.rect?`). -/
 def onArea {α : Type} (target : Target) (run : Scroll.Area → EditorM α) : EditorM (Option α) := do
   let state ← editorState
@@ -2083,9 +2083,7 @@ def onArea {α : Type} (target : Target) (run : Scroll.Area → EditorM α) : Ed
   some <$>
       target.buffer.text.withSnapshot fun snapshot => do
         let blocks ← ExcerptView.blocksOf target.buffer snapshot
-        -- Its folds are those the scene showing it has (`Loop.views`).
-        let covered ← Fold.coveredOf target.buffer.text target.buffer.folds
-        run (.ofRect snapshot rect bottom padding blocks ((Fold.shown covered).map (·.1.toFold)))
+        run (.ofRect snapshot rect bottom padding blocks (← state.viewFolds target.window.id))
 
 end Target
 

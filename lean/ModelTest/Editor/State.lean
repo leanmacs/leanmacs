@@ -528,7 +528,29 @@ def displayStateChecks : List Check :=
         pure <|
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
           | none => false
-          | some state => state.displayed windowedDisplaying == state }]
+          | some state => state.displayed windowedDisplaying == state },
+    { name :=
+        "a view's folds are its buffer's shown folds as the scene's placeholders, outermost first, with their rows; the minibuffer's view and a view there is none of have none"
+      run :=
+        pure <|
+          let range (key : String) (start stop : Nat) (folded : Bool := true) : Foldable :=
+            { start, stop, key, text := s!"[{key}]", folded }
+          -- Rows 1 to 2 (`outer`) hold row 1 (`inner`); `open` is not folded.
+          let folds := #[range "open" 0 2 false, range "inner" 3 5, range "outer" 3 9]
+          let read : TextM (Array Fold × Array (Nat × Nat) × Array Fold × Array Fold) := do
+            let initial ← EditorState.initial ⟨640, 480⟩
+            let text ← createText "ab\ncd\nef\ngh"
+            let (_, asking) := prompted initial
+            let foldedIn (buffer : Option Buffer) : Option Buffer :=
+              buffer.map fun buffer =>
+                { buffer with
+                  text, folds }
+            let state := { asking with buffers := asking.buffers.map foldedIn }
+            let minibuffer := state.minibufferView?.getD ⟨0⟩
+            let shown : Array Fold.Covered ← state.shownFoldsOf ⟨0⟩
+            return (← state.viewFolds ⟨0⟩, shown.map (·.2), ← state.viewFolds minibuffer,
+                ← state.viewFolds ⟨90⟩)
+          onTextModel read == some (#[(range "outer" 3 9).toFold], #[(1, 2)], #[], #[]) }]
 
 /-- States of the quit checks, each `twoBuffers` with its histories set by
 hand. -/

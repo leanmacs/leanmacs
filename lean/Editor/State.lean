@@ -2887,6 +2887,23 @@ def paddingOf (state : EditorState) (id : ViewId) : Padding :=
         else 0
       { across := state.padding, down := state.padding, top, gutter }
 
+/-- The shown folds of the view `id` with the rows they cover: its buffer's
+folded ranges a view draws as placeholders, outermost first (`Fold.shown`),
+none for the minibuffer's view and for a view there is none of. The
+scene's folds (`viewFolds`, `Loop.views`), the folds the display is asked
+about a view with (`Target.onArea`) and the range a view's decorations are
+read over (`Loop.rangeOf`) are all these. -/
+def shownFoldsOf (state : EditorState) (id : ViewId) : TextM (Array Fold.Covered) := do
+  if state.minibufferView? == some id then
+    return #[]
+  let some target := state.target? id | return #[]
+  return Fold.shown (← Fold.coveredOf target.buffer.text target.buffer.folds)
+
+/-- The folds of the view `id` as the scene draws them: its shown folds
+(`shownFoldsOf`), each its range and its placeholder (`Foldable.toFold`). -/
+def viewFolds (state : EditorState) (id : ViewId) : TextM (Array Fold) := do
+  return (← state.shownFoldsOf id).map (·.1.toFold)
+
 /-- Whether `place` is held by a marker of the text of an open buffer, or
 is detached into a file: a place a state may hold. -/
 def placeHolds (state : EditorState) (place : Place) : Bool :=

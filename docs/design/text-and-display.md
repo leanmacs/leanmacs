@@ -2087,8 +2087,11 @@ its own faces (`crates/editor-layout/src/folds.rs`, `src/query.rs`,
   first row an earlier shown fold covers is dropped. So of two nested
   folded ranges the outer one shows, and a range that only partly overlaps
   a shown one leaves its later rows visible. Lean computes this
-  (`Fold.shown`) and hands a view only its shown folds, and layout applies
-  the same rule to whatever it is handed, so the two never disagree.
+  (`Fold.shown`) and hands a view only its shown folds
+  (`EditorState.viewFolds`, the one function the scene, the scroll
+  commands' area and a view's decoration range all read), and layout
+  applies the same rule to whatever it is handed, so the two never
+  disagree.
 - **The layer, and its departure.** A fold never changes the text of a row
   it leaves shown, so the tab and wrap layers keep their per-row entries
   keyed by buffer row, `TabLayer::Below` stays the buffer's snapshot, and
