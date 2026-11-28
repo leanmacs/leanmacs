@@ -1873,10 +1873,89 @@ generated buffer's text that names a target, followed from the keyboard
   decisions; the package `link-commands` registers them (`Links.setup`).
   Leaving it out leaves link following out: links are still drawn, and a
   mode keeps its own `activate`.
+- **The compilation buffer's locations are links** (phase 7): each
+  location's text is a link whose target is a command, `compile-visit` with
+  the scope's place and the location's index, not a file location. The
+  links mode's keymaps go first in a buffer with links, so a location
+  target would make `RET` (`link-follow`, then `Jumps.goTo`) replace the
+  compilation buffer in its own window and never make the location
+  current, which `next-error` steps from. Through the command,
+  `compile-goto-error` and the links mode's `RET` take one path: the
+  visiting view, the location made current, and the jump recorded
+  (`packages/compile/Compile.lean`, "Faces and links").
 - **Not built**: following with the mouse, links in a block, and moving
-  the compile and excerpt buffers onto links (each visits by a row lookup
-  of its own, `compile-goto-error` and `Jumps.visitLocated`; phase 7 moves
-  compile).
+  the excerpt buffers onto links: they still visit by a row lookup of
+  their own (`Jumps.visitLocated`; rdm task
+  `excerpt-visit-onto-span-targets`).
+
+### The rich-text description, as built
+
+The rich text display roadmap's phase 7 named one value for everything a
+generated buffer shows, and one call that writes a buffer from it
+(`lean/Editor/RichText.lean`; `BufferId.setRichText` and
+`BufferId.appendRichText`, `lean/Editor/Api.lean`). Phases 1 to 4 and 6
+each added a part through a call of its own, which stay for a producer that
+sets one part alone; a producer of a whole format builds the description
+instead.
+
+- **The value** (`RichText`) is plain data: a text and, at byte offsets of
+  it, five parts.
+  - **Face spans** (`spans`, `Decoration`): ranges each drawn in a face, in
+    order, a later span drawn over an earlier one (phase 1).
+  - **Align-to stops** (`stops`, `AlignStop`): offsets each with an x in
+    whole points where a cell of its row starts. The producer measures
+    them through the display (`Editor/Columns.lean`), so the description is
+    layout-complete (phase 2).
+  - **Span targets** (`links`, `Link`): ranges each naming a target the
+    links mode follows (phase 3, "Followable spans, as built").
+  - **Fold ranges** (`folds`, `Foldable`): ranges each with the producer's
+    key, a placeholder and a declared state. Written again, a range whose
+    key the buffer has keeps its toggled state (`Fold.merge`; phase 4,
+    "Folds, as built").
+  - **Wrap indents** (`indents`, `WrapIndent`): ranges each with where the
+    visual lines of the rows it covers start (phase 6, "Display layers",
+    as built, "Wrap indents").
+- **Two calls**, each inside `BufferId.writing`, so a read-only generated
+  buffer is written by its owner, and each refused `noSuchBuffer` with the
+  buffer unchanged:
+  - `setRichText id rich start` writes the buffer from `start` on: its
+    text from `start` (or from its end or the description's, when either is
+    shorter) is replaced with the description's, as one edit and none when
+    nothing would change, and its parts by the prefix rule. With `start` 0
+    it sets the whole buffer;
+  - `appendRichText id tail` extends the buffer's description at its end:
+    the tail's text inserted at the end, and its parts moved past it and
+    listed after the buffer's own. Nothing before the end is edited, so a
+    streamed document updates only its tail.
+- **The prefix rule** (`RichText.replaceFrom`) is applied a part at a
+  time. A range lies before `start` when it starts before it and stops at
+  it or before; an empty range at `start` belongs to the tail; a stop lies
+  before `start` when its offset does. Each of the buffer's parts that lies
+  before `start` is kept as the buffer has it, and every part of the
+  description that does not is taken, the kept ones first, so spans keep
+  their draw order.
+- **The fold-key rule**: a kept fold whose key one of the taken folds has
+  is dropped, so each key is declared once, and the folds are then ordered
+  by start. A heading's fold that reaches past `start` is restated by the
+  new description with its new stop.
+- **It clears a rendered document.** Both calls drop `Buffer.markdown`, so
+  the document a buffer holds is always the one its parts were last written
+  from; the markdown view keeps its document again after its write.
+- **Two producers.** Markdown lowers its layout-free description to it
+  (`Doc.richText`, `Editor/Markdown/Doc.lean`), adding the stops its tables
+  were measured into, and writes the buffer with one `setRichText` from 0
+  for a render and from where the text first changes for an append
+  ("Rendered markdown, as built"). The compile mode, which never goes
+  through markdown, builds its compilation buffer from it: the header line
+  with `setRichText`, and each batch of output lines with `appendRichText`,
+  every location a span and a link (`packages/compile/Compile.lean`,
+  "Faces and links"). So the parts make a format that does not depend on
+  markdown.
+- **An in-process value, not a wire format.** It is plain Lean data for
+  generated buffers, handed from a producer to the core in one process. It
+  is not the remote-clients content vocabulary and nothing serialises it
+  ([remote-clients.md](remote-clients.md), "The vocabulary"); that
+  vocabulary stays a non-goal.
 
 ### Rendered markdown, as built
 
@@ -1886,9 +1965,11 @@ core call (`lean/Editor/Markdown/`).
 
 - **Two calls, and the document on the buffer.**
   `BufferId.renderMarkdown id source options` renders a whole document into
-  the buffer `id`: its text, then its spans, align-to stops, links and
-  foldable ranges, written inside `BufferId.writing`, so a read-only buffer
-  is written by its owner. `BufferId.appendMarkdown id more` extends the
+  the buffer `id`: its text, spans, align-to stops, links, foldable ranges
+  and wrap indents, written by one `BufferId.setRichText` of the document's
+  rich-text description (`Doc.richText`; "The rich-text description, as
+  built", phase 7), inside `BufferId.writing`, so a read-only buffer is
+  written by its owner. `BufferId.appendMarkdown id more` extends the
   document the buffer holds (`Buffer.markdown`, set by the state request
   `setMarkdown`) and is refused `notRendered` on a buffer that holds none.
   Each is refused, with the buffer as it was, for an absent buffer and for a
@@ -1935,7 +2016,7 @@ core call (`lean/Editor/Markdown/`).
   without the angles; a backslash escape its character. Top-level blocks
   are one empty line apart.
 - **Links and `path:line` references** are the buffer's links
-  (`setLinks`), drawn in `text.link` and followed by the links mode
+  (`RichText.links`), drawn in `text.link` and followed by the links mode
   (phase 3). A destination in a web scheme (`http`, `https`, `mailto`,
   `ftp`, `file`) is a URL; `path:line[:column]`, its path holding a `/` or
   a `.`, is a location at that row and column from 0; any other scheme is a
@@ -1954,7 +2035,7 @@ core call (`lean/Editor/Markdown/`).
   `code <n>`, its placeholder `<language or code>, <k> lines` (`1 line`
   for one) in `text.code-block`; a fence with no rows renders as an empty
   row, and its range is the empty one at that row, which covers it
-  (`0 lines`). All are declared unfolded; `setFolds` merges by key, so a
+  (`0 lines`). All are declared unfolded; the write merges by key, so a
   toggle survives an append.
 - **Tables are measured when applied.** A table in the description is rows
   of cell ranges, layout-free. The call measures each cell with the spans
@@ -1972,9 +2053,10 @@ core call (`lean/Editor/Markdown/`).
   table's delimiter row, a lazy continuation, a list's next item and an
   unclosed fence each extend or change the last block alone. The heading
   folds, whose ranges an append can move, and the fold keys are made from
-  every piece on each update. The buffer's text is rewritten only from
-  where it first changes (`Doc.firstChanged`, the end of the last block
-  kept). The document an append makes describes what rendering the whole
+  every piece on each update. The buffer is written by one `setRichText`
+  from where its text first changes (`Doc.firstChanged`, the end of the
+  last block kept): no byte and no part before it is rewritten, and a
+  heading fold that crosses it is the new description's. The document an append makes describes what rendering the whole
   source does (`ModelTest.markdownStreamChecks`). A long document is parsed
   on the editor thread, as the request is answered on the thread that asks
   (an open question, `rust-library.md`).
@@ -1998,8 +2080,8 @@ core call (`lean/Editor/Markdown/`).
   row. So a nested list's items are a step further in, each hanging under
   its own text. A block quote's lines are a step in, first and
   continuation alike, a nested quote's a step further: depth times the
-  step. The view writes the description's indents with its other parts
-  (`setIndents`). An item's later blocks (a second paragraph, a code block)
+  step. The view writes the description's indents with its other parts,
+  in the one `setRichText`. An item's later blocks (a second paragraph, a code block)
   start a step in, not under its text, since a lead is measured on its own
   row (rdm task `markdown-list-item-later-blocks-hang`).
 

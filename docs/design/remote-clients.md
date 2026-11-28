@@ -232,7 +232,11 @@ never code.
   diff, an image, a metric with its baseline, and links to a hunk, a file
   or a plan item. Each value carries several representations down to
   plain text, and a client draws the richest it knows, as Jupyter's MIME
-  bundles do, so an old client never breaks on new content.
+  bundles do, so an old client never breaks on new content. The core's
+  rich-text description (`RichText`, [text-and-display.md](text-and-display.md),
+  "The rich-text description, as built") is not this vocabulary: it is an
+  in-process value a producer writes a generated buffer from, and nothing
+  serialises it.
 - **Interaction as commands**: a button in content ("rerun on main",
   "open hunk") carries a command that goes back to the host. The client
   runs no agent code.

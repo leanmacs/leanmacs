@@ -4906,16 +4906,38 @@ buffer while editing goes on.
   file through the line or column, is a span of the compilation buffer in
   a face by severity: `compilation.error`, `compilation.warning`,
   `compilation.note`, drawn under the last search's matches
-  ([text-and-display.md](text-and-display.md), "Decorations"). A rerun in
-  a workspace resets that workspace's list only.
+  ([text-and-display.md](text-and-display.md), "Decorations"), and a link
+  over the same bytes, drawn in `text.link`, whose target is the command
+  `compile-visit` with the workspace's place and the location's index. The
+  buffer is built from rich-text descriptions
+  ([text-and-display.md](text-and-display.md), "The rich-text description,
+  as built"): the header line written alone, and each batch of lines
+  appended with its spans and links. A rerun in a workspace resets that
+  workspace's list only, and the buffer's spans and links with its text.
 - **Stepping.** Each workspace's list has a current location, none at
   first. `next-error` and `previous-error` step through the focused
   buffer's workspace's list, so a buffer of another worktree or project
   steps through its own, and stop with a message at either end; in a
-  compilation buffer, `activate` (`compile-goto-error`, `RET`) visits the
-  location on the cursor's line. Each sets the current location and puts
-  the compilation buffer's cursor on its first line; moving that cursor by
-  hand changes nothing.
+  compilation buffer, `activate` (`compile-goto-error`, `RET`) follows the
+  link at the cursor, a location's, to `compile-visit`, which visits it:
+  the link's target, not the cursor's row, decides. Off a link, on a
+  location's message or a joined continuation row among it, it says
+  `compile-goto-error: no location at the cursor` (visiting the nearest
+  location before the cursor, as Emacs does, is rdm task
+  `compile-goto-error-nearest-location`). Each sets the current location
+  and puts the compilation buffer's cursor on the location's first byte,
+  its link's start, so `RET` after a step is on the link; for a lead
+  format, rustc's, that is the path on the ` -->` line, not the lead's
+  row. Moving that cursor by hand changes nothing.
+- **Through the links mode.** Where the package `link-commands` is in the
+  set, the links mode's keymaps go first in a compilation buffer, which
+  has links: `RET` is `link-follow`, which on a location follows the same
+  link to `compile-visit`, and off one runs the mode's own `activate`,
+  `compile-goto-error`, which says there is no location. `] l` and `[ l`
+  (the roles `next-link` and `previous-link`) move between the locations.
+  The target is a command, not a file location, because a location target
+  would be visited in the compilation buffer's own window and never made
+  current.
 - **Visiting** opens the location's file (`Files.visit`) and puts the
   cursor on its line and column, the column in characters less the
   format's column base (1 for `general`). From a compilation buffer the
