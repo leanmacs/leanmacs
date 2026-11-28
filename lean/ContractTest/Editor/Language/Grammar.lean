@@ -61,8 +61,8 @@ def declaredGrammarDrawnCheck (completions : Job.Completions) (fixture : JobCont
 the core's registration job on the library's grammar and file services,
 the core's reading of its answers and resolution of a language's tree, and
 the text entered with that tree on the real syntax tree binding and drawn on
-the real display. It registers only the fixture's own name, `ini`, never a
-compiled-in one, so later checks see the same service. -/
+the real display. It registers only the fixture's own name, `ini`, never one
+the test grammars registered, so later checks see the same service. -/
 def grammarDeclarationChecks (completions : Job.Completions) (fixture : JobContract.GrammarFixture)
     (syntaxFixtures : System.FilePath) : List Check :=
   [declaredGrammarDrawnCheck completions fixture syntaxFixtures]

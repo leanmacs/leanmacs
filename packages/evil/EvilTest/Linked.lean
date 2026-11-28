@@ -121,8 +121,8 @@ def syntaxFixtures : System.FilePath :=
 /-- What every check is handed: the harness's context, the directory of
 the syntax fixtures, and the grammars the core's tests load (the third
 argument, `Editor.Test.Linked.TestGrammars`), which the checks over the
-library's syntax service register or declare, since the library hides its
-compiled-in grammars. -/
+library's syntax service register or declare, since the library compiles in
+no grammar. -/
 abbrev EvilTest.Linked.Context :=
   Editor.Test.Linked.HostContext × System.FilePath × Editor.Test.Linked.TestGrammars
 

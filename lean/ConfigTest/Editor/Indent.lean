@@ -21,8 +21,8 @@ concurrency in tests"; `docs/dev-practices/real-thread-checks.md`): every
 check it holds is one. **The real adapter.** The library's syntax service
 with Rust's shipped `indents` query, through a host
 (`withRealSyntaxTestHost`), which declares the grammars cargo builds for
-the core's tests (`Editor.Test.Linked.TestGrammars`): the library hides its
-compiled-in grammars, so the host's `register-grammars` job registers them
+the core's tests (`Editor.Test.Linked.TestGrammars`): the library compiles in
+no grammar, so the host's `register-grammars` job registers them
 and the Rust language's tree takes its queries from their directory.
 **Why.** The syntax model holds JSON alone, so the Rust indents query is
 reached only over the real binding. Its one

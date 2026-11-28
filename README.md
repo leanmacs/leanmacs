@@ -14,8 +14,11 @@ processes.
 ## Limitations
 
 - No mouse support.
-- Highlighting covers Rust, JSON, Markdown, TOML and Lean only. Grammars
-  are compiled in, so adding one means rebuilding the editor.
+- Highlighting covers the languages the default package `languages`
+  ships: Rust, JSON, Markdown, TOML, Lean and YAML. A grammar comes from a
+  package, built from pinned source by the package set's build, with no
+  change to the editor's library: adding one means adding a package (or a
+  grammar to one) and rebuilding the set.
 - A pending key prefix and input-method composition are not shown on
   screen.
 - A config that fails to reload shows only its first error in the window;

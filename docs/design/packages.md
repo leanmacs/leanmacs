@@ -379,8 +379,13 @@ regular files, the names nvim-treesitter and Helix use; a link would
 dangle in a staged or bundled copy.
 
 **From source.** A package may instead ship a grammar as pinned source,
-which the set's build compiles: the `languages` package ships `yaml` so
-(`packages/languages/`, the package `languages-grammars`). Its lakefile
+which the set's build compiles: the `languages` package ships all seven of
+its grammars so (`packages/languages/`, the package `languages-grammars`):
+`rust`, `json`, `markdown`, `markdown_inline`, `toml`, `lean` and `yaml`.
+The first six were compiled into the library until the shipped-grammars
+roadmap's phase 4, which moved them, their pins and their queries here;
+the library compiles in no grammar since, so every editor's grammars are
+packages'. Its lakefile
 declares a Lake input file named `editorGrammarSources`
 (`grammarSourcesTargetName` in `lean/lakefile.lean`; a TOML lakefile holds
 it as `[[input_file]] name = "editorGrammarSources"`), whose path is the
@@ -388,7 +393,10 @@ it as `[[input_file]] name = "editorGrammarSources"`), whose path is the
 `languages-grammar-sources`). That crate's build script calls the
 workspace crate `editor-grammar-build` with the grammars it declares, each
 a build-dependency it names (`Grammar::package("yaml",
-"tree-sitter-yaml")`), or a directory of its own. `editor-grammar-build`
+"tree-sitter-yaml")`), a subdirectory of one (`Grammar::package_in`, for
+`tree-sitter-md`'s two grammars, `markdown` and `markdown_inline`), or a
+directory (`Grammar::directory`, for `lean`, the vendored
+`vendor/tree-sitter-lean`, taken from the crate's directory). `editor-grammar-build`
 finds each grammar crate's directory with `cargo metadata` (the version
 the root lock pins, through the calling crate's own node of the resolve),
 compiles its `src/parser.c` and `src/scanner.c` with the C compiler `cc`
@@ -447,6 +455,33 @@ the bundled `languages` holds its compiled libraries under
 `grammars/<platform>/`, and a user's set built from the bundle takes the
 shipped branch, with no crate to build.
 
+**What compiling from source costs, and what was set aside.** A
+build-dependency's own build compiles its C once more, into an archive
+nothing links. The crates.io parsers together are about 11 MB of C (rust
+6.5 MB, markdown's two 2.1 MB and 2.3 MB, toml 0.13 MB, json 0.03 MB),
+against lean's 49 MB, which is why `lean` is a directory source and no
+dependency: no build compiles its archive. The test fixture
+`editor-syntax-fixture-grammars` takes the four crates.io grammars as
+build-dependencies too, with the same features (`tree-sitter-md` with its
+default features off in both), so in the dev profile Cargo builds one unit
+of each for both build scripts, and compiles the vendored directory as the
+package does. What remains: in dev, each grammar's shared library is
+compiled twice at `OPT_LEVEL` 0, once by each build script; in release,
+`cargo run --release` of the package's crate compiles each crates.io
+grammar's archive once at the build-override's opt-level 0, wasted, and
+each shared library at `OPT_LEVEL` 3. In return the release archive Lean
+links compiles no grammar at all, lean's 49 MB included
+([rust-library.md](rust-library.md), "Syntax, as built", "Measured").
+Set aside:
+
+- **A `cfg(any())`-gated dependency**, which no build would compile:
+  `cargo metadata --filter-platform` drops it, so `editor-grammar-build`
+  does not find it, and dropping the filter makes a build fetch every
+  platform's packages.
+- **The core's tests depending on `languages-grammar-sources` for its
+  libraries**, instead of the fixture crate: the core would then depend on
+  a package.
+
 A user's set outside the repository can go stale: the built branch takes
 what the checkout last compiled, as `prebuiltRust` takes the last-built
 archive, so after a pull that changes a grammar it uses the old library
@@ -461,9 +496,15 @@ every headless fixture would lose the `code` mode and every shipped
 language. So it sits in a second `Editor.Package` of the Lake package
 `languages`, `languages-grammars` (`Languages/Grammars.lean`): where
 nothing is staged only that package is refused, silently, and no fixture's
-job ids move. That the harness refuses such a package is a gap the
-shipped-grammars roadmap's phase 4 must close before the built-in grammars
-move into the package.
+job ids move. The shipped languages' grammars sit there too, since phase 4
+of the shipped-grammars roadmap, and the harness loses nothing it could
+show by refusing them: a fixture runs on the stepped host's fakes, whose
+syntax model already holds the core's six test grammars registered, and a
+fixture cannot ask for highlights (the `highlights` directive is refused
+stepped, [headless-mode.md](../dev-practices/headless-mode.md)). A
+fixture that opens a file of a shipped language (acp's `conversation`
+opens a `lakefile.lean`) gets the tree the model's test grammar gives it,
+as before. So the harness keeps refusing `languages-grammars`, silently.
 
 **Where the files go.** Each place an editor runs from gets a copy, and a
 record that names it (`editor.grammars`, lines `<lake><TAB><directory>`,
@@ -4779,7 +4820,7 @@ points it registers at and reads, and the names it declares or reaches.
 | `binding-search` | implementation | `binding-search-api`, `minibuffer-api` | none | none | registers `binding-search-api`'s name; reaches `minibuffer-api`'s names |
 | `compile` | implementation | `minibuffer-api`, `compile-api`, `shell-api` | `Compile.Contribution` | `Compile.Contribution`, `Compile.ProjectCommands`, `FilesApi.Files` | registers the compile mode's commands and its six ex names; reaches `minibuffer-api`'s names and `shell-api`'s history |
 | `at-point` | implementation | `at-point-api`, `evil-api` | none | none | registers `at-point-api`'s names; reaches `insert-newline` and `insert-tab` by `evil-api`'s constants |
-| `languages` | implementation | none | `defineLanguage yaml` and the grammar `yaml` (package `languages-grammars`) | none | registers the `code` mode and the languages that ship |
+| `languages` | implementation | none | `defineLanguage yaml` and the grammars `rust`, `json`, `markdown`, `markdown_inline`, `toml`, `lean` and `yaml` (package `languages-grammars`) | none | registers the `code` mode and the languages that ship |
 | `mise` | implementation | none | `EnvironmentApi.DirectorySource` | none | declares no name; its setting, `Mise.executable`, registers at the same point |
 | `login-shell` | implementation | none | `EnvironmentApi.BaseSource` (and a default `environmentBase`) | none | declares no name; its setting, `LoginShell.timeLimit`, registers at the same point |
 

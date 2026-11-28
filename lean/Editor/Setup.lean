@@ -478,7 +478,7 @@ languages hold from the next file opened.
 
 Config declares a grammar loaded from a native library at run time with
 `defineGrammar` (`Editor/Language/Grammar.lean`), and a language names it
-as it names a compiled-in one:
+as it names a package's:
 
 ```lean
 def setup : SetupM Unit := do

@@ -8,12 +8,18 @@ root `Cargo.toml`'s `exclude`), and `mise run c-fmt` leaves its C alone.
 ## `tree-sitter-lean/`: the Lean 4 grammar
 
 - **What**: the tree-sitter grammar for Lean 4, with its Rust binding (crate
-  `tree-sitter-lean`, version `0.2.0`), compiled into
-  `crates/editor-syntax-treesitter` as the grammar `lean`.
+  `tree-sitter-lean`, version `0.2.0`; this file holds the version, since
+  no `Cargo.toml` names the copy and Cargo checks no version of it). The
+  `languages` package's grammar-source crate (`packages/languages/rust`)
+  compiles it, as a directory source of `editor-grammar-build`, into the
+  library of the grammar `lean` the package ships, and the test fixture
+  `crates/editor-syntax-fixture-grammars` does the same for the core's
+  tests. No crate depends on the copy.
 - **Why vendored**: there is no usable crates.io crate. The one Lean grammar
   crate, `tree-sitter-lean4`, has a normal dependency on `tree-sitter ^0.25`,
   which cannot coexist with the pinned library; `tree-sitter-lean` is not
-  published. The adapter's `Cargo.toml` records the alternatives set aside.
+  published. `packages/languages/rust/Cargo.toml` records the alternatives
+  set aside.
 - **Upstream**: <https://github.com/Julian/tree-sitter-lean>, commit
   `0d28e5d6e8c4755f5df7ef9bde3b6ec6f59fae94` (2026-11-01).
 - **Licence**: MIT, `Copyright (c) 2024 Julian Berman`; the notice is
@@ -34,8 +40,12 @@ root `Cargo.toml`'s `exclude`), and `mise run c-fmt` leaves its C alone.
 ### Updating it
 
 Copy the same file list from the new upstream commit, then bump the commit
-here and in `crates/editor-syntax-treesitter/Cargo.toml`'s comment (and the
-version there, if upstream's changed), and re-run the contract:
+(and the version, if upstream's changed) here, in
+`packages/languages/rust/Cargo.toml`'s comment and in the `lean` row of
+`packages/languages/README.md`; copy the new `queries/highlights.scm` to
+`packages/languages/grammars/queries/lean/highlights.scm` and the new
+`LICENSE` to `packages/languages/grammars/licenses/tree-sitter-lean`; and
+re-run the contract:
 
 ```sh
 git clone https://github.com/Julian/tree-sitter-lean /tmp/tree-sitter-lean

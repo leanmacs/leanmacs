@@ -35,6 +35,7 @@ compile is recorded rather than panicked on. The editor never links it
 - `editor-syntax-fixture-grammars`, the grammars the core's tests load as
   libraries, by a build-dependency. It uses the report `build` hands back:
   it fails on a grammar that failed, and copies each built grammar's
-  queries from the source directory the outcome names. Two of its grammars
-  are subdirectories of one crate (`Grammar::package_in`), as the
-  `languages` package's markdown grammars will be.
+  queries from the `languages` package's `grammars/queries/`. Two of its
+  grammars are subdirectories of one crate (`Grammar::package_in`), and
+  one a directory (`Grammar::directory`, the vendored Lean grammar), as in
+  the `languages` package's crate.

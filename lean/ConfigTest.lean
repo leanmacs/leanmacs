@@ -573,8 +573,8 @@ directory the config-migrate binary makes of the old-form fixture
 (`tests/config-migrate/migrated`), is `migratedConfigChecks`'. The ninth is
 the directory of the grammars cargo builds for the core's tests
 (`crates/editor-syntax-fixture-grammars`), which the checks that draw with
-a real grammar register or declare, since the library hides its
-compiled-in grammars (`realSyntaxChecks`, `indentChecks`).
+a real grammar register or declare, since the library compiles in
+no grammar (`realSyntaxChecks`, `indentChecks`).
 
 `lsp` is the language server check (`ConfigTest.Lsp`,
 `ConfigTest/Lsp.lean`) on a directory it is given: it starts Lean's

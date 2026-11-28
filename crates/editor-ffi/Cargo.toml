@@ -102,11 +102,12 @@ editor-fuzzy-triple-accel = { path = "../editor-fuzzy-triple-accel" }
 # range, and the session and worker that reparse a document from its edit
 # log, which the C functions of `src/syntax.rs` forward to.
 editor-syntax = { path = "../editor-syntax" }
-# The real syntax: tree-sitter, with its grammars compiled in. This is the
-# crate that wires the library together, so it is the one that links the
-# adapter: the syntax service parses with it. Through it the static library
-# Lean links holds tree-sitter and the grammars' parsers, compiled C with
-# no system dependency.
+# The real syntax: tree-sitter, with grammars loaded from native libraries
+# at run time and none compiled in. This is the crate that wires the
+# library together, so it is the one that links the adapter: the syntax
+# service parses with it. Through it the static library Lean links holds
+# tree-sitter, compiled C with no system dependency, and no grammar's
+# parser.
 editor-syntax-treesitter = { path = "../editor-syntax-treesitter" }
 # Search within a text: the rule of which match is answered, which the two
 # C functions of `src/search.rs` ask, and the Engine port it asks it over.
@@ -189,9 +190,9 @@ rustix = { version = "=1.1.6", default-features = false, features = ["std", "pro
 # grammar registration (`tests/grammars.rs`) registers it through the C
 # functions, over the process's syntax service and the real adapter.
 editor-syntax-fixture-ini = { path = "../editor-syntax-fixture-ini" }
-# The six grammars the adapter compiles in, built as native libraries with
-# their queries beside them, for tests alone: the syntax service hides the
-# compiled-in table, so the syntax tests (`src/syntax.rs`'s,
+# The six grammars the `languages` package ships, built as native libraries
+# with its queries beside them, for tests alone: the syntax service compiles
+# in no grammar, so the syntax tests (`src/syntax.rs`'s,
 # `tests/syntax.rs`, `tests/highlight.rs`) register the grammars they use
 # from here and draw with its queries.
 editor-syntax-fixture-grammars = { path = "../editor-syntax-fixture-grammars" }

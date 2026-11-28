@@ -38,6 +38,11 @@
 //! `editor-ffi`) lists no grammar, opens no parser and compiles no query
 //! until one is registered.
 //!
+//! **Measured.** With no grammar compiled in, the release archive Lean
+//! links (`libeditor_rust.a`) is 76.5 MB against 86.8 MB before, and its
+//! clean build about 27 s wall either way (2026-11-27;
+//! `docs/design/rust-library.md`, "Syntax, as built", "Measured").
+//!
 //! **The moment before.** Every editor registers its grammars at startup,
 //! through the core's `register-grammars` job, which starts at the first
 //! install of config. A file opened before the job's command runs is drawn

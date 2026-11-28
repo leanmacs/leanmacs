@@ -8,8 +8,8 @@
 
 const TSLanguage *tree_sitter_ini(void);
 
-// The INI grammar under a compiled-in grammar's name: a library that
-// overrides `json`.
+// The INI grammar under the name `json`: a library that overrides a `json`
+// registered before.
 FIXTURE_EXPORT const TSLanguage *tree_sitter_json(void) {
   return tree_sitter_ini();
 }

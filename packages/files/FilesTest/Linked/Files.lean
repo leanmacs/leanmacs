@@ -248,7 +248,7 @@ def noHighlightsRefusal (session : Session) : IO Bool := do
 and the languages that ship as compiled code registers them, with the real
 elaborator. A json file and a file of no language are on a stepped stage
 over the file fake and the syntax fake (`withLanguageHost`), whose model
-holds json; the grammars and shipped queries the model does not hold, rust,
+holds json; the grammars and queries the model does not hold, rust,
 markdown, toml and lean, are the real syntax binding's, on a real host over
 real files (`withRealLanguageHost`, row W91 of
 `docs/dev-practices/inferred-waits.md`), sharing the file checks' table of

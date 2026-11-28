@@ -16,7 +16,7 @@ a real host), and its syntax service with the grammars and queries the
 syntax model does not hold (rust, toml, lean; W91), registered from the
 directory of the grammars cargo builds for the core's tests
 (`Editor.Test.Linked.TestGrammars`), which the host declares: the library
-hides its compiled-in grammars. **Why.** Each is a
+compiles in no grammar. **Why.** Each is a
 real service's end-to-end check (AC4): the fakes stand in for them in every
 other check of the package.
 
@@ -81,7 +81,7 @@ def withRealFileHost (context : HostContext) (directory : System.FilePath)
 def languageStage.realHost : Editor.RealHost :=
   .service
 
--- inferred-waits W91: stays (A5: the grammars and shipped queries of rust, markdown, toml and lean, which the syntax model does not hold, over the real binding)
+-- inferred-waits W91: stays (A5: the grammars and queries of rust, markdown, toml and lean, which the syntax model does not hold, over the real binding)
 set_option linter.inferredWait false in
 /-- Runs `check` against a host over the library's file service
 (`Stage.overFiles`), with a config directory of its own holding

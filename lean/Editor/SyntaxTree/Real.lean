@@ -7,7 +7,8 @@ import Editor.Text.Real
 
 The syntax tree interface (`Editor/SyntaxTree.lean`) answered by the Rust
 library's syntax service (`crates/editor-ffi`, `src/syntax.rs`): tree-sitter,
-with its grammars compiled in (`crates/editor-syntax-treesitter`), parsing
+with the grammars registered on it at run time and none compiled in
+(`crates/editor-syntax-treesitter`), parsing
 each attached document on a worker thread of its own and reparsing it from
 its edit log after each edit.
 

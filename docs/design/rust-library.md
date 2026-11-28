@@ -2141,86 +2141,121 @@ phase 1 (2026-11-16) made each edit deliver its incremental reparse and an
 idle refresh restore exactness, gave each grammar a reparse policy, and
 restated the contract to match.
 
-**How grammars are loaded.** Two ways, both through the one adapter.
-
-*Compiled in.* Each grammar is a crates.io
-grammar crate, pinned exactly (`tree-sitter-rust` 0.24.2,
-`tree-sitter-json` 0.24.8, `tree-sitter-md` 0.5.4 and
-`tree-sitter-toml-ng` 0.7.0, over `tree-sitter` 0.27.2), or, for Lean,
-upstream's own crate vendored unmodified under `vendor/`
-(`tree-sitter-lean` 0.2.0, from `Julian/tree-sitter-lean` at `0d28e5d`,
-MIT; `vendor/README.md`), whose build compiles
-the generated `parser.c` (and the grammar's scanner, if it has one) with
-`cc` when Cargo builds the library; the objects end up in
-the editor's one Rust archive, the crate the core's build generates
-from `editor-ffi` (`libeditor_rust.a`), which Lake links. Lean is vendored because no crates.io crate builds
-against the pinned library: the one Lean grammar crate, `tree-sitter-lean4`,
-has a normal dependency on tree-sitter 0.25, which cannot coexist with
-0.27.2. The workspace excludes `vendor/`, so the copy is a path dependency
-whose dev-dependencies never enter the lock, and `mise run c-fmt` leaves its
-generated C alone.
+**How grammars are loaded.** One way, through the one adapter: native
+libraries, loaded at run time. The adapter compiles in no grammar.
 
 *Native libraries, at run time* (the syntax-runtime-grammars roadmap's
 phase 2, 2026-11-26). A grammar is registered ("Registering a grammar",
 below) from a shared library (`.dylib` on macOS, `.so` on Linux) exporting
-`tree_sitter_<name>`: the same generated C, linked as a library rather than
-statically. This is how Emacs, Helix and Neovim load grammars. The
-adapter's module `native` opens it with `libloading` (pinned `=0.8.9`, the
-copy the graph already builds for `ash`, `dlib`, `khronos-egl`, `wgpu-hal`
-and `x11rb`), wraps its language function with `tree-sitter-language`'s
-`LanguageFn`, and checks the language's ABI version against the pinned
-library's `MIN_COMPATIBLE_LANGUAGE_VERSION..=LANGUAGE_VERSION` before any
-parser is made. A loaded library is never unloaded: a language, and every
-parser and tree of it, points into its code. The editor never finds,
-fetches or compiles a grammar: the library's path is named by the user's
-config or a package (the roadmap's later phases) and handed in. `unsafe`
-is denied across the adapter crate and allowed only at `native`'s three
-sites, each with its reason.
+`tree_sitter_<name>`: a grammar's generated C, linked as a library. This is
+how Emacs, Helix and Neovim load grammars. The adapter's module `native`
+opens it with `libloading` (pinned `=0.8.9`, the copy the graph already
+builds for `ash`, `dlib`, `khronos-egl`, `wgpu-hal` and `x11rb`), wraps its
+language function with `tree-sitter-language`'s `LanguageFn`, and checks
+the language's ABI version against the pinned library's
+`MIN_COMPATIBLE_LANGUAGE_VERSION..=LANGUAGE_VERSION` before any parser is
+made. A loaded library is never unloaded: a language, and every parser and
+tree of it, points into its code. The editor never finds, fetches or
+compiles a grammar: the library's path is named by the user's config or a
+package and handed in. `unsafe` is denied across the adapter crate and
+allowed only at `native`'s three sites, each with its reason.
 
-*The compiled-in table is hidden from the tests* (the
-shipped-grammars-package roadmap's phase 3, 2026-11-27). A fresh adapter
-(`TreeSitter::default`, and so the process's syntax service) lists no
-compiled-in name, opens no parser and compiles no query for one, declares it
-no policy and ships it no query, until `TreeSitter::use_compiled_grammars`
-turns the table on. It is a switch at run time, not a Cargo feature: the
-editor and every Lean test program link one release archive, and `cargo
-test --workspace` would unify a feature on. Two places turn it on, and the
-root `clippy.toml` refuses the method everywhere else, each admitted call
-at an `#[expect]` of its own:
+*Every shipped grammar is a package's* (the shipped-grammars-package
+roadmap's phase 4, 2026-11-27). Until then six grammars were compiled into
+the adapter as a private table (`rust`, `json`, `markdown`,
+`markdown_inline`, `toml`, `lean`), each a crates.io grammar crate or, for
+Lean, upstream's crate vendored under `vendor/`, whose builds compiled
+their C into the editor's one Rust archive (`libeditor_rust.a`); phase 3
+hid the table from every test but its own, and the editor's startup
+turned it on. Phase 4 moved them into the default package `languages`, as
+the package value `languages-grammars` (`packages/languages/Languages/Grammars.lean`),
+beside `yaml`:
 
-- the editor's startup: `Editor.Main.run` calls, first, a `private` extern
-  (`useCompiledGrammars`) of the glue's
-  `editor_glue_syntax_use_compiled_grammars`, which calls `editor-ffi`'s
-  non-`pub` `editor_ffi_syntax_use_compiled_grammars`, which calls the
-  adapter's method on the process's service directly, with no wrapper a
-  test of the crate could call;
-- the adapter's own table tests: its unit tests of the table's names and
-  policies, `tests/table.rs` (the six compiled-in grammars held to the
-  syntax contract with the queries they ship) and `tests/registration.rs`
-  (whose `OVERRIDES` registers over the compiled-in `json`).
+- their pins and the rationale for each (the reparse findings, the
+  alternatives set aside, why Lean is vendored) moved to the package's
+  grammar-source crate, `packages/languages/rust/Cargo.toml`, where the four
+  crates.io crates are build-dependencies (`tree-sitter-rust` 0.24.2,
+  `tree-sitter-json` 0.24.8, `tree-sitter-md` 0.5.4 with its default
+  features off, `tree-sitter-toml-ng` 0.7.0), and the vendored
+  `tree-sitter-lean` 0.2.0 is a directory source of `editor-grammar-build`,
+  no dependency at all, so it left `Cargo.lock`;
+- their queries, the crates' own and the repository's two for Rust, moved
+  byte for byte into the package's `grammars/queries/<name>/`, its notices
+  into `grammars/licenses/`, and the table of which grammar ships which
+  into its README;
+- the table, its shipped queries, the switch
+  (`TreeSitter::use_compiled_grammars`, its FFI extern and glue binding,
+  `Editor.Main.run`'s call and the clippy ban) and the adapter's grammar
+  dependencies went. `shipped_query` stays on the port, for its fake, and
+  the adapter answers none (the task `syntax-port-drop-shipped-query`).
 
-Every other test, Rust or Lean, registers the grammars it uses from
+*The moment before the grammars register.* Every editor registers its
+grammars at startup, through the core's `register-grammars` job of its
+first install. A file opened before the job's command runs is drawn plain
+for that moment, then highlighted when the command records the answers,
+its Markdown fences of a declared grammar included. This is accepted
+([keymaps-and-modes.md](keymaps-and-modes.md), "Declared grammars").
+
+*The double compile of the crates.io grammars.* A build-dependency's own
+build compiles its C into an archive nothing links. The test fixture
+`crates/editor-syntax-fixture-grammars` takes the same four crates as
+build-dependencies, with the same features, so in the dev profile Cargo
+builds one unit of each for both build scripts; each grammar's shared
+library is then compiled twice at `OPT_LEVEL` 0, once by each build
+script. In release, the package's `cargo run --release` compiles each
+crates.io grammar's archive once at the build-override's opt-level 0,
+wasted, and each shared library at `OPT_LEVEL` 3. Lean's 49 MB parser,
+against about 11 MB of C for the four crates.io grammars together, is a
+directory source, so no build compiles its archive
+([packages.md](packages.md), "A package's grammars", "From source").
+
+*Measured* (by hand, as "The syntax round, measured on demand" is; numbers
+for the record, not a gate), on 2026-11-27, on an Apple M5 Max (18 cores,
+128 GB, macOS 27.2), with rustc 1.98.1 and Apple clang 21.0.0. The
+library's clean build is `buildRust`'s own command, `cargo rustc --release
+--offline --lib --manifest-path target/editor-rust/core/Cargo.toml`, after
+`cargo fetch --locked` and one `lake -d lean build rustlib`, into a fresh
+`--target-dir` of its own, timed with `/usr/bin/time -p`; "before" is the
+phase-3 head (`e693358b`), built from a copy of its tree, and "after" this
+phase's head. The two were run back to back, on a machine with other work
+running (load average 5 to 9):
+
+| | Before | After |
+|---|---|---|
+| `libeditor_rust.a`, bytes (`stat -f %z`) | 86,752,080 | 76,503,968 (10.2 MB, 11.8% less) |
+| Clean build, wall | 26.98 s | 26.89 s |
+| Clean build, user CPU | 248.2 s | 250.3 s |
+
+The archive no longer holds any grammar's code. The clean build's time
+did not measurably change: the grammars' C compiled in parallel with the
+Rust crates, so the wall time is the Rust build's, and the CPU time moved
+within the noise of a loaded machine. Taken alone earlier that evening,
+before took 31.58 s (load 8) and after 25.08 s (load 2), which is the
+machine's load, not the change.
+
+What the set's build now does instead, also measured that evening: the
+grammar step, `cargo run --release --locked --quiet --manifest-path
+packages/languages/rust/Cargo.toml` with `CARGO_TARGET_DIR` a fresh
+directory, took 6.75 s wall (`cargo build --release` of the same, 6.69 s
+wall, 8.0 s user, 3.6 s system), and the seven libraries it staged under
+`packages/.lake/build/grammars/languages/darwin-aarch64/` total 10,605,072
+bytes (`du -sk`: 10,372 KiB), of which lean's is 8,309,016 and rust's
+1,158,872.
+
+Every test, Rust or Lean, registers the grammars it uses from
 `crates/editor-syntax-fixture-grammars`, a test-only crate whose build
-script compiles the same six grammars, from the same pinned crates (normal
-dependencies, so Cargo builds no grammar's archive twice), as shared
-libraries with `editor-grammar-build`, and stages each one's queries beside
-them under `queries/<name>/`, the layout of a package's staged
-`grammars/`. Rust tests reach it by a dev-dependency (`DIRECTORY` and a
+script compiles the six from the package's pins as shared libraries with
+`editor-grammar-build`, and stages the package's queries beside them under
+`queries/<name>/`, the layout of a package's staged `grammars/` (phase 3,
+2026-11-27). Rust tests reach it by a dev-dependency (`DIRECTORY` and a
 `Grammar` constant each); `mise run ffi-test` hands its directory, printed
 by its binary, to `ffi-test`, `contract-test`, `config-test` and every
 linked test, whose kit wraps it as `Editor.Test.Linked.TestGrammars`: a
 host's check declares the six (`TestGrammars.package`) and waits for its
 `register-grammars` job's command, and a check with no host registers them
 (`registerTestGrammars`) and draws with trees whose queries are read from
-the directory. The Lean model compiles nothing in by default either; its
-kits hold the six registered (`SyntaxTreeModel.withTestGrammars`). So a
-passing gate shows no test outside the table tests depends on a compiled-in
-grammar. What is held by review, not by a tool: the C symbol
-`editor_ffi_syntax_use_compiled_grammars` is exported, so a Rust test could
-declare it again in an `extern "C"` block of its own, and a Lean test
-module could declare its own `@[extern]` of the glue's symbol; `private`
-and the missing `pub` keep only the names out of reach. Phase 4 removes the
-table, the switch and both callers.
+the directory. The Lean model compiles nothing in either; its kits hold
+the six registered (`SyntaxTreeModel.withTestGrammars`).
 
 Set aside, and why:
 
@@ -2233,11 +2268,14 @@ Set aside, and why:
   their C with the machine's compiler, which the editor never does; and a
   parser of our own.
 
-`deny.toml` bans `wasmtime` and `tree-sitter-loader` outright, and lets only
-the adapter depend on tree-sitter, the grammars and `libloading`. The grammars are Rust,
-for the editor's own language, JSON, which the Lean model reproduces, and
-Markdown's two grammars, the inline one as an injected layer ("Injections,
-indentation and text objects, as built", below).
+`deny.toml` bans `wasmtime` and `tree-sitter-loader` outright, lets only
+the adapter depend on tree-sitter and `libloading`, and lets the grammar
+crates be depended on only by the `languages` package's grammar-source
+crate and the test fixture, as build-dependencies. The grammars the
+package ships are Rust, for the editor's own language, JSON, which the
+Lean model reproduces, Markdown's two grammars, the inline one as an
+injected layer ("Injections, indentation and text objects, as built",
+below), TOML, Lean and YAML.
 
 **The port** (`crates/editor-syntax`, over `editor-text` alone) is
 `Syntax`: the grammars it has, a parser for one, a parse of a snapshot
@@ -2450,10 +2488,11 @@ field.
   one, else `Whole`, since a loaded grammar cannot be swept for grammar
   quality when it loads; a later registration of a name replaces the
   earlier one, and a registered grammar replaces a compiled-in one of the
-  same name, for parsers opened afterwards, while a parser opened before
-  keeps its grammar; a refusal changes nothing; the listing is the
-  compiled-in names, then the registered ones in the order first
-  registered; each entry keeps its source, so the queries declared beside
+  same name (the fake's `parens`; the real adapter compiles in none), for
+  parsers opened afterwards, while a parser opened before keeps its
+  grammar; a refusal changes nothing; the listing is the compiled-in names
+  it is handed (none, for the real adapter), then the registered ones in
+  the order first registered; each entry keeps its source, so the queries declared beside
   its library can be found. A registered grammar ships no query: its
   queries are read in Lean and handed in as a mode's override.
 - **The worker orders it.** The registry is the syntax service's state, so
@@ -2483,12 +2522,15 @@ field.
 - **The fake and the contract.** `fake::Libraries` is the fake with a
   table: it "loads" grammars of the fake's shape, each with its own list
   delimiters, from an in-memory table keyed by path, and nothing touches
-  the disk. The registration properties (success; the override of a
-  compiled-in name, after which the name ships no query and takes the
-  source's policy, not the compiled-in grammar's; the default policy; each
-  refusal) are a contract of their own, `contract::registration::check`,
+  the disk. The registration properties (success; the override of a name
+  already listed, compiled in or registered before from the corpus's
+  `before`, after which the name ships no query and takes the source's
+  policy, not the listed grammar's; the default policy; each refusal) are a
+  contract of their own, `contract::registration::check`,
   separate from `contract::check`, held against the fake with its table
-  and against the real adapter on its fixture library; a syntax that loads
+  and against the real adapter on its fixture library, whose corpus
+  registers the fixture grammars' `json` first, since the adapter compiles
+  in no grammar (phase 4 of the shipped-grammars roadmap); a syntax that loads
   no grammar runs `contract::registration::check_unsupported`, as the fake
   with no table does. Each property is seen to bite on a broken
   registering syntax.
@@ -2508,8 +2550,9 @@ field.
   `crates/editor-syntax-fixture-ini`, a test-only crate whose build
   script compiles a small INI grammar of ours (generated by the tree-sitter
   CLI 0.27.2, checked in) and its fixture exports into a shared library:
-  `tree_sitter_ini`, the grammar, whose name is not compiled in;
-  `tree_sitter_json`, the same grammar under a compiled-in name; and
+  `tree_sitter_ini`, the grammar, whose name no test registers before;
+  `tree_sitter_json`, the same grammar under the name `json`, which the
+  registration contract registers over the real `json`; and
   `tree_sitter_abi_0`, a language of ABI 0. It is a build-script product,
   not a Cargo `cdylib`, because a `cdylib`'s path cannot reach another
   crate's tests on stable Cargo and a Rust `cdylib` does not export a
@@ -2552,14 +2595,16 @@ task `packages-load-native-libraries-at-run-time`).
 
 Built by the syntax roadmap's phase 2 (2026-11-16).
 
-**The queries ship with the grammar crates.** The port answers
-`Syntax::shipped_query(grammar, QueryKind::Highlights)`: the adapter's
-table holds each grammar crate's `HIGHLIGHTS_QUERY` (its
-`queries/highlights.scm`), so a query is pinned with the grammar it was
-written for by the same exact version, under the crate's licence, and an
-update is one version bump. A vendored copy could drift from the grammar's
-node types. A mode's config may give a query source of its own in place of
-the shipped one. Richer third-party query sets (nvim-treesitter's,
+**The queries are the grammar crates'.** Each grammar's highlights query
+is its crate's `queries/highlights.scm`, so a query is pinned with the
+grammar it was written for by the same exact version, under the crate's
+licence. Until the shipped-grammars roadmap's phase 4 the adapter's table
+held each crate's `HIGHLIGHTS_QUERY` and the port answered it as
+`Syntax::shipped_query`; since then the `languages` package keeps each
+query byte for byte in its `grammars/queries/<name>/`, read in Lean beside
+the library at registration, and the adapter ships none. An update bumps
+the pin and copies the new version's files (`packages/languages/README.md`).
+A language entry or a mode's config may give a query source of its own. Richer third-party query sets (nvim-treesitter's,
 Helix's) are set aside: their captures and predicates are written for
 those editors. The fake ships `PARENS_HIGHLIGHTS`; the Lean model ships a
 JSON query of its own in its query subset, since the library's uses an
@@ -2691,9 +2736,12 @@ its buffer's text (`lean/Editor/Highlight.lean`).
 Built by the syntax roadmap's phase 3 (2026-11-16).
 
 **Where each query comes from.** The port's `QueryKind` is `Highlights`,
-`Injections`, `TextObjects` and `Indents`, and the adapter's table lists,
-for each grammar, the queries it ships by kind. A grammar crate's own query
-is used wherever it ships one, as phase 2 decided for highlights:
+`Injections`, `TextObjects` and `Indents`. Until the shipped-grammars
+roadmap's phase 4 the adapter's table listed, for each grammar, the
+queries it shipped by kind; since then the `languages` package keeps the
+same files in its `grammars/queries/<name>/`, as the table below lists. A
+grammar crate's own query is used wherever it ships one, as phase 2
+decided for highlights:
 
 | Grammar | Highlights | Injections | Text objects | Indents |
 |---|---|---|---|---|
@@ -2705,7 +2753,9 @@ is used wherever it ships one, as phase 2 decided for highlights:
 | `lean` | upstream's, vendored with the grammar | none | none | none |
 
 `tree-sitter-rust` 0.24.2 ships no `indents.scm` or `textobjects.scm`, so
-Rust's are this repository's (`crates/editor-syntax-treesitter/queries/rust/`,
+Rust's are this repository's (`packages/languages/grammars/queries/rust/`
+since phase 4 of the shipped-grammars roadmap, under the adapter's
+`queries/rust/` before,
 GPL-3.0-or-later), each opening with a comment naming the Lean rule that
 reads it, with nvim-treesitter's capture names so a config author can read
 them. Third-party query sets are set aside for the reason phase 2 gave:

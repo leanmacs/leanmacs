@@ -26,8 +26,7 @@ leaves the state as it was ... and publishes one scene"). Its helpers,
 `recordedStage`, `withRealRecordedSyntaxTree` and `registeredTestGrammars`,
 are marked.
 
-**The grammars.** The library hides its compiled-in grammars from every
-test, so each check first registers the grammars cargo builds for the
+**The grammars.** The library compiles in no grammar, so each check first registers the grammars cargo builds for the
 core's tests (`registeredTestGrammars`, over the process's one completion
 pump), and its mode carries its own highlights query: a mode's own tree is
 not resolved against a declaration, and a registered grammar ships none.

@@ -47,7 +47,9 @@ details:
   linter on and warnings errors, which runs Cargo for the Rust static
   library; the editor and fixture harness of the default set (`packages/`)
   and of the fixture set (`tests/packages/`), whose builds compile
-  `languages`' grammar sources through Cargo (`editorGrammars`;
+  `languages`' seven grammars from their pinned sources through Cargo, the
+  shipped languages' among them, since the library compiles in none
+  (`editorGrammars`;
   [`packages.md`](../design/packages.md), "A package's grammars"), each
   package's targets and linked test ("The package steps"); the editor of
   the set that holds
@@ -68,22 +70,24 @@ details:
   `tests/headless` on the default set's fixture harness, stepped on the
   fakes ([`headless-mode.md`](headless-mode.md), "How the gate runs a
   fixture"); each package's linked test and headless fixtures ("The
-  package steps"), `languages`' among them, which checks the grammar the
-  default set's build compiled and that a grammar source that does not
-  compile fails a set's build; and the grammar set's package's linked
+  package steps"), `languages`' among them, which checks the grammars the
+  default set's build compiled, draws a `.rs` file and a Markdown
+  paragraph's inline markup with them, and that a grammar source that does
+  not compile fails a set's build; and the grammar set's package's linked
   test, handed the
   grammar set's editor, the fixture grammar library Cargo builds and the
   syntax fixtures. Two test-only crates are built by Cargo for it, each
   line building the one it needs and passing the path its binary prints:
   `editor-syntax-fixture-ini`'s INI grammar library, `contract-test`'s
   fourth argument and the grammar set's linked test's second; and
-  `editor-syntax-fixture-grammars`' directory of the six grammars the
-  syntax adapter compiles in, built as libraries with their queries beside
-  them, which the library hides from every test: `ffi-test`'s one
+  `editor-syntax-fixture-grammars`' directory of the six former built-ins,
+  built as libraries from `languages`' pins with its queries beside them,
+  since the library compiles in no grammar: `ffi-test`'s one
   argument (after `wiring` for its wiring run), `contract-test`'s fifth,
   `config-test`'s ninth, and every linked test's third, through
   `tools/package-set.sh run`'s. The install check of that package
-  (`mise run grammar-install-check`) is on demand, never here
+  (`mise run grammar-install-check`), and that of the default set's
+  grammars (`mise run languages-install-check`), are on demand, never here
   ([`on-demand-checks.md`](on-demand-checks.md)).
 - **`window-scenarios`**: each window scenario of `ffi-test`
   (`FfiTest.windowScenarios`), the window mode's wiring on the scripted

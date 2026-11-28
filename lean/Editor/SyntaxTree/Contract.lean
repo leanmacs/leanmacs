@@ -28,9 +28,9 @@ snapshots of them, in that order:
 Every property is over the grammar `json`, which the model reproduces and
 the library has. Each runner hands an implementation on which `json` is
 registered, as the core's tests register it from the directory of grammars
-cargo builds for them (`editor-syntax-fixture-grammars`): the library hides
-its compiled-in grammars from every test, and the model runs with the test
-grammars registered (`SyntaxTreeModel.withTestGrammars`).
+cargo builds for them (`editor-syntax-fixture-grammars`): the library
+compiles in no grammar, and the model runs with the test grammars
+registered (`SyntaxTreeModel.withTestGrammars`).
 
 - the grammars listed, and a grammar that is not listed refused;
 - a question of a text that is not attached, or no longer, refused;
@@ -47,8 +47,9 @@ grammars registered (`SyntaxTreeModel.withTestGrammars`).
   whole text's rows that are in it;
 - a range that is not two positions in order refused;
 - a registered grammar's shipped queries refused, of every kind, as
-  neither ships one for a registered name, and an unlisted grammar's
-  refused as unknown;
+  neither ships one for any grammar (the library compiles in none, and the
+  model none), and an unlisted grammar's refused as unknown: no caller in
+  the core asks one (the task `syntax-port-drop-shipped-query`);
 - a highlighter set, and refused for a text not attached, a face table of
   the wrong size, and a released query;
 - an injection and a keep refused for a text not attached, and a language

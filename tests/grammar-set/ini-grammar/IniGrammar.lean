@@ -7,7 +7,7 @@ import Editor.Package
 A package outside the core that ships a grammar, used by tests alone
 (`docs/design/packages.md`, "A package's grammars"). It registers the
 language `ini`, of `*.ini` files, which names the grammar `ini`, a grammar
-not compiled into the editor; and it declares that grammar per platform,
+no default package ships; and it declares that grammar per platform,
 each library and the query directory relative to its Lake package's
 `grammars/` directory, where the package keeps their files. The set's
 build stages that directory beside the editor, and the editor resolves the

@@ -25,8 +25,8 @@ import Editor.Text.Real
 The grammars the core's tests load (`TestGrammars`): the directory
 `editor-syntax-fixture-grammars` builds, which a test program is handed as
 an argument, laid out as a package's staged `grammars/` (each grammar's
-library, and its queries under `queries/<name>/`). The library hides its
-compiled-in grammars from every test, so a check that draws with a real
+library, and its queries under `queries/<name>/`). The library compiles in
+no grammar, so a check that draws with a real
 grammar registers it from here first: a host's check hands the host their
 declarations (`TestGrammars.package`), which the core's `register-grammars`
 job registers, and a check with no host registers them itself
@@ -167,7 +167,7 @@ def registerTestGrammars.realHost : RealHost :=
 service, in turn, through the library's grammar registrations
 (`Grammar.register`) in a job on `services`, and waits for the job's end,
 by which every registration is answered and taken: for a check with no
-host, which then draws with a grammar the library hides compiled in. `.ok`
+host, which then draws with a grammar registered from there. `.ok`
 once every one registered under its name. Otherwise why, for the first that
 did not: its library, its symbol and the refusal, or the name it registered
 under in place of its own; or why the job did not finish. -/

@@ -219,7 +219,7 @@ text's captures, waits, with a bound, for the text's tree to be delivered:
 for a check whose subject is the library's syntax service, on a real
 host (A5 of `docs/dev-practices/real-thread-checks.md`). The host is handed
 the test grammars' declarations beside `packages` (`TestGrammars.package`):
-the library hides its compiled-in grammars, so its `register-grammars` job
+the library compiles in no grammar, so its `register-grammars` job
 registers them from `grammars`' directory at the first install, through the
 library's grammar registrations, over the table of waits the one completion
 pump runs over (`HostContext.fileWaits`), and reads their queries through

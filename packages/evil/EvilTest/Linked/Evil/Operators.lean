@@ -115,9 +115,9 @@ def _root_.Editor.Test.Linked.Session.loadedAndTyped (session : Session) (name k
 
 /-- The checks of `=` and of indented new lines through a host of the Vim
 scheme that ships (`withRealVimHost`), with the real elaborator, the real text
-binding and the library's syntax service with Rust's shipped indents query,
+binding and the library's syntax service with Rust's indents query,
 through keys: `g g =` over a mangled Rust buffer. It asserts the wiring
-alone, that the shipped query is reached over the library and answers:
+alone, that the indents query is reached over the library and answers:
 `=` over its other motions and text objects, its undo, the levels `RET`,
 `o` and `O` open at, and the refusals in a buffer with no language and in
 one whose language has no indents query are `EvilTest.evilIndentChecks`'

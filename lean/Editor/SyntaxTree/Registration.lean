@@ -31,9 +31,9 @@ queue, as a diff's does (`crates/editor-ffi/src/grammars.rs`).
 - **The policy** is the one the source declares, and `whole` when it
   declares none: a grammar loaded at run time has not been swept for the
   incremental reparse's quality.
-- **A later registration of a name replaces the earlier one**, and a
-  registered grammar replaces a compiled-in one of the same name, for
-  documents attached afterwards.
+- **A later registration of a name replaces the earlier one**, for
+  documents attached afterwards. The library compiles in no grammar, so
+  every name it lists was registered.
 - **A refusal is a value** (`GrammarError.refused`), and leaves every
   grammar as it was. Each refusal of the library's crosses as one of its
   own: `RegistrationRefusal`'s constructors are the Rust enum's, one for

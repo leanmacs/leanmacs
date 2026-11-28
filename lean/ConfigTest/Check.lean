@@ -65,8 +65,8 @@ structure Context extends Editor.Test.Linked.HostContext where
   load; the binary's own test holds its conversion to the same files. -/
   migratedConfig : System.FilePath
   /-- The directory of the grammars the core's tests load, built by cargo
-  (`crates/editor-syntax-fixture-grammars`), absolute: the library hides its
-  compiled-in grammars, so the checks that draw with a real grammar
+  (`crates/editor-syntax-fixture-grammars`), absolute: the library compiles in
+  no grammar, so the checks that draw with a real grammar
   register them from here. -/
   testGrammars : Editor.Test.Linked.TestGrammars
 

@@ -26,8 +26,10 @@ the library does not export `missingSymbol`, and a grammar of another ABI
 `unsupportedAbi`. A grammar it exports is registered under the source's
 name (`GrammarSource.name`), with the source's policy or `whole`, in place
 of any entry of that name before. A refusal leaves the registry unchanged.
-The names listed (`grammars`) are the compiled-in names, then each
-registered name that is not among them.
+The names listed (`grammars`) are the compiled-in names it is handed, then
+each registered name that is not among them: none is handed by the syntax
+tree model, as the library compiles in none; the parameter models
+`editor_syntax::registry`, which keeps it for the Rust fake's `parens`.
 
 The job model answers a job's registration from one
 (`JobModel.grammars`, `Editor/Job/Model.lean`), and the syntax tree model
@@ -37,9 +39,9 @@ lists, attaches and compiles for the grammars one holds
 `testGrammars` is the registry the model kits hold by default: the six
 grammars `editor-syntax-fixture-grammars` builds for the core's tests,
 registered as a test registers them from the library's directory, each with
-its policy. The library hides its compiled-in grammars from every test, so
-a fake-backed check attaches and compiles for these names as the real
-checks do, from a registration. Pinned by
+its policy. The library compiles in no grammar, so a fake-backed check
+attaches and compiles for these names as the real checks do, from a
+registration. Pinned by
 `ModelTest.grammarRegistryChecks`, the answer with no table among them; and,
 given the table that describes the fixture grammar library
 (`JobContract.GrammarFixture.registry`), held to the real service's answers

@@ -1766,14 +1766,15 @@ answers its name, for every policy a source may declare; a library that is
 not there, a symbol the library does not export and a grammar of ABI 0 are
 each refused as their own refusal.
 
-No property registers a compiled-in name: on the real service that would
-replace the compiled-in grammar for the rest of the run. That a service with
+No property registers a name the core's tests registered before (`json`):
+on the real service that would replace that grammar for the rest of the
+run. That a service with
 no table refuses every registration `unsupported` is the model's, pinned by
 `ModelTest.grammarRegistryChecks`. -/
 
 /-- The fixture grammar library: the shared library
 `crates/editor-syntax-fixture-ini` builds, a small INI grammar of our own
-that is not compiled in, exporting the symbols named in this namespace. The
+that no test registers before, exporting the symbols named in this namespace. The
 real run is handed the built library's path; the model's run a path it never
 reads from disk. -/
 structure GrammarFixture where
@@ -1790,8 +1791,9 @@ def symbol : String :=
 def name : String :=
   "ini"
 
-/-- The symbol that exports the same grammar under a compiled-in name,
-`json`. No property registers it; the table lists it as the library does. -/
+/-- The symbol that exports the same grammar under the name `json`, which
+the core's tests register from their grammars. No property registers it;
+the table lists it as the library does. -/
 def overridingSymbol : String :=
   "tree_sitter_json"
 

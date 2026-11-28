@@ -52,14 +52,15 @@ and commit `grammar.js` and `grammar/src/` together.
 Each export is a fixture for one property of the registration contract
 (`editor_syntax::contract::registration`), not a grammar to use:
 
-- `tree_sitter_ini`: the generated grammar, named `ini`, which is not one of
-  the grammars compiled into the adapter. It is registered and held to the
+- `tree_sitter_ini`: the generated grammar, named `ini`, which is none of
+  the grammars the core's tests register. It is registered and held to the
   syntax contract and the registration contract's `REGISTERS`.
-- `tree_sitter_json`: the same grammar under the name of a compiled-in
-  grammar, `json`, in `exports.c`: a library that overrides it (`OVERRIDES`).
-  The compiled-in `json` ships a highlights query and is reparsed
-  incrementally; once overridden from a source declaring no policy, the
-  name ships no query and is reparsed whole.
+- `tree_sitter_json`: the same grammar under the name `json`, in
+  `exports.c`: a library that overrides a `json` registered before
+  (`OVERRIDES`). The registration contract registers the real `json` from
+  `editor-syntax-fixture-grammars` first, reparsed incrementally; once
+  overridden from this source, declaring no policy, the name ships no query
+  and is reparsed whole.
 - `tree_sitter_abi_0`: a language whose ABI version is 0 and every other
   field zero, in `exports.c`. ABI 0 is below any version the parsing library
   will accept, so it stays refused through library bumps

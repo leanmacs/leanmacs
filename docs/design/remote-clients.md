@@ -159,8 +159,9 @@ own syntax spans.
 The crates the phone would run depend on nothing of Lean's:
 `editor-text` (ropey), `editor-layout`, `editor-shape-parley` (Parley,
 fontique), `editor-render` and `editor-render-wgpu` (wgpu, swash,
-etagere), `editor-raster`, and `editor-syntax-treesitter`, whose grammars
-are compiled in.
+etagere), `editor-raster`, and `editor-syntax-treesitter`, which compiles
+in no grammar: a client would load the grammars the packages ship as
+native libraries, as the editor does.
 
 What is new:
 

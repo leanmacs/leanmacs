@@ -3,7 +3,7 @@
 //! injections query, and a Rust macro's token tree, by the Rust grammar's.
 //! The six grammars are registered from the native libraries
 //! `editor-syntax-fixture-grammars` builds, and their queries are the ones
-//! staged beside them, never the compiled-in table's.
+//! staged beside them, the `languages` package's.
 //!
 //! A layer's tree is held to the content parsed alone and shifted by its
 //! offset, the oracle a spike grounded on 2026-11-16 (a fence's content

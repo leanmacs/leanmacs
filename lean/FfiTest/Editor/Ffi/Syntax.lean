@@ -14,7 +14,7 @@ import FfiTest.Support.Queues
 The tests of `Editor/Ffi/Syntax.lean`: `syntaxChecks`. The root module `FfiTest`
 runs them, and each list's own doc says what it checks.
 
-The library hides its compiled-in grammars from every test, so the first
+The library compiles in no grammar, so the first
 check registers the grammars of the directory cargo builds for the core's
 tests (`crates/editor-syntax-fixture-grammars`, which `ffi-test` is handed
 last) through the raw grammar bindings, before the checks that attach or

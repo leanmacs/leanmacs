@@ -2347,7 +2347,7 @@ the Vim scheme).
 Six more entries of `Evil.objects` (which is `Evil.vimObjects`, the sixteen
 above, and these) take their ranges from the syntax tree of a buffer's
 text: the captures of the text objects query its major mode keeps
-(`Mode.SyntaxTree.textObjects`, or the grammar's shipped one), asked of the
+(`Mode.SyntaxTree.textObjects`, the tree's own or its declared grammar's), asked of the
 library as plain rows (`SyntaxTree.capturesOf`), the rule Lean's:
 
 | Keys | Objects | Captures read | Rule |
@@ -3362,20 +3362,23 @@ structure Mode where
 
 structure Mode.SyntaxTree where
   grammar     : String                               -- the library's grammar: rust, json, markdown, toml, lean
-  highlights  : Option String := none                -- query source; none: the grammar's shipped one
+  highlights  : Option String := none                -- query source; none: drawn plain
   captures    : List (String × Option FaceName) := [] -- config's capture faces, over the shipped default
-  injections  : Option String := none                -- injections query source; none: the shipped one
-  textObjects : Option String := none                -- text objects query source; none: the shipped one
-  indents     : Option String := none                -- indents query source; none: the shipped one
+  injections  : Option String := none                -- injections query source; none: no injections
+  textObjects : Option String := none                -- text objects query source; none: none
+  indents     : Option String := none                -- indents query source; none: none
 ```
 
 - **`syntaxTree` says how the mode's text is parsed and drawn**: a grammar
-  of the library's syntax service, the highlights query's source (none for
-  the one the grammar ships), config's mapping of capture names to faces
-  over the shipped default (`lean/Editor/Highlight.lean`), and the sources
-  of the injections, text objects and indents queries, each none for the
-  grammar's shipped one; an empty source captures nothing, which turns that
-  part off. It is not
+  of the library's syntax service, the highlights query's source, config's
+  mapping of capture names to faces over the shipped default
+  (`lean/Editor/Highlight.lean`), and the sources of the injections, text
+  objects and indents queries. A language's tree gets the sources its
+  declared grammar's directory holds (`Language.Grammar.treeOf`, "Declared
+  grammars" below); a source still none is no query of its kind, since the
+  library compiles in no grammar and ships no query (a tree with no
+  highlights is drawn plain, `Highlight.noHighlights` said); an empty
+  source captures nothing, which turns that part off too. It is not
   called `syntax`, which is a keyword of Lean's. A derived mode with none
   takes the nearest of its lineage (`Mode.syntaxTreeOf`). Config writes it
   in `defineMode`; there is no other registry API.
@@ -3567,8 +3570,7 @@ contributes nothing.
   became the major mode, or the nearest of its lineage, has a syntax tree,
   the loop runs `Highlight.enter` before the on-enter actions, inside the
   command: with a snapshot of the buffer's text it attaches the text with
-  the grammar, compiles the query (the mode's own or the grammar's shipped
-  highlights), and has the library draw the text with each capture in the
+  the grammar, compiles the tree's highlights query, and has the library draw the text with each capture in the
   face `Highlight.faceOf` gives (the capture's own entry, else its first
   component's, else none; config's mapping over the shipped
   `syntax.<capture>` default), then releases the query, which the library's
@@ -3579,10 +3581,11 @@ contributes nothing.
   first, so it is drawn plain, as the echo area says: a refused attach
   replaces nothing, and an attach with the grammar the text already has
   keeps its highlighter, so without it the mode before would still be
-  drawn. After highlights
-  that succeeded, four more steps, each from the mode's own source or the
-  grammar's shipped query, a grammar that ships none of a kind skipping its
-  step: the text's injections (compiled, `inject`ed, released); a language
+  drawn. A tree that names no highlights query runs none of these steps:
+  the text is detached and ``highlights: `<mode>`: <Highlight.noHighlights>``
+  said. After highlights
+  that succeeded, four more steps, each from the tree's own source, a tree
+  that names none of a kind skipping its step: the text's injections (compiled, `inject`ed, released); a language
   for each grammar the library has (its highlights, the mode's own for its
   grammar, in the faces of the mode's mapping, so config's capture faces
   reach embedded code, and its injections; names are grammar names, an
@@ -3701,9 +3704,10 @@ otherwise be a cycle).
   language's.
 - **A grammar config declares** (`defineGrammar`,
   `lean/Editor/Language/Grammar.lean`, roadmap `syntax-runtime-grammars`
-  phase 4) is loaded from a native library at run time, and a language
-  names it by name as it names a compiled-in one: entries need no new
-  field.
+  phase 4) is loaded from a native library at run time, as every grammar
+  is (the library compiles in none; the default package `languages` ships
+  the shipped languages' grammars the same way), and a language names it
+  by name: entries need no new field.
 
   ```lean
   def setup : SetupM Unit := do
@@ -3728,16 +3732,15 @@ otherwise be a cycle).
     Helix use, read from the query directory and filled into the
     language's tree where the entry gives no source of its own: the
     entry's own override wins over a file. A missing file ships no query of
-    its kind, as a compiled-in grammar that ships none.
+    its kind.
   - *Injected languages.* The declared queries also fill an injected
     language's tree, by grammar name (`Language.Grammar.injectedTreeOf`):
     the tree of the first language entry naming the grammar, or the bare
     grammar when none does, resolved as a buffer's is, the entry's own
     source winning over a file. So a Markdown fence of a config-declared
-    or package-shipped grammar, or of a compiled-in one a declaration
-    overrides, is drawn with the queries read from its directory; one of a
-    grammar still awaiting its answer, or refused and no longer listed,
-    gives no language. A compiled-in language whose entry gives its own
+    or package-shipped grammar is drawn with the queries read from its
+    directory; one of a grammar still awaiting its answer, or refused and no
+    longer listed, gives no language. A language whose entry gives its own
     highlights uses them for its injections too. A Markdown buffer
     highlighted before the answers arrive is injected into again by the
     job's command (`Highlight.reinject`), its own parse and highlights
@@ -3757,11 +3760,22 @@ otherwise be a cycle).
     (`Language.Grammar.treeOf`), and an older generation's command, should
     one run, does nothing over a later generation's answers. The editor
     thread waits for none of it.
-  - *Overrides and refusals.* A declaration named as a compiled-in grammar
-    replaces it for buffers highlighted after the registration. A refusal
-    is said in the echo area, ``grammar `<name>`: <why>, so <what stays>``:
-    "the compiled-in grammar stays" (a `.lean` buffer keeps the compiled-in
-    `lean`), "the grammar registered before stays" (its buffers keep the
+  - *The startup moment.* Every grammar is a declared one, the shipped
+    languages' too (`languages-grammars`), so every editor registers its
+    grammars at startup, through the job of its first install: a file
+    opened before the job's command runs (the window mode's file on its
+    command line, say) is drawn plain for that moment, then highlighted by
+    the command; a Markdown buffer's fences of a declared grammar are
+    highlighted then too. This is accepted (the shipped-grammars-package
+    roadmap's phase 4), and pinned by
+    `ModelTest.grammarRegisterChecks`' Markdown buffer opened before the
+    command.
+  - *Overrides and refusals.* A declaration named as a grammar registered
+    before (a package's, say) replaces it for buffers highlighted after the
+    registration. A refusal is said in the echo area,
+    ``grammar `<name>`: <why>, so <what stays>``: "the grammar registered
+    before stays", when the library still lists the name, which it does
+    only once something registered it (its buffers keep the
     queries read at that registration, which the answers keep for each
     name this process registered), or "its languages have no syntax tree"
     (the buffer stays open as plain text). A query file
@@ -5835,9 +5849,9 @@ names a scheme's key:
 | `modeRegistryChecks` | A mode's lineage, a cycle and a missing parent; the order of the active keymaps; a mode name no mode is registered under; a view with no window |
 | `modeDispatchChecks` | On the editor's models, through the loop: a major mode's role runs its command in a view of its buffer and the global binding elsewhere; a minor mode's wins; a derived mode falls to its parent; the localleader then a suffix |
 | `modeEnterChecks` | On the editor's models: the on-enter action runs once, with the view, when the mode becomes the major mode; a derived mode's lineage root first; a refusal runs nothing |
-| `highlightFaceChecks`, `highlightEnterChecks` | The capture-to-face rule, pure; and, on the editor's models through the loop, a mode with a syntax tree attaching and highlighting its text in the faces the rule gives, its own query, a refusal in the echo area with the mode set and the text detached, a mode before drawn no more, a parent's syntax tree, and the text detached when a mode with none replaces it; then its injections and a language for the model's grammar, its text objects and indents queries kept, and a refusal of one of those steps said and stopping it alone |
+| `highlightFaceChecks`, `highlightEnterChecks` | The capture-to-face rule, pure; and, on the editor's models through the loop, a tree that names no highlights query asking for nothing but a detach and said, a mode with a syntax tree attaching and highlighting its text in the faces the rule gives, its own query, a refusal in the echo area with the mode set and the text detached, a mode before drawn no more, a parent's syntax tree, and the text detached when a mode with none replaces it; then its injections and a language for the model's grammar, its text objects and indents queries kept, and a refusal of one of those steps said and stopping it alone |
 | `languageMatchChecks`, `languageOpenChecks` | The language rule, pure: by extension, an exact base name over an extension, config's entry over a shipped one and the earlier over the later, no match, `Language.over` and the registry's table, and the shipped table; and, on the loop's driver over the editor's models, a `.json` and a `.rs` file opened into `code` with their language and highlighted, a file of no language opened as before, one already open asking nothing more, a config mode with its own tree winning, and config's entry of a language's name used |
-| `FilesTest.Linked.languageChecks` | Through the headless host, the real elaborator and the real syntax binding: a `.rs`, a `.json` and a `.md` file opened into `code` and highlighted with their grammar's shipped query, a file of no language asking the syntax tree port nothing, and config's `rust` with its own highlights query used in place of the shipped one |
+| `FilesTest.Linked.languageChecks` | Through the headless host, the real elaborator and the real syntax binding: a `.rs`, a `.json` and a `.md` file opened into `code` and highlighted with the queries read from their grammar's directory (the test grammars, which the host declares), a file of no language asking the syntax tree port nothing, and config's `rust` with its own highlights query used in place of the directory's |
 | `treeObjectRuleChecks` | The syntax tree's text-object rule (`Evil.TreeObjects.choose`), pure, over hand-built rows: the smallest node first, a count, a node no bigger than a wider selection passed over, the inside as the longest inner row within, no inside, and no node round the cursor |
 | `indentRuleChecks`, `indentLevelChecks` | The indent rule (`Indent.rule`), pure, over hand-built rows; and the indent primitive (`TextId.indentLevels`) on the editor's models, under a test mode of the model's JSON grammar with an indents query of its own, refused for a text with no syntax tree or no indents query |
 | `indentOpeningChecks`, `indentEditChecks` | The opening rule (`Indent.openingCounts`, `Indent.levelOf`) and the widening (`Indent.widenedStart`), pure, over hand-built nodes; and levels as edits, pure: a level's whitespace in spaces or tabs, the re-indent's edits (a row already right left, a blank row emptied, a kept row untouched), what a new line gets for each answer, and `RET`'s edit (`Indent.breakAt`) |

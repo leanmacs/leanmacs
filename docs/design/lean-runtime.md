@@ -1889,7 +1889,9 @@ editor state's buffers and windows through one port, whose shape is:
 - **The syntax tree port** (`lean/Editor/SyntaxTree.lean`, made a sub-port
   by the syntax roadmap's phase 2) is what a command and a major mode ask
   of the library's syntax service: grammars, attaching and detaching a
-  text, queries, a grammar's shipped query, drawing a text with a query's
+  text, queries, a grammar's shipped query (which the library answers
+  with none, since it compiles in no grammar, and the core no longer asks),
+  drawing a text with a query's
   captures in faces, its injections and the languages they may name, and
   keeping a query of a structural kind (text objects, indents) whose
   captures are asked by kind (made by the syntax roadmap's phase 3). **Its refusal is a value**: `SyntaxTree.lift`
@@ -2077,7 +2079,7 @@ editor state's buffers and windows through one port, whose shape is:
 | Its pure model, with no state: a subsequence test, and the candidates that are the pattern first | `lean/Editor/Fuzzy/Model.lean` |
 | Its contract, imported from the port alone, run against the model by `lake test` and against the real binding by `contract-test` | `lean/Editor/Fuzzy/Contract.lean` |
 | Its real binding: one call into the library | `lean/Editor/Fuzzy/Real.lean` |
-| The syntax tree port, a sub-port of the editor's: the grammars, attaching a text to a grammar, a query compiled, its capture names and its captures in a range, a grammar's shipped query, and a text highlighted with a query in faces, each refusal a value; `SyntaxTreeHandler`; `SyntaxTree.none`. Named `SyntaxTree`, since `Syntax` is `Lean.Syntax` wherever `Lean` is open and `Grammar` an input scheme's | `lean/Editor/SyntaxTree.lean` |
+| The syntax tree port, a sub-port of the editor's: the grammars, attaching a text to a grammar, a query compiled, its capture names and its captures in a range, a grammar's shipped query (none, from the library, which compiles in no grammar), and a text highlighted with a query in faces, each refusal a value; `SyntaxTreeHandler`; `SyntaxTree.none`. Named `SyntaxTree`, since `Syntax` is `Lean.Syntax` wherever `Lean` is open and `Grammar` an input scheme's | `lean/Editor/SyntaxTree.lean` |
 | The capture-to-face rule and what setting a major mode with a syntax tree asks of the port | `lean/Editor/Highlight.lean` |
 | The language table, the rule that chooses a path's language, and the `code` mode, whose tree is its buffer's language's | `lean/Editor/Language.lean` |
 | Its pure model: one grammar, a parser of a subset of JSON that builds the tree `tree-sitter-json` builds, a subset of the query language, and the Rust core's rule for a range; it parses at once, so it answers `notParsed` only when a test says its trees are not delivered (`delivered`) | `lean/Editor/SyntaxTree/Model.lean`, `Model/Json.lean`, `Model/Query.lean` |

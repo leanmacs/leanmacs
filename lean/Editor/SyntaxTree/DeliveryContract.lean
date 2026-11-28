@@ -9,7 +9,7 @@ parses, as a list of properties over a `DeliveryRig`: the rig gives the
 handler, how to make a json text and how to edit it to a new snapshot of
 the same text, and how to settle a snapshot's delivery. The rig's service
 has `json` registered, as the core's tests register it, since the library
-hides its compiled-in grammars from every test. The answers themselves are
+compiles in no grammar. The answers themselves are
 the model's (`Editor/SyntaxTree/Model.lean`), with the test grammars
 registered (`SyntaxTreeModel.withTestGrammars`): each property compares a
 question's answer with the model's for the same text. The same list runs

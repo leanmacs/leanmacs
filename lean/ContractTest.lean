@@ -273,8 +273,7 @@ the real text binding, an interrupt key that arrives while a command runs.
 That check is single-threaded, so where the key arrives is exact: the
 display handler posts it during one of the command's own publishes.
 
-**The test grammars.** The library hides its compiled-in grammars from every
-test (`crates/editor-syntax-treesitter`, "How grammars are loaded"), so
+**The test grammars.** The library compiles in no grammar (`crates/editor-syntax-treesitter`, "How grammars are loaded"), so
 `main` registers the six grammars of the directory cargo builds for the
 core's tests (`crates/editor-syntax-fixture-grammars`), its fifth argument,
 on the library's syntax service once, before any check that draws
