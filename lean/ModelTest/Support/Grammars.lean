@@ -118,8 +118,8 @@ rules. -/
 def installedWith (setup : SetupM Unit) (libraries : Array (String × GrammarRegistry.Library))
     (files : Array (String × String)) (directories : Array String := #[])
     (platform : String := checkedPlatform) (packages : Array Package := #[])
-    (grammarDirectories : List (String × System.FilePath) := [])
-    (compiled : Array String := #[]) : Option TestDriver := do
+    (grammarDirectories : List (String × System.FilePath) := []) (compiled : Array String := #[]) :
+    Option TestDriver := do
   let (state, generation, grammars) ←
     installOver (withPackages shippedState packages grammarDirectories) setup
   let keys : Loop.Keys TestScheme.scheme := { registered := state.registry.registered }

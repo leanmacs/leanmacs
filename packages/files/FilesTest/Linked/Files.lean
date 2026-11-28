@@ -16,6 +16,7 @@ import Editor.Package
 import Editor.Program
 import Editor.Setup
 import Editor.Test.Editing
+import Editor.Test.Files
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
@@ -185,7 +186,10 @@ stage (`Stage.stepped`) whose file fake holds `files`, handed what
 syntax service (`Stage.fakeSyntaxService`) with every request recorded
 (`recordedRequest`) in the array `check` is handed: the requests the host
 hands the syntax port are the subject, and the fake records them on the
-check's thread. The config is loaded before `check` runs. -/
+check's thread. The fake's model has `json` registered (the test grammars),
+which ships no query, so the shipped `json` language is drawn with the
+model's own highlights query (`Editor.Test.modelJson`). The config is loaded before
+`check` runs. -/
 def withLanguageHost (context : HostContext) (more : String)
     (opens : List (String × System.FilePath)) (files : FileModel)
     (check : Session → IO.Ref (Array String) → IO Bool) : IO Bool :=
@@ -198,7 +202,9 @@ def withLanguageHost (context : HostContext) (more : String)
                 (opens.map fun (name, path) => opening name path).toArray
             jobs := Files.package.registered.jobs
             modes := Test.Minibuffer.package.registered.modes ++ Language.modes
-            languages := Language.shipped }
+            languages :=
+              Language.shipped.map fun language =>
+                if language.name == Test.modelJson.name then Test.modelJson else language }
     let (stage, fake) ← (← stage.stepped files).fakeSyntaxService
     let asked ← IO.mkRef #[]
     let recorded : SyntaxTreeHandler := fun request => do
@@ -249,7 +255,7 @@ real files (`withRealLanguageHost`, row W91 of
 waits (`Stage.overFiles`). -/
 def languageChecks (context : HostContext) : List Check :=
   [{  name :=
-        "opening a .json file gives its buffer the language json and the major mode code, and highlights its text with json's shipped query"
+        "opening a .json file gives its buffer the language json and the major mode code, and highlights its text with its language's query"
       run :=
         -- On the syntax fake, whose model holds json and its highlights:
         -- the requests are the model's answers. Markdown's grammar and its
@@ -262,9 +268,8 @@ def languageChecks (context : HostContext) : List Check :=
           let requests ← asked.get
           saw
               (report == some "json code".quote &&
-                requests.extract 0 7 ==
-                  #["refreshAfter 500", "attach json", "shippedQuery json highlights",
-                    "compile json", "captureNames",
+                requests.extract 0 6 ==
+                  #["refreshAfter 500", "attach json", "compile json", "captureNames",
                     "highlight syntax.string, syntax.string, syntax.number, syntax.constant",
                     "release"] &&
                 (← noHighlightsRefusal session))

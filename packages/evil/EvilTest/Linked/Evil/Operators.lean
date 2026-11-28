@@ -88,16 +88,22 @@ def setup : SetupM Unit := do
 
 /-- Runs `check` against a real host of the Vim scheme that ships
 (`withRealVimHost`) over `indentText` of the mangled Rust indent fixture,
-with the config loaded: handed the fixture's text and the mangled one. The
+with the config loaded and the test grammars of `grammars`' directory
+registered by the host's `register-grammars` job, so the Rust language's
+tree takes its queries from there: handed the fixture's text and the
+mangled one. The
 host runs a loop thread of its own, since the library's syntax service
 hands its parses back over the library's editor queue, which a stepped
 host never pulls. -/
-private def withEvilIndentHost (context : HostContext) (syntaxFixtures : System.FilePath)
-    (check : RealSession → String → String → IO Bool) : IO Bool := do
+private def withEvilIndentHost (context : HostContext) (grammars : TestGrammars)
+    (syntaxFixtures : System.FilePath) (check : RealSession → String → String → IO Bool) :
+    IO Bool := do
   let source ← IO.FS.readFile (syntaxFixtures / "rust" / "indent.rs")
   let mangled := mangledRust source indentKept
-  withRealVimHost context [("init.lean", indentText mangled)] fun session => do
+  withRealVimHost context grammars [("init.lean", indentText mangled)] fun session => do
       session.ask [.reload]
+      unless ← session.testGrammarsRegistered do
+        return false
       check session source mangled
 
 /-- The view line after `load-<name>` and then the keys `keys`. -/
@@ -119,11 +125,12 @@ one whose language has no indents query are `EvilTest.evilIndentChecks`'
 row gets is `Editor/Indent.lean`'s, pinned by `ModelTest`'s indent checks
 and, over the library, by `ContractTest/Editor/SyntaxTree/Real.lean`'s
 indents checks. -/
-def evilIndentChecks (context : HostContext) (syntaxFixtures : System.FilePath) : List Check :=
+def evilIndentChecks (context : HostContext) (grammars : TestGrammars)
+    (syntaxFixtures : System.FilePath) : List Check :=
   [{  name :=
         "in a Rust buffer whose indentation was mangled, g g = G gives text equal to the rustfmt-formatted fixture it came from, with the cursor on the first row's first non-blank, through the host's loop and the library's syntax tree; the rows inside its multi-line string and block comment, which the rule would indent by four spaces, keep theirs"
       run :=
-        withEvilIndentHost context syntaxFixtures fun session source mangled => do
+        withEvilIndentHost context grammars syntaxFixtures fun session source mangled => do
           let line ← session.loadedAndTyped "mangled" "g g = G"
           let leading (row : String) := (row.takeWhile (· == ' ')).toString
           unless showsText line source 0 0 do

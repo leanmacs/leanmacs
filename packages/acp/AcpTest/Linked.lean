@@ -75,7 +75,7 @@ set runs"): the conversation's, the permissions', the table's and the
 load's checks in a plain group each, then three groups,
 of its three modules of the wiring set, which the build's `linter.wiringSet`
 holds true and complete. With `--wiring` after
-the two directories it runs those groups alone, the stress loop's
+the three arguments it runs those groups alone, the stress loop's
 `linked-wiring` suite (`tools/package-set.sh run --wiring`), and
 `wiring-modules` prints their modules, one a line, building nothing.
 -/
@@ -140,7 +140,7 @@ private def AcpTest.Linked.runSelected (sysroot oleans : String) (mode : Editor.
 /-- Says the command lines it takes, and exits 2. -/
 private def AcpTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: AcpTest-Linked <sysroot> <core olean dir> [--wiring], or AcpTest-Linked wiring-modules"
+      "usage: AcpTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], or AcpTest-Linked wiring-modules"
   return 2
 
 /-- Runs the checks, all or with `--wiring` the wiring set's alone, and
@@ -152,7 +152,7 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules AcpTest.Linked.checks do
       IO.println module
     return 0
-  | sysroot :: oleans :: rest =>
+  | sysroot :: oleans :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
       AcpTest.Linked.runSelected sysroot oleans mode

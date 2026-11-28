@@ -40,13 +40,15 @@ def withRealVimHost.realHost : Editor.RealHost :=
 set_option linter.inferredWait false in
 /-- `withVimHost` with a real host and the real syntax binding, in its
 bracket (`withRealSyntaxHost Vim.Default.scheme`), which returns once its
-loop has ended. -/
-def withRealVimHost (context : HostContext) (files : List (String × String))
-    (check : RealSession → IO Bool) (fileModel : Option FileModel := none)
-    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
-    (packages : Array Package := context.packages)
+loop has ended, declaring the test grammars of `grammars`' directory, which
+the check waits to see registered (`Session.testGrammarsRegistered`) before
+it opens a buffer of one. -/
+def withRealVimHost (context : HostContext) (grammars : TestGrammars)
+    (files : List (String × String)) (check : RealSession → IO Bool)
+    (fileModel : Option FileModel := none) (workingDirectory : System.FilePath := "/")
+    (home : Option System.FilePath := none) (packages : Array Package := context.packages)
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
-  withRealSyntaxHost Vim.Default.scheme context files check fileModel workingDirectory home packages
-    emitting
+  withRealSyntaxHost Vim.Default.scheme context grammars files check fileModel workingDirectory home
+    packages emitting
 
 end Editor.Test.Linked

@@ -3,6 +3,7 @@ import Editor.RealHost
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
 import Editor.Test.Linked.Lines
+import Editor.Test.Linked.Services
 import Editor.Test.Linked.Shipped
 import Editor.Test.Linked.Syntax
 import Editor.Vocabulary
@@ -38,12 +39,14 @@ open Editor
 open Editor.Test.Linked
 
 /-- A config whose `setup` defines the mode `rust-test`, whose text is
-parsed with the grammar `rust` and drawn by the shipped default, and the
-command `rust-buffer`, which puts `rustObjectsText` in the scratch buffer's
-text, places the cursor inside the method's body, at `let`, and only then
-makes `rust-test` its major mode, so the text is attached at its last
-revision. -/
-def rustObjectsConfig : String :=
+parsed with the grammar `rust` and drawn as `rust`, the Rust tree of the
+test grammars' directory (`TestGrammars.tree`), says: a mode's own tree is
+not filled in from a declaration, so the config names its queries
+(`TestGrammars.treeSource`); and the command `rust-buffer`, which puts
+`rustObjectsText` in the scratch buffer's text, places the cursor inside
+the method's body, at `let`, and only then makes `rust-test` its major
+mode, so the text is attached at its last revision. -/
+def rustObjectsConfig (rust : Mode.SyntaxTree) : String :=
   "def rustText : String := " ++ rustObjectsText.quote ++
     "
 
@@ -55,7 +58,9 @@ def rustBuffer : EditorM Unit := do
   discard <| (⟨0⟩ : ViewId).setMajorMode \"rust-test\"
 
 def setup : SetupM Unit := do
-  defineMode { name := \"rust-test\", syntaxTree := some { grammar := \"rust\" } }
+  defineMode { name := \"rust-test\", syntaxTree := some " ++
+    TestGrammars.treeSource rust ++
+    " }
   command \"rust-buffer\" rustBuffer
 "
 
@@ -67,29 +72,32 @@ query, which the syntax model does not hold, over the real binding. Which
 node an object is, `v i f`'s among them, is `Evil/TreeObjects.lean`'s,
 pinned by `EvilTest.treeObjectRuleChecks`, `EvilTest.evilObjectChecks` and
 `treeObjectsEditedCheck` here, and, over the library, by `ContractTest`. -/
-def treeObjectChecks (context : HostContext) : List Check :=
+def treeObjectChecks (context : HostContext) (grammars : TestGrammars) : List Check :=
   [{  name :=
         "in a Rust buffer v a f selects the enclosing function, from its fn through its closing brace, through the host's loop and the library's syntax tree; and <Escape> d a f then deletes it, its lines whole"
-      run :=
+      run := do
         -- Seen to bite once by hand: with `a-function` taken out of
         -- `Evil.objects`, `v a f` leaves the cursor's one cell selected.
-        withRealVimHost context [("init.lean", rustObjectsConfig)] fun session => do
-          session.ask [.reload]
-          session.ask [.run "rust-buffer"]
-          let before := lastViewLine (← session.sceneLines)
-          session.typed "v a f"
-          let selected := lastViewLine (← session.sceneLines)
-          session.typed "<Escape> d a f"
-          let deleted := lastViewLine (← session.sceneLines)
-          let some fnAt := offsetOf rustObjectsText "fn one" | return false
-          let some closing := offsetOf rustObjectsText "}\n}\n" | return false
-          let some letAt := offsetOf rustObjectsText "let x" | return false
-          -- `d` over a charwise span from a line's indent to the end of a
-          -- later line takes the lines whole, Vim's exception for `d`.
-          let without := "struct S;\n\nimpl S {\n}\n"
-          return (before.splitOn s!"selections {letAt}..{letAt},").length == 2 &&
-              (selected.splitOn s!"selections {fnAt}..{closing},").length == 2 &&
-              (deleted.splitOn s!"{without.quote}, scroll").length == 2 }]
+        let rust ← grammars.tree "rust"
+        withRealVimHost context grammars [("init.lean", rustObjectsConfig rust)] fun session => do
+            session.ask [.reload]
+            unless ← session.testGrammarsRegistered do
+              return false
+            session.ask [.run "rust-buffer"]
+            let before := lastViewLine (← session.sceneLines)
+            session.typed "v a f"
+            let selected := lastViewLine (← session.sceneLines)
+            session.typed "<Escape> d a f"
+            let deleted := lastViewLine (← session.sceneLines)
+            let some fnAt := offsetOf rustObjectsText "fn one" | return false
+            let some closing := offsetOf rustObjectsText "}\n}\n" | return false
+            let some letAt := offsetOf rustObjectsText "let x" | return false
+            -- `d` over a charwise span from a line's indent to the end of a
+            -- later line takes the lines whole, Vim's exception for `d`.
+            let without := "struct S;\n\nimpl S {\n}\n"
+            return (before.splitOn s!"selections {letAt}..{letAt},").length == 2 &&
+                (selected.splitOn s!"selections {fnAt}..{closing},").length == 2 &&
+                (deleted.splitOn s!"{without.quote}, scroll").length == 2 }]
 
 /-- A row of the tree's text objects over the Rust fixture: where the
 cursor is, as the text it is at the start of (its first occurrence), the
@@ -210,12 +218,12 @@ def objectRowsWrong (held : SyntaxText) (source : String) (edited : String → S
 set_option linter.inferredWait false in
 /-- A check of `treeObjectFixtureChecks`, a declaration of its own so that
 the allow above it covers it alone. -/
-def treeObjectsEditedCheck (syntaxFixtures : System.FilePath) : Check :=
+def treeObjectsEditedCheck (grammars : TestGrammars) (syntaxFixtures : System.FilePath) : Check :=
   { name :=
       "the tree's text objects of the Rust fixture, through the Lean editor API, cover the ranges written by hand, and still do after a function is inserted above and a line added inside a method's body"
     run := do
       let source ← IO.FS.readFile (syntaxFixtures / "rust" / "objects.rs")
-      let some held ← SyntaxText.over source "rust" | return false
+      let some held ← SyntaxText.over grammars source "rust" | return false
       let before ← objectRowsWrong held source id objectRows
       let line := "        let add = |v| v + extra;\n"
       let added := line ++ "        let unused = 1;\n"
@@ -232,17 +240,35 @@ def treeObjectsEditedCheck (syntaxFixtures : System.FilePath) : Check :=
         throw (IO.userError ("; ".intercalate (before ++ after)))
       return now == edited }
 
+/-- The mark of `registeredGrammars`: it runs a real background service
+(`Editor/RealHost.lean`). -/
+def registeredGrammars.realHost : Editor.RealHost :=
+  .service
+
+/-- Registers the test grammars of `grammars`' directory on the library's
+syntax service (`registerTestGrammars`), in a job on services over the
+process's one completion pump (`HostContext.fileWaits`): whether every one
+registered. For a check with no host, which draws with one. -/
+def registeredGrammars (context : HostContext) (grammars : TestGrammars) : IO Bool := do
+  let services ← Services.over (← context.fileWaits)
+  return (← registerTestGrammars grammars services.jobs) matches .ok ()
+
 /-- What only the real syntax tree binding shows of the tree's text objects
 over the fixtures in `syntaxFixtures` (the repository's `tests/syntax`), with
 no host, through the linked kit's text over the real bindings
 (`Editor.Test.Linked.SyntaxText`): the objects of a Rust fixture, before
-and after edits, and the names the shipped Rust text objects query
-captures. -/
-def treeObjectFixtureChecks (syntaxFixtures : System.FilePath) : List Check :=
-  [{  name := "the shipped Rust text objects query names only what the text-object rule reads"
+and after edits, and the names the Rust text objects query captures. The
+test grammars of `grammars`' directory are registered first, and each tree
+takes its queries from there. -/
+def treeObjectFixtureChecks (context : HostContext) (grammars : TestGrammars)
+    (syntaxFixtures : System.FilePath) : List Check :=
+  [{  name :=
+        "the test grammars register, and the Rust text objects query names only what the text-object rule reads"
       run := do
-        let some names ← shippedCaptureNames "rust" .textObjects | return false
+        unless ← registeredGrammars context grammars do
+          return false
+        let some names ← testQueryCaptureNames grammars "rust" .textObjects | return false
         return !names.isEmpty && names.all Evil.TreeObjects.names.contains },
-    treeObjectsEditedCheck syntaxFixtures]
+    treeObjectsEditedCheck grammars syntaxFixtures]
 
 end EvilTest.Linked

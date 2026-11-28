@@ -37,7 +37,7 @@ Its checks are a check set (`LoginShellTest.Linked.checks`,
 `Editor.CheckGroup`, `docs/dev-practices/real-thread-checks.md`, "How the
 set runs"): each module of the wiring set's list in a group of its module,
 which the build's `linter.wiringSet` holds true and complete. With
-`--wiring` after the two directories it runs those groups alone, the stress
+`--wiring` after the three arguments it runs those groups alone, the stress
 loop's `linked-wiring` suite (`tools/package-set.sh run --wiring`), and
 `wiring-modules` prints its modules, building nothing.
 -/
@@ -86,7 +86,7 @@ private def LoginShellTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : 
 /-- Says the command lines it takes, and exits 2. -/
 private def LoginShellTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: LoginShellTest-Linked <sysroot> <core olean dir> [--wiring], or LoginShellTest-Linked wiring-modules"
+      "usage: LoginShellTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], or LoginShellTest-Linked wiring-modules"
   return 2
 
 /-- Runs the checks (the module docs). -/
@@ -96,7 +96,7 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules LoginShellTest.Linked.checks do
       IO.println module
     return 0
-  | _ :: _ :: rest =>
+  | _ :: _ :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
       LoginShellTest.Linked.runSelected mode

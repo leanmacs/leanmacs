@@ -42,7 +42,7 @@ module `ContractTest` runs them; its module doc says what each shows.
 namespace ContractTest
 
 open Editor
-open Editor.Test.Linked (settlingAttach drainedParsed)
+open Editor.Test.Linked (settlingAttach drainedParsed TestGrammars testQueryCaptureNames)
 
 /-- Whether the editor queue holds exactly one event, the library's report
 of a parse delivered, which is pulled: what an edit of a highlighted text
@@ -76,16 +76,6 @@ their nodes. -/
 def capturedTexts (text : String) (captures : Array SyntaxTree.Capture) : Array String :=
   captures.map fun capture => String.fromUTF8! (text.toUTF8.extract capture.start capture.stop)
 
-/-- The capture names of the query of `kind` the library ships for
-`grammar`; none when it ships none or the query does not compile. -/
-def shippedNames (grammar : String) (kind : QueryKind) : IO (Option (Array String)) := do
-  let table ← Snapshots.new
-  let real ← RealSyntaxTree.new table.reader
-  let program : SyntaxTreeM (Array String) := do
-    let query ← SyntaxTree.compile grammar (← SyntaxTree.shippedQuery grammar kind)
-    SyntaxTree.captureNames query
-  return (← program.runWith real.handle).toOption
-
 /-- What the indent primitive answers of each row of `text`, whose major
 mode is the shipped Rust one, over the real syntax tree binding: the text,
 the levels, and the texts the run left. Each question waits for its
@@ -101,11 +91,11 @@ def rustIndentLevels (table : Snapshots) (texts : RealTexts) (text : TextId) :
   return some answered
 
 /-- The opening level of a Rust text, written with a bar where the line
-opens (`fixture`), whose major mode is the shipped Rust one, over the real
-syntax tree binding, with what follows the bar on its row moved to the new
-row when `rest`: `none` when the run was refused. The question waits for
-its snapshot's tree (`settling`). -/
-def rustOpeningLevel (fixture : String) (rest : Bool) :
+opens (`fixture`), entered with the test grammars' Rust tree (`rust`), over
+the real syntax tree binding, with what follows the bar on its row moved to
+the new row when `rest`: `none` when the run was refused. The question
+waits for its snapshot's tree (`settling`). -/
+def rustOpeningLevel (rust : Mode.SyntaxTree) (fixture : String) (rest : Bool) :
     IO (Option (Except SyntaxTreeError (Option Nat))) := do
   let offset := ((fixture.splitOn "|").headD "").utf8ByteSize
   let source := fixture.replace "|" ""
@@ -113,7 +103,7 @@ def rustOpeningLevel (fixture : String) (rest : Bool) :
   let real ← RealSyntaxTree.new table.reader
   let asked : EditorM (Except SyntaxTreeError (Option Nat)) := do
     let text ← createText source
-    Highlight.enter "rust" text { grammar := "rust" }
+    Highlight.enter "rust" text rust
     text.openingLevel offset rest
   let (.ok answered, _) ←
     asked.runReal (.over table) (← recorderOf table).handle (syntaxTree :=
@@ -163,15 +153,16 @@ def rustUnclosedTexts : List String :=
     "fn a() {\n    let v = [1, 2;\n}\n\nfn b() {\n    x\n}\n", "fn main() {\n    let x = 1;\n",
     "impl A {\n    fn f(&self) {\n        x();\n"]
 
-/-- The indent levels of `source`, whose major mode is the shipped Rust one,
-over the real syntax tree binding: `none` when the run was refused. The
-question waits for its snapshot's tree (`settling`). -/
-def rustSourceLevels (source : String) : IO (Option (Array (Option Nat))) := do
+/-- The indent levels of `source`, entered with the test grammars' Rust tree
+(`rust`), over the real syntax tree binding: `none` when the run was
+refused. The question waits for its snapshot's tree (`settling`). -/
+def rustSourceLevels (rust : Mode.SyntaxTree) (source : String) :
+    IO (Option (Array (Option Nat))) := do
   let table ← Snapshots.new
   let real ← RealSyntaxTree.new table.reader
   let entered : EditorM TextId := do
     let text ← createText source
-    Highlight.enter "rust" text { grammar := "rust" }
+    Highlight.enter "rust" text rust
     return text
   let (.ok text, texts) ←
     entered.runReal (.over table) (← recorderOf table).handle (syntaxTree :=
@@ -180,24 +171,27 @@ def rustSourceLevels (source : String) : IO (Option (Array (Option Nat))) := do
 
 /-- What only the real syntax tree binding shows over the fixtures in
 `fixtures` (`tests/syntax`): the indent levels of a Rust fixture, before
-and after an edit, and the names the shipped Rust indents query captures.
+and after an edit, and the names the Rust indents query captures. Each
+draws with the Rust grammar registered from `grammars`' directory
+(`ContractTest`'s `main`) and its queries read from there.
 The tree's text objects over the binding are evil's
 (`EvilTest.Linked.treeObjectFixtureChecks`, `packages/evil/EvilTest/Linked/Evil/TreeObjects.lean`). -/
-def syntaxFixtureChecks (fixtures : System.FilePath) : List Check :=
-  [{  name := "the shipped Rust indents query names only what the indent rule reads"
+def syntaxFixtureChecks (grammars : TestGrammars) (fixtures : System.FilePath) : List Check :=
+  [{  name := "the Rust indents query names only what the indent rule reads"
       run := do
-        let some names ← shippedNames "rust" .indents | return false
+        let some names ← testQueryCaptureNames grammars "rust" .indents | return false
         return !names.isEmpty && names.all Indent.names.contains },
     { name :=
         "the indent levels of the Rust fixture are its own indentation, and the rows inside its multi-line string and block comment keep theirs, before and after an edit that wraps a statement in a new block"
       run := do
         let source ← IO.FS.readFile (fixtures / "rust" / "indent.rs")
         let kept := ["not indented by the rule\";", "       comment */"]
+        let rust ← grammars.tree "rust"
         let table ← Snapshots.new
         let real ← RealSyntaxTree.new table.reader
         let entered : EditorM TextId := do
           let text ← createText source
-          Highlight.enter "rust" text { grammar := "rust" }
+          Highlight.enter "rust" text rust
           return text
         let (.ok text, texts) ←
           entered.runReal (.over table) (← recorderOf table).handle (syntaxTree :=
@@ -222,9 +216,10 @@ def syntaxFixtureChecks (fixtures : System.FilePath) : List Check :=
     { name :=
         "the opening level of Rust texts at an unclosed bracket counts every bracket the tree did not close, widened to the incomplete node that holds them: closed and unclosed at the text's end, three deep, a match, an if, a call and a vec! opened mid-function, a balanced error elsewhere, o and O on a closing row and in a body, and nothing inside a string"
       run := do
+        let rust ← grammars.tree "rust"
         let mut wrong := #[]
         for (fixture, rest, level) in rustOpeningRows do
-          let answered ← rustOpeningLevel fixture rest
+          let answered ← rustOpeningLevel rust fixture rest
           let said :=
             match answered with
             | some (.ok got) => if got == level then none else some (repr got)
@@ -238,9 +233,10 @@ def syntaxFixtureChecks (fixtures : System.FilePath) : List Check :=
     { name :=
         "the indent levels of Rust texts with a bracket the tree did not close are their own indentation: a call's ( and an array's [ whose partner is missing mid-function count on no row after their node, so the function's } and the next function keep their levels, and brackets open at the text's end count on the rows their error holds"
       run := do
+        let rust ← grammars.tree "rust"
         let mut wrong := #[]
         for source in rustUnclosedTexts do
-          match ← rustSourceLevels source with
+          match ← rustSourceLevels rust source with
           | some levels =>
             unless rustIndentHolds source [] levels do
               wrong := wrong.push s!"{repr source} answered {repr levels}"
@@ -250,17 +246,20 @@ def syntaxFixtureChecks (fixtures : System.FilePath) : List Check :=
           throw (IO.userError ("; ".intercalate wrong.toList))
         return true }]
 
-/-- What only the real syntax tree binding shows: the library's Rust
-grammar, a query of one grammar asked of a text parsed with another, and a
-text edited through its document reparsed. -/
-def syntaxTreeChecks : List Check :=
-  [{  name := "the library's syntax service has a Rust grammar beside JSON"
+/-- What only the real syntax tree binding shows: the grammars registered
+from `grammars`' directory listed, a query of one grammar asked of a text
+parsed with another, and a text edited through its document reparsed. Each
+text is drawn with a tree whose queries are read from the directory
+(`TestGrammars.over`), never a query the library ships. -/
+def syntaxTreeChecks (grammars : TestGrammars) : List Check :=
+  [{  name := "the grammars registered from the test grammars' directory are listed"
       run := do
-        let grammars ←
+        let listed ←
           SyntaxTree.grammars.runWith fun request => do
               let (_, _, _, handler) ← syntaxTreeOver #[]
               handler request
-        return grammars.toOption.any fun names => names.contains "rust" && names.contains "json" },
+        return listed.toOption.any fun names =>
+            TestGrammars.names.all fun (name, _) => names.contains name },
     { name := "a Rust function's name is captured through the binding, by its field"
       run :=
         onRealSyntaxTree #["fn one() {}\nstruct S;\nfn two(x: u8) {}\n"] fun _ _ ids handler => do
@@ -331,6 +330,8 @@ def syntaxTreeChecks : List Check :=
     { name :=
         "a Rust text highlighted by the shipped default and edited is drawn by the real display with its keywords in the keyword face's colour, once the edit's tree is delivered and reported on the editor queue"
       run := do
+        let rust ← grammars.tree "rust"
+        let injected ← grammars.injected
         let table ← Snapshots.new
         let real ← RealSyntaxTree.new table.reader
         let syntaxTree := settlingAttach table real.handle
@@ -341,7 +342,7 @@ def syntaxTreeChecks : List Check :=
               #[{ name := ⟨"syntax.keyword"⟩, face := { foreground := some red } }]
         let highlighted : EditorM TextId := do
           let text ← createText "fn one() {}\n"
-          Highlight.enter "rust" text { grammar := "rust" }
+          Highlight.enter "rust" text rust injected
           return text
         let (.ok text, texts) ←
           highlighted.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
@@ -369,6 +370,7 @@ def syntaxTreeChecks : List Check :=
     { name :=
         "a TOML text entered with the toml language's tree is drawn by the real display with its table header's key and its key in the type face's colour, its string in the string face's colour and the header's brackets in the punctuation face's colour"
       run := do
+        let toml ← grammars.over Language.toml.syntaxTree
         let table ← Snapshots.new
         let real ← RealSyntaxTree.new table.reader
         let syntaxTree := settlingAttach table real.handle
@@ -383,7 +385,7 @@ def syntaxTreeChecks : List Check :=
                 { name := ⟨"syntax.punctuation"⟩, face := { foreground := some blue } }]
         let entered : EditorM (SnapshotId × MarkerId) := do
           let text ← createText "[package]\nname = \"x\"\n"
-          Highlight.enter "toml" text Language.toml.syntaxTree
+          Highlight.enter "toml" text toml
           return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
         let (.ok (snapshot, scroll), texts) ←
           entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
@@ -410,6 +412,7 @@ def syntaxTreeChecks : List Check :=
     { name :=
         "a Lean text entered with the lean language's tree is drawn by the real display with its keyword in the keyword face's colour, its string in the string face's colour and its comment in the comment face's colour"
       run := do
+        let lean ← grammars.over Language.lean.syntaxTree
         let table ← Snapshots.new
         let real ← RealSyntaxTree.new table.reader
         let syntaxTree := settlingAttach table real.handle
@@ -424,7 +427,7 @@ def syntaxTreeChecks : List Check :=
                 { name := ⟨"syntax.comment"⟩, face := { foreground := some blue } }]
         let entered : EditorM (SnapshotId × MarkerId) := do
           let text ← createText "def x := \"a\"\n-- c\n"
-          Highlight.enter "lean" text Language.lean.syntaxTree
+          Highlight.enter "lean" text lean
           return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
         let (.ok (snapshot, scroll), texts) ←
           entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
@@ -452,6 +455,7 @@ def syntaxTreeChecks : List Check :=
     { name :=
         "a Lean text entered with the lean language's tree is drawn by the real display with a namespace's name in the module face's colour, not hidden by the identifier's variable capture"
       run := do
+        let lean ← grammars.over Language.lean.syntaxTree
         let table ← Snapshots.new
         let real ← RealSyntaxTree.new table.reader
         let syntaxTree := settlingAttach table real.handle
@@ -464,7 +468,7 @@ def syntaxTreeChecks : List Check :=
                 { name := ⟨"syntax.module"⟩, face := { foreground := some yellow } }]
         let entered : EditorM (SnapshotId × MarkerId) := do
           let text ← createText "namespace A.B\n"
-          Highlight.enter "lean" text Language.lean.syntaxTree
+          Highlight.enter "lean" text lean
           return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
         let (.ok (snapshot, scroll), texts) ←
           entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
@@ -489,6 +493,8 @@ def syntaxTreeChecks : List Check :=
     { name :=
         "a Markdown text with a fenced Rust block, entered with the shipped default, is drawn by the real display with the fence's `fn` in the keyword face's colour"
       run := do
+        let markdown ← grammars.tree "markdown"
+        let injected ← grammars.injected
         let table ← Snapshots.new
         let real ← RealSyntaxTree.new table.reader
         let syntaxTree := settlingAttach table real.handle
@@ -499,7 +505,7 @@ def syntaxTreeChecks : List Check :=
               #[{ name := ⟨"syntax.keyword"⟩, face := { foreground := some red } }]
         let entered : EditorM (SnapshotId × MarkerId) := do
           let text ← createText "# Title\n\n```rust\nfn one() {}\n```\n"
-          Highlight.enter "markdown" text { grammar := "markdown" }
+          Highlight.enter "markdown" text markdown injected
           return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
         let (.ok (snapshot, scroll), texts) ←
           entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
@@ -541,9 +547,11 @@ def syntaxTreeChecks : List Check :=
         let captures :=
           [("text.emphasis", some ⟨"test.emphasis"⟩), ("text.literal", some ⟨"test.literal"⟩),
             ("punctuation.delimiter", none)]
+        let markdown ← grammars.over { grammar := "markdown", captures }
+        let injected ← grammars.injected
         let entered : EditorM (SnapshotId × MarkerId) := do
           let text ← createText "Some *emphasis* and `code`.\n"
-          Highlight.enter "markdown" text { grammar := "markdown", captures }
+          Highlight.enter "markdown" text markdown injected
           return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
         let (.ok (snapshot, scroll), texts) ←
           entered.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false

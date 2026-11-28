@@ -1,5 +1,7 @@
 import ConfigTest.Editor.Headless
 import Editor.RealHost
+import Editor.Test.Linked.Services
+import Editor.Test.Linked.Syntax
 
 /-!
 # Config tests: `Editor/SyntaxTree/Real.lean`, the library's syntax service
@@ -18,7 +20,16 @@ and a parse of a highlighted text the library delivers makes the real host
 publish a scene; that a delivered parse publishes one
 scene is the loop's, `ModelTest/Editor/Loop.lean` ("a parse delivered
 leaves the state as it was ... and publishes one scene"). Its helpers,
-`recordedStage` and `withRealRecordedSyntaxTree`, are marked.
+`recordedStage`, `withRealRecordedSyntaxTree` and `registeredTestGrammars`,
+are marked.
+
+**The grammars.** The library hides its compiled-in grammars from every
+test, so each check first registers the grammars cargo builds for the
+core's tests (`registeredTestGrammars`, over the process's one completion
+pump), and its mode carries its own highlights query: a mode's own tree is
+not resolved against a declaration, and a registered grammar ships none.
+The TOML mode's is the query file in the test grammars' directory, the
+same file the adapter ships, so the faces are the same.
 -/
 
 /-- This module is of the wiring set (`Editor/RealHost.lean`). -/
@@ -31,6 +42,19 @@ namespace ConfigTest
 
 open Editor
 open Editor.Test.Linked
+
+/-- The mark of `registeredTestGrammars`: it runs a real background service
+(`Editor/RealHost.lean`). -/
+def registeredTestGrammars.realHost : Editor.RealHost :=
+  .service
+
+/-- Registers the test grammars of `context`'s directory on the library's
+syntax service (`registerTestGrammars`), in a job on services over the
+process's one completion pump (`HostContext.fileWaits`): whether every one
+registered. -/
+def registeredTestGrammars (context : Context) : IO Bool := do
+  let services ← Services.over (← context.fileWaits)
+  return (← registerTestGrammars context.testGrammars services.jobs) matches .ok ()
 
 /-- The mark of `recordedStage`: it runs a real background service (`Editor/RealHost.lean`). -/
 def recordedStage.realHost : Editor.RealHost :=
@@ -109,6 +133,8 @@ def parseHighlightedTextLibraryCheck (context : Context) : Check :=
       -- Its waits are its own job's: the job's park, its sleep's wait
       -- recorded (the recorder), and the job's end line.
       withRealRecordedSyntaxTree context fun session recorder published settleShown => do
+        unless ← registeredTestGrammars context do
+          return false
         session.ask [.reload]
         session.ask [.spawn "highlight"]
         -- hang guard: the highlight job's park on its sleep, recorded; only
@@ -135,16 +161,19 @@ def parseHighlightedTextLibraryCheck (context : Context) : Check :=
           return false
         return (← published) > before + 1 }
 
-/-- A config that defines the mode `toml`, whose syntax tree is the
-compiled-in TOML grammar, and the command `open-toml`, which puts a TOML
-table in the scratch text and sets the focused view's major mode to it. -/
-def tomlText : String :=
+/-- A config that defines the mode `toml`, whose syntax tree is the TOML
+grammar registered from the test grammars' directory, drawn with
+`highlights`, and the command `open-toml`, which puts a TOML table in the
+scratch text and sets the focused view's major mode to it. -/
+def tomlText (highlights : String) : String :=
   "def openToml : EditorM Unit := do
   (⟨0⟩ : TextId).insert 0 \"[package]\\nname = \\\"x\\\"\\n\"
   discard <| (⟨0⟩ : ViewId).setMajorMode \"toml\"
 
 def setup : SetupM Unit := do
-  defineMode { name := \"toml\", syntaxTree := some { grammar := \"toml\" } }
+  defineMode { name := \"toml\", syntaxTree := some { grammar := \"toml\", highlights := some " ++
+    highlights.quote ++
+    " } }
   command \"open-toml\" openToml
 "
 
@@ -163,7 +192,10 @@ def highlightsDirectiveCheck (context : Context) : Check :=
       -- fail the run as `undelivered`: seen to bite once by hand, with the
       -- attachment probe answering attached for every text.
       IO.FS.withTempDir fun directory => do
-        writeConfig directory [("init.lean", tomlText)]
+        unless ← registeredTestGrammars context do
+          return false
+        let some highlights := (← context.testGrammars.queriesOf "toml").highlights | return false
+        writeConfig directory [("init.lean", tomlText highlights)]
         let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
         let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
           return (← RealSyntaxTree.new snapshots).handle

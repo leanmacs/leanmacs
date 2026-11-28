@@ -10,7 +10,7 @@
 #   tools/package-set.sh build <set dir>
 #   tools/package-set.sh fmt <set dir>
 #   tools/package-set.sh format <set dir>
-#   tools/package-set.sh [--wiring | --no-linked] run <set dir> <sysroot> <core olean dir>
+#   tools/package-set.sh [--wiring | --no-linked] run <set dir> <sysroot> <core olean dir> <test grammars dir>
 #
 # Run it in `lean/`. The packages are the ones Lake names for the set
 # (`lake -d <set dir> query :editorPackages`, a facet the core defines in
@@ -28,7 +28,11 @@
 #   its workers sized by tools/lean-fmt-workers.sh; `format` rewrites
 #   instead (`format`, `check --fix`).
 # - `run`: its linked test, in the package's directory, with the
-#   toolchain's directory and the core's `.olean` directory; then, when it
+#   toolchain's directory, the core's `.olean` directory and the directory
+#   of the grammars cargo builds for the core's tests
+#   (`crates/editor-syntax-fixture-grammars`), which a linked test that
+#   draws with a real grammar registers or declares, the library hiding its
+#   compiled-in grammars, and every other ignores; then, when it
 #   has a `tests/headless/` directory, the set's fixture harness over it
 #   (`<set dir>/.lake/build/bin/fixture-test <sysroot> <core olean dir>
 #   --repo <repository> run <package>/tests/headless`), which runs each
@@ -48,7 +52,7 @@ set -eu
 
 usage() {
   echo "usage: tools/package-set.sh test|build|fmt|format <set dir>" >&2
-  echo "       tools/package-set.sh [--wiring | --no-linked] run <set dir> <sysroot> <core olean dir>" >&2
+  echo "       tools/package-set.sh [--wiring | --no-linked] run <set dir> <sysroot> <core olean dir> <test grammars dir>" >&2
   exit 2
 }
 
@@ -75,7 +79,7 @@ set_dir=$2
 shift 2
 case $step in
   test | build | fmt | format) [ "$#" -eq 0 ] || usage ;;
-  run) [ "$#" -eq 2 ] || usage ;;
+  run) [ "$#" -eq 3 ] || usage ;;
   *) usage ;;
 esac
 if { [ -n "$wiring" ] || [ -n "$no_linked" ]; } && [ "$step" != run ]; then
@@ -114,6 +118,7 @@ case $step in
     # A linked test runs in its package's directory, so the paths it and
     # the fixtures are handed are absolute.
     oleans=$(cd "$2" && pwd)
+    grammars=$(cd "$3" && pwd)
     harness=$(cd "$set_dir" && pwd)/.lake/build/bin/fixture-test
     # Run in `lean/`: the repository's root, which the harness names each
     # fixture from, is the directory above.
@@ -148,10 +153,10 @@ while IFS=$tab read -r name dir linked linked_exe <&3; do
       if [ "$linked" != - ] && [ -z "$no_linked" ]; then
         if [ -n "$wiring" ]; then
           echo "package-set: linked test $linked of $name, its wiring set"
-          (cd "$dir" && "$linked_exe" "$sysroot" "$oleans" --wiring)
+          (cd "$dir" && "$linked_exe" "$sysroot" "$oleans" "$grammars" --wiring)
         else
           echo "package-set: linked test $linked of $name"
-          (cd "$dir" && "$linked_exe" "$sysroot" "$oleans")
+          (cd "$dir" && "$linked_exe" "$sysroot" "$oleans" "$grammars")
         fi
       fi
       # With --wiring, no headless fixture: those run stepped on the fakes.

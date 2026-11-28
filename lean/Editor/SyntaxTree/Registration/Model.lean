@@ -133,12 +133,12 @@ each from a library of the test grammars' directory, as the real tests
 register them, with its policy; and no table, so any other registration is
 refused `unsupported`, as the default is. -/
 def testGrammars : GrammarRegistry :=
-  { registered :=
+  {
+    registered :=
       testGrammarNames.map fun (name, policy) =>
         (name,
           { library := s!"/test-grammars/libtree-sitter-{name}.so", symbol := s!"tree_sitter_{name}"
-            policy := some policy },
-          policy) }
+            policy := some policy }, policy) }
 
 /-- The names to list: `compiled` in its order, then each registered name
 that is not among them, in the order it was first registered. -/

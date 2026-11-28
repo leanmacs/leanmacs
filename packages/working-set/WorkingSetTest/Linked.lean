@@ -42,7 +42,7 @@ def WorkingSetTest.Linked.checks : List (Editor.CheckGroup Unit WorkingSetTest.C
 /-- The usage, on stderr, and status 2. -/
 private def WorkingSetTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: WorkingSetTest-Linked <sysroot> <core olean dir> [--wiring], or WorkingSetTest-Linked wiring-modules"
+      "usage: WorkingSetTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], or WorkingSetTest-Linked wiring-modules"
   return 2
 
 /-- Runs the checks (the module docs). -/
@@ -52,7 +52,7 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules WorkingSetTest.Linked.checks do
       IO.println module
     return 0
-  | _ :: _ :: rest =>
+  | _ :: _ :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
       Editor.CheckGroup.running mode WorkingSetTest.Linked.checks do

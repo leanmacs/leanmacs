@@ -144,21 +144,34 @@ for suite in config-wiring linked-wiring; do
   fi
 done
 
+# The fixture grammar library and the directory of the grammars the core's
+# tests load, built by Cargo and printed by each fixture crate's binary, as
+# `mise run ffi-test` hands them (crates/editor-syntax-fixture-ini,
+# crates/editor-syntax-fixture-grammars): built once, before the rounds.
+lib=
+grammars=
+for suite in config-wiring ffi-wiring contract linked-wiring; do
+  if chosen "$suite" && [ -z "$grammars" ]; then
+    lib=$(cd "$root" && cargo run --quiet --locked -p editor-syntax-fixture-ini)
+    grammars=$(cd "$root" && cargo run --quiet --locked -p editor-syntax-fixture-grammars)
+  fi
+done
+
 # Runs one suite once, in the foreground, its output to the file $1.
 run_suite() {
   log=$1
   case "$2" in
   config-wiring)
-    (cd "$root/lean" && low .lake/build/bin/config-test "$prefix" .lake/build/lib/lean ../tests/syntax ../config/default ../packages . ../tests/config-package/lsp ../tests/config-migrate/migrated --wiring --timings "${log%.log}.timings") >"$log" 2>&1 ;;
+    (cd "$root/lean" && low .lake/build/bin/config-test "$prefix" .lake/build/lib/lean ../tests/syntax ../config/default ../packages . ../tests/config-package/lsp ../tests/config-migrate/migrated "$grammars" --wiring --timings "${log%.log}.timings") >"$log" 2>&1 ;;
   ffi-wiring)
-    (cd "$root/lean" && low sh -c 'status=0
-      .lake/build/bin/ffi-test wiring || status=$?
+    (cd "$root/lean" && GRAMMARS=$grammars low sh -c 'status=0
+      .lake/build/bin/ffi-test wiring "$GRAMMARS" || status=$?
       mise run --skip-deps window-scenarios || status=$?
       exit "$status"') >"$log" 2>&1 ;;
   contract)
-    (cd "$root/lean" && low .lake/build/bin/contract-test ../tests/syntax ../tests/completion ../tests/launch) >"$log" 2>&1 ;;
+    (cd "$root/lean" && low .lake/build/bin/contract-test ../tests/syntax ../tests/completion ../tests/launch "$lib" "$grammars") >"$log" 2>&1 ;;
   linked-wiring)
-    (cd "$root/lean" && low sh ../tools/package-set.sh --wiring run ../tests/packages "$prefix" .lake/build/lib/lean) >"$log" 2>&1 ;;
+    (cd "$root/lean" && low sh ../tools/package-set.sh --wiring run ../tests/packages "$prefix" .lake/build/lib/lean "$grammars") >"$log" 2>&1 ;;
   rust)
     (cd "$root" && low cargo test --workspace --locked) >"$log" 2>&1 ;;
   gate-ffi)

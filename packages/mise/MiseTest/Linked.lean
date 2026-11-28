@@ -80,7 +80,7 @@ private def MiseTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : IO UIn
 /-- Says the command lines it takes, and exits 2. -/
 private def MiseTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: MiseTest-Linked <sysroot> <core olean dir> [--wiring], or MiseTest-Linked wiring-modules"
+      "usage: MiseTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], or MiseTest-Linked wiring-modules"
   return 2
 
 /-- Runs the checks (the module docs). -/
@@ -90,7 +90,7 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules MiseTest.Linked.checks do
       IO.println module
     return 0
-  | _ :: _ :: rest =>
+  | _ :: _ :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
       MiseTest.Linked.runSelected mode

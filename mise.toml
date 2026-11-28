@@ -325,8 +325,16 @@ run = [
   "cargo deny --offline --manifest-path ../target/editor-rust/core/Cargo.toml check --config ../target/editor-rust/core/deny.toml -D unused-wrapper bans",
   # One of these checks measures the stack the entry point gives Lean's
   # threads, and LEAN_STACK_SIZE_KB overrides that size, so a variable in the
-  # developer's shell must not reach it.
-  "env -u LEAN_STACK_SIZE_KB .lake/build/bin/ffi-test",
+  # developer's shell must not reach it. Its one argument is the directory of
+  # the grammars the core's tests load (crates/editor-syntax-fixture-grammars:
+  # the six grammars the syntax adapter compiles in, built by Cargo as native
+  # libraries from the same pinned sources, their queries beside them),
+  # printed by that crate's binary: the library hides its compiled-in
+  # grammars from every test, so its syntax checks register these first. The
+  # line only builds it and passes its path, and a failed build fails the
+  # line; the lines below that take it build it the same way, which compiles
+  # nothing once `cargo test` has.
+  "grammars=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-syntax-fixture-grammars) && env -u LEAN_STACK_SIZE_KB .lake/build/bin/ffi-test \"$grammars\"",
   # Quit is for good and process-wide, so shutdown has processes of its own.
   ".lake/build/bin/ffi-test shutdown",
   ".lake/build/bin/ffi-test exit-while-blocked",
@@ -342,7 +350,9 @@ run = [
   # fixture grammar library the job port's grammar properties register,
   # built by Cargo and printed by the fixture crate's binary
   # (crates/editor-syntax-fixture-ini): the line only builds it and passes
-  # its path, and a failed build fails the line. A compile over
+  # its path, and a failed build fails the line. Its fifth is the directory
+  # of the grammars the core's tests load (as for ffi-test above), which it
+  # registers once before the checks that draw. A compile over
   # the real process service is
   # no check of this executable any more, and nor are the workspace finder,
   # the listers, `:!` and a child's environment looked up by mise: they are
@@ -354,7 +364,7 @@ run = [
   # (packages/compile/tests/compile, packages/workspace/tests/workspaces and
   # tests/completion, packages/mise/tests/process-environment); the shell's
   # run on a rig over fakes, with no fixture.
-  "lib=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-syntax-fixture-ini) && .lake/build/bin/contract-test ../tests/syntax ../tests/completion ../tests/launch \"$lib\"",
+  "lib=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-syntax-fixture-ini) && grammars=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-syntax-fixture-grammars) && .lake/build/bin/contract-test ../tests/syntax ../tests/completion ../tests/launch \"$lib\" \"$grammars\"",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment; its third argument is the directory of the syntax
@@ -368,13 +378,15 @@ run = [
   # Lean's language server there (lean/ConfigTest/Lsp.lean). Its eighth is
   # the config directory the config-migrate binary makes of the old-form
   # fixture (tests/config-migrate/migrated), which the migrated config's
-  # check loads; the binary's own test holds its conversion to the same
+  # check loads; its ninth the directory of the grammars the core's tests
+  # load (as for ffi-test above), which its real syntax checks register or
+  # declare; the binary's own test holds its conversion to the same
   # files (crates/editor-config-migrate-std/tests/convert.rs). Which of its checks may
   # run a real editor loop thread or a real service is no list here: `lake
   # build`'s `linter.realHost` confines them to the wiring set's modules
   # (docs/dev-practices/real-thread-checks.md); every other host check runs
   # on a host stepped on its own thread.
-  ".lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default ../packages . ../tests/config-package/lsp ../tests/config-migrate/migrated",
+  "grammars=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-syntax-fixture-grammars) && .lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/syntax ../config/default ../packages . ../tests/config-package/lsp ../tests/config-migrate/migrated \"$grammars\"",
   # The headless fixtures of tests/headless (docs/dev-practices/headless-mode.md,
   # "How the gate runs a fixture"): the default set's fixture harness
   # (`fixture-test`, linked by `lean`) runs each stepped, on the fakes,
@@ -417,9 +429,12 @@ run = [
   # package for it too, and its `run` runs every linked test, each once,
   # with each package's fixtures on the fixture set's harness. The default
   # set's run is `--no-linked`, so its fixtures run on the shipped set's
-  # own harness and no linked test runs twice.
-  "sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
-  "sh ../tools/package-set.sh --no-linked run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean",
+  # own harness and no linked test runs twice. Each linked test is handed
+  # the directory of the grammars the core's tests load (as for ffi-test
+  # above) as its third argument, which those that draw with a real grammar
+  # declare or register and every other ignores.
+  "grammars=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-syntax-fixture-grammars) && sh ../tools/package-set.sh run ../tests/packages \"$(lean --print-prefix)\" .lake/build/lib/lean \"$grammars\"",
+  "grammars=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-syntax-fixture-grammars) && sh ../tools/package-set.sh --no-linked run ../packages \"$(lean --print-prefix)\" .lake/build/lib/lean \"$grammars\"",
   # The linked test of the package that ships a grammar
   # (tests/grammar-set/ini-grammar/IniGrammarTest/Linked.lean), which no
   # package step reaches: run in the package's directory with the grammar
@@ -1030,7 +1045,7 @@ depends = ["lean"]
 dir = "lean"
 run = [
   ".lake/build/bin/ffi-test theme-pictures ../tests/render/themes ../tests/fonts/NotoSansMono-Regular.subset.ttf --write",
-  "sysroot=$(lean --print-prefix) && oleans=$PWD/.lake/build/lib/lean && cd ../packages/shipped-themes && .lake/build/bin/ShippedThemesTest-Linked \"$sysroot\" \"$oleans\" --write",
+  "sysroot=$(lean --print-prefix) && oleans=$PWD/.lake/build/lib/lean && grammars=$(cargo run --quiet --locked --manifest-path ../Cargo.toml -p editor-syntax-fixture-grammars) && cd ../packages/shipped-themes && .lake/build/bin/ShippedThemesTest-Linked \"$sysroot\" \"$oleans\" \"$grammars\" --write",
 ]
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It

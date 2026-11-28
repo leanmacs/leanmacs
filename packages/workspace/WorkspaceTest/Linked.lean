@@ -58,7 +58,7 @@ Its checks are a check set (`WorkspaceTest.Linked.checks`, `Editor.CheckGroup`,
 `docs/dev-practices/real-thread-checks.md`, "How the set runs"):
 the lists of its modules of the wiring set in groups of their module, which
 the build's `linter.wiringSet` holds true and complete. With `--wiring`
-after the two directories it
+after the three arguments it
 runs those groups alone, the stress loop's `linked-wiring` suite
 (`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
 modules, one a line, building nothing.
@@ -118,7 +118,7 @@ private def WorkspaceTest.Linked.runSelected (mode : Editor.CheckGroup.Mode) : I
 /-- Says the command lines it takes, and exits 2. -/
 private def WorkspaceTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: WorkspaceTest-Linked <sysroot> <core olean dir> [--wiring], WorkspaceTest-Linked wiring-modules, or WorkspaceTest-Linked bench-workspace-files <sysroot> <core olean dir> <repository> <samples>"
+      "usage: WorkspaceTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], WorkspaceTest-Linked wiring-modules, or WorkspaceTest-Linked bench-workspace-files <sysroot> <core olean dir> <repository> <samples>"
   return 2
 
 /-- Runs the checks (the module docs). -/
@@ -142,7 +142,7 @@ def main (arguments : List String) : IO UInt32 := do
       IO.eprintln
           "usage: WorkspaceTest-Linked bench-workspace-files <sysroot> <core olean dir> <repository> <samples>"
       return 2
-  | _ :: _ :: rest =>
+  | _ :: _ :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
       WorkspaceTest.Linked.runSelected mode

@@ -131,11 +131,11 @@ def checks : List (Editor.CheckGroup (String × String) (IO Bool)) :=
 /-- The usage, on stderr, and status 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: GreetingTest-Linked <sysroot> <core olean dir> [--wiring], or GreetingTest-Linked wiring-modules"
+      "usage: GreetingTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], or GreetingTest-Linked wiring-modules"
   return 2
 
 /-- Runs the three checks and exits 0 when all hold, 1 when one does not, and
-2 for a command line that is not the two directories, with `--wiring` after
+2 for a command line that is not the two directories and the test grammars' directory, with `--wiring` after
 them or not. Its check set (`checks`) holds no module of the wiring set, so
 with `--wiring` it selects no check and exits 0, building no host
 (`Editor.CheckGroup.running`), and `wiring-modules` prints none. The exit is
@@ -147,7 +147,7 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules checks do
       IO.println module
     return 0
-  | sysroot :: oleans :: rest =>
+  | sysroot :: oleans :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
       Editor.CheckGroup.running mode checks do

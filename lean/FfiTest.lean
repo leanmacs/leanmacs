@@ -1,5 +1,6 @@
 import Editor.Ffi.Events
 import Editor.RealHost
+import Editor.Test.Linked.Syntax
 import FfiTest.Check
 import FfiTest.Editor.Display.Real
 import FfiTest.Editor.Event.Queue
@@ -97,10 +98,11 @@ def wiringSet.FfiTest : Editor.WiringSet :=
 
 namespace FfiTest
 
-/-- Every check, in the order they run: the check set
-(`Editor.CheckGroup`), `windowRealChecks`, of the wiring set
-(`FfiTest/Editor/Window/Real.lean`), in a group of its module. -/
-def checks : List (Editor.CheckGroup Unit Check) :=
+/-- Every check, in the order they run, over the directory of the test
+grammars (`Editor.Test.Linked.TestGrammars`), which the syntax checks
+register: the check set (`Editor.CheckGroup`), `windowRealChecks`, of the
+wiring set (`FfiTest/Editor/Window/Real.lean`), in a group of its module. -/
+def checks : List (Editor.CheckGroup Editor.Test.Linked.TestGrammars Check) :=
   [.plain fun _ =>
       entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks () ++ timerChecks () ++
         fileChecks () ++
@@ -114,15 +116,16 @@ def checks : List (Editor.CheckGroup Unit Check) :=
         markerChecks () ++
         inverseChecks () ++
         windowChecks (),
-    .wired "FfiTest.Editor.Window.Real" wiringSet.FfiTest.Editor.Window.Real windowRealChecks,
-    .plain fun _ =>
+    .wired "FfiTest.Editor.Window.Real" wiringSet.FfiTest.Editor.Window.Real fun _ =>
+      windowRealChecks (),
+    .plain fun grammars =>
       displayChecks () ++ sceneChecks () ++ decodeChecks () ++ eventDecodeChecks () ++
         eventEncodeChecks () ++
         eventChecks () ++
         interruptChecks () ++
         ffiLaunchChecks () ++
         fuzzyChecks () ++
-        syntaxChecks () ++
+        syntaxChecks grammars ++
         searchChecks () ++
         pairChecks () ++
         pictureChecks () ++
@@ -142,9 +145,13 @@ def themePictures (dir font : String) (write : Bool) : IO UInt8 :=
 
 end FfiTest
 
-/-- With no arguments, runs the checks: exits 0 when all hold, and 1 after
-naming the ones that do not. `wiring` runs the wiring set's checks alone
-(`Editor.CheckGroup.Mode.ofSubcommand?`), and exits with their status.
+/-- With the test grammars' directory alone (the directory cargo builds for
+the core's tests, `crates/editor-syntax-fixture-grammars`), runs the
+checks: exits 0 when all hold, and 1 after naming the ones that do not.
+`wiring` before the directory runs the wiring set's checks alone
+(`Editor.CheckGroup.Mode.ofSubcommand?` over what comes before the
+directory), and exits with their status. A subcommand of one word is
+matched before a directory is.
 
 With the arguments `exit <code>`, exits with that status and does nothing
 else. The `ffi-test` task uses this to see that the entry point passes the
@@ -164,13 +171,29 @@ than its stack. Nothing catches the C++ exception the interpreter throws, so
 the process dies of SIGABRT, and the `ffi-overflow` task requires exactly
 that. Any exit status of its own means the scenario went wrong. -/
 def main (args : List String) : IO UInt32 := do
-  -- The checks, all or the wiring set's (`ffi-test wiring`): the mode its
-  -- subcommands name, read and selected by as every root does
-  -- (`Editor.CheckGroup.Mode`).
-  match Editor.CheckGroup.Mode.ofSubcommand? args with
-  | some mode =>
+  -- The checks, all or the wiring set's (`ffi-test <dir>`, `ffi-test wiring
+  -- <dir>`): the mode its subcommands name, read and selected by as every
+  -- root does (`Editor.CheckGroup.Mode`), with the test grammars' directory
+  -- last, made absolute here, at the edge. A window scenario of one word
+  -- (`window-host`, a file not given) is a subcommand, never a directory.
+  let scenario := args.head?.any fun command => FfiTest.windowScenarios.any (·.command == command)
+  let subcommand :=
+    scenario ||
+      args.head?.any
+        (["wiring-modules", "wiring-scenarios", "shutdown", "exit-while-blocked"].contains ·)
+  let run? : Option (Editor.CheckGroup.Mode × String) :=
+    if subcommand then none
+    else
+      match args with
+      | [directory] | ["wiring", directory] =>
+        if directory == "wiring" then none
+        else (Editor.CheckGroup.Mode.ofSubcommand? args.dropLast).map (·, directory)
+      | _ => none
+  match run? with
+  | some (mode, directory) =>
+    let grammars : Editor.Test.Linked.TestGrammars := { directory := ← IO.FS.realPath directory }
     let name := if mode == .wiring then "ffi-test wiring" else "ffi-test"
-    let status ← FfiTest.run name (Editor.CheckGroup.select mode FfiTest.checks ())
+    let status ← FfiTest.run name (Editor.CheckGroup.select mode FfiTest.checks grammars)
     if status == 0 && mode == .all then
       return 0
     else

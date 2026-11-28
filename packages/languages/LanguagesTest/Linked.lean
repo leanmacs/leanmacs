@@ -34,7 +34,7 @@ Its checks are a check set (`LanguagesTest.Linked.checks`,
 `Editor.CheckGroup`, `docs/dev-practices/real-thread-checks.md`, "How the
 set runs"): each wiring module's list in a group of its module, which the
 build's `linter.wiringSet` holds true and complete. With `--wiring` after
-the two directories it runs the wiring set's groups alone, the stress
+the three arguments it runs the wiring set's groups alone, the stress
 loop's `linked-wiring` suite (`tools/package-set.sh run --wiring`), and
 `wiring-modules` prints their modules, building nothing.
 
@@ -75,7 +75,7 @@ private def LanguagesTest.Linked.runSelected (mode : Editor.CheckGroup.Mode)
 /-- Says the command lines it takes, and exits 2. -/
 private def LanguagesTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: LanguagesTest-Linked <sysroot> <core olean dir> [--wiring], or LanguagesTest-Linked wiring-modules"
+      "usage: LanguagesTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], or LanguagesTest-Linked wiring-modules"
   return 2
 
 /-- Runs the checks (the module docs). -/
@@ -85,7 +85,7 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules LanguagesTest.Linked.checks do
       IO.println module
     return 0
-  | sysroot :: _ :: rest =>
+  | sysroot :: _ :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
       LanguagesTest.Linked.runSelected mode sysroot

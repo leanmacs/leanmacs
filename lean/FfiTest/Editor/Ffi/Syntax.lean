@@ -3,6 +3,7 @@ import Editor.Ffi.Events
 import Editor.Ffi.Files
 import Editor.Ffi.Snapshot
 import Editor.Ffi.Syntax
+import Editor.Test.Linked.Syntax
 import FfiTest.Check
 import FfiTest.Support.Files
 import FfiTest.Support.Queues
@@ -12,6 +13,12 @@ import FfiTest.Support.Queues
 
 The tests of `Editor/Ffi/Syntax.lean`: `syntaxChecks`. The root module `FfiTest`
 runs them, and each list's own doc says what it checks.
+
+The library hides its compiled-in grammars from every test, so the first
+check registers the grammars of the directory cargo builds for the core's
+tests (`crates/editor-syntax-fixture-grammars`, which `ffi-test` is handed
+last) through the raw grammar bindings, before the checks that attach or
+compile for one of them.
 -/
 
 namespace FfiTest
@@ -55,18 +62,40 @@ def namesWhileHeld (grammar source : String) : IO (Option (Array String × UInt6
   let held ← Editor.Ffi.SyntaxQuery.live
   return some (← query.captureNames, held)
 
+/-- The registration ids the first check takes, one a test grammar. -/
+def testGrammarIds : UInt64 :=
+  1350
+
 /-- The checks of the syntax service's bindings: a list of strings out, a
 query as a handle with its refusals as a status, a tag and an offset, and
 captures as words with their refusals as statuses, and a registration's
 answer read from its status, every status, so that Lean's half of the
 encoding is held to the numbers the Rust side pins. What is parsed and what a
 query answers are the library's rules; these pin that each request, its
-answer and each refusal cross. -/
-def syntaxChecks (_ : Unit) : List Check :=
-  [{  name := "the grammars the library has cross as a list of strings"
+answer and each refusal cross. The grammars are those of `grammars`'
+directory, which the first check registers. -/
+def syntaxChecks (grammars : Editor.Test.Linked.TestGrammars) : List Check :=
+  [{  name :=
+        "each test grammar registers from its library through the raw bindings: its start is taken, its completion arrives on the completion queue, and its take answers its name"
       run := do
-        let grammars ← Editor.Ffi.syntaxGrammars
-        return ["json", "rust", "markdown", "toml", "lean"].all grammars.contains },
+        let names := Editor.Test.Linked.TestGrammars.names.map (·.1)
+        let mut registered := true
+        for (name, index) in names.zipIdx do
+          let id := testGrammarIds + index.toUInt64
+          let started ←
+            Editor.Ffi.grammarsStart id (grammars.library name).toString s!"tree_sitter_{name}" 0
+          let completed ← registrationCompleted id
+          let taken ← Editor.Ffi.grammarsTake id
+          let answered :=
+            match taken with
+            | .ok answer => answer == name
+            | .error _ => false
+          registered := registered && started && completed && answered
+        return registered && (← Editor.Ffi.grammarsPending) == 0 },
+    { name := "the grammars registered cross as a list of strings"
+      run := do
+        let listed ← Editor.Ffi.syntaxGrammars
+        return Editor.Test.Linked.TestGrammars.names.all fun (name, _) => listed.contains name },
     { name :=
         "a query crosses as a handle, with its capture names as a list of strings, and is freed when the last reference to it goes"
       run := do
@@ -139,19 +168,15 @@ def syntaxChecks (_ : Unit) : List Check :=
             pastTheEnd matches .error .badRange &&
             notParsed matches .error .notParsed },
     { name :=
-        "a shipped query crosses as its source, and its refusals as their statuses: a grammar the library lacks and a kind it has no tag for"
+        "a registered grammar's shipped query crosses as none shipped, and the refusals as their statuses: a grammar the library lacks and a kind it has no tag for"
       run := do
+        -- A registered grammar ships no query, so the success encoding is
+        -- untested here until phase 4 of the roadmap
+        -- `shipped-grammars-package` removes shipped queries: a named gap.
         let shipped ← Editor.Ffi.syntaxShippedQuery "json" 0
         let unknown ← Editor.Ffi.syntaxShippedQuery "cobol" 0
         let noKind ← Editor.Ffi.syntaxShippedQuery "json" 9
-        let compiles ←
-          match shipped with
-          | .ok source =>
-            do
-              pure (← Editor.Ffi.SyntaxQuery.new "json" source).toBool
-          | .error _ =>
-            pure false
-        return compiles && unknown matches .error .unknownGrammar &&
+        return shipped matches .error .noShippedQuery && unknown matches .error .unknownGrammar &&
             noKind matches .error .noShippedQuery },
     { name :=
         "faces cross as a list of strings in, and each refusal of a highlight as its status: a text not attached, a query of another grammar and faces not one for each capture name"

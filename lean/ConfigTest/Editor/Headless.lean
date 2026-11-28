@@ -50,6 +50,7 @@ import Editor.Scene
 import Editor.Setup
 import Editor.State
 import Editor.SyntaxTree
+import Editor.SyntaxTree.Model
 import Editor.TabBar
 import Editor.Test.Linked.Host
 import Editor.Test.Linked.Keys
@@ -819,7 +820,10 @@ def jobsConfig : List (String × String) :=
   [("Config/Greet.lean", greetText "v1"), ("init.lean", overGreet jobsText)]
 
 /-- A config whose `setup` registers the mode `json`, whose text is parsed
-with the grammar `json` and drawn by the shipped default; the command
+with the grammar `json` and drawn with its own highlights query, the syntax
+tree model's (`SyntaxTreeModel.highlights`), which the library compiles
+too: `json` is registered in both, and a registered grammar ships no query;
+the command
 `edit`, which puts `, 2` before the last byte of the scratch buffer's text;
 and the job `highlight`, which sleeps 10 ms and finishes with a command that
 puts `[1, true]` in the scratch buffer's text and makes `json` its major
@@ -835,7 +839,11 @@ def edit : EditorM Unit := do
   text.insert (length - 1) \", 2\"
 
 def setup : SetupM Unit := do
-  defineMode { name := \"json\", syntaxTree := some { grammar := \"json\" } }
+  defineMode
+    { name := \"json\",
+      syntaxTree := some { grammar := \"json\", highlights := some " ++
+    SyntaxTreeModel.highlights.quote ++
+    " } }
   command \"edit\" edit
   job \"highlight\" wait fun _ => do
     (⟨0⟩ : TextId).insert 0 \"[1, true]\"
@@ -1107,7 +1115,7 @@ def jobThrowsReportedFailedCheck (context : Context) : Check :=
 above it covers it alone. -/
 def jobCommandSetsModeCheck (context : Context) : Check :=
   { name :=
-      "a job's command that sets a mode with a syntax tree reaches the host's syntax tree: the refresh delay handed over, the text attached, the grammar's shipped query compiled and its text highlighted in the default faces, and the grammar's injections, text objects and indents asked for, none of which json ships"
+      "a job's command that sets a mode with a syntax tree reaches the host's syntax tree: the refresh delay handed over, the text attached, the mode's own query compiled and its text highlighted in the default faces, and the grammar's injections, text objects and indents asked for, none of which a registered json ships"
     run :=
       -- Seen to bite once by hand: with `Running.ended` handing
       -- `Job.finishWith` no syntax tree, the job's command reaches
@@ -1125,8 +1133,7 @@ def jobCommandSetsModeCheck (context : Context) : Check :=
         let scene ← session.sceneLines
         return (← session.output.get).contains "job 1 highlight: ok" &&
             (← asked.get) ==
-              #["refreshAfter 500", "attach json", "shippedQuery json highlights", "compile json",
-                "captureNames",
+              #["refreshAfter 500", "attach json", "compile json", "captureNames",
                 -- The faces of the syntax model's json query's captures, which
                 -- the fake answers, in the shipped defaults.
                 "highlight syntax.string, syntax.string, syntax.number, syntax.constant", "release",

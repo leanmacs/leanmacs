@@ -42,6 +42,7 @@ import Editor.Job.Real
 import Editor.Job.Runner
 import Editor.SyntaxTree.Contract
 import Editor.Test.Linked.Services
+import Editor.Test.Linked.Syntax
 import Editor.Text.Contract
 import Editor.UndoTree.Cases
 import Editor.Watch.Contract
@@ -104,7 +105,7 @@ only `main`, which runs them in the order its doc gives.
   properties (`JobContract.grammarProperties`, `grammarJobFailures`), over
   the library's grammar registrations (`Job.realGrammars`, the syntax worker
   and the real adapter), which load the fixture grammar library whose path
-  is the fifth argument, with nothing left in the service afterwards;
+  is the fourth argument, with nothing left in the service afterwards;
   `model-test` holds the job model and the fake grammar service, each given
   the table that describes the fixture library, to the same answers: the
   fixture's grammar registered under its name, and a library that is not
@@ -272,9 +273,19 @@ the real text binding, an interrupt key that arrives while a command runs.
 That check is single-threaded, so where the key arrives is exact: the
 display handler posts it during one of the command's own publishes.
 
+**The test grammars.** The library hides its compiled-in grammars from every
+test (`crates/editor-syntax-treesitter`, "How grammars are loaded"), so
+`main` registers the six grammars of the directory cargo builds for the
+core's tests (`crates/editor-syntax-fixture-grammars`), its fifth argument,
+on the library's syntax service once, before any check that draws
+(`Editor.Test.Linked.registerTestGrammars`), and the checks that enter a
+text take its trees, their queries read from the directory
+(`Editor.Test.Linked.TestGrammars`).
+
 The syntax tree interface's contract (`Editor/SyntaxTree/Contract.lean`) is
 run against its real binding (`Editor/SyntaxTree/Real.lean`), so against the
-library's syntax service, tree-sitter's JSON grammar over its worker thread
+library's syntax service, tree-sitter's JSON grammar, registered from the
+test grammars' directory, over its worker thread
 (`syntaxTreeFailures`): each property's texts are made documents and
 snapshots in the library, entered in a table of the text binding, and the
 property runs against a new binding over that table. The library parses off
@@ -282,7 +293,7 @@ the editor thread, so the runner's handler waits, with a bound, for the
 snapshot's tree to be delivered before it forwards each question of
 captures (`Ffi.syntaxSettle`): the one difference from `model-test`'s run of
 the same list against the model. `syntaxTreeChecks` pins what only the real
-binding shows: that the library has a Rust grammar, a Rust function's name
+binding shows: that the grammars registered from the directory are listed, a Rust function's name
 captured, a query of one grammar asked of a text parsed with another, and a
 text edited through its document reparsed, its new function's name captured
 once the tree of the edit is delivered. That the text of a file the file
@@ -398,18 +409,20 @@ of the run. Shutdown is quit, which must end the pump, then an explicit
 exit: a task that failed a check may still be blocked in the library. -/
 def main (arguments : List String) : IO UInt32 := do
   -- The fixtures of the syntax checks, the filtering checks and the launch
-  -- checks, and the fixture grammar library, made absolute here, at the edge.
-  let (syntaxFixtures, completionFixtures, launchFixtures, grammarLibrary) ←
+  -- checks, the fixture grammar library and the test grammars' directory,
+  -- made absolute here, at the edge.
+  let (syntaxFixtures, completionFixtures, launchFixtures, grammarLibrary, testGrammars) ←
     match arguments with
-    | [syntaxDirectory, completion, launch, grammar] =>
+    | [syntaxDirectory, completion, launch, grammar, grammars] =>
       pure
           (← IO.FS.realPath syntaxDirectory, ← IO.FS.realPath completion, ← IO.FS.realPath launch,
-            ← IO.FS.realPath grammar)
+            ← IO.FS.realPath grammar, ← IO.FS.realPath grammars)
     | _ =>
       IO.eprintln
-          "usage: contract-test <the directory of the syntax fixtures> <the directory of the completion fixtures> <the directory of the launch fixtures> <the fixture grammar library>"
+          "usage: contract-test <the directory of the syntax fixtures> <the directory of the completion fixtures> <the directory of the launch fixtures> <the fixture grammar library> <the test grammars' directory>"
       return 2
   let grammarFixture : Editor.JobContract.GrammarFixture := { library := grammarLibrary.toString }
+  let testGrammars : Editor.Test.Linked.TestGrammars := { directory := testGrammars }
   let some pool ← Editor.Job.Pool.holdAll (← Editor.Job.Pool.expected) ContractTest.warmPatience |
     IO.eprintln
         s!"contract-test: a hang: the pool's tasks had not all started within {ContractTest.warmPatience.ms} ms"
@@ -422,6 +435,11 @@ def main (arguments : List String) : IO UInt32 := do
   let completions := running.completions
   let held := running.held
   let services := running.jobs
+  -- The test grammars, registered once on the library's syntax service
+  -- before any check that draws (the module docs).
+  if let .error why← Editor.Test.Linked.registerTestGrammars testGrammars services then
+    IO.eprintln s!"contract-test: the test grammars did not register: {why}"
+    IO.Process.exit 1
   let properties := Editor.TextContract.properties
   -- The undo tree's cases run through the same binding, so the count of
   -- live documents covers the texts they make too.
@@ -468,7 +486,7 @@ def main (arguments : List String) : IO UInt32 := do
   let checkFailed ← ContractTest.checkFailures checks
   let protocolContractChecks := ContractTest.protocolContractChecks services
   let protocolContractFailed ← ContractTest.checkFailures protocolContractChecks
-  let fileChecks := ContractTest.fileChecks completions
+  let fileChecks := ContractTest.fileChecks completions testGrammars
   let fileCheckFailed ← ContractTest.checkFailures fileChecks
   let grepChecks := ContractTest.grepChecks completions
   let grepCheckFailed ← ContractTest.checkFailures grepChecks
@@ -487,7 +505,8 @@ def main (arguments : List String) : IO UInt32 := do
   let fuzzyCheckFailed ← ContractTest.checkFailures fuzzyChecks
   let syntaxTreeFailed ← ContractTest.syntaxTreeFailures
   let syntaxTreeChecks :=
-    ContractTest.syntaxTreeChecks ++ ContractTest.syntaxFixtureChecks syntaxFixtures
+    ContractTest.syntaxTreeChecks testGrammars ++
+      ContractTest.syntaxFixtureChecks testGrammars syntaxFixtures
   let syntaxTreeCheckFailed ← ContractTest.checkFailures syntaxTreeChecks
   let syntaxDeliveryChecks := ContractTest.syntaxDeliveryChecks
   let syntaxDeliveryFailed ← ContractTest.checkFailures syntaxDeliveryChecks

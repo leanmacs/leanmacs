@@ -148,7 +148,9 @@ def syntaxTreeChecks : List Check :=
           let listsNone : SyntaxTreeM Bool := do
             let names ← SyntaxTree.grammars
             return names.isEmpty &&
-                (← SyntaxTreeContract.refusedWith .unknownGrammar (SyntaxTree.attach snapshot "json"))
+                (←
+                  SyntaxTreeContract.refusedWith .unknownGrammar
+                      (SyntaxTree.attach snapshot "json"))
           let registered : SyntaxTreeM Bool := do
             let names ← SyntaxTree.grammars
             SyntaxTree.attach snapshot "rust"
@@ -156,8 +158,8 @@ def syntaxTreeChecks : List Check :=
             let found ← SyntaxTree.captures snapshot query 0 3
             let shipsNone ←
               names.allM fun name =>
-                SyntaxTreeContract.refusedWith .noShippedQuery
-                  (SyntaxTree.shippedQuery name .highlights)
+                  SyntaxTreeContract.refusedWith .noShippedQuery
+                    (SyntaxTree.shippedQuery name .highlights)
             return names == GrammarRegistry.testGrammarNames.map (·.1) && found.size == 1 &&
                 shipsNone
           let pythonAlone : SyntaxTreeM Bool := do
@@ -169,7 +171,8 @@ def syntaxTreeChecks : List Check :=
                       (SyntaxTree.shippedQuery "python" .highlights))
           (SyntaxTreeM.runModel listsNone bare).1 matches .ok true &&
             (SyntaxTreeM.runModel registered model).1 matches .ok true &&
-            (SyntaxTreeM.runModel pythonAlone { bare with registry := python }).1 matches .ok true },
+            (SyntaxTreeM.runModel pythonAlone { bare with registry := python }).1 matches
+              .ok true },
     { name :=
         "a syntax tree model given json and lean as compiled in lists both, attaches and compiles for each and ships its highlights for each; a registration of either overrides it and ships no query for it"
       run :=
@@ -179,7 +182,9 @@ def syntaxTreeChecks : List Check :=
         pure <|
           let (model, ids) := syntaxTreeModelOf #["[1]"]
           let snapshot := ids[0]?.getD ⟨0⟩
-          let compiled := { model with compiled := #["json", "lean"], registry := {} }
+          let compiled :=
+            { model with
+              compiled := #["json", "lean"], registry := {} }
           let leanRegistered : GrammarRegistry :=
             {
               registered :=
@@ -207,10 +212,12 @@ def syntaxTreeChecks : List Check :=
                   SyntaxTreeContract.refusedWith .noShippedQuery
                       (SyntaxTree.shippedQuery name .highlights))
           (SyntaxTreeM.runModel both compiled).1 matches .ok true &&
-            (SyntaxTreeM.runModel (overridden "lean") { compiled with registry := leanRegistered }).1
-              matches .ok true &&
-            (SyntaxTreeM.runModel (overridden "json") { compiled with registry := jsonRegistered }).1
-              matches .ok true },
+            (SyntaxTreeM.runModel (overridden "lean")
+                  { compiled with registry := leanRegistered }).1 matches
+              .ok true &&
+            (SyntaxTreeM.runModel (overridden "json")
+                  { compiled with registry := jsonRegistered }).1 matches
+              .ok true },
     { name := "every property of the syntax tree contract holds of the model"
       run := return (← syntaxTreeBroken SyntaxTreeModel.handle).isEmpty }]
 

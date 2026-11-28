@@ -88,14 +88,15 @@ def withRealSyntaxTestHost.realHost : Editor.RealHost :=
 set_option linter.inferredWait false in
 /-- `withTestHost` with a real host, on a loop thread of its own, and the
 real syntax tree binding over the library's
-syntax service (`Editor.Test.Linked.withRealSyntaxHost`): for a check whose
-subject is the library's syntax service (A5). -/
-def withRealSyntaxTestHost (context : Test.Linked.HostContext) (files : List (String × String))
-    (check : Test.Linked.RealSession → IO Bool) (fileModel : Option FileModel := none)
-    (workingDirectory : System.FilePath := "/") (home : Option System.FilePath := none)
-    (packages : Array Package := context.packages)
+syntax service (`Editor.Test.Linked.withRealSyntaxHost`), declaring the
+test grammars of `grammars`' directory: for a check whose subject is the
+library's syntax service (A5). -/
+def withRealSyntaxTestHost (context : Test.Linked.HostContext) (grammars : Test.Linked.TestGrammars)
+    (files : List (String × String)) (check : Test.Linked.RealSession → IO Bool)
+    (fileModel : Option FileModel := none) (workingDirectory : System.FilePath := "/")
+    (home : Option System.FilePath := none) (packages : Array Package := context.packages)
     (emitting : (String → IO Unit) → String → IO Unit := id) : IO Bool :=
-  Test.Linked.withRealSyntaxHost TestScheme.scheme context files check fileModel workingDirectory
-    home (packages.push Test.editingPackage) emitting
+  Test.Linked.withRealSyntaxHost TestScheme.scheme context grammars files check fileModel
+    workingDirectory home (packages.push Test.editingPackage) emitting
 
 end ConfigTest

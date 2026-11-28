@@ -64,7 +64,8 @@ namespace FakeSyntaxService
 
 /-- A service over `model`, by default the model with the test grammars
 registered, nothing pending. -/
-def new (model : SyntaxTreeModel := SyntaxTreeModel.withTestGrammars) (post : BaseIO Unit := pure ())
+def new (model : SyntaxTreeModel := SyntaxTreeModel.withTestGrammars)
+    (post : BaseIO Unit := pure ())
     (learn : SnapshotId → BaseIO (Option String) := fun _ => pure none) :
     BaseIO FakeSyntaxService :=
   return { state := ← IO.mkRef { model }, post, learn }

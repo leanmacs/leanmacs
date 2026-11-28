@@ -56,7 +56,7 @@ private def AgentsApiTest.Linked.runSelected (sysroot oleans : String)
 /-- Says the command lines it takes, and exits 2. -/
 private def AgentsApiTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: AgentsApiTest-Linked <sysroot> <core olean dir> [--wiring], or AgentsApiTest-Linked wiring-modules"
+      "usage: AgentsApiTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], or AgentsApiTest-Linked wiring-modules"
   return 2
 
 /-- Runs the checks, all or with `--wiring` the wiring set's alone, and
@@ -70,7 +70,7 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules AgentsApiTest.Linked.checks do
       IO.println module
     return 0
-  | sysroot :: oleans :: rest =>
+  | sysroot :: oleans :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
       Editor.CheckGroup.running mode AgentsApiTest.Linked.checks

@@ -6,11 +6,9 @@ import Editor.Display
 import Editor.Fuzzy
 import Editor.Fuzzy.Contract
 import Editor.Program
-import Editor.Scene
 import Editor.SyntaxTree
 import Editor.SyntaxTree.Contract
 import Editor.SyntaxTree.Model
-import Editor.SyntaxTree.Model.Query
 import Editor.Text
 import Editor.Text.Model
 import Editor.Watch

@@ -5,6 +5,7 @@ import Editor.Config.Session
 import Editor.Job.Runner
 import Editor.RealHost
 import Editor.Test.Linked.Host
+import Editor.Test.Linked.Syntax
 import ExtensionFixture
 
 /-!
@@ -63,6 +64,11 @@ structure Context extends Editor.Test.Linked.HostContext where
   fixture (`tests/config-migrate/migrated`), which `migratedConfigChecks`
   load; the binary's own test holds its conversion to the same files. -/
   migratedConfig : System.FilePath
+  /-- The directory of the grammars the core's tests load, built by cargo
+  (`crates/editor-syntax-fixture-grammars`), absolute: the library hides its
+  compiled-in grammars, so the checks that draw with a real grammar
+  register them from here. -/
+  testGrammars : Editor.Test.Linked.TestGrammars
 
 /-- A check's context as a host harness takes it. -/
 instance : Coe Context Editor.Test.Linked.HostContext :=
@@ -286,8 +292,8 @@ import and of each check (`timingLine`), a line each, flushed as written, so
 a run that is killed keeps the lines of what had ended: what a guard is
 sized from (`Editor.Test.Linked.hangGuard`). -/
 def run (checks : Context → List Check) (sysroot oleanDir : String)
-    (syntaxFixtures defaultConfig setDirectory coreDirectory lspFixture migratedConfig :
-      System.FilePath)
+    (syntaxFixtures defaultConfig setDirectory coreDirectory lspFixture migratedConfig
+      testGrammars : System.FilePath)
     (packages : Array Package) (timings : Option System.FilePath := none) : IO UInt8 := do
   let timed ←
     match timings with
@@ -321,7 +327,8 @@ def run (checks : Context → List Check) (sysroot oleanDir : String)
         { elaborator, bumped, ids := ← IO.mkRef 100, waits := ← IO.mkRef none, sysroot
           oleanDirs := oleanDirs oleanDir, packages, realLoops, syntaxFixtures, defaultConfig
           setDirectory := ← IO.FS.realPath setDirectory
-          coreDirectory := ← IO.FS.realPath coreDirectory, lspFixture, migratedConfig }
+          coreDirectory := ← IO.FS.realPath coreDirectory, lspFixture, migratedConfig
+          testGrammars := { directory := ← IO.FS.realPath testGrammars } }
       let checks := checks context
       let failed ← timedFailures checks clock timed
       for name in failed do
@@ -355,7 +362,8 @@ def runChecks (context : Context) : List Check :=
               run (fun _ => [looks "first", looks "second"]) context.sysroot
                   (":".intercalate (context.oleanDirs.map toString)) context.syntaxFixtures
                   context.defaultConfig context.setDirectory context.coreDirectory
-                  context.lspFixture context.migratedConfig context.packages (some file)
+                  context.lspFixture context.migratedConfig context.testGrammars.directory
+                  context.packages (some file)
             finally
               discard <| IO.setStdout before
           -- Each line as its name, when what is before the tab is a number.
@@ -375,7 +383,7 @@ def runChecks (context : Context) : List Check :=
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> <set dir> <core dir> <lsp fixture> <migrated config> [--wiring] [--timings <file>] | config-test wiring-modules | config-test lsp <sysroot> <config dir> <line> <column> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-reload-directory <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-soak-modules <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples>"
+      "usage: config-test <sysroot> <olean dir> <syntax fixtures> <default config> <set dir> <core dir> <lsp fixture> <migrated config> <test grammars dir> [--wiring] [--timings <file>] | config-test wiring-modules | config-test lsp <sysroot> <config dir> <line> <column> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-reload-directory <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-soak-modules <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples> | config-test bench-prompt <sysroot> <olean dir> <samples>"
   return 2
 
 end ConfigTest

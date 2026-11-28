@@ -19,7 +19,7 @@ each of which mirrors the module it tests, and runs them:
   each shipped theme's picture matches its reference image in
   `tests/render/`, and carries the palette's colours.
 
-With `--write` after the two directories it writes the reference images
+With `--write` after the three arguments it writes the reference images
 instead of comparing them (`mise run theme-references`); the gate never
 does.
 -/
@@ -33,11 +33,11 @@ def ShippedThemesTest.Linked.checks : List (Editor.CheckGroup Bool (IO UInt8)) :
 /-- The usage, on stderr, and status 2. -/
 private def ShippedThemesTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: ShippedThemesTest-Linked <sysroot> <core olean dir> [--wiring] [--write], or ShippedThemesTest-Linked wiring-modules"
+      "usage: ShippedThemesTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring] [--write], or ShippedThemesTest-Linked wiring-modules"
   return 2
 
 /-- Runs the linked tests and exits 0 when they hold and 1 when one does
-not; 2 for a command line that is not the two directories, with `--wiring`,
+not; 2 for a command line that is not the two directories and the test grammars' directory, with `--wiring`,
 `--write` or both, in that order, after them or not. Its check set
 (`ShippedThemesTest.Linked.checks`) holds no module of the wiring set, so
 with `--wiring` it selects no check and exits 0
@@ -50,7 +50,7 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules ShippedThemesTest.Linked.checks do
       IO.println module
     return 0
-  | _ :: _ :: rest =>
+  | _ :: _ :: _ :: rest =>
     let write? : List String → Option Bool
       | [] => some false
       | ["--write"] => some true

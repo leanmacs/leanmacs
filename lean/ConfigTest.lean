@@ -40,7 +40,7 @@ import Editor.RealHost
 The `config-test` executable is linked exactly like `editor`, with the glue
 object, the Rust archive and Lean's elaborator. `mise run ffi-test` runs it
 as `config-test <sysroot> <olean dir> <syntax fixtures> <default config>
-<set dir> <core dir> <lsp fixture> <migrated config>`: the Lean toolchain's directory, the
+<set dir> <core dir> <lsp fixture> <migrated config> <test grammars dir>`: the Lean toolchain's directory, the
 directory holding the package's `.olean` files, the directory of the syntax
 fixtures (`tests/syntax`), whose Rust indent fixture the indent checks
 read, the directory of the default config `mise run install` ships
@@ -49,7 +49,8 @@ directory (`packages`), the core's (`lean`) and the language server check's
 root and config file (`tests/config-package/lsp`), which `lspChecks` read, and
 the config directory the config-migrate binary makes of the old-form
 fixture (`tests/config-migrate/migrated`), which `migratedConfigChecks`
-load. It reads nothing from the
+load, and the directory of the grammars cargo builds for the core's tests
+(`crates/editor-syntax-fixture-grammars`). It reads nothing from the
 environment or the working directory. It runs every check in `checks`, names
 the ones that failed, each with what it saw when it says (`saw`), and exits
 non-zero if any did.
@@ -555,7 +556,7 @@ def checks : List (CheckGroup Context Check) :=
 end ConfigTest
 
 /-- `config-test <sysroot> <olean dir> <syntax fixtures> <default config>
-<set dir> <core dir> <lsp fixture> <migrated config>` runs the checks: exits 0 when all hold, and 1 after naming the ones that do
+<set dir> <core dir> <lsp fixture> <migrated config> <test grammars dir>` runs the checks: exits 0 when all hold, and 1 after naming the ones that do
 not. With `--wiring` after them it runs the wiring set's checks alone, the
 mode read and selected by as every root does (`Editor.CheckGroup.Mode.read?`
 with `ConfigTest.timings?`, then `Editor.CheckGroup.select`). With
@@ -569,7 +570,11 @@ the fifth, sixth and seventh, the default set's directory, the core's and
 the directory of the language server check's root and config file
 (`tests/config-package/lsp`), are `lspChecks`', and the eighth, the config
 directory the config-migrate binary makes of the old-form fixture
-(`tests/config-migrate/migrated`), is `migratedConfigChecks`'.
+(`tests/config-migrate/migrated`), is `migratedConfigChecks`'. The ninth is
+the directory of the grammars cargo builds for the core's tests
+(`crates/editor-syntax-fixture-grammars`), which the checks that draw with
+a real grammar register or declare, since the library hides its
+compiled-in grammars (`realSyntaxChecks`, `indentChecks`).
 
 `lsp` is the language server check (`ConfigTest.Lsp`,
 `ConfigTest/Lsp.lean`) on a directory it is given: it starts Lean's
@@ -659,14 +664,16 @@ def main (args : List String) : IO UInt32 := do
   sysroot ::
       oleanDir ::
       syntaxFixtures ::
-      defaultConfig :: setDirectory :: coreDirectory :: lspFixture :: migratedConfig :: rest =>
+      defaultConfig ::
+      setDirectory :: coreDirectory :: lspFixture :: migratedConfig :: testGrammars :: rest =>
     match Editor.CheckGroup.Mode.read? ConfigTest.timings? rest with
     | some (mode, timings) =>
       let selected := Editor.CheckGroup.select mode ConfigTest.checks
       IO.Process.exit
           (←
             ConfigTest.run selected sysroot oleanDir syntaxFixtures defaultConfig setDirectory
-                coreDirectory lspFixture migratedConfig ConfigTest.shippedPackages timings)
+                coreDirectory lspFixture migratedConfig testGrammars ConfigTest.shippedPackages
+                timings)
     | none =>
       ConfigTest.usage
   | _ =>

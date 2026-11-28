@@ -1015,7 +1015,8 @@ def evilIndentChecks : List Check :=
           evilGaveUp
             (indentEdited fixture "= ="
               { modelJsonIndented with
-                syntaxTree := { grammar := "json", highlights := some SyntaxTreeModel.highlights } })
+                syntaxTree :=
+                  { grammar := "json", highlights := some SyntaxTreeModel.highlights } })
             fixture (Evil.cannotIndent .noQuery) },
     { name :=
         "a config entry of the buffer's language that indents by a tab wins over the compiled one: = = indents with tabs"
@@ -1070,8 +1071,9 @@ def evilIndentChecks : List Check :=
         "in a buffer with no language, and in one whose tree keeps no indents query, A RET, o and O insert the bare line break, copying no indent"
       run :=
         pure <|
-          let noQuery := { modelJsonIndented with
-                syntaxTree := { grammar := "json", highlights := some SyntaxTreeModel.highlights } }
+          let noQuery :=
+            { modelJsonIndented with
+              syntaxTree := { grammar := "json", highlights := some SyntaxTreeModel.highlights } }
           (evilEdited "    a|b" "A RET").map (·.shown) == some "    ab\n|" &&
             (evilEdited "    a|b" "o").map (·.shown) == some "    ab\n|" &&
             (evilEdited "    a|b" "O").map (·.shown) == some "|\n    ab" &&

@@ -12,13 +12,17 @@ package's commands, and those adapters have no module of this package.
 
 **The real adapters.** The library's file service (a write end to end, the
 bytes on disk), its watch service (a change on disk reaching the buffer, on
-a real host), and its syntax service with the shipped grammars and queries
-the syntax model does not hold (rust, toml, lean; W91). **Why.** Each is a
+a real host), and its syntax service with the grammars and queries the
+syntax model does not hold (rust, toml, lean; W91), registered from the
+directory of the grammars cargo builds for the core's tests
+(`Editor.Test.Linked.TestGrammars`), which the host declares: the library
+hides its compiled-in grammars. **Why.** Each is a
 real service's end-to-end check (AC4): the fakes stand in for them in every
 other check of the package.
 
 - `realLanguageChecks`: a .rs, a .toml and Cargo.lock, and a .lean and
-  lakefile.lean, each attached and highlighted with its shipped grammar,
+  lakefile.lean, each attached and highlighted with its declared grammar,
+  once the host's `register-grammars` job has registered them,
   wiring only; the order of a buffer's requests is the stepped json
   check's (`languageChecks`), the injections the syntax model's
   (`ModelTest/Editor/Highlight.lean`);
@@ -86,12 +90,13 @@ their jobs, the kit's minibuffer's commands and its mode
 (`Editor/Test/Minibuffer.lean`), the `code` mode and the
 languages that ship (`Language.modes`, `Language.shipped`), as the
 executable is, and, for each name and path of `opens`, a command of that
-name that opens that path (`opening`). Its syntax tree is the real binding
-with every request recorded in the array `check` is handed
-(`recordingSyntaxTree`). The config is loaded before `check` runs. Stops the
-host: `false` if the check did not hold or the host did not stop. -/
-def languageStage (context : HostContext) (directory : System.FilePath) (more : String)
-    (opens : List (String × System.FilePath)) :
+name that opens that path (`opening`), and the test grammars of `grammars`'
+directory, declared (`TestGrammars.package`), which its
+`register-grammars` job registers at the first install. Its syntax tree is
+the real binding with every request recorded in the array `check` is handed
+(`recordingSyntaxTree`). -/
+def languageStage (context : HostContext) (grammars : TestGrammars) (directory : System.FilePath)
+    (more : String) (opens : List (String × System.FilePath)) :
     IO (Stage Config.Elaborate.Base Config.Elaborate.Handle × IO.Ref (Array String)) := do
   writeConfig directory [("init.lean", languageReportText more)]
   let asked ← IO.mkRef #[]
@@ -102,7 +107,8 @@ def languageStage (context : HostContext) (directory : System.FilePath) (more : 
               (opens.map fun (name, path) => opening name path).toArray
           jobs := Files.package.registered.jobs
           modes := Test.Minibuffer.package.registered.modes ++ Language.modes
-          languages := Language.shipped }
+          languages := Language.shipped
+          packages := #[grammars.package] }
   return ({ stage with
         collaborators := { stage.collaborators with syntaxTree := recordingSyntaxTree asked } },
       asked)
@@ -113,30 +119,44 @@ def withRealLanguageHost.realHost : Editor.RealHost :=
 
 /-- A real host (`onRealStage`) over `languageStage`'s stage: for a buffer that
 attaches to the library's syntax service, whose parses come back over the
-library's editor queue, with a grammar and shipped queries only the
-library holds (row W91 of `docs/dev-practices/inferred-waits.md`). -/
-def withRealLanguageHost (context : HostContext) (more : String)
+library's editor queue, with a grammar and queries only the library and
+the test grammars' directory hold (row W91 of
+`docs/dev-practices/inferred-waits.md`). The config is loaded and the test
+grammars' registration answered (`Session.testGrammarsRegistered`) before
+`check` runs, and the requests recorded until then are dropped. Stops the
+host: `false` if the check did not hold or the host did not stop. -/
+def withRealLanguageHost (context : HostContext) (grammars : TestGrammars) (more : String)
     (opens : List (String × System.FilePath))
     (check : RealSession → IO.Ref (Array String) → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
-    let (stage, asked) ← languageStage context directory more opens
+    let (stage, asked) ← languageStage context grammars directory more opens
     onRealStage stage fun host stage => do
         let session := RealSession.ofStage host directory stage
         session.ask [.reload]
+        unless ← session.testGrammarsRegistered do
+          return false
+        asked.set #[]
         check session asked
+
+/-- The mark of `declaredHighlightRequests`: it compiles a query on the
+library's syntax service (`Editor/RealHost.lean`). -/
+def declaredHighlightRequests.realHost : Editor.RealHost :=
+  .service
 
 /-- The requests the entry of a buffer's mode makes of the syntax tree
 port before its injections, for a language parsed with `grammar` and
-highlighted with the grammar's shipped query, its captures mapped by
-`captures` over the shipped default, as `recordedRequest` writes them. -/
-def shippedHighlightRequests (grammar : String) (captures : List (String × Option FaceName) := []) :
-    IO (Array String) :=
-  return #["refreshAfter 500", s!"attach {grammar}", s!"shippedQuery {grammar} highlights",
-      s!"compile {grammar}", "captureNames", ← shippedFaces grammar captures, "release"]
+highlighted with the highlights query its declaration read from `grammars`'
+directory, its captures mapped by `captures` over the shipped default, as
+`recordedRequest` writes them. The faces are read from the library, on
+which `grammar` is registered by then. -/
+def declaredHighlightRequests (grammars : TestGrammars) (grammar : String)
+    (captures : List (String × Option FaceName) := []) : IO (Array String) :=
+  return #["refreshAfter 500", s!"attach {grammar}", s!"compile {grammar}", "captureNames",
+      ← testFaces grammars grammar captures, "release"]
 
 /-- The checks of a file's language over the library's syntax service
 (this module's doc says what pins each). -/
-def realLanguageChecks (context : HostContext) : List Check :=
+def realLanguageChecks (context : HostContext) (grammars : TestGrammars) : List Check :=
   [{  name :=
         "opening a .rs file gives its buffer the language rust and the major mode code, and its text is attached with rust and highlighted over the library's syntax service, with no refusal said"
       run :=
@@ -147,34 +167,36 @@ def realLanguageChecks (context : HostContext) : List Check :=
         context.withFiles fun files => do
           let path := files / "main.rs"
           IO.FS.writeFile path "fn main() {\n    let x = 1;\n}\n"
-          withRealLanguageHost context "" [("open-rs", path)] fun session asked => do
+          withRealLanguageHost context grammars "" [("open-rs", path)] fun session asked => do
               let report ← reportedAfter session "open-rs"
               let requests ← asked.get
               return report == some "rust code".quote && requests.contains "attach rust" &&
                   requests.any (·.startsWith "highlight ") &&
                   (← noHighlightsRefusal session) },
     { name :=
-        "opening a .toml file and a file named Cargo.lock gives each buffer the language toml and the major mode code, and highlights its text with TOML's shipped query, keys and table headers in the type face, strings in the string face, brackets in the punctuation face and booleans in the constant face, with no refusal said"
+        "opening a .toml file and a file named Cargo.lock gives each buffer the language toml and the major mode code, and highlights its text with TOML's declared query, keys and table headers in the type face, strings in the string face, brackets in the punctuation face and booleans in the constant face, with no refusal said"
       run :=
         context.withFiles fun files => do
           let toml := files / "mise.toml"
           let lock := files / "Cargo.lock"
           IO.FS.writeFile toml "[tools]\nrust = \"1.91\"\nenabled = true\n"
           IO.FS.writeFile lock "version = 4\n\n[[package]]\nname = \"cc\"\n"
-          let expected ← shippedHighlightRequests "toml" Language.toml.syntaxTree.captures
-          let faces := ((expected[5]?.getD "").replace "highlight " "").splitOn ", "
-          let drawn :=
-            ["syntax.type", "syntax.string", "syntax.punctuation", "syntax.operator",
-                  "syntax.constant"].all
-              faces.contains
           let opened (name : String) (path : System.FilePath) : IO Bool :=
-            withRealLanguageHost context "" [(name, path)] fun session asked => do
+            withRealLanguageHost context grammars "" [(name, path)] fun session asked => do
+              let expected ←
+                declaredHighlightRequests grammars "toml" Language.toml.syntaxTree.captures
+              let faces := ((expected[4]?.getD "").replace "highlight " "").splitOn ", "
+              let drawn :=
+                ["syntax.type", "syntax.string", "syntax.punctuation", "syntax.operator",
+                      "syntax.constant"].all
+                  faces.contains
               let report ← reportedAfter session name
-              return report == some "toml code".quote && (← asked.get).extract 0 7 == expected &&
+              return drawn && report == some "toml code".quote &&
+                  (← asked.get).extract 0 6 == expected &&
                   (← noHighlightsRefusal session)
-          return drawn && (← opened "open-toml" toml) && (← opened "open-lock" lock) },
+          return (← opened "open-toml" toml) && (← opened "open-lock" lock) },
     { name :=
-        "opening a .lean file and a file named lakefile.lean gives each buffer the language lean and the major mode code, and asks the syntax tree port to highlight its text with Lean's shipped query and the lean entry's captures, the faces asked for including the keyword, string, comment, constant and module faces, with no refusal said"
+        "opening a .lean file and a file named lakefile.lean gives each buffer the language lean and the major mode code, and asks the syntax tree port to highlight its text with Lean's declared query and the lean entry's captures, the faces asked for including the keyword, string, comment, constant and module faces, with no refusal said"
       run :=
         context.withFiles fun files => do
           let main := files / "Main.lean"
@@ -182,18 +204,20 @@ def realLanguageChecks (context : HostContext) : List Check :=
           IO.FS.writeFile main
               "/-- Says hello. -/\ndef main : IO Unit := IO.println \"hi\" -- greet\n"
           IO.FS.writeFile lakefile "import Lake\nopen Lake DSL\n\npackage demo\n"
-          let expected ← shippedHighlightRequests "lean" Language.lean.syntaxTree.captures
-          let faces := ((expected[5]?.getD "").replace "highlight " "").splitOn ", "
-          let drawn :=
-            ["syntax.keyword", "syntax.string", "syntax.comment", "syntax.constant",
-                  "syntax.module"].all
-              faces.contains
           let opened (name : String) (path : System.FilePath) : IO Bool :=
-            withRealLanguageHost context "" [(name, path)] fun session asked => do
+            withRealLanguageHost context grammars "" [(name, path)] fun session asked => do
+              let expected ←
+                declaredHighlightRequests grammars "lean" Language.lean.syntaxTree.captures
+              let faces := ((expected[4]?.getD "").replace "highlight " "").splitOn ", "
+              let drawn :=
+                ["syntax.keyword", "syntax.string", "syntax.comment", "syntax.constant",
+                      "syntax.module"].all
+                  faces.contains
               let report ← reportedAfter session name
-              return report == some "lean code".quote && (← asked.get).extract 0 7 == expected &&
+              return drawn && report == some "lean code".quote &&
+                  (← asked.get).extract 0 6 == expected &&
                   (← noHighlightsRefusal session)
-          return drawn && (← opened "open-lean" main) && (← opened "open-lake" lakefile) }]
+          return (← opened "open-lean" main) && (← opened "open-lake" lakefile) }]
 
 /-- A check of `fileChecks`, a declaration of its own. It stays over the
 library's file service (row W37 of `docs/dev-practices/inferred-waits.md`):

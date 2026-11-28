@@ -49,7 +49,7 @@ Its checks are a check set (`VersionControlTest.Linked.checks`, `Editor.CheckGro
 `docs/dev-practices/real-thread-checks.md`, "How the set runs"):
 the lists of its modules of the wiring set in groups of their module, which
 the build's `linter.wiringSet` holds true and complete. With `--wiring`
-after the two directories it
+after the three arguments it
 runs those groups alone, the stress loop's `linked-wiring` suite
 (`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
 modules, one a line, building nothing.
@@ -92,7 +92,7 @@ private def VersionControlTest.Linked.runSelected (mode : Editor.CheckGroup.Mode
 /-- Says the command lines it takes, and exits 2. -/
 private def VersionControlTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: VersionControlTest-Linked <sysroot> <core olean dir> [--wiring], or VersionControlTest-Linked wiring-modules"
+      "usage: VersionControlTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], or VersionControlTest-Linked wiring-modules"
   return 2
 
 /-- Runs the checks (the module docs). -/
@@ -102,7 +102,7 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules VersionControlTest.Linked.checks do
       IO.println module
     return 0
-  | _ :: _ :: rest =>
+  | _ :: _ :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
       VersionControlTest.Linked.runSelected mode

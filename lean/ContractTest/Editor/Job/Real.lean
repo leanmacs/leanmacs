@@ -640,7 +640,8 @@ def cancellingJobWhoseLoadCheck (completions : Job.Completions) : Check :=
 set_option linter.inferredWait false in
 /-- A check of `fileChecks`, a declaration of its own so that the allow
 above it covers it alone. -/
-def jobCommandReachesSyntaxTreeCheck (completions : Job.Completions) : Check :=
+def jobCommandReachesSyntaxTreeCheck (completions : Job.Completions)
+    (grammars : Editor.Test.Linked.TestGrammars) : Check :=
   { name :=
       "a job's command run by Job.finishWith reaches the syntax tree it is handed: its text, highlighted as a mode with a syntax tree is entered, is attached in the library, and a query of it answers"
     run := do
@@ -649,9 +650,12 @@ def jobCommandReachesSyntaxTreeCheck (completions : Job.Completions) : Check :=
       discard <| hangGuarded "the job's end" handle.outcome.result?
       let real ← RealSyntaxTree.new rig.published.reader
       let syntaxTree := settlingAttach rig.published real.handle
+      -- `json` registered from the test grammars' directory (`ContractTest`'s
+      -- `main`), its tree's queries read from there.
+      let json ← grammars.tree "json"
       let command : EditorM SnapshotId := do
         let text ← createText "[1, 2]"
-        Highlight.enter "json" text { grammar := "json" }
+        Highlight.enter "json" text json
         text.snapshot
       let display := (← recorderOf rig.published).handle
       let (.ok snapshot, texts) ←
@@ -672,9 +676,10 @@ def jobCommandReachesSyntaxTreeCheck (completions : Job.Completions) : Check :=
 text binding (`Editor/Job/Real.lean`, `Editor/Text/Real.lean`): what only the
 two together can show. It is a function, not a constant, because it calls
 bindings. Every file is in a temporary directory its check makes and
-removes. -/
-def fileChecks (completions : Job.Completions) : List Check :=
-  [loadWritesNothingEditorCheck completions, jobCommandReachesSyntaxTreeCheck completions,
+removes. The syntax check draws with the test grammars of `grammars`. -/
+def fileChecks (completions : Job.Completions) (grammars : Editor.Test.Linked.TestGrammars) :
+    List Check :=
+  [loadWritesNothingEditorCheck completions, jobCommandReachesSyntaxTreeCheck completions grammars,
     { name :=
         "a snapshot a job loaded that no command adopted is freed when the job is settled: the library holds what it held, and the editor's table never grew"
       run :=

@@ -13,7 +13,7 @@ builds this root's executable with the Rust library linked, and runs it in
 the package's directory with the Lean toolchain's directory and the core's
 `.olean` directory. It prints `themes linked test: N checks passed`, and
 exits 0 when all hold, 1 after naming on stderr the ones that do not, and 2
-for a command line that is not the two directories, with `--wiring` after
+for a command line that is not the two directories and the test grammars' directory, with `--wiring` after
 them or not. Its check set (`ThemesTest.Linked.checks`) holds no module of
 the wiring set, so with `--wiring` it selects no check and exits 0, building
 no host (`Editor.CheckGroup.running`), and `wiring-modules` prints none. The
@@ -62,7 +62,7 @@ def ThemesTest.Linked.checks :
 /-- The usage, on stderr, and status 2. -/
 private def ThemesTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: ThemesTest-Linked <sysroot> <core olean dir> [--wiring], or ThemesTest-Linked wiring-modules"
+      "usage: ThemesTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], or ThemesTest-Linked wiring-modules"
   return 2
 
 /-- Runs the checks (the module docs). -/
@@ -72,7 +72,7 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules ThemesTest.Linked.checks do
       IO.println module
     return 0
-  | sysroot :: oleans :: rest =>
+  | sysroot :: oleans :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
       Editor.CheckGroup.running mode ThemesTest.Linked.checks do

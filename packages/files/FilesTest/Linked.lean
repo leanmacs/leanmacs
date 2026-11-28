@@ -56,7 +56,7 @@ config the hosts load names no declaration of this package.
 Its checks are a check set (`FilesTest.Linked.checks`, `Editor.CheckGroup`,
 `docs/dev-practices/real-thread-checks.md`, "How the set runs"):
 the wiring set's lists in groups of their module, which the build's
-`linter.wiringSet` holds true and complete. With `--wiring` after the two directories it runs those groups alone, the
+`linter.wiringSet` holds true and complete. With `--wiring` after the three arguments it runs those groups alone, the
 stress loop's `linked-wiring` suite (`tools/package-set.sh run --wiring`),
 and `wiring-modules` prints their modules, one a line, building no host.
 
@@ -81,30 +81,36 @@ def setPackages : Array Editor.Package :=
   Files.EditorPackage.packages ++ Editor.Test.Shipped.packages ++
     #[Editor.Test.AtPoint.package, Editor.Test.Minibuffer.package]
 
-/-- Every check of the linked test, in the order they run: its check set
-(`Editor.CheckGroup`), the lists of `FilesTest/Linked/Files/Real.lean`, of
-the wiring set, in that module's groups between the others'. -/
+/-- Every check of the linked test, in the order they run, over the
+harness's context and the grammars the core's tests load (the third
+argument, which the checks over the library's syntax service declare): its
+check set (`Editor.CheckGroup`), the lists of
+`FilesTest/Linked/Files/Real.lean`, of the wiring set, in that module's
+groups between the others'. -/
 def FilesTest.Linked.checks :
-    List (Editor.CheckGroup Editor.Test.Linked.HostContext FilesTest.Check) :=
-  [.plain fun context =>
+    List
+      (Editor.CheckGroup (Editor.Test.Linked.HostContext × Editor.Test.Linked.TestGrammars)
+        FilesTest.Check) :=
+  [.plain fun (context, _) =>
       FilesTest.Linked.filePromptChecks context ++ FilesTest.Linked.fileChecks context,
-    .wired "FilesTest.Linked.Files.Real" wiringSet.FilesTest.Linked.Files.Real fun context =>
+    .wired "FilesTest.Linked.Files.Real" wiringSet.FilesTest.Linked.Files.Real fun (context, _) =>
       FilesTest.Linked.fileServiceChecks context,
-    .plain fun context => FilesTest.Linked.languageChecks context,
-    .wired "FilesTest.Linked.Files.Real" wiringSet.FilesTest.Linked.Files.Real fun context =>
-      FilesTest.Linked.realLanguageChecks context,
-    .plain fun context => FilesTest.Linked.reloadChecks context,
-    .wired "FilesTest.Linked.Files.Real" wiringSet.FilesTest.Linked.Files.Real fun context =>
+    .plain fun (context, _) => FilesTest.Linked.languageChecks context,
+    .wired "FilesTest.Linked.Files.Real" wiringSet.FilesTest.Linked.Files.Real
+      fun (context, grammars) => FilesTest.Linked.realLanguageChecks context grammars,
+    .plain fun (context, _) => FilesTest.Linked.reloadChecks context,
+    .wired "FilesTest.Linked.Files.Real" wiringSet.FilesTest.Linked.Files.Real fun (context, _) =>
       FilesTest.Linked.autoReloadChecks context]
 
 /-- Runs the checks `mode` selects from the check set
 (`Editor.CheckGroup.select`), over the harness's context, and says which
 failed, or how many passed. -/
-private def FilesTest.Linked.runSelected (sysroot oleans : String) (mode : Editor.CheckGroup.Mode) :
-    IO UInt32 := do
+private def FilesTest.Linked.runSelected (sysroot oleans grammars : String)
+    (mode : Editor.CheckGroup.Mode) : IO UInt32 := do
+  let grammars : Editor.Test.Linked.TestGrammars := { directory := ← IO.FS.realPath grammars }
   let failed ←
     Editor.Test.Linked.HostContext.run sysroot oleans setPackages fun context => do
-        let checks := Editor.CheckGroup.select mode FilesTest.Linked.checks context
+        let checks := Editor.CheckGroup.select mode FilesTest.Linked.checks (context, grammars)
         let failed ← FilesTest.failures checks
         for name in failed do
           IO.eprintln s!"FAILED: {name}"
@@ -118,7 +124,7 @@ private def FilesTest.Linked.runSelected (sysroot oleans : String) (mode : Edito
 /-- Says the command lines it takes, and exits 2. -/
 private def FilesTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: FilesTest-Linked <sysroot> <core olean dir> [--wiring], FilesTest-Linked wiring-modules, or FilesTest-Linked bench-auto-reload <sysroot> <core olean dir> <samples>"
+      "usage: FilesTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], FilesTest-Linked wiring-modules, or FilesTest-Linked bench-auto-reload <sysroot> <core olean dir> <samples>"
   return 2
 
 /-- Runs the checks (the module docs). -/
@@ -143,10 +149,10 @@ def main (arguments : List String) : IO UInt32 := do
     | none =>
       IO.eprintln "usage: FilesTest-Linked bench-auto-reload <sysroot> <core olean dir> <samples>"
       return 2
-  | sysroot :: oleans :: rest =>
+  | sysroot :: oleans :: grammars :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
-      FilesTest.Linked.runSelected sysroot oleans mode
+      FilesTest.Linked.runSelected sysroot oleans grammars mode
     | none =>
       FilesTest.Linked.usage
   | _ =>

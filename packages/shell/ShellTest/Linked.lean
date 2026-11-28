@@ -10,7 +10,7 @@ builds this root's executable with the Rust library linked, and runs it in
 the package's directory with the Lean toolchain's directory and the core's
 `.olean` directory, which it does not need. It prints `shell linked test: N
 checks passed`, and exits 0 when all hold, 1 after naming on stderr the ones
-that do not, and 2 for a command line that is not the two directories, with `--wiring` after them or not. Its check set (`ShellTest.Linked.checks`)
+that do not, and 2 for a command line that is not the two directories and the test grammars' directory, with `--wiring` after them or not. Its check set (`ShellTest.Linked.checks`)
 holds no module of the wiring set, so with `--wiring` it selects no check
 and exits 0 (`Editor.CheckGroup.running`), and `wiring-modules` prints
 none. The
@@ -41,7 +41,7 @@ def ShellTest.Linked.checks : List (Editor.CheckGroup Unit ShellTest.Check) :=
 /-- The usage, on stderr, and status 2. -/
 private def ShellTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: ShellTest-Linked <sysroot> <core olean dir> [--wiring], or ShellTest-Linked wiring-modules"
+      "usage: ShellTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], or ShellTest-Linked wiring-modules"
   return 2
 
 /-- Runs the checks (the module docs). -/
@@ -51,7 +51,7 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules ShellTest.Linked.checks do
       IO.println module
     return 0
-  | _ :: _ :: rest =>
+  | _ :: _ :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
       Editor.CheckGroup.running mode ShellTest.Linked.checks do

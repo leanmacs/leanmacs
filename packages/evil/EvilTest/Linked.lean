@@ -81,7 +81,7 @@ Its checks are a check set (`EvilTest.Linked.checks`, `Editor.CheckGroup`,
 `docs/dev-practices/real-thread-checks.md`, "How the set runs"):
 the lists of its modules of the wiring set in groups of their module, which
 the build's `linter.wiringSet` holds true and complete. With `--wiring`
-after the two directories it
+after the three arguments it
 runs those groups alone, the stress loop's `linked-wiring` suite
 (`tools/package-set.sh run --wiring`), and `wiring-modules` prints their
 modules, one a line, building nothing.
@@ -118,10 +118,13 @@ package's directory, where the gate runs this executable. -/
 def syntaxFixtures : System.FilePath :=
   "../../tests/syntax"
 
-/-- What every check is handed: the harness's context and the directory of
-the syntax fixtures. -/
+/-- What every check is handed: the harness's context, the directory of
+the syntax fixtures, and the grammars the core's tests load (the third
+argument, `Editor.Test.Linked.TestGrammars`), which the checks over the
+library's syntax service register or declare, since the library hides its
+compiled-in grammars. -/
 abbrev EvilTest.Linked.Context :=
-  Editor.Test.Linked.HostContext × System.FilePath
+  Editor.Test.Linked.HostContext × System.FilePath × Editor.Test.Linked.TestGrammars
 
 /-- Every check of the linked test, in the order they run, over the
 harness's context and the syntax fixtures: its check set
@@ -130,23 +133,27 @@ and `EvilTest/Linked/Evil/Operators.lean`, of the wiring set, in groups of
 their module. -/
 def EvilTest.Linked.checks : List (Editor.CheckGroup EvilTest.Linked.Context EvilTest.Check) :=
   [.wired "EvilTest.Linked.Evil.TreeObjects" wiringSet.EvilTest.Linked.Evil.TreeObjects
-      fun (context, fixtures) =>
-      EvilTest.Linked.treeObjectChecks context ++ EvilTest.Linked.treeObjectFixtureChecks fixtures,
+      fun (context, fixtures, grammars) =>
+      EvilTest.Linked.treeObjectChecks context grammars ++
+        EvilTest.Linked.treeObjectFixtureChecks context grammars fixtures,
     .wired "EvilTest.Linked.Evil.Operators" wiringSet.EvilTest.Linked.Evil.Operators
-      fun (context, fixtures) => EvilTest.Linked.evilIndentChecks context fixtures,
-    .plain fun (context, _) =>
+      fun (context, fixtures, grammars) =>
+      EvilTest.Linked.evilIndentChecks context grammars fixtures,
+    .plain fun (context, _, _) =>
       EvilTest.Linked.evilChecks context ++ EvilTest.Linked.evilLeaderChecks context]
 
 /-- Runs the checks `mode` selects from the check set
 (`Editor.CheckGroup.select`), and says which failed, or how many passed. -/
-private def EvilTest.Linked.runSelected (sysroot oleans : String) (mode : Editor.CheckGroup.Mode) :
-    IO UInt32 := do
+private def EvilTest.Linked.runSelected (sysroot oleans grammars : String)
+    (mode : Editor.CheckGroup.Mode) : IO UInt32 := do
   let fixtures ← IO.FS.realPath syntaxFixtures
+  let grammars : Editor.Test.Linked.TestGrammars := { directory := ← IO.FS.realPath grammars }
   let failed ←
     Editor.Test.Linked.HostContext.run sysroot (":".intercalate (oleans :: oleanDirectories))
         setPackages
         (fun context => do
-          let checks := Editor.CheckGroup.select mode EvilTest.Linked.checks (context, fixtures)
+          let checks :=
+            Editor.CheckGroup.select mode EvilTest.Linked.checks (context, fixtures, grammars)
           let failed ← EvilTest.failures checks
           for name in failed do
             IO.eprintln s!"FAILED: {name}"
@@ -161,7 +168,7 @@ private def EvilTest.Linked.runSelected (sysroot oleans : String) (mode : Editor
 /-- Says the command lines it takes, and exits 2. -/
 private def EvilTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: EvilTest-Linked <sysroot> <core olean dir> [--wiring], or EvilTest-Linked wiring-modules"
+      "usage: EvilTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], or EvilTest-Linked wiring-modules"
   return 2
 
 /-- Runs the checks (the module docs). -/
@@ -171,10 +178,10 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules EvilTest.Linked.checks do
       IO.println module
     return 0
-  | sysroot :: oleans :: rest =>
+  | sysroot :: oleans :: grammars :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
-      EvilTest.Linked.runSelected sysroot oleans mode
+      EvilTest.Linked.runSelected sysroot oleans grammars mode
     | none =>
       EvilTest.Linked.usage
   | _ =>

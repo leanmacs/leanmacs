@@ -20,8 +20,12 @@ A module of the wiring set, declared in place (`AGENTS.md`, "Deterministic
 concurrency in tests"; `docs/dev-practices/real-thread-checks.md`): every
 check it holds is one. **The real adapter.** The library's syntax service
 with Rust's shipped `indents` query, through a host
-(`withRealSyntaxTestHost`). **Why.** The syntax model holds JSON alone, so
-the shipped Rust query is reached only over the real binding. Its one
+(`withRealSyntaxTestHost`), which declares the grammars cargo builds for
+the core's tests (`Editor.Test.Linked.TestGrammars`): the library hides its
+compiled-in grammars, so the host's `register-grammars` job registers them
+and the Rust language's tree takes its queries from their directory.
+**Why.** The syntax model holds JSON alone, so the Rust indents query is
+reached only over the real binding. Its one
 check asserts the wiring: the refusals are `ModelTest.Editor.Indent`'s,
 and the levels `ContractTest/Editor/SyntaxTree/Real.lean`'s.
 -/
@@ -111,13 +115,18 @@ def withIndentHost.realHost : Editor.RealHost :=
 set_option linter.inferredWait false in
 /-- Runs `check` against a real host of the test scheme with the real syntax
 binding (`withRealSyntaxTestHost`) over `reindentText` of the mangled Rust indent fixture, with the config
-loaded: handed the fixture's text and the mangled one. -/
+loaded and the test grammars' registration answered
+(`Session.testGrammarsRegistered`): handed the fixture's text and the
+mangled one. -/
 def withIndentHost (context : Context) (check : RealSession → String → String → IO Bool) :
     IO Bool := do
   let source ← IO.FS.readFile (context.syntaxFixtures / "rust" / "indent.rs")
   let mangled := mangledRust source indentKept
-  withRealSyntaxTestHost context [("init.lean", reindentText mangled)] fun session => do
+  withRealSyntaxTestHost context context.testGrammars [("init.lean", reindentText mangled)]
+      fun session => do
       session.ask [.reload]
+      unless ← session.testGrammarsRegistered do
+        return false
       check session source mangled
 
 /-- The text the view shows after `load-<name>` and then the command

@@ -46,7 +46,7 @@ def ProjectSearchTest.Linked.checks : List (Editor.CheckGroup Unit ProjectSearch
 /-- The usage, on stderr, and status 2. -/
 private def ProjectSearchTest.Linked.usage : IO UInt32 := do
   IO.eprintln
-      "usage: ProjectSearchTest-Linked <sysroot> <core olean dir> [--wiring], or ProjectSearchTest-Linked wiring-modules"
+      "usage: ProjectSearchTest-Linked <sysroot> <core olean dir> <test grammars dir> [--wiring], or ProjectSearchTest-Linked wiring-modules"
   return 2
 
 /-- Runs the checks (the module docs). -/
@@ -56,7 +56,7 @@ def main (arguments : List String) : IO UInt32 := do
     for module in Editor.CheckGroup.modules ProjectSearchTest.Linked.checks do
       IO.println module
     return 0
-  | _ :: _ :: rest =>
+  | _ :: _ :: _ :: rest =>
     match Editor.CheckGroup.Mode.ofArguments? rest with
     | some mode =>
       Editor.CheckGroup.running mode ProjectSearchTest.Linked.checks do
