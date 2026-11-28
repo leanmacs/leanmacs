@@ -83,22 +83,40 @@ pub struct FoldSnapshot {
     hidden_before: Vec<usize>,
 }
 
+/// The first and last rows of `snapshot` that the range `start..stop`
+/// covers, by the rule (module docs, "The rule"): each row it has a byte
+/// in, a line break being the row's it ends, or the row of `start` when
+/// it is empty. Offsets past the end are the end, and a stop before the
+/// start is the start. A wrap indent covers rows by the same rule
+/// ([`indent`](crate::indent)).
+pub(crate) fn covered_rows(snapshot: &Snapshot, start: usize, stop: usize) -> (usize, usize) {
+    let row_of = |offset: usize| {
+        snapshot
+            .offset_to_point(boundary_at_or_before(snapshot, offset))
+            .map_or(0, |point| point.row)
+    };
+    // Clamped but not moved back: a range covers the row of each of its
+    // bytes, the last one included, even where that byte is inside a
+    // character (Lean's model reads the range the same way).
+    let start = start.min(snapshot.len());
+    let stop = stop.min(snapshot.len()).max(start);
+    let first = row_of(start);
+    let last = if stop > start {
+        row_of(stop - 1)
+    } else {
+        first
+    };
+    (first, last)
+}
+
 impl FoldSnapshot {
     /// `buffer` with `folds` shown by the rule (module docs, "The rule").
     pub fn new(buffer: &Snapshot, folds: &[Fold]) -> Self {
-        let row_of = |offset: usize| {
-            buffer
-                .offset_to_point(boundary_at_or_before(buffer, offset))
-                .map_or(0, |point| point.row)
-        };
+        // Ordered by the ranges as clamped (`covered_rows`).
         let mut ranges: Vec<(usize, usize, usize)> = folds
             .iter()
             .enumerate()
             .map(|(index, fold)| {
-                // Clamped but not moved back: a range covers the row of
-                // each of its bytes, the last one included, even where
-                // that byte is inside a character (Lean's model reads the
-                // range the same way).
                 let start = fold.start.min(buffer.len());
                 let stop = fold.stop.min(buffer.len()).max(start);
                 (index, start, stop)
@@ -107,12 +125,7 @@ impl FoldSnapshot {
         ranges.sort_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2)));
         let mut shown: Vec<ShownFold> = Vec::new();
         for (index, start, stop) in ranges {
-            let first = row_of(start);
-            let last = if stop > start {
-                row_of(stop - 1)
-            } else {
-                first
-            };
+            let (first, last) = covered_rows(buffer, start, stop);
             if shown.last().is_some_and(|before| first <= before.last) {
                 continue;
             }
@@ -368,7 +381,7 @@ impl Layer for FoldLayer {
 mod tests {
     use editor_text::Text;
 
-    use super::{FoldLayer, FoldPoint, FoldSnapshot, ShownFold};
+    use super::{FoldLayer, FoldPoint, FoldSnapshot, ShownFold, covered_rows};
     use crate::layer::{Bias, Layer, LayerEdit};
     use crate::scene::Fold;
 
@@ -392,6 +405,31 @@ mod tests {
     }
 
     const TEXT: &str = "ab\ncd\nef\ngh";
+
+    #[test]
+    fn a_range_covers_the_rows_it_has_a_byte_in() {
+        let covered =
+            |text: &str, start, stop| covered_rows(&Text::from(text).snapshot(), start, stop);
+        // `[3,6)` is `cd` and the line break that ends it: row 1 alone.
+        assert_eq!(covered(TEXT, 3, 6), (1, 1));
+        assert_eq!(covered(TEXT, 3, 7), (1, 2));
+        // An empty range, the row of its start.
+        assert_eq!(covered(TEXT, 4, 4), (1, 1));
+        // A stop before the start is the start.
+        assert_eq!(covered(TEXT, 7, 2), (2, 2));
+        // Offsets past the end are the end.
+        assert_eq!(covered(TEXT, 6, 99), (2, 3));
+        assert_eq!(covered(TEXT, 40, 90), (3, 3));
+        // `é` is bytes 3 and 4 of `ab\néx\nz`. A start inside it is on its
+        // row, empty or not; a stop at 4 holds its first byte, so covers
+        // its row, and one at 3 only the line break of row 0.
+        let accented = "ab\néx\nz";
+        assert_eq!(covered(accented, 4, 4), (1, 1));
+        assert_eq!(covered(accented, 4, 7), (1, 1));
+        assert_eq!(covered(accented, 4, 8), (1, 2));
+        assert_eq!(covered(accented, 0, 4), (0, 1));
+        assert_eq!(covered(accented, 0, 3), (0, 0));
+    }
 
     #[test]
     fn a_fold_covers_the_rows_its_range_has_a_byte_in() {

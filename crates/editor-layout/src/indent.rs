@@ -3,9 +3,10 @@
 //!
 //! An indent ([`WrapIndent`]) covers the rows its range has a byte in, a
 //! line break being the row's it ends, or the row of `start` when the
-//! range is empty: the fold rule ([`folds`](crate::folds)). An offset past
-//! the end is the end, and one inside a character is moved back to its
-//! start. Of two indents over a row the later one listed wins. They are
+//! range is empty: the fold rule ([`folds`](crate::folds)), one helper
+//! (`folds::covered_rows`) reading the rows for both. An offset past the
+//! end is the end, and a byte inside a character is on that character's
+//! row. Of two indents over a row the later one listed wins. They are
 //! kept in whole points, so that a query after a change of scale lays a
 //! row out under them at the new scale, as the stops are.
 //!
@@ -20,6 +21,7 @@
 
 use editor_text::Snapshot;
 
+use crate::folds::covered_rows;
 use crate::pixels;
 use crate::scene::{Continuation, WrapIndent};
 use crate::tabs::{boundary_at_or_before, row_content};
@@ -59,22 +61,10 @@ pub(crate) fn resolved(snapshot: &Snapshot, indents: &[WrapIndent]) -> RowIndent
     if indents.is_empty() {
         return RowIndents::default();
     }
-    let row_of = |offset: usize| {
-        snapshot
-            .offset_to_point(boundary_at_or_before(snapshot, offset))
-            .map_or(0, |point| point.row)
-    };
     let covers = indents
         .iter()
         .map(|indent| {
-            let start = boundary_at_or_before(snapshot, indent.start.min(snapshot.len()));
-            let stop = indent.stop.min(snapshot.len()).max(start);
-            let first = row_of(start);
-            let last = if stop > start {
-                row_of(stop - 1)
-            } else {
-                first
-            };
+            let (first, last) = covered_rows(snapshot, indent.start, indent.stop);
             (first, last, *indent)
         })
         .collect();
