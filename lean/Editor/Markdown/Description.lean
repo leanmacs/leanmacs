@@ -13,9 +13,17 @@ core's rich-text description.
 - **A piece** (`Piece`) is one top-level block rendered: its text, with the
   markup left out, and, at offsets of that text, its spans (each a face
   over a range, outer first, so a later one is drawn over an earlier one),
-  its links, its tables, its headings and its fenced code blocks.
-  `Piece.shift` moves its offsets; `Piece.join` puts pieces one after
-  another with a separator between.
+  its links, its tables, its headings, its fenced code blocks and its wrap
+  indents. `Piece.shift` moves its offsets; `Piece.join` puts pieces one
+  after another with a separator between.
+- **Indents** (`Piece.indents`) are layout-free data, as links are: where
+  the visual lines of a range's rows start, in points or, the hanging form,
+  after a row's first bytes (`WrapIndent`, `Editor/Scene.lean`). Nothing
+  is measured for them. `Piece.indentedBy` puts a whole piece a step in, a
+  block quote's blocks or a list item's: one indent over it, listed first,
+  then each it had a step further in, a lead left as it is, since it is
+  measured from the row's shifted start. Of two over a row the later
+  listed wins.
 - **The description** (`Description`) is the pieces joined by one empty
   line (`Description.ofPieces`), with its foldable ranges made from the
   headings and fences.
@@ -38,7 +46,8 @@ core's rich-text description.
   (`Editor/Markdown/View.lean`).
 - **The options** (`Options`) are what a render takes beyond the document:
   the root a relative link is resolved against, the gap between table
-  columns, and the face a fence's capture is drawn in, by grammar and
+  columns, the indent step of a list item's or a quote's blocks, and the
+  face a fence's capture is drawn in, by grammar and
   capture name, which the caller resolves from config, so the renderer
   never reads a language table.
 
@@ -50,7 +59,8 @@ scene's types, links and folds.
 
 | Addition | Where |
 |---|---|
-| A new part of a rendered block | A field of `Piece`, moved by `Piece.shift`, kept by `Piece.join`, and gathered by `Description.ofPieces` |
+| A new part of a rendered block | A field of `Piece`, moved by `Piece.shift`, kept by `Piece.append` (and so `Piece.join`), and gathered by `Description.ofPieces` |
+| A new way a block is indented | A use of `Piece.indentedBy`, or an indent of the piece, in its case of `Editor/Markdown/Block.lean` |
 | A new document-wide part (made from every piece, on every update) | `Description.ofPieces` |
 
 Pinned by the rendered-markdown checks of `ModelTest/Editor/Markdown/Doc.lean`.
@@ -66,6 +76,9 @@ structure Options where
   /-- The gap between a table column's widest cell and the next column, in
   points. -/
   gap : Nat := 16
+  /-- How far a list item's blocks and a block quote's are indented, a
+  nesting level, in points. -/
+  indent : Nat := 16
   /-- The face a fence's capture is drawn in, by its layer's grammar and the
   capture's name; `none` leaves it in `text.code-block`. -/
   faces : String → String → Option FaceName := fun _ _ => none
@@ -94,10 +107,12 @@ structure Piece where
   /-- Its fenced code blocks, each the start and the stop of its rows, and
   its language, or the empty string for none. -/
   codes : Array (Nat × Nat × String) := #[]
+  /-- Its wrap indents, in order: a later one over a row wins. -/
+  indents : Array WrapIndent := #[]
   deriving DecidableEq, Repr, Inhabited
 
-/-- A rendered document: its text, its spans, its tables, its links and its
-foldable ranges. -/
+/-- A rendered document: its text, its spans, its tables, its links, its
+wrap indents and its foldable ranges. -/
 structure Description where
   /-- Its text. -/
   text : String := ""
@@ -109,6 +124,8 @@ structure Description where
   links : Array Link := #[]
   /-- Its foldable ranges, every one unfolded. -/
   folds : Array Foldable := #[]
+  /-- Its wrap indents, in order. -/
+  indents : Array WrapIndent := #[]
   deriving DecidableEq, Repr, Inhabited
 
 /-- The bytes of `source` from `start` up to `stop`, as a string; the empty
@@ -139,7 +156,11 @@ def shift (piece : Piece) (distance : Nat) : Piece :=
     headings :=
       piece.headings.map fun (level, start, stop) => (level, start + distance, stop + distance)
     codes :=
-      piece.codes.map fun (start, stop, language) => (start + distance, stop + distance, language) }
+      piece.codes.map fun (start, stop, language) => (start + distance, stop + distance, language)
+    indents :=
+      piece.indents.map fun indent =>
+        { indent with
+          start := indent.start + distance, stop := indent.stop + distance } }
 
 /-- `before`, then `separator`, then `after`, with `after`'s parts moved past
 the two. -/
@@ -147,7 +168,8 @@ def append (before after : Piece) (separator : String) : Piece :=
   let after := after.shift (before.text.utf8ByteSize + separator.utf8ByteSize)
   { text := before.text ++ separator ++ after.text, spans := before.spans ++ after.spans
     links := before.links ++ after.links, tables := before.tables ++ after.tables
-    headings := before.headings ++ after.headings, codes := before.codes ++ after.codes }
+    headings := before.headings ++ after.headings, codes := before.codes ++ after.codes
+    indents := before.indents ++ after.indents }
 
 /-- `pieces` one after another, `separator` between each two. -/
 def join (pieces : Array Piece) (separator : String) : Piece :=
@@ -162,6 +184,24 @@ def after (text : String) (piece : Piece) : Piece :=
 /-- `piece` with `spans` before its own: drawn under them. -/
 def under (spans : Array Decoration) (piece : Piece) : Piece :=
   { piece with spans := spans ++ piece.spans }
+
+/-- `piece` a step of `step` points in ("Indents", in the module docs): one
+indent over its whole text, its first lines and the rest `step` in, listed
+first, then each indent it had with `step` added to its first-line indent
+and to a continuation in points; a lead is left as it is, since it is
+measured from the row's start, which the step has moved. -/
+def indentedBy (step : Nat) (piece : Piece) : Piece :=
+  let whole : WrapIndent :=
+    { start := 0, stop := piece.text.utf8ByteSize, first := step, rest := .points step }
+  let deeper :=
+    piece.indents.map fun indent =>
+      { indent with
+        first := indent.first + step
+        rest :=
+          match indent.rest with
+          | .points x => .points (x + step)
+          | .lead bytes => .lead bytes }
+  { piece with indents := #[whole] ++ deeper }
 
 end Piece
 
@@ -206,6 +246,6 @@ def foldsOf (piece : Piece) : Array Foldable :=
 def Description.ofPieces (pieces : Array Piece) : Description :=
   let joined := Piece.join pieces blockSeparator
   { text := joined.text, spans := joined.spans, tables := joined.tables, links := joined.links
-    folds := foldsOf joined }
+    folds := foldsOf joined, indents := joined.indents }
 
 end Editor.Markdown

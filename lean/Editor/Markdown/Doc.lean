@@ -10,9 +10,9 @@ to and the align-to stops its tables were measured into. Its description
 
 - **A block** is a top-level block: a child of a section that is not a
   section (`@block`). A list, a block quote and a table are each one.
-- **The options' data parts are kept** (`root`, `gap`), so a later render
-  of the document's tail resolves its links and lays out its tables as the
-  first did. The faces of a fence's captures are a function, which the
+- **The options' data parts are kept** (`root`, `gap`, `indent`), so a
+  later render of the document's tail resolves its links, lays out its
+  tables and indents its lists and quotes as the first did. The faces of a fence's captures are a function, which the
   caller hands each render again.
 - **Rendered** (`Doc.rendered`) counts the block renders the document has
   had over its life.
@@ -77,6 +77,8 @@ structure Doc where
   root : Option System.FilePath := none
   /-- The gap between its tables' columns, in points. -/
   gap : Nat := 16
+  /-- The indent step of its list items' and quotes' blocks, in points. -/
+  indent : Nat := 16
   /-- Its top-level blocks, in order. -/
   blocks : Array Doc.Block := #[]
   /-- How many block renders it has had over its life. -/
@@ -96,7 +98,8 @@ def renderBlocks (options : Options) (source : String) (layers : Array SyntaxTre
 `options`, every block once. -/
 def render (options : Options) (source : String) (layers : Array SyntaxTree.Layer) : Doc :=
   let blocks := renderBlocks options source layers
-  { source, root := options.root, gap := options.gap, blocks, rendered := blocks.size }
+  { source, root := options.root, gap := options.gap, indent := options.indent, blocks
+    rendered := blocks.size }
 
 namespace Doc
 
@@ -127,11 +130,11 @@ def tail (doc : Doc) (more : String) : String :=
 
 /-- `doc` with `more` appended ("The tail", in the module docs): every block
 but the last kept as it is, and the blocks of the tail, parsed into
-`tailLayers` (`tail`), rendered with the document's root and gap, a fence's
-captures in `faces`. -/
+`tailLayers` (`tail`), rendered with the document's root, gap and indent
+step, a fence's captures in `faces`. -/
 def extend (doc : Doc) (more : String) (tailLayers : Array SyntaxTree.Layer)
     (faces : String → String → Option FaceName := fun _ _ => none) : Doc :=
-  let options : Options := { root := doc.root, gap := doc.gap, faces }
+  let options : Options := { root := doc.root, gap := doc.gap, indent := doc.indent, faces }
   let fresh := renderBlocks options (doc.tail more) tailLayers doc.tailStart
   { doc with
     source := doc.source ++ more

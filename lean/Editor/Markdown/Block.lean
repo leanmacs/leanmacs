@@ -17,13 +17,33 @@ tables, headings and fenced code blocks. Pure.
 | fenced code block | its content rows, the fence lines left out | `text.code-block` over them; its layer's captures in their faces |
 | indented code block | its content rows | `text.code-block`; not foldable |
 | table | the header row, then the body rows; the delimiter row and the pipes left out; cells joined by one space | `text.table-header` over the header cells |
-| list | an item a line: two spaces a nesting level, then `•` (or the item's own number and `.` or `)`), a space and its blocks, one a line | `text.list-marker` over the marker |
-| block quote | its blocks, the `>` markers left out | `text.quote` over them |
+| list | an item a line: `•` (or the item's own number and `.` or `)`), a space and its blocks, one a line; its continuation lines hang under the text after the marker, and its blocks after the first, a nested list among them, are one indent step (`Options.indent`, 16 points) in | `text.list-marker` over the marker |
+| block quote | its blocks, the `>` markers left out; every line of them one step in a nesting level | `text.quote` over them |
 | thematic break | `———` | — |
 | HTML block | its source | `text.code-block` |
 | link reference definition | its source | — |
 
-A task-list marker is kept as its source, before the item's text.
+A task-list marker is kept as its source, before the item's text, and the
+hang is after it.
+
+## Indents
+
+Nothing here is measured: a list item's and a quote's indents are data on
+the piece (`Piece.indents`, `Piece.indentedBy`), which layout places.
+
+- **A list item** is its marker, a space, its task marker and its blocks,
+  with no spaces of indent. Its blocks are indented a step
+  (`Piece.indentedBy`). Its indents are that step's, over its blocks; then
+  its first row's hang, a first-line indent of 0 continued where the
+  marker, the space and the task marker end (`ContinuationIndent.lead`),
+  which wins over the step on that row; then its blocks' own. So a nested
+  list's items are a step further in, each hanging under its own text.
+- **A block quote** is its blocks a step in, first lines and continuation
+  alike, its inner indents a step further: depth times the step.
+- An item's blocks after the first start a step in, not under its text,
+  since a lead is measured on its own row: the side task
+  `markdown-list-item-later-blocks-hang` (`docs/design/text-and-display.md`,
+  "Rendered markdown, as built").
 
 ## The tree of a block
 
@@ -202,9 +222,8 @@ def source (context : Context) (node : Node) : String :=
   trimEnd (slice context.source node.start node.stop)
 
 mutual
-/-- The node at `index` rendered, a list `depth` levels deep (the module
-docs). -/
-partial def node (context : Context) (index : Nat) (depth : Nat) : Piece :=
+/-- The node at `index` rendered (the module docs). -/
+partial def node (context : Context) (index : Nat) : Piece :=
   let found := context.nodes[index]!
   match found.name with
   | "paragraph" =>
@@ -215,11 +234,11 @@ partial def node (context : Context) (index : Nat) (depth : Nat) : Piece :=
   | "code.indented" => indented context found
   | "list" =>
     let items := childrenOf context index (·.name == "list.item")
-    Piece.join (items.map fun item => listItem context item depth) "\n"
+    Piece.join (items.map (listItem context)) "\n"
   | "quote" =>
     let blocks := childrenOf context index isBlock
-    let joined := Piece.join (blocks.map fun child => node context child depth) blockSeparator
-    joined.under #[span 0 joined.text.utf8ByteSize "text.quote"]
+    let joined := Piece.join (blocks.map (node context)) blockSeparator
+    (joined.indentedBy context.options.indent).under #[span 0 joined.text.utf8ByteSize "text.quote"]
   | "table" => table context found
   | "break" => { text := "———" }
   | "html" =>
@@ -229,9 +248,10 @@ partial def node (context : Context) (index : Nat) (depth : Nat) : Piece :=
     match name.dropPrefix? "heading." with
     | some level => heading context found (level.toString.toNat?.getD 1)
     | none => { text := source context found }
-/-- The list item at `index`, a list `depth` levels deep: its indent, its
-marker, its task marker as its source, and its blocks one a line. -/
-partial def listItem (context : Context) (index : Nat) (depth : Nat) : Piece :=
+/-- The list item at `index`: its marker, its task marker as its source, and
+its blocks one a line, a step in, its first row hanging after its head
+("Indents", in the module docs). -/
+partial def listItem (context : Context) (index : Nat) : Piece :=
   let own (name : String) : Option Node :=
     (childrenOf context index (·.name == name))[0]?.map (context.nodes[·]!)
   let marker :=
@@ -242,15 +262,15 @@ partial def listItem (context : Context) (index : Nat) (depth : Nat) : Piece :=
     match own "task" with
     | some found => slice context.source found.start found.stop ++ " "
     | none => ""
-  let indent := String.ofList (List.replicate (2 * depth) ' ')
-  let blocks :=
-    (childrenOf context index isBlock).map fun child =>
-      if context.nodes[child]!.name == "list" then node context child (depth + 1)
-      else node context child depth
-  let body := Piece.join blocks "\n"
-  let head := indent ++ marker ++ " " ++ task
-  (Piece.after head body).under
-    #[span indent.utf8ByteSize (indent.utf8ByteSize + marker.utf8ByteSize) "text.list-marker"]
+  let blocks := (childrenOf context index isBlock).map (node context)
+  let body := (Piece.join blocks "\n").indentedBy context.options.indent
+  let head := marker ++ " " ++ task
+  let item := (Piece.after head body).under #[span 0 marker.utf8ByteSize "text.list-marker"]
+  -- The step over the blocks, then the first row's hang, then the blocks'
+  -- own: a later one over a row wins.
+  let hang : WrapIndent := { start := 0, stop := 0, rest := .lead head.utf8ByteSize }
+  { item with
+    indents := item.indents.extract 0 1 ++ #[hang] ++ item.indents.extract 1 item.indents.size }
 end
 
 /-- The ranges of `[0, size)` that no span of `code` covers, in order. -/
@@ -276,7 +296,7 @@ def render (options : Options) (parsed : Parsed) (source : String) (start stop :
   match top with
   | none => {}
   | some index =>
-    let piece := node context index 0
+    let piece := node context index
     let code :=
       (piece.spans.filter (·.face == ⟨"text.code-block"⟩)).map fun span => (span.start, span.stop)
     let prose :=

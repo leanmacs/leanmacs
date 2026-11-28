@@ -19,7 +19,8 @@ import ModelTest.Support.Markdown
 # Model tests: `Editor/Markdown/View.lean`
 
 The model tests of `Editor/Markdown/View.lean`: `markdownViewChecks`,
-`markdownTableViewChecks` and `markdownAppendChecks`. Each runs commands
+`markdownTableViewChecks`, `markdownAppendChecks` and
+`markdownIndentViewChecks`. Each runs commands
 that render into a read-only buffer on the stepped loop driver over the
 editor's models, the syntax tree model answering the fixtures' canned layers
 (`ModelTest.Support.Markdown.canned`) and the loop's language table the
@@ -85,7 +86,8 @@ def keepResult (buffer : BufferId) (result : Except Markdown.Refusal Unit) : Edi
 - `reply-append`: the reply's next chunk, the chunk's index the value
   `chunk` of `reply`, appended to `reply`;
 - `reply-whole`: `reply.md`, whole, into a new buffer `reply-whole`, with
-  the root. -/
+  the root;
+- `lists`: `lists.md` into a new buffer `lists`. -/
 def markdownViewCommands : List (String × Dispatched) :=
   [("render", fun call => do
       let some doc ← generated call "doc" | return none
@@ -162,6 +164,10 @@ def markdownViewCommands : List (String × Dispatched) :=
       let some whole ← generated call "reply-whole" | return none
       keepResult whole
           (← whole.renderMarkdown Support.Markdown.reply.source { root := some markdownRoot })
+      return none),
+    ("lists", fun call => do
+      let some lists ← generated call "lists" | return none
+      keepResult lists (← lists.renderMarkdown Support.Markdown.lists.source)
       return none)]
 
 /-- A driver whose window shows an empty buffer, with each of
@@ -177,7 +183,7 @@ def markdownDriver : Option TestDriver :=
           ("C-c t", invoke "table"), ("C-c w", invoke "whole"), ("C-c s", invoke "stream"),
           ("C-c a", invoke "append"), ("C-c e", invoke "reply"), ("C-c n", invoke "reply-append"),
           ("C-c y", invoke "reply-whole"), ("C-c k", invoke "append-unknown"),
-          ("C-c b", invoke "append-absent")]
+          ("C-c b", invoke "append-absent"), ("C-c l", invoke "lists")]
         markdownViewCommands with
       registered := { languages := Language.shipped.toList } }
   let model := { editorModel with syntaxTree := { once := Support.Markdown.canned } }
@@ -451,5 +457,86 @@ def markdownAppendChecks : List Check :=
                 reply.stops == whole.stops &&
                 reply.markdown.map (·.rendered) == some 3
             | _, _ => false }]
+
+/-- The display model over the last scene `driver` published, knowing the
+text of the buffer called `name`, in the editor model's cells of 1 by 1, so
+that a point is a cell; with the snapshot view 0 shows and that text. -/
+def displayedIn (driver : TestDriver) (name : String) :
+    Option (DisplayModel × SnapshotId × String) := do
+  let view ← markdownView driver
+  let buffer ← markdownBuffer driver name
+  let text ← markdownText driver buffer
+  let scene ← driver.model.display.scenes.back?
+  return ({
+        cells := { advance := 1, lineHeight := 1 }, texts := #[(view.snapshot, text)]
+        published := #[scene] },
+      view.snapshot, text)
+
+/-- The x of the spot of `position` of `snapshot` in `model`, in a view
+`width` wide and tall enough for every row, shown from `anchor`. -/
+def spotX (model : DisplayModel) (snapshot : SnapshotId) (width anchor position : Nat) :
+    Option Nat :=
+  ((model.spot { snapshot, width, height := 1000, anchor, position }).toOption.join).map (·.x)
+
+/-- The starts of the rows of `snapshot` in `model` a view `width` wide
+shows from `anchor` that start before `stop`. -/
+def rowStarts (model : DisplayModel) (snapshot : SnapshotId) (width anchor stop : Nat) :
+    Array Nat :=
+  (((model.rows { snapshot, width, height := 1000, anchor }).toOption.getD #[]).map
+        (·.start)).filter
+    (· < stop)
+
+/-- The checks that a rendered list item's wrapped lines continue under its
+text and a block quote's are indented by its depth, over `lists.md` on the
+loop's driver, laid out by the display model under the scene the loop
+published (**criteria 5 and 6**). -/
+def markdownIndentViewChecks : List Check :=
+  let expected :=
+    Markdown.render viewOptions Support.Markdown.lists.source Support.Markdown.lists.layers
+  let rendered := markdownDriver.map (markdownFed · "C-c l")
+  [{  name :=
+        "renderMarkdown of lists.md gives the buffer, and its published view, the description's indents"
+      run :=
+        pure <|
+          match rendered with
+          | none => false
+          | some driver =>
+            let indents := expected.description.indents
+            markdownValue driver "lists" "result" == some (.str "ok") && !indents.isEmpty &&
+              ((markdownBuffer driver "lists").map (·.indents)) == some indents &&
+              ((markdownView driver).map (·.indents)) == some indents },
+    { name :=
+        "a wrapped nested list item continues under the text after its marker: its second row starts at the x of its text's first character, past the item's first-line indent of 16"
+      run :=
+        pure <|
+          match rendered.bind (displayedIn · "lists") with
+          | none => false
+          | some (model, snapshot, text) =>
+            let (start, stop) := over text "• two point one"
+            -- 26 cells: 10 after the indent of 16, which "two point one"
+            -- does not fit.
+            let starts := rowStarts model snapshot 26 start stop
+            let after := start + "• ".utf8ByteSize
+            match starts[1]? with
+            | none => false
+            | some second =>
+              spotX model snapshot 26 start second == spotX model snapshot 26 start after &&
+                (spotX model snapshot 26 start after).any (· > 16) &&
+                spotX model snapshot 26 start start == some 16 },
+    { name := "every row of a wrapped nested quote is 32 points in, and the quote's 16"
+      run :=
+        pure <|
+          match rendered.bind (displayedIn · "lists") with
+          | none => false
+          | some (model, snapshot, text) =>
+            let (start, stop) := over text "nested quote"
+            let (outer, outerStop) := over text "A quote"
+            -- 40 cells: 8 after the indent of 32, which "nested quote" does
+            -- not fit.
+            let nested := rowStarts model snapshot 40 start stop
+            let quote := rowStarts model snapshot 40 outer outerStop
+            nested.size ≥ 2 && nested.all (spotX model snapshot 40 start · == some 32) &&
+              !quote.isEmpty &&
+              quote.all (spotX model snapshot 40 outer · == some 16) }]
 
 end ModelTest

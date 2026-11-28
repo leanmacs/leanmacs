@@ -14,8 +14,8 @@ The core call a package renders a Markdown document into a buffer with
 - **`BufferId.renderMarkdown id source options`** parses `source` once
   through the syntax tree port (`Markdown.parse`), renders every block
   (`Markdown.render`), measures each table into align-to stops, and writes
-  the buffer: its whole text, then its spans, stops, links and foldable
-  ranges, then the document itself (`Buffer.markdown`).
+  the buffer: its whole text, then its spans, stops, wrap indents, links and
+  foldable ranges, then the document itself (`Buffer.markdown`).
 - **`BufferId.appendMarkdown id more`** extends the document the buffer
   holds with `more`: it parses only the document's tail (`Doc.tail`),
   renders only the tail's blocks (`Doc.extend`), measures only their
@@ -123,8 +123,8 @@ def measureFrom (doc : Doc) (first : Nat) : DisplayM Doc := do
   return { doc with blocks }
 
 /-- Writes `doc` into the buffer `id`: its text from `start` to its end
-replaced with the description's from `start`, then its spans, stops, links
-and foldable ranges, then the document. -/
+replaced with the description's from `start`, then its spans, stops, wrap
+indents, links and foldable ranges, then the document. -/
 def apply (id : BufferId) (doc : Doc) (start : Nat) : EditorM (Except Refusal Unit) := do
   let description := doc.description
   id.writing do
@@ -137,6 +137,7 @@ def apply (id : BufferId) (doc : Doc) (start : Nat) : EditorM (Except Refusal Un
         text.replaceRange start length (slice description.text start description.text.utf8ByteSize)
         discard <| id.setSpans description.spans
         discard <| id.setStops doc.stops
+        discard <| id.setIndents description.indents
         discard <| id.setLinks description.links
         discard <| id.setFolds description.folds
         discard <| EditorState.ask (.setMarkdown id (some doc))

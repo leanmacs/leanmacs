@@ -1438,11 +1438,14 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   unlinked with no root; `markdownFoldChecks`, the exact foldable ranges of
   `folds.md`: each heading's to the next of the same or a higher level and
   each fence's over its rows, an empty fence's over its empty row, their
-  keys and placeholders, every one unfolded; `markdownListChecks`, `lists.md`'s exact text, a nested item
-  two spaces in, a bullet as `•`, an ordered item's number kept, a quote's
+  keys and placeholders, every one unfolded; `markdownListChecks`, `lists.md`'s exact text, no
+  spaces of indent, a bullet as `•`, an ordered item's number kept, a quote's
   `>` and a thematic break's markup gone, `text.list-marker` over each
   marker alone and `text.quote` over the quote and the nested quote;
-  `markdownStreamChecks`, `stream.md` streamed in chunks: each
+  `markdownIndentChecks`, `lists.md`'s indents: each item hanging after its
+  marker and space, a nested item's first line 16 points in, a quote's lines
+  16 and a nested quote's 32, no other line indented, and `stream.md`'s
+  indents the same whole and streamed; `markdownStreamChecks`, `stream.md` streamed in chunks: each
   append parses exactly its checked-in tail and renders only that tail's
   blocks, counted by `Doc.rendered`, the document it ends with describes
   the whole render, a kept heading's fold grows over the appended blocks,
@@ -1467,7 +1470,11 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   chunk resolved against the first render's root), and keeping a toggled
   fold of the prefix folded; and a reply appended to an empty render, one
   unfinished paragraph then the rest, ending with the text, spans, links
-  and stops a whole render of `reply.md` puts;
+  and stops a whole render of `reply.md` puts; `markdownIndentViewChecks`,
+  `lists.md` rendered into a buffer with its description's indents on the
+  buffer and its view, and, laid out by the display model under the scene
+  published, a wrapped nested item continuing under its text and every row
+  of a wrapped nested quote 32 points in;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1837,10 +1844,12 @@ def checks : List Check :=
     markdownLinkChecks ++
     markdownFoldChecks ++
     markdownListChecks ++
+    markdownIndentChecks ++
     markdownStreamChecks ++
     markdownViewChecks ++
     markdownTableViewChecks ++
     markdownAppendChecks ++
+    markdownIndentViewChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++

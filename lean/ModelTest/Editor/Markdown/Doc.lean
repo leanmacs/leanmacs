@@ -1,3 +1,4 @@
+import Editor.Display.Model
 import Editor.Markdown.Doc
 import ModelTest.Check
 import ModelTest.Support.Markdown
@@ -8,7 +9,7 @@ import ModelTest.Support.Markdown
 The model tests of the Markdown renderer (`Editor/Markdown/Doc.lean` and the
 modules it imports): `markdownProseChecks`, `markdownHeadingChecks`,
 `markdownTableChecks`, `markdownLinkChecks`, `markdownFoldChecks`,
-`markdownListChecks` and `markdownStreamChecks`. Each renders a fixture of `tests/markdown/` from its
+`markdownListChecks`, `markdownIndentChecks` and `markdownStreamChecks`. Each renders a fixture of `tests/markdown/` from its
 canned layers (`ModelTest.Support.Markdown`) and asserts the exact rendered
 text and the span, link or fold over named substrings. The root module
 `ModelTest` runs them; its module doc says what each shows.
@@ -321,23 +322,23 @@ def markdownListChecks : List Check :=
   let markers :=
     (lists.spans.filter (·.face == ⟨"text.list-marker"⟩)).map fun span => (span.start, span.stop)
   [{  name :=
-        "lists.md renders an item a line, two spaces a nesting level, a bullet as •, an ordered item's own number, a quote's blocks without their > and a thematic break as ———"
+        "lists.md renders an item a line with no spaces of indent, a bullet as •, an ordered item's own number, a quote's blocks without their > and a thematic break as ———"
       run :=
         pure <|
           text ==
-              "• one\n• two\n  • two point one\n  • two point two\n• three\n\n1. first\n2. second\n\nA quote\n\nnested quote\n\n———" &&
+              "• one\n• two\n• two point one\n• two point two\n• three\n\n1. first\n2. second\n\nA quote\n\nnested quote\n\n———" &&
             !text.any (· == '>') &&
             !text.any (· == '-') },
     { name :=
-        "text.list-marker is over each item's marker alone, a nested item's after its indent, and over nothing else"
+        "text.list-marker is over each item's marker alone, a nested item's too, and over nothing else"
       run :=
         pure <|
           let line (item : String) : Nat := (over text item).1
           markers ==
               #[overNth text "•" 0, overNth text "•" 1, overNth text "•" 2, overNth text "•" 3,
                 overNth text "•" 4, over text "1.", over text "2."] &&
-            (overNth text "•" 2).1 == line "  • two point one" + 2 &&
-            (overNth text "•" 3).1 == line "  • two point two" + 2 &&
+            (overNth text "•" 2).1 == line "• two point one" &&
+            (overNth text "•" 3).1 == line "• two point two" &&
             (over text "1.").1 == line "1. first" },
     { name :=
         "text.quote is over the quote's blocks, the nested quote's too, and over nothing outside the quote"
@@ -483,5 +484,50 @@ def markdownStreamChecks : List Check :=
           docs.back!.source == Support.Markdown.reply.source &&
             docs.back!.description == whole.description &&
             !whole.description.tables.isEmpty }]
+
+/-- The wrap indent of the line of `description`'s text that holds `offset`,
+as the display reads it (`DisplayModel.indentOf`): the later listed of
+those that cover the line, as its first-line indent and its
+continuation. -/
+def indentAt (description : Description) (offset : Nat) : Option (Nat × ContinuationIndent) :=
+  let text := description.text
+  (DisplayModel.indentOf text description.indents (DisplayModel.lineOf text offset)).map
+    fun indent => (indent.first, indent.rest)
+
+/-- The checks that a rendered list item hangs under its text and a block
+quote is indented by its depth, as indents on the description (the
+renderer half of **criteria 5 and 6**). -/
+def markdownIndentChecks : List Check :=
+  let lists := described Support.Markdown.lists
+  let text := lists.text
+  let on (needle : String) : Option (Nat × ContinuationIndent) :=
+    indentAt lists (over text needle).1
+  [{  name :=
+        "each item of lists.md hangs after its marker and its space, • 4 bytes and 1. 3, its first line at 0 at the top level and 16 points in a nested list"
+      run :=
+        pure <|
+          on "• one" == some (0, .lead 4) && on "• two\n" == some (0, .lead 4) &&
+            on "• two point one" == some (16, .lead 4) &&
+            on "• two point two" == some (16, .lead 4) &&
+            on "• three" == some (0, .lead 4) &&
+            on "1. first" == some (0, .lead 3) &&
+            on "2. second" == some (0, .lead 3) },
+    { name :=
+        "a block quote's lines are a step in, first and continuation alike, and a nested quote's two steps"
+      run :=
+        pure <|
+          on "A quote" == some (16, .points 16) && on "nested quote" == some (32, .points 32) },
+    { name := "no line outside a list or a quote has an indent"
+      run :=
+        pure <|
+          let blanks := [(over text "• three\n").2, (over text "2. second\n").2]
+          blanks.all (indentAt lists · == none) && on "———" == none },
+    { name := "stream.md rendered whole and appended in chunks has one set of indents"
+      run :=
+        pure <|
+          let whole :=
+            Markdown.render markdownOptions Support.Markdown.stream.source
+              Support.Markdown.stream.layers
+          streamed.1.back!.description.indents == whole.description.indents }]
 
 end ModelTest
