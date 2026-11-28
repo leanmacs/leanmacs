@@ -634,7 +634,13 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
         let some extent := covered[0]? | throw .badSelection
         let limit ← text.motion .lineEnd (← text.offsetOf ⟨← lastLine text, 0⟩)
         let startRow ← rowOf text extent.start
-        let stopRow ← rowOf text extent.stop
+        -- The row of the last byte covered: the stop is exclusive, and a
+        -- range that ends on a line break stops at the next row's start.
+        let stopRow ←
+          if extent.stop > extent.start then
+            rowOf text (extent.stop - 1)
+          else
+            pure startRow
         let widenedStart ←
           if (Fold.cover shown startRow).isSome then
             text.offsetOf ⟨firstOf startRow, 0⟩

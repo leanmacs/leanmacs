@@ -913,6 +913,39 @@ def evilSelectionChecks : List Check :=
               (fun driver => (evilFed driver "V j y").loop.state.register? Evil.unnamed) ==
             some (some { text := "ab1\nab2\nab3\nab4\n", linewise := true }) },
     { name :=
+        "v j y from the row above a folded range yanks from the anchor through the end of the range's last row, v k y from the row below it from the range's first row to the anchor, and v j y with the anchor inside the range, past its first byte, from the range's first row"
+      run :=
+        pure <|
+          let fold : Foldable :=
+            { start := 8, stop := 19, key := "f", text := "[2-4]", folded := true }
+          let yanked (fixture typed : String) : Option (Option Register) :=
+            (foldedEvilDriver fixture #[fold]).map
+              (fun driver => (evilFed driver typed).loop.state.register? Evil.unnamed)
+          yanked "ab0\na|b1\nab2\nab3\nab4\nab5" "v j y" == some (charwise "b1\nab2\nab3\nab4") &&
+            yanked "ab0\nab1\nab2\nab3\nab4\na|b5" "v k y" == some (charwise "ab2\nab3\nab4\nab") &&
+            yanked "ab0\nab1\nab2\na|b3\nab4\nab5" "v j y" == some (charwise "ab2\nab3\nab4\nab") },
+    { name :=
+        "a v selection that ends on the line break of the row above a folded range touches only that row: v y and v d from an empty row, and v $ y and v $ d, leave the range alone"
+      run :=
+        pure <|
+          -- Rows 2 to 4 folded, below an empty row and below `ab1`.
+          let belowEmpty : Foldable :=
+            { start := 5, stop := 16, key := "f", text := "[2-4]", folded := true }
+          let belowFull : Foldable :=
+            { start := 8, stop := 19, key := "f", text := "[2-4]", folded := true }
+          let fed (fixture : String) (fold : Foldable) (typed : String) : Option EvilDriver :=
+            (foldedEvilDriver fixture #[fold]).map (evilFed · typed)
+          let register (driver : Option EvilDriver) : Option (Option Register) :=
+            driver.map (·.loop.state.register? Evil.unnamed)
+          let empty := "ab0\n|\nab2\nab3\nab4\nab5"
+          let full := "ab0\n|ab1\nab2\nab3\nab4\nab5"
+          register (fed empty belowEmpty "v y") == some (charwise "\n") &&
+            (fed empty belowEmpty "v d").bind evilText == some "ab0\nab2\nab3\nab4\nab5" &&
+            register (fed empty belowEmpty "v d") == some (charwise "\n") &&
+            register (fed full belowFull "v $ y") == some (charwise "ab1\n") &&
+            (fed full belowFull "v $ d").bind evilText == some "ab0\nab2\nab3\nab4\nab5" &&
+            register (fed full belowFull "v $ d") == some (charwise "ab1\n") },
+    { name :=
         "a count typed before the operator of a visual selection changes nothing: the selection is what is acted on"
       run :=
         operatorRows
