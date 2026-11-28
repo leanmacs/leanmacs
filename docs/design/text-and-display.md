@@ -1504,7 +1504,8 @@ sources' buffers' spans, translated to each excerpt ("As built: showing
 excerpts"); a buffer's links, each in the face `text.link` ("Followable
 spans, as built"); a buffer's own spans, byte ranges each with a face that
 the buffer's owner sets (`Buffer.spans`, `lean/Editor/State.lean`,
-"Buffers"), such as the compile mode's locations in a compilation buffer;
+"Buffers"), such as the compile mode's locations in a compilation buffer
+and a rendered Markdown document's faces ("Rendered markdown, as built");
 then, over each tracked excerpt no scene has shown, a span in
 `review-unexamined` ("As built: the review buffer"); then the matches of
 the last search, in the face `search-match`. A later decoration is drawn
@@ -1877,6 +1878,115 @@ generated buffer's text that names a target, followed from the keyboard
   of its own, `compile-goto-error` and `Jumps.visitLocated`; phase 7 moves
   compile).
 
+### Rendered markdown, as built
+
+The rich text display roadmap's phase 5 built a rendered-markdown view: a
+Markdown document rendered into the parts a generated buffer takes, by one
+core call (`lean/Editor/Markdown/`).
+
+- **Two calls, and the document on the buffer.**
+  `BufferId.renderMarkdown id source options` renders a whole document into
+  the buffer `id`: its text, then its spans, align-to stops, links and
+  foldable ranges, written inside `BufferId.writing`, so a read-only buffer
+  is written by its owner. `BufferId.appendMarkdown id more` extends the
+  document the buffer holds (`Buffer.markdown`, set by the state request
+  `setMarkdown`) and is refused `notRendered` on a buffer that holds none.
+  Each is refused, with the buffer as it was, for an absent buffer and for a
+  parse the syntax tree port refused. The options are the root a relative
+  link or `path:line` is resolved against (none: not linked) and the gap
+  between table columns (16 points). The document keeps both, so an append
+  renders its tail as the first render did; a fence's faces are a function
+  of the language table, read again on each call. As with spans, stops,
+  links and folds, the buffer is its owner's: an owner that also writes the
+  text by hand renders again.
+- **Parsed once, by the library; rendered by Lean.** The text is parsed
+  once, whole, through one stateless request of the syntax tree port
+  (`SyntaxTree.parseOnce`, `rust-library.md`, "A text parsed once"), with
+  the block grammar `markdown` as the host: its layers come back as plain
+  captures, the Markdown layers' of a query kind of our own, `rendered`
+  (`crates/editor-syntax-treesitter/queries/markdown*/rendered.scm`), and
+  a fence's of its grammar's shipped highlights. A table's cells are inline
+  layers too, by the rendered injections. A pure Lean renderer turns the
+  source and the layers into a document of top-level blocks, each rendered
+  to a piece (`Editor/Markdown/Block.lean`, `Inline.lean`), whose pieces
+  joined give a layout-free description (`Markdown.Description`): text with
+  the markup left out, face spans, table cells, links and foldable ranges.
+  The renderer's tests run on fixtures checked in with the library's
+  parses (`tests/markdown/`), held to the library by
+  `ContractTest.markdownCaseChecks`.
+- **What renders how.** Prose (everything outside code) is drawn in
+  `text.prose`, the proportional face, and every code part sets monospace
+  itself (phase 1). Spans of a block go from outer to inner:
+
+  | Block | Rendered text | Spans |
+  |---|---|---|
+  | heading | its text, without `#` or the underline | `text.heading.<level>` over it |
+  | paragraph | its inline text, a soft break a space, a hard break a line feed | — |
+  | fenced code block | its content rows, the fence lines left out | `text.code-block` over them; its layer's captures in the faces config's language table gives them |
+  | indented code block | its content rows | `text.code-block` |
+  | table | the header row, then the body rows; the delimiter row and the pipes left out; cells joined by one space | `text.table-header` over the header cells |
+  | list | an item a line: two spaces a nesting level, then `•` (or the item's own number and `.` or `)`), a space and its blocks | `text.list-marker` over the marker |
+  | block quote | its blocks, the `>` markers left out | `text.quote` over them |
+  | thematic break | `———` | — |
+
+  Inline, an emphasis, a strong emphasis and a code span lose their
+  delimiters and are drawn in `text.emphasis`, `text.strong` and
+  `text.code-span`; a link shows its text alone; an autolink its address
+  without the angles; a backslash escape its character. Top-level blocks
+  are one empty line apart.
+- **Links and `path:line` references** are the buffer's links
+  (`setLinks`), drawn in `text.link` and followed by the links mode
+  (phase 3). A destination in a web scheme (`http`, `https`, `mailto`,
+  `ftp`, `file`) is a URL; `path:line[:column]`, its path holding a `/` or
+  a `.`, is a location at that row and column from 0; any other scheme is a
+  reference for its resolver (`rdm:task/x`); anything else is a path at its
+  first row. A relative path is resolved against the root. In prose and in
+  code spans, never in fenced code, a bare `http(s)://` token and a bare
+  `path:line` are links too (`Editor/Markdown/Target.lean`). An email
+  autolink links to `mailto:`.
+- **Folds.** Each heading is a foldable range from its text to the start of
+  the next heading of the same or a higher level, or to the end, keyed
+  `heading <n>` by its ordinal, its placeholder its text in its heading face
+  and ` …`. Each fenced code block with rows is a range over them, keyed
+  `code <n>`, its placeholder `<language or code>, <k> lines` (`1 line`
+  for one) in `text.code-block`; a fence with no rows has none. All are
+  declared unfolded; `setFolds` merges by key, so
+  a toggle survives an append.
+- **Tables are measured when applied.** A table in the description is rows
+  of cell ranges, layout-free. The call measures each cell with the spans
+  over it (`Columns.measureCells`, `Display.measure`), lays the columns out
+  past the widest cell of each column before and the wider of the gap and a
+  space (`Columns.starts`), and puts a stop at each later cell's first byte
+  (`Columns.stopsAt`). Columns are left-aligned. The stops are kept on their
+  block, and only the blocks an update renders are measured: a theme or
+  font change re-measures a table only when its block is rendered again.
+- **Streaming: the tail rule.** An append keeps every top-level block but
+  the last, parses the source from the last block's start with the new
+  text alone, and renders only that tail's blocks (`Doc.extend`, counted by
+  `Doc.rendered`). Markdown's block structure before the start of the last
+  top-level block cannot change on an append: a setext underline, a
+  table's delimiter row, a lazy continuation, a list's next item and an
+  unclosed fence each extend or change the last block alone. The heading
+  folds, whose ranges an append can move, and the fold keys are made from
+  every piece on each update. The buffer's text is rewritten only from
+  where it first changes (`Doc.firstChanged`, the end of the last block
+  kept). The document an append makes describes what rendering the whole
+  source does (`ModelTest.markdownStreamChecks`). A long document is parsed
+  on the editor thread, as the request is answered on the thread that asks
+  (an open question, `rust-library.md`).
+- **What it does not render.** An image shows its description, linked to
+  its source, never the image. HTML shows as its source: an HTML block in
+  `text.code-block`, inline HTML as prose. Reference-style links (and their
+  definitions), entities, strikethrough and task-list markers are shown as
+  their source (rdm task `rendered-markdown-unrendered-constructs`). GFM's
+  column alignment (`:-:`, `-:`) is read and not built: every column is
+  left-aligned. A fence is highlighted with its grammar's shipped
+  highlights alone, so a mode's own highlights source is not used for it,
+  and a grammar registered at run time, which ships none, draws its fences
+  in `text.code-block` alone (rdm task `rendered-markdown-fence-highlights`).
+  Nested lists and quotes have no hanging or depth indent beyond a list's
+  two spaces a level: that is phase 6.
+
 ### Text is the only layout engine
 
 The library is a text display engine, not a GUI toolkit (decided
@@ -1888,7 +1998,10 @@ text layout places:
   columns or buttons of its own. Built as text with faces ("Decorations",
   as built). Followable spans are built for a buffer's text ("Followable
   spans, as built") and not in a block, which the cursor cannot enter.
-- **Tables, lists and pickers** are text views over generated text.
+- **Tables, lists and pickers** are text views over generated text. A
+  rendered Markdown table is built through it: its rows are text, and its
+  columns align-to stops measured when it is applied ("Rendered markdown,
+  as built").
 - **Columns are aligned with align-to stops** in text layout, the one
   primitive this adds (built by the rich text display roadmap's phase 2;
   "Display layers", as built, "Align-to stops"). A stop (`AlignStop`, a

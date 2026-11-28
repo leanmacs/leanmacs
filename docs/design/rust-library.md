@@ -2683,18 +2683,48 @@ its buffer's text (`lean/Editor/Highlight.lean`).
 Built by the syntax roadmap's phase 3 (2026-11-16).
 
 **Where each query comes from.** The port's `QueryKind` is `Highlights`,
-`Injections`, `TextObjects` and `Indents`, and the adapter's table lists,
-for each grammar, the queries it ships by kind. A grammar crate's own query
-is used wherever it ships one, as phase 2 decided for highlights:
+`Injections`, `TextObjects`, `Indents` and `Rendered`, and the adapter's
+table lists, for each grammar, the queries it ships by kind. A grammar
+crate's own query is used wherever it ships one, as phase 2 decided for
+highlights:
 
-| Grammar | Highlights | Injections | Text objects | Indents |
-|---|---|---|---|---|
-| `rust` | the crate's | the crate's (a macro's or a macro rule's token tree, as Rust, its children included) | ours | ours |
-| `json` | the crate's | none | none | none |
-| `markdown` | ours, the crate's block query changed (below) | the crate's, of the block grammar (a fence's code in the language its info string names, and each `(inline)` node as `markdown_inline`) | none | none |
-| `markdown_inline` | ours, the crate's inline query changed (below) | the crate's, of the inline grammar (`html` and `latex`, which the service has not, so nothing) | none | none |
-| `toml` | the crate's | none | none | none |
-| `lean` | upstream's, vendored with the grammar | none | none | none |
+| Grammar | Highlights | Injections | Text objects | Indents | Rendered |
+|---|---|---|---|---|---|
+| `rust` | the crate's | the crate's (a macro's or a macro rule's token tree, as Rust, its children included) | ours | ours | none |
+| `json` | the crate's | none | none | none | none |
+| `markdown` | ours, the crate's block query changed (below) | the crate's, of the block grammar (a fence's code in the language its info string names, and each `(inline)` node as `markdown_inline`) | none | none | ours |
+| `markdown_inline` | ours, the crate's inline query changed (below) | the crate's, of the inline grammar (`html` and `latex`, which the service has not, so nothing) | none | none | ours |
+| `toml` | the crate's | none | none | none | none |
+| `lean` | upstream's, vendored with the grammar | none | none | none | none |
+
+The rendered queries (`queries/markdown/rendered.scm`,
+`queries/markdown_inline/rendered.scm`) are a kind of our own, as Rust's
+indents and text objects are: which nodes a rendered view of Markdown reads,
+its blocks, its spans and the markup it leaves out, each opening with a
+comment naming the Lean module that reads it
+(`lean/Editor/Markdown/Parsed.lean`). The highlights captures cannot carry
+that structure: top-level blocks, table cells and rows, every delimiter to
+leave out, a link's destination apart from its text. A declared grammar
+reads no `rendered.scm`.
+
+**A text parsed once** (the rich text display roadmap's phase 5).
+`editor_syntax::once::parse` parses a text whole with a host grammar, finds
+its layers by the injection rule over a table of languages (each a grammar,
+the query its layers are answered with and its own injections query,
+through `inject::Languages`), and answers each layer, the host first at
+depth 0, with its query's captures over the hull of its ranges, uncut. It
+keeps nothing. `editor_ffi_syntax_parse_once` is its C function: each pair
+it is handed, a grammar's name and a kind, is a language answered with that
+grammar's shipped query of the kind; a Markdown host asked with `Rendered`
+finds its layers with the rendered injections
+(`TreeSitter::rendered_injections`: the block grammar's injections and
+`queries/markdown/rendered-injections.scm`, which makes each table cell an
+inline layer). The shipped queries it compiles are kept process-wide by
+their grammar and source, so a grammar registered over a compiled-in name,
+which ships none, never meets a query of the old one. It runs on the
+calling thread, the editor thread, and touches no session and no worker:
+what the rendered-markdown view asks (`text-and-display.md`, "Rendered
+markdown, as built").
 
 `tree-sitter-rust` 0.24.2 ships no `indents.scm` or `textobjects.scm`, so
 Rust's are this repository's (`crates/editor-syntax-treesitter/queries/rust/`,
@@ -2957,6 +2987,11 @@ better generic primitive, not a feature-specific service.
 
 ## Open questions
 
+- **A long document parsed once off the editor thread.** A text parsed once
+  (`editor_ffi_syntax_parse_once`) is answered on the thread that asks: a
+  rendered-markdown view parses the whole document on its first render and
+  then only each append's tail. A long document's first render would be
+  better parsed in a job, its answer applied when it arrives.
 - **Threads or an async runtime inside the library.** Lean pulls events, so
   the library needs no scheduler of its own. Plain threads and channels are
   the starting point; an async runtime (tokio) would only be justified by
