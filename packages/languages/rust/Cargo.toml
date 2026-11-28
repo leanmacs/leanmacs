@@ -159,5 +159,12 @@ tree-sitter-toml-ng = { version = "=0.7.0" }
 # notice travels with the library at `grammars/licenses/tree-sitter-yaml`.
 tree-sitter-yaml = { version = "=0.7.2" }
 
+[dev-dependencies]
+# The temporary directory the on-demand install check
+# (`tests/default_install.rs`, `mise run languages-install-check`) lays a
+# config and an install out in, pinned as every crate of the workspace pins
+# it, with its default features off as they do.
+tempfile = { version = "=3.27.0", default-features = false }
+
 [lints]
 workspace = true

@@ -1336,6 +1336,23 @@ description = "On demand, never part of ci: install a set with a package that sh
 depends = ["lean"]
 run = 'LEANMACS_SYSROOT="$(cd lean && lean --print-prefix)" cargo test --locked -p editor-syntax-fixture-ini --test package_install -- --ignored --nocapture'
 
+# On demand: run it by hand, and do not add it to `ci` or to hk.pkl (the
+# operator's decision, 2026-11-26): it installs a package set, about 420 MB,
+# and no gate step installs one (docs/design/packages.md, "The install").
+# The languages package's wiring checks over the default set's build
+# (`ffi-test`) cover the path of the grammars it ships in the gate. It
+# generates a config directory with no setup of its own, installs the
+# default set with `:editorInstall` into a temporary directory of its own,
+# and runs the installed editor headless on the Rust fixture, opened with
+# the Vim scheme's keys (packages/languages/rust/tests/default_install.rs;
+# docs/dev-practices/on-demand-checks.md, "The default set's grammars,
+# installed, on demand"). It needs the default set's editor, which `lean`
+# builds.
+[tasks.languages-install-check]
+description = "On demand, never part of ci: install the default set with no config into a temporary directory and see the installed editor, run headless, highlight a .rs file with the languages package's grammar (packages/languages/rust/tests/default_install.rs)"
+depends = ["lean"]
+run = 'LEANMACS_SYSROOT="$(cd lean && lean --print-prefix)" cargo test --locked -p languages-grammar-sources --test default_install -- --ignored --nocapture'
+
 [tasks.library-install-check]
 description = "On demand, never part of ci: install a set with a package that declares an already-built native library into a temporary directory, with no cargo on PATH, and see the installed editor load the library from the install once the package's source and the set's build are gone (crates/editor-package-check/tests/package_install.rs)"
 depends = ["lean"]

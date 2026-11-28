@@ -1,0 +1,26 @@
+# The script the installed editor's headless mode runs in the on-demand
+# install check (packages/languages/rust/tests/default_install.rs), with a
+# config directory holding no setup of its own, in a directory holding a
+# copy of the Rust fixture `hello.rs`. Its `highlights` line must be
+# exactly the one `expected` holds.
+
+# The config installs, which starts the core's `register-grammars` job for
+# the grammars of the default set's packages, `languages`' among them.
+reload
+settle
+
+# `:` opens the ex line and `e` opens the file, which opens in the code mode
+# with the shipped language `rust`. `join` waits for the load and the
+# registration, whichever ends last highlighting the buffer.
+key : Semicolon shift
+commit e hello.rs
+key <Enter> Enter -
+join
+
+# The scene, whose echo would say a refused registration of a grammar,
+# which the check holds it never does.
+scene
+
+# The faces the package's grammar `rust` and its highlights query draw the
+# fixture in, once the library has delivered its tree.
+highlights

@@ -102,6 +102,13 @@ pins and copy these queries, so their pins move in the same commit.
   package's grammars over the real services; and a set whose package's
   grammar source does not compile fails its build naming the package and
   the grammar.
+- **The on-demand check**, [`rust/tests/default_install.rs`](rust/tests/default_install.rs)
+  (`mise run languages-install-check`, never in the gate): the default set,
+  installed with no config, opens `tests/syntax/rust/hello.rs` highlighted
+  by the package's `rust` grammar, with `tests/install/`'s script, expected
+  line and empty config
+  ([on-demand-checks.md](../../docs/dev-practices/on-demand-checks.md),
+  "The default set's grammars, installed, on demand").
 - It has no headless fixture of its own.
 
 ## Dropping it

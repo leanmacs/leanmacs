@@ -305,6 +305,58 @@ registration. Run it after a change to the install (`editorInstall`), the
 records (`editor.grammars`, `Editor/ModuleLookup.lean`), the staging
 (`editorGrammars`, `editorShipped`) or the install's signing.
 
+## The default set's grammars, installed, on demand
+
+```sh
+mise run languages-install-check
+```
+
+The library compiles in no grammar (`crates/editor-syntax-treesitter`,
+"How grammars are loaded"): every grammar an editor highlights with is a
+package's, the shipped languages' among them, which the default package
+`languages` ships from pinned source ([packages.md](../design/packages.md),
+"A package's grammars"). The task builds what `mise run lean` builds, then
+runs the ignored test `packages/languages/rust/tests/default_install.rs`
+with `LEANMACS_SYSROOT` naming the toolchain's directory (the test panics
+when that is unset). In a temporary directory it owns, it:
+
+- generates a config directory with the default set's editor's
+  `headless --generate`, from `packages/languages/tests/install/config/init.lean`,
+  a root whose `setup` registers nothing, which is "no config" (the editor
+  needs a root module in its config directory to write the directory's
+  lakefile and to install), and resolves it with the toolchain's `lake
+  update --keep-toolchain`;
+- installs it with `lake -d <config> build :editorInstall`, with
+  `EDITOR_INSTALL_DIR` in the temporary directory and the default set's
+  `editor.build`, and reads back that the install copied the package's
+  `grammars/languages/<platform>/libtree-sitter-rust.<ext>` and wrote the
+  line naming `languages` at `grammars/languages` in its `editor.grammars`;
+- runs the installed editor headless, in a directory holding a copy of
+  `tests/syntax/rust/hello.rs`, on `packages/languages/tests/install/script`:
+  `reload` and `settle` stand in for the window mode's first install, which
+  starts the core's `register-grammars` job; the file is opened with the
+  Vim scheme's keys (`:e hello.rs`); and `highlights` is asked. It holds the
+  `highlights` line to `packages/languages/tests/install/expected` and the
+  output to no refusal of any grammar.
+
+It writes nothing outside its temporary directory but what the default
+set's and the core's builds would write in place, which `mise run lean`
+has already built; it takes about 7 s after that build (2026-11-27, macOS
+arm64). It ends `languages-install-check: the default set,
+installed with no config, highlights hello.rs with the languages package's
+grammar`.
+
+It is not part of the gate (the operator's decision, 2026-11-26): an
+install is about 420 MB, and no gate step installs a set
+([packages.md](../design/packages.md), "The install"). The gate covers the
+path through the languages package's wiring checks over the default set's
+build (`LanguagesTest.Linked.realChecks`, in `mise run ffi-test`: every
+grammar staged, a `.rs` file and a Markdown paragraph's inline markup
+drawn with the package's grammars), and the model checks of the
+declarations and of a shipped language's file drawn plain until the job's
+command. Run it after a change to the grammars `languages` ships, to its
+grammar-source crate, or to anything the check above names.
+
 ## A package's library, installed, on demand
 
 ```sh

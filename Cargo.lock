@@ -1939,6 +1939,7 @@ name = "languages-grammar-sources"
 version = "0.1.0"
 dependencies = [
  "editor-grammar-build",
+ "tempfile",
  "tree-sitter-json",
  "tree-sitter-md",
  "tree-sitter-rust",

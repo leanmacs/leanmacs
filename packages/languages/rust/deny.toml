@@ -13,9 +13,9 @@
 # of the editor's it may reach, and that only at build time; the grammars
 # it compiles, each a build-dependency; the trees of `cc` and
 # `serde_json`, which `editor-grammar-build` compiles and locates with; and
-# that of `tempfile`, its dev-dependency, which cargo-deny counts since
-# `editor-grammar-build` is a path dependency, though nothing of it is
-# built for this crate. It
+# that of `tempfile`, this crate's dev-dependency for its on-demand install
+# check, and `editor-grammar-build`'s, though nothing of it is built into
+# the crate's binary. It
 # is no library: a build-time crate whose binary the set's build runs
 # (docs/design/packages.md, "A package's grammars"), linked into nothing.
 #
@@ -62,7 +62,7 @@ allow = [
   { crate = "itoa", reason = "a dependency of serde_json's tree" },
   { crate = "memchr", reason = "a dependency of serde_json's tree" },
   { crate = "zmij", reason = "a dependency of serde_json's tree" },
-  { crate = "tempfile", reason = "`editor-grammar-build`'s dev-dependency, for its compiler's test, which cargo-deny counts in this graph since that crate is a path dependency (=3.27.0); nothing of it is built for this crate" },
+  { crate = "tempfile", reason = "the crate's own dev-dependency, for the on-demand install check (`tests/default_install.rs`), and `editor-grammar-build`'s, for its compiler's test (=3.27.0); nothing of it is built into the crate's binary" },
   { crate = "fastrand", reason = "a dependency of tempfile's tree" },
   { crate = "once_cell", reason = "a dependency of tempfile's tree" },
   { crate = "rustix", reason = "a dependency of tempfile's tree" },
