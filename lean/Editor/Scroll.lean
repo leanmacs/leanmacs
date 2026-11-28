@@ -148,6 +148,11 @@ rows and a spot are asked with the blocks, so the rows shown, the cursor's
 row and the rows a view fits count them. A move is not: a block holds no
 position (`Editor/Display.lean`, "Blocks").
 
+A view with folds (`Area.folds`) asks every question with them: a fold is
+one row to the rows shown, to a spot and to a move, so the follow counts a
+folded range as one row and keeps a cursor below it in view
+(`Editor/Display.lean`, "Folds").
+
 The follow counts text rows, so the anchor it places in such a view may
 show too few rows to hold the cursor's row. **It then settles**: it asks
 the rows from that anchor, and while they do not hold the cursor's row
@@ -241,6 +246,10 @@ structure Area where
   count heights, the rows and a spot, and never by a move (the module docs,
   "Blocks"). None by default. -/
   blocks : Array Block := #[]
+  /-- The view's folds (`View.folds`): asked with by every question, since a
+  fold changes which rows there are (`Editor/Display.lean`, "Folds"). None
+  by default. -/
+  folds : Array Fold := #[]
   deriving DecidableEq, Repr
 
 namespace Area
@@ -253,21 +262,21 @@ is the one definition that says which height a view's rows are asked with
 state's (`EditorState.bottomRow`), and so is the padding
 (`EditorState.paddingOf`). -/
 def ofRect (snapshot : SnapshotId) (rect : Rect) (bottom : Nat) (padding : Padding := {})
-    (blocks : Array Block := #[]) : Area :=
-  { snapshot, width := rect.width, height := rect.height - bottom, padding, blocks }
+    (blocks : Array Block := #[]) (folds : Array Fold := #[]) : Area :=
+  { snapshot, width := rect.width, height := rect.height - bottom, padding, blocks, folds }
 
 /-- The rows the view shows from `anchor`, its blocks counted among them. -/
 def rows (area : Area) (anchor : Nat) : DisplayM (Array Display.Row) :=
   Display.rowsShown
     { snapshot := area.snapshot, width := area.width, height := area.height, anchor
-      padding := area.padding, blocks := area.blocks }
+      padding := area.padding, blocks := area.blocks, folds := area.folds }
 
 /-- Where `position` is drawn in the view when it shows from `anchor`
 (`Display.spotOf`), its blocks counted above it. -/
 def spot (area : Area) (anchor position : Nat) : DisplayM (Option Display.Spot) :=
   Display.spotOf
     { snapshot := area.snapshot, width := area.width, height := area.height, anchor
-      padding := area.padding, position, blocks := area.blocks }
+      padding := area.padding, position, blocks := area.blocks, folds := area.folds }
 
 /-- Where the row that holds `position` starts; `position` itself in a view
 that shows no row. -/
@@ -285,7 +294,7 @@ def away (area : Area) (position : Nat) (lines : Int) : DisplayM Nat := do
         Display.linesFrom
             { snapshot := area.snapshot, width := area.width, across := area.padding.across,
               gutter := area.padding.gutter
-              position, lines, goal := some 0 }).position
+              position, lines, goal := some 0, folds := area.folds }).position
 
 /-- A position of the row `lines` rows above the one that holds `position`,
 as an anchor; the text's first row when there are fewer above. -/

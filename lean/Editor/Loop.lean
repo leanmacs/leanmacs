@@ -1901,12 +1901,21 @@ def views (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
       -- An excerpt buffer's headers, placed by the snapshot shown, so the
       -- follow asks with them (`ExcerptView.blocksOf`).
       let blocks ← ExcerptView.blocksOf target.buffer snapshot
+      -- The buffer's shown folds, so every view of it draws its folded
+      -- ranges as placeholders and the follow asks with them.
+      let folds ←
+        if state.prompt.map (·.view) == some id then
+          pure #[]
+        else
+          do
+            let covered ← Fold.coveredOf text target.buffer.folds
+            pure ((Fold.shown covered).map (·.1.toFold))
       views :=
         views.push
           { id, rect, snapshot, scroll := target.window.scroll,
             selections := #[target.window.selection]
             cursor := report.cursor, decorations := #[], status, statusFace
-            padding := state.paddingOf id, blocks }
+            padding := state.paddingOf id, blocks, folds }
   return (views, shown, refusal)
 
 /-- The face the matches of the last search are drawn in. -/
@@ -1924,20 +1933,28 @@ def spansIn (spans : Array Decoration) (start stop : Nat) : Array Decoration :=
 
 /-- The range of `view`'s snapshot its decorations and its gutter marks are
 read over ("Decorations", in the module docs): from the row of its scroll
-anchor through `rect.height / heights.text + 1` rows below, or the text's
-end; `none` when its anchor is not a marker of its text. -/
+anchor through `rect.height / heights.text + 1` rows below, a shown fold
+counting as one row (`Fold.stepRows`), or the text's end; `none` when its
+anchor is not a marker of its text. -/
 def rangeOf (state : EditorState) (view : View) : TextM (Option (Nat × Nat)) := do
   let some target := state.target? view.id | return none
   let .anchor anchor ← target.buffer.text.marker view.scroll | return none
   let snapshot := view.snapshot
-  let row := (← snapshot.pointOf anchor.offset).row
+  let shown := Fold.shown (← Fold.coveredOf target.buffer.text target.buffer.folds)
+  let count ← snapshot.rowCount
+  -- An anchor in a fold shows from the fold's first row.
+  let row := Fold.stepRows shown (← snapshot.pointOf anchor.offset).row 0 (count - 1) true
   -- A view of `n` display rows shows at most `n` text rows from its
   -- anchor's, however its rows wrap; one more is drawn, which nothing sees.
+  -- A shown fold is one of them, and its rows end the range only past its
+  -- last.
   let rows := view.rect.height / max 1 state.heights.text + 1
+  let last := Fold.stepRows shown row rows (count - 1) true
+  let last := ((Fold.cover shown last).map (·.2.2)).getD last
   let start ← snapshot.offsetOf ⟨row, 0⟩
   let stop ←
-    if row + rows + 1 < (← snapshot.rowCount) then
-      snapshot.offsetOf ⟨row + rows + 1, 0⟩
+    if last + 1 < count then
+      snapshot.offsetOf ⟨last + 1, 0⟩
     else
       snapshot.byteLength
   return some (start, stop)
@@ -2318,7 +2335,7 @@ def follow (margin : Nat) (bottom : Nat) (view : View) : EditorM Unit := do
     return
   let text := view.scroll.text
   let .anchor anchor ← text.marker view.scroll | throw .noSuchMarker
-  let area := Scroll.Area.ofRect view.snapshot view.rect bottom view.padding view.blocks
+  let area := Scroll.Area.ofRect view.snapshot view.rect bottom view.padding view.blocks view.folds
   let shown ← area.rows anchor.offset
   if shown.isEmpty then
     return
@@ -2431,7 +2448,7 @@ def spots (state : EditorState) (views : Array View) :
           let .anchor scroll ← shown.scroll.text.marker shown.scroll | throw .noSuchMarker
           let area :=
             Scroll.Area.ofRect shown.snapshot shown.rect (state.bottomRow view) shown.padding
-              shown.blocks
+              shown.blocks shown.folds
           area.spot scroll.offset anchor.offset
     return some (float.view, (answer : Except TextError (Option Display.Spot)).toOption.join)
 
@@ -2542,7 +2559,7 @@ def viewedBy (state : EditorState) (views : Array View) :
       let placed ← view.snapshot.excerpts
       let area :=
         Scroll.Area.ofRect view.snapshot view.rect (state.bottomRow view.id) view.padding
-          view.blocks
+          view.blocks view.folds
       return ExcerptView.shown placed (← area.rows anchor.offset)
     let .ok indices ← (observing asked : EditorM (Except TextError (Array Nat))) | continue
     let id := target.window.buffer

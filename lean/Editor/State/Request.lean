@@ -307,6 +307,11 @@ inductive StateRequest where
   | setStops (id : BufferId) (stops : Array AlignStop)
   /-- Set the links of the buffer `id`, in place of those it had. -/
   | setLinks (id : BufferId) (links : Array Link)
+  /-- Declare the foldable ranges of the buffer `id`, keeping the state of
+  each whose key survives. -/
+  | setFolds (id : BufferId) (declared : Array Foldable)
+  /-- Fold or unfold the foldable range of the buffer `id` keyed `key`. -/
+  | setFolded (id : BufferId) (key : String) (folded : Bool)
   /-- Set the gutter of the buffer `id`, or take it away. -/
   | setGutter (id : BufferId) (gutter : Option Buffer.Gutter)
   /-- Tell the version-control gutter's state what arrived. -/
@@ -476,6 +481,8 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setSpans .. => Except BufferRefusal Unit
   | .setStops .. => Except BufferRefusal Unit
   | .setLinks .. => Except BufferRefusal Unit
+  | .setFolds .. => Except BufferRefusal Unit
+  | .setFolded .. => Except BufferRefusal Unit
   | .setGutter .. => Except BufferRefusal Unit
   | .gutter _ => Unit
   | .setRestore _ => Unit
@@ -587,6 +594,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setSpans id spans, state => state.setSpans id spans
   | .setStops id stops, state => state.setStops id stops
   | .setLinks id links, state => state.setLinks id links
+  | .setFolds id declared, state => state.setFolds id declared
+  | .setFolded id key folded, state => state.setFolded id key folded
   | .setGutter id gutter, state => state.setGutter id gutter
   | .gutter change, state => ((), state.changeGutter change)
   | .setRestore kept, state => ((), { state with restore := kept })

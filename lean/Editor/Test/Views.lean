@@ -174,7 +174,9 @@ def seenIn (model : EditorModel) (view : ViewId := ⟨0⟩) : Option ViewSeen :=
     let some range := selection.ranges[selection.primary]? | throw .badSelection
     -- A window's view, asked with its height less its status row, which
     -- is the display model's cell.
-    let area := Scroll.Area.ofRect shown.snapshot shown.rect model.display.cells.heights.status
+    let area :=
+      Scroll.Area.ofRect shown.snapshot shown.rect model.display.cells.heights.status (folds :=
+        shown.folds)
     return {
         scroll := shown.scroll, anchor := anchor.offset, selection, head := range.head
         shown := ← area.rows anchor.offset, row := (← area.rows range.head)[0]? }

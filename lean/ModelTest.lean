@@ -56,6 +56,7 @@ import ModelTest.Editor.File.Model
 import ModelTest.Editor.FileJobs
 import ModelTest.Editor.FileWatch.Model
 import ModelTest.Editor.Floating
+import ModelTest.Editor.Fold
 import ModelTest.Editor.Fuzzy.Contract
 import ModelTest.Editor.Fuzzy.Model
 import ModelTest.Editor.Grep.Model
@@ -1381,13 +1382,20 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   handler off a link, a mode of the buffer's own that fills `activate` with
   `link-follow` itself not running it again, a location's jump and `C-o`
   back, each refusal, and the link roles' keys stepping across links and stopping at either end;
+- `foldChecks`: the pure functions over a buffer's foldable ranges
+  (`Editor/Fold.lean`): a declaration merged by key, the shown folds of
+  nested and overlapping ranges, a step of rows over shown folds, the range
+  a toggle acts on, and the rows a range covers through the text model;
 - `columnsChecks`: the column arithmetic of align-to stops
   (`Editor/Columns.lean`), pure and on the display model, and a generated
   buffer's stops and spans reaching its view; `stopChecks`, beside the
   decoration checks, a buffer's stops reaching every view of it in its
   range and none the minibuffer's; `linkDecorationChecks`, beside them, a
   buffer's links drawn in `text.link` under its spans in the same range,
-  and none in the minibuffer's view;
+  and none in the minibuffer's view; `foldViewChecks`, beside them, a
+  buffer's folded ranges reaching its view as placeholders the display
+  model shows as one row each, and the range decorations are read over
+  counting a fold as one row;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1739,11 +1747,13 @@ def checks : List Check :=
     faceVocabularyChecks ++
     searchDecorationChecks ++
     stopChecks ++
+    foldViewChecks ++
     linkDecorationChecks ++
     columnsChecks ++
     linkChecks ++
     linkFollowChecks ++
     linkMoveChecks ++
+    foldChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++

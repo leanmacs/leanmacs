@@ -5,6 +5,7 @@ import Editor.DisplayRules
 import Editor.Face
 import Editor.File
 import Editor.Floating
+import Editor.Fold
 import Editor.GeneratedView
 import Editor.Invocation
 import Editor.JumpList
@@ -822,6 +823,15 @@ candidate list with no typed text (`EditorState.keyHints`, a
   link face under its spans, and the links mode follows and moves between
   them (`Editor/Links.lean`). Like spans and stops they are its owner's and
   nothing moves them on an edit.
+- A buffer may have **foldable ranges** (`Buffer.folds`, declared by
+  `setFolds`, toggled by `setFolded`, each refusing `noSuchBuffer`): byte
+  ranges of its text, each with a key, a placeholder and whether it is
+  folded (`Foldable`, `Editor/Fold.lean`). Every view of it shows its folded
+  ranges as placeholder rows (`View.folds`). Declaring again keeps the
+  state of each range whose key survives (`Fold.merge`), and toggling
+  changes no text, so the text's content and revision stay as they were.
+  Like spans and links they are its owner's and nothing moves them on an
+  edit.
 - A buffer may have a **gutter** (`Buffer.gutter`, set by `setGutter`,
   which refuses `noSuchBuffer`): marks, each a byte range of its text at
   the gutter's revision with a short text and a face, which every window
@@ -1341,6 +1351,9 @@ structure Buffer where
   /-- Its links, set by its owner: byte ranges of its text each naming a
   target to follow ("Buffers", in the module docs). -/
   links : Array Link := #[]
+  /-- Its foldable ranges, declared by its owner, each with whether it is
+  folded now ("Buffers", in the module docs). -/
+  folds : Array Foldable := #[]
   /-- For an excerpt buffer, what its edits reached ("Excerpt buffers", in
   the module docs); `none` for any other buffer. -/
   excerpts : Option Buffer.Excerpts := none
@@ -3623,6 +3636,31 @@ def setStops (id : BufferId) (stops : Array AlignStop) (state : EditorState) :
 def setLinks (id : BufferId) (links : Array Link) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with links })) state
+
+/-- Declares the foldable ranges of the buffer `id` to be `declared`, in
+place of those it had: a range whose key one it had has keeps that one's
+state, and any other range takes its declared one (`Fold.merge`; "Buffers",
+in the module docs). Refused, with the state unchanged, with `noSuchBuffer`
+for a buffer there is none of. -/
+def setFolds (id : BufferId) (declared : Array Foldable) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with folds := Fold.merge buffer.folds declared }))
+    state
+
+/-- Folds (`folded`) or unfolds the foldable range of the buffer `id` whose
+key is `key`; a key no range has changes nothing. The text is not touched
+("Buffers", in the module docs). Refused, with the state unchanged, with
+`noSuchBuffer` for a buffer there is none of. -/
+def setFolded (id : BufferId) (key : String) (folded : Bool) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id
+    (fun buffer =>
+      ((),
+        { buffer with
+          folds :=
+            buffer.folds.map fun range =>
+              if range.key == key then { range with folded } else range }))
+    state
 
 /-- The state once `change` is told ("The version-control gutter",
 `packages/version-control/VersionControl/Gutter.lean`): a head that arrived for the latest

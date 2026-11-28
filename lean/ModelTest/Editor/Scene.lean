@@ -55,6 +55,16 @@ def sceneChecks : List Check :=
               view.statusFace == none &&
               { view with statusFace := some ⟨"mode-line.inactive"⟩ } != view)
         | none => pure false },
+    { name := "a view has no folds unless it says so, and one with a fold reads it back"
+      run :=
+        let fold : Fold := { start := 3, stop := 9, text := "▸ three lines" }
+        match twoViews.views[1]? with
+        | some view =>
+          pure
+            (view.folds == #[] && fold.decorations == #[] &&
+              ({ view with folds := #[fold] }).folds == #[fold] &&
+              { view with folds := #[fold] } != view)
+        | none => pure false },
     { name :=
         "a scene has no divider unless it says so, and one with a divider reads back its rectangle and its face"
       run :=

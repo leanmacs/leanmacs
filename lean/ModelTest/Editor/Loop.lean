@@ -6014,6 +6014,62 @@ def stopChecks : List Check :=
             minibuffer.isSome && stopsOf minibuffer == some #[] &&
               stopsOf (some ⟨0⟩) == some #[stop 0 40, stop 5 40] }]
 
+/-- The byte offset where row `row` of `text` starts. -/
+def rowStartIn (text : String) (row : Nat) : Nat :=
+  ((text.splitOn "\n").take row).foldl (fun offset line => offset + line.utf8ByteSize + 1) 0
+
+/-- The folds of the view `view` in the last scene `driver` published. -/
+def foldsOfScene (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option (Array Fold) :=
+  driver.model.display.scenes.back?.bind fun scene =>
+    (scene.views.find? (·.id == view)).map (·.folds)
+
+/-- The checks of a view's folds (`Editor/Loop.lean`, "Decorations",
+"Folds"): a buffer's folded ranges reach every view of it as placeholders,
+which the display model shows as one row each, and the range a view's
+decorations are read over counts a fold as one row, on the loop's driver
+over the editor's models and the display recorder, as the decoration checks
+run. -/
+def foldViewChecks : List Check :=
+  let foldOver (key : String) (first last : Nat) (folded : Bool) : Foldable :=
+    { start := rowStartIn decoratedText first
+      stop := rowStartIn decoratedText (last + 1) - 1, key, text := s!"[{key}]", folded }
+  let folding (folds : Array Foldable) (spans : Array Decoration := #[]) : TextM EditorState := do
+    let state ← decorationState decoratedText
+    return { state with
+        buffers :=
+          state.buffers.map
+            (·.map
+              ({ · with
+                folds, spans })) }
+  let stepped (start : TextM EditorState) : Option TestDriver :=
+    (decorationDriver decoratedText (some start)).map (keysFed · "<ArrowRight>")
+  [{  name :=
+        "a range its buffer's owner declares folded reaches the buffer's view as its placeholder, and the display model shows its rows as one row; an unfolded range is not in the view's folds"
+      run :=
+        pure <|
+          let folded := foldOver "a" 2 4 true
+          match stepped (folding #[folded, foldOver "b" 7 8 false]) with
+          | none => false
+          | some driver =>
+            let row (index : Nat) : Display.Row :=
+              ⟨rowStartIn decoratedText index, rowStartIn decoratedText (index + 1) - 1⟩
+            foldsOfScene driver == some #[folded.toFold] &&
+              ((viewSeen driver).map fun seen => seen.shown.extract 0 5) ==
+                some #[row 0, row 1, ⟨(row 2).start, (row 4).stop⟩, row 5, row 6] },
+    { name :=
+        "a span on a row below a fold that the view shows is drawn, the fold counted as one row of the range decorations are read over, and with the range unfolded it is not"
+      run :=
+        pure <|
+          let face : FaceName := ⟨"compilation.error"⟩
+          -- Row 65 is past the rows a view of the frame's height shows from
+          -- the start, but shown below a fold of rows 1 to 60.
+          let span : Decoration :=
+            { start := rowStartIn decoratedText 65, stop := rowStartIn decoratedText 65 + 3, face }
+          let drawn (folded : Bool) : Option Bool :=
+            (stepped (folding #[foldOver "a" 1 60 folded] #[span])).bind fun driver =>
+              (decorationsOfScene driver).map (·.contains span)
+          drawn true == some true && drawn false == some false }]
+
 /-- A driver of the view checks over `viewState`, under the test scheme,
 each step handed the kit's editing keys and commands
 (`Editor/Test/Editing.lean`) and then `commands`, on `model`; `none` if

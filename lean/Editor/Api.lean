@@ -74,6 +74,13 @@ operation, such as `exBinding`, `runCommand` or `giveUp`, not the request.
   (`Buffer.unsavedAt`), by a copy of its undo tree told the revision its
   text is at, so an edit made earlier in the same command counts. `quit`,
   `list-buffers` and `close-buffer` all ask it (`packages/buffers/Buffers.lean`).
+- `BufferId.setFolds id declared` declares a buffer's foldable ranges,
+  keeping the state of each whose key survives, and `BufferId.setFolded id
+  key folded` toggles one, leaving the text and its revision as they were
+  (`Editor/Fold.lean`). `BufferId.shownFolds id` is the folded ranges a
+  view draws, with their rows, and `BufferId.reveal id offset` unfolds
+  every folded range whose rows hold the offset's row: the one call a jump,
+  an accepted search and a landing through the jump list make.
 - `BufferId.text` is the buffer's text. Reading a buffer is the text
   port's reads on it (`TextId.read`, `rowContent`, `slice`, `byteLength`
   and the rest of `Editor/Text.lean`): there is no read request of the
@@ -1112,6 +1119,47 @@ in the link face under its spans and the links mode follows
 def BufferId.setLinks (id : BufferId) (links : Array Link) : EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.setLinks id links)
 
+/-- Declares the foldable ranges of the buffer `id` (`Foldable`,
+`Editor/Fold.lean`): a range whose key the buffer already has keeps its
+state, and any other range takes its declared one (`Fold.merge`). Every view
+of the buffer shows its folded ranges as placeholder rows. Refused with
+`noSuchBuffer` for a buffer there is none of. -/
+def BufferId.setFolds (id : BufferId) (declared : Array Foldable) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setFolds id declared)
+
+/-- Folds (`folded`) or unfolds the foldable range of the buffer `id` keyed
+`key`, leaving its text as it is; a key no range has changes nothing.
+Refused with `noSuchBuffer` for a buffer there is none of. -/
+def BufferId.setFolded (id : BufferId) (key : String) (folded : Bool) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setFolded id key folded)
+
+/-- Each foldable range of the buffer `id` with the first and the last row
+of its text it covers (`Fold.coveredOf`); none for a buffer there is none
+of. -/
+def BufferId.foldsCovered (id : BufferId) : EditorM (Array Fold.Covered) := do
+  let some buffer := (← editorState).buffer? id | return #[]
+  Fold.coveredOf buffer.text buffer.folds
+
+/-- The shown folds of the buffer `id` with their rows (`Fold.shown`): its
+folded ranges a view draws as placeholders, outermost first. -/
+def BufferId.shownFolds (id : BufferId) : EditorM (Array Fold.Covered) := do
+  return Fold.shown (← id.foldsCovered)
+
+/-- Unfolds every folded range of the buffer `id` whose rows hold the row of
+the byte `offset`: what a jump, an accepted search and a landing through the
+jump list or a mark do where they land (`docs/design/text-and-display.md`,
+"Folds, as built"). A buffer with no folded range there is left as it is. -/
+def BufferId.reveal (id : BufferId) (offset : Nat) : EditorM Unit := do
+  let some buffer := (← editorState).buffer? id | return
+  unless buffer.folds.any (·.folded) do
+    return
+  let row ← Fold.rowOf buffer.text (← buffer.text.byteLength) offset
+  for (range, first, last) in ← id.foldsCovered do
+    if range.folded && first ≤ row && row ≤ last then
+      discard <| id.setFolded range.key false
+
 /-- Sets the gutter of the buffer `id`, marks at a revision of its text that
 every window of it draws in a column before its text, carried through the
 edits made since; or takes it away, and the column with it, with `none`
@@ -2015,8 +2063,9 @@ def scrollTo (target : Target) (offset : Nat) : TextM Unit :=
 
 /-- Runs `run` with what the display is asked about `target`'s view with
 (`Scroll.Area`): a snapshot of its buffer's text, taken here, the view's
-rectangle in the frame, and its blocks, read of that snapshot, so a scroll
-command asks the rows the view shows with its blocks counted. The snapshot is released when `run` has
+rectangle in the frame, its blocks, read of that snapshot, and its buffer's
+shown folds, so a scroll command asks the rows the view shows with its
+blocks and folds counted. The snapshot is released when `run` has
 ended, also when it was refused, and its refusal is then thrown: that is
 `TextId.withSnapshot` (`Editor/Command.lean`), and this is the rectangle's
 lookup and it. `none`, with nothing taken and nothing run, for a view that
@@ -2034,7 +2083,9 @@ def onArea {α : Type} (target : Target) (run : Scroll.Area → EditorM α) : Ed
   some <$>
       target.buffer.text.withSnapshot fun snapshot => do
         let blocks ← ExcerptView.blocksOf target.buffer snapshot
-        run (.ofRect snapshot rect bottom padding blocks)
+        -- Its folds are those the scene showing it has (`Loop.views`).
+        let covered ← Fold.coveredOf target.buffer.text target.buffer.folds
+        run (.ofRect snapshot rect bottom padding blocks ((Fold.shown covered).map (·.1.toFold)))
 
 end Target
 
