@@ -340,8 +340,8 @@ ef" },
                   scroll := SceneFixture.own fixture.top, indents } }
         let encoded ← real.encode (indented indents) none
         let past ←
-          real.encode (indented #[{ start := 3, stop := 4, first := 2 ^ 40, rest := .lead (2 ^ 70) }])
-            none
+          real.encode
+              (indented #[{ start := 3, stop := 4, first := 2 ^ 40, rest := .lead (2 ^ 70) }]) none
         real.publish (indented #[])
         let bare ← real.display.frameText
         real.publish (indented indents)
