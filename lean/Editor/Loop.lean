@@ -1185,6 +1185,17 @@ none. Layout places the cells of the rows they fall on at them
 row out under the stops of the last frame that showed the text at its
 revision, so they need none of their own.
 
+**Folds.** A view of a buffer with foldable ranges (`Buffer.folds`,
+`Editor/Fold.lean`) has its shown folds (`View.folds`, `views`): its
+folded ranges, outermost first, as the scene's placeholders
+(`Fold.shown`), none for the minibuffer's view. The follow asks the display
+with them (`follow`), so a folded range counts as one row there, and the
+range a view's decorations, marks and stops are read over counts a shown
+fold as one row too (`rangeOf`, `Fold.stepRows`), so a view showing a fold
+still has the decorations of the rows after it. Layout draws nothing of a
+folded row but its placeholder (`docs/design/text-and-display.md`, "Folds,
+as built").
+
 - **Every view but the minibuffer's** covers the range from the start of
   its scroll anchor's row to the start of the row `rows + 1` text rows
   below, or the text's end, where `rows` is the view's height over the

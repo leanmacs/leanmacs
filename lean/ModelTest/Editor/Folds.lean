@@ -72,8 +72,8 @@ def foldAgainText : String :=
 
 /-- Makes the buffer `name` of `text` with `ranges` declared, shows it in the
 call's window and sets its major mode `major`, when given. -/
-def fillFolded (name text : String) (ranges : Array Foldable) (major : Option String) (call : Call) :
-    EditorM Unit := do
+def fillFolded (name text : String) (ranges : Array Foldable) (major : Option String)
+    (call : Call) : EditorM Unit := do
   let .ok id ← createBuffer name text | return
   discard <| id.setFolds ranges
   let view := call.target.window.id
@@ -101,10 +101,10 @@ def foldsTestPackage : Package :=
           text.delete 0 (← text.byteLength)
           text.insert 0 foldAgainText
           discard <|
-            id.setFolds
-              #[{ start := 4, stop := 6, key := "b", text := "[b]", folded := false },
-                { start := 11, stop := 13, key := "a", text := "[a]", folded := true },
-                { start := 14, stop := 16, key := "c", text := "[c]", folded := true }]
+              id.setFolds
+                #[{ start := 4, stop := 6, key := "b", text := "[b]", folded := false },
+                  { start := 11, stop := 13, key := "a", text := "[a]", folded := true },
+                  { start := 14, stop := 16, key := "c", text := "[c]", folded := true }]
       commandWith "section-toggle" fun _ => message "toggled"
       commandWith "at" fun call =>
           match call.arguments with
