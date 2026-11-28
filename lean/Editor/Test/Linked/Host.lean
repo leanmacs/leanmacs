@@ -1085,39 +1085,65 @@ that start with `hint `. -/
 def Session.hints (session : Session) : IO (Array String) := do
   return (← session.sceneLines).filter (·.startsWith "hint ")
 
-/-- The mark of `Stage.overFiles`: it runs a real background service (`Editor/RealHost.lean`). -/
-def Stage.overFiles.realHost : RealHost :=
+/-- The mark of `Stage.withRealFilesAndGrammars`: it hands a stage the
+library's real services (`Editor/RealHost.lean`). -/
+def Stage.withRealFilesAndGrammars.realHost : RealHost :=
   .service
 
-/-- A stage for a host whose jobs reach real files: one over the real
-elaborator and `source`, with what `compiled` hands it, whose services have
-the library's file service, its diff service, its watch service and its
-grammar registrations, as the executable wires them, over the table of waits the file checks share
-(`HostContext.fileWaits`), which the one completion pump runs over. Its clock is
-still a fake one: the watch service coalesces on the library's own. -/
-def Stage.overFiles (context : HostContext) (source : Config.Source) (compiled : Compiled := {}) :
-    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle) := do
-  let completions ← context.fileWaits
-  let stage ← Stage.new context context.elaborator source compiled (some completions)
+/-- `stage`, made over `completions`, the table of waits the one completion
+pump runs over (`HostContext.fileWaits`), with the library's file service
+and its grammar registrations as its jobs' files and grammars, as the
+executable wires them, and marked a stage over the library's services
+(`realServices`), which a stepped stage refuses: what `Stage.overFiles`
+and a real syntax host (`shippedStagedReal`) build on. -/
+def Stage.withRealFilesAndGrammars {β σ : Type} (stage : Stage β σ)
+    (completions : Job.Completions) : IO (Stage β σ) := do
   let collaborators := stage.collaborators
-  let refusedDiffs ← Job.RefusedDiffs.new
   let refusedGrammars ← Job.RefusedGrammars.new
-  let greps ← Job.RealGreps.new
-  let watches ← Job.RealWatches.new
   return { stage with
       realServices := true
       collaborators :=
         { collaborators with
           services :=
             { collaborators.services with
-              fileWatches := Job.realFileWatches completions watches
               files := Job.realFiles completions collaborators.published.reader collaborators.held
+              grammars := Job.realGrammars completions refusedGrammars } } }
+
+/-- The mark of `Stage.overFiles`: it runs a real background service (`Editor/RealHost.lean`). -/
+def Stage.overFiles.realHost : RealHost :=
+  .service
+
+/-- A stage for a host whose jobs reach real files: one over the real
+elaborator and `source`, with what `compiled` hands it, whose services have
+the library's file service and its grammar registrations
+(`Stage.withRealFilesAndGrammars`), its diff service and its watch service,
+as the executable wires them, over the table of waits the file checks share
+(`HostContext.fileWaits`), which the one completion pump runs over. Its clock is
+still a fake one: the watch service coalesces on the library's own. -/
+def Stage.overFiles (context : HostContext) (source : Config.Source) (compiled : Compiled := {}) :
+    IO (Stage Config.Elaborate.Base Config.Elaborate.Handle) := do
+  let completions ← context.fileWaits
+  let stage ←
+    (←
+            Stage.new context context.elaborator source compiled
+                (some completions)).withRealFilesAndGrammars
+        completions
+  let collaborators := stage.collaborators
+  let refusedDiffs ← Job.RefusedDiffs.new
+  let greps ← Job.RealGreps.new
+  let watches ← Job.RealWatches.new
+  return { stage with
+      collaborators :=
+        { collaborators with
+          services :=
+            { collaborators.services with
+              fileWatches := Job.realFileWatches completions watches
               diffs :=
                 Job.realDiffs completions collaborators.published.reader collaborators.held
                   refusedDiffs
               greps :=
-                Job.realGreps completions collaborators.published.reader collaborators.held greps
-              grammars := Job.realGrammars completions refusedGrammars } } }
+                Job.realGreps completions collaborators.published.reader collaborators.held
+                  greps } } }
 
 namespace Session
 

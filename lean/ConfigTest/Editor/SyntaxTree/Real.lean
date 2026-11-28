@@ -1,6 +1,8 @@
 import ConfigTest.Editor.Headless
+import Editor.InputScheme.Test
 import Editor.RealHost
 import Editor.Test.Linked.Services
+import Editor.Test.Linked.Shipped
 import Editor.Test.Linked.Syntax
 
 /-!
@@ -217,8 +219,28 @@ def highlightsDirectiveCheck (context : Context) : Check :=
                   "highlights 0: syntax.punctuation 0..1 syntax.type 1..8 syntax.punctuation 8..9 syntax.property 10..20 syntax.type 10..14 syntax.operator 15..16 syntax.string 17..20"])
             s!"failure={repr failure} lines={lines}" }
 
+-- inferred-waits W89: stays (A5: the stage of a real syntax host, whose subject is the library's syntax service; nothing is waited on)
+set_option linter.inferredWait false in
+/-- A check of `realSyntaxChecks`, a declaration of its own. -/
+def realSyntaxStageCheck (context : Context) : Check :=
+  { name :=
+      "the stage of a real syntax host, whose jobs register its grammars and read their queries over the library's services, is a stage over the library's services: a stepped stage refuses it"
+    run :=
+      IO.FS.withTempDir fun directory => do
+        let (stage, _) ←
+          shippedStagedReal TestScheme.scheme context context.testGrammars directory [] none "/"
+              none id #[]
+        let refused ←
+          try
+            discard <| stage.stepped
+            pure false
+          catch _ =>
+            pure true
+        saw refused "Stage.stepped took the real syntax host's stage" }
+
 /-- The checks of the library's syntax service under a real host. -/
 def realSyntaxChecks (context : Context) : List Check :=
-  [parseHighlightedTextLibraryCheck context, highlightsDirectiveCheck context]
+  [parseHighlightedTextLibraryCheck context, highlightsDirectiveCheck context,
+    realSyntaxStageCheck context]
 
 end ConfigTest

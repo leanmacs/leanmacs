@@ -222,8 +222,10 @@ the test grammars' declarations beside `packages` (`TestGrammars.package`):
 the library hides its compiled-in grammars, so its `register-grammars` job
 registers them from `grammars`' directory at the first install, through the
 library's grammar registrations, over the table of waits the one completion
-pump runs over (`HostContext.fileWaits`), as `Stage.overFiles` wires them,
-and reads their queries through the library's file service, or, when the
+pump runs over (`HostContext.fileWaits`), and reads their queries through
+the library's file service (`Stage.withRealFilesAndGrammars`, which
+`Stage.overFiles` builds on too, and which marks the stage one over the
+library's services), or, when the
 check hands a model of files, from that model, given the query files
 (`TestGrammars.inFileModel`). -/
 def shippedStagedReal (scheme : InputScheme) (context : HostContext) (grammars : TestGrammars)
@@ -235,7 +237,6 @@ def shippedStagedReal (scheme : InputScheme) (context : HostContext) (grammars :
         Headless.Collaborators Config.Elaborate.Base Config.Elaborate.Handle scheme) :=
   do
   let completions ← context.fileWaits
-  let refused ← Job.RefusedGrammars.new
   let fileModel ←
     match fileModel with
     | some model =>
@@ -244,17 +245,7 @@ def shippedStagedReal (scheme : InputScheme) (context : HostContext) (grammars :
       pure none
   shippedStagedWith scheme context directory files fileModel workingDirectory home emitting
       (packages.push grammars.package) false (waits := some completions) fun stage => do
-      let collaborators := stage.collaborators
-      let stage :=
-        { stage with
-          collaborators :=
-            { collaborators with
-              services :=
-                { collaborators.services with
-                  grammars := Job.realGrammars completions refused
-                  files :=
-                    Job.realFiles completions collaborators.published.reader
-                      collaborators.held } } }
+      let stage ← stage.withRealFilesAndGrammars completions
       let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
         let real ← RealSyntaxTree.new snapshots
         return fun request => do
