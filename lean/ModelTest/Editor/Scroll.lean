@@ -293,6 +293,19 @@ with the scroll anchor and the cursor as offsets. A row is one the display model
 (`allRows`, `rowsFrom`, `rowAt`): no check says where a text wraps. -/
 def scrollChecks : List Check :=
   [{  name :=
+        "the follow counts a fold as one row: a cursor the view shows below a folded range keeps the anchor, one past the rows shown moves it by rows counting the fold as one, and with no fold the first moves it"
+      run :=
+        pure <|
+          -- Rows 1 to 8, b to i, folded: the view shows a, the fold, j, k
+          -- and l.
+          let folds : Array Fold := #[{ start := 2, stop := 17, text := "…" }]
+          let follow (folds : Array Fold) (head : Nat) : Option (Option Nat) :=
+            onDisplay sixteen do
+              let area := { areaOf 10 5 with folds }
+              Scroll.follow area 0 (← area.rows 0) head
+          follow folds 22 == some none && follow folds 24 == some (some 2) &&
+            follow #[] 22 == some (some 14) },
+    { name :=
         "the area of a view asks with the snapshot of its text, its rectangle's width and its rectangle's height less its bottom row"
       run :=
         pure

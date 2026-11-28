@@ -26,7 +26,12 @@ upstream and licence notice.
   the grammar the `markdown` grammar's injections query hands each inline
   node. Their queries are the ones the library shipped, byte for byte: the
   grammar crates' own, the vendored `tree-sitter-lean`'s highlights alone,
-  and the repository's `textobjects.scm` and `indents.scm` for `rust`.
+  and the repository's `textobjects.scm` and `indents.scm` for `rust` and
+  `highlights.scm` for `markdown` and `markdown_inline` (a heading by its
+  level, a link's title as a link). `markdown` and `markdown_inline` also
+  ship the repository's `rendered.scm`, and `markdown` its
+  `rendered-injections.scm`, which a rendered Markdown view parses with
+  (`Editor/Markdown/Parse.lean`).
 - **`yaml`**: the language of `.yaml` and `.yml` files, defined here, and
   its grammar (`tree-sitter-yaml` 0.7.2), highlighted with the query its
   crate ships, copied unmodified to `grammars/queries/yaml/`. It declares

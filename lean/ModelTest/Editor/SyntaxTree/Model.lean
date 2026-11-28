@@ -181,6 +181,24 @@ def syntaxTreeChecks : List Check :=
             (SyntaxTreeM.runModel registered model).1 matches .ok true &&
             (SyntaxTreeM.runModel pythonAlone { bare with registry := python }).1 matches
               .ok true },
+    { name :=
+        "a canned answer of a text parsed once is answered as stored whatever the languages hold, and a source with no answer of a grammar the model cannot parse is refused as an unknown grammar"
+      run :=
+        pure <|
+          let layer : SyntaxTree.Layer :=
+            { language := "markdown", depth := 0, ranges := #[(0, 2)], names := #["block"]
+              captures := #[{ pattern := 0, capture := 0, start := 0, stop := 2 }] }
+          let model : SyntaxTreeModel := { once := #[("markdown", "x\n", #[layer])] }
+          let markdown : SyntaxTree.OnceLanguage :=
+            { grammar := "markdown", query := "(section) @block", injections := some "(x) @x" }
+          (SyntaxTreeM.runModel (SyntaxTree.parseOnce "x\n" "markdown" #[]) model).1.toOption ==
+              some #[layer] &&
+            (SyntaxTreeM.runModel (SyntaxTree.parseOnce "x\n" "markdown" #[markdown])
+                  model).1.toOption ==
+              some #[layer] &&
+            (SyntaxTreeM.runModel (SyntaxTree.parseOnce "y\n" "markdown" #[markdown])
+                  model).1 matches
+              .error .unknownGrammar },
     { name := "every property of the syntax tree contract holds of the model"
       run := return (← syntaxTreeBroken SyntaxTreeModel.handle).isEmpty }]
 

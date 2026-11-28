@@ -16,8 +16,10 @@ import Editor.InputScheme.Test
 import Editor.Invocation
 import Editor.Job
 import Editor.Keymap
+import Editor.Link
 import Editor.Loop.Driver
 import Editor.Mode
+import Editor.Package
 import Editor.Process
 import Editor.Process.Model
 import Editor.Program
@@ -162,9 +164,12 @@ with `check`, asking nothing, so a new compilation buffer is in view 1,
 below view 0). For stepping: `C-k n` (`next-error`), `C-k p`
 (`previous-error`), `C-k e` (`compile-goto-error`), and `C-k g` and `C-k j`
 (`to-point`, which puts the window's cursor at row 4, column 3, and at row
-2, column 0), and `C-k b` (`zero-base`, which has every location `/r` keeps
+2, column 0), `C-k w` (`to-point` at row 1, column 20, past a location's
+text on its row), `C-k b` (`zero-base`, which has every location `/r` keeps
 count its columns from 0, as those of a format whose `columnBase` is 0
-do). -/
+do), and `C-k l` (`relink`, which replaces the links of the window's buffer
+with one over the byte at its cursor naming `compile-visit` for `/r`'s
+location 3). -/
 def compileBindings : List (String × Invocation) :=
   openBindings ++ windowBindings ++
     [("C-k c", invoke Compile.compileName),
@@ -181,7 +186,8 @@ def compileBindings : List (String × Invocation) :=
       ("C-k e", invoke Compile.gotoName),
       ("C-k g", { command := "to-point", arguments := [.nat 4, .nat 3] }),
       ("C-k j", { command := "to-point", arguments := [.nat 2, .nat 0] }),
-      ("C-k b", invoke "zero-base")]
+      ("C-k w", { command := "to-point", arguments := [.nat 1, .nat 20] }),
+      ("C-k b", invoke "zero-base"), ("C-k l", invoke "relink")]
 
 /-- The commands of the compile checks (`compileBindings`). -/
 def compileCommands : List (String × Dispatched) :=
@@ -211,13 +217,23 @@ def compileCommands : List (String × Dispatched) :=
     Compile.setRecord placeR
         { record with locations := record.locations.map ({ · with columnBase := 0 }) }
     return none
+  let relink : Dispatched := fun call => do
+    let selection ← call.target.selection
+    let head := (selection.ranges[selection.primary]?.map (·.head)).getD 0
+    discard <|
+        call.target.window.buffer.setLinks
+          #[{ start := head, stop := head + 1
+              target :=
+                .command
+                  { command := Compile.visitName, arguments := placeR.arguments ++ [.nat 3] } }]
+    return none
   openCommandsWith FilesApiTest.openSaveCommands ++
     dispatchedOf
       (exLinePackage.registered.commands ++ Editor.Test.Minibuffer.package.registered.commands ++
         Compile.package.registered.commands) ++
     windowCommands ++
     [("insert-x", insertX), ("to-start", toStart), ("focus-compilation", focusCompilation),
-      ("squat-clone", squat), ("to-point", toPoint), ("zero-base", zeroBase)]
+      ("squat-clone", squat), ("to-point", toPoint), ("zero-base", zeroBase), ("relink", relink)]
 
 /-- The ex bindings of the compile checks: the kit's ex line's
 (`Editor.Test.exLinePackage`, standing in for the `ex` package, whose module
@@ -228,15 +244,20 @@ def compileExBindings : Array Ex.Binding :=
 
 /-- The keys of the compile checks over `bindings`, with the compile mode
 and the ex names of the kit's ex line and the `compile` package registered,
-and the hooks at `FilesApi.Opened` of the stand-ins `workspace`
-(`compileWorkspace` by default) and of `files-api`'s fake: the active
-keymaps of a registry holding the compile mode's modes, so the mode's roles
-are on their keys in a compilation buffer as a host's registry puts them,
-then the keymap of `bindings`. -/
+the commands and modes of the packages `extra` (none by default), and the
+hooks at `FilesApi.Opened` of the stand-ins `workspace` (`compileWorkspace`
+by default) and of `files-api`'s fake: the active keymaps of a registry
+holding the compile mode's modes and `extra`'s, so the modes' roles are on
+their keys in a compilation buffer as a host's registry puts them, then the
+keymap of `bindings`. -/
 def compileKeysOf (bindings : List (String × Invocation))
-    (workspace : Array Package := compileWorkspace) : Loop.Keys TestScheme.scheme :=
-  let keys := dispatchKeys bindings compileCommands
-  let registry := ({} : Config.Registry).replaceModes .compiled Compile.package.registered.modes
+    (workspace : Array Package := compileWorkspace) (extra : Array Package := #[]) :
+    Loop.Keys TestScheme.scheme :=
+  let keys :=
+    dispatchKeys bindings (compileCommands ++ dispatchedOf (extra.flatMap (·.registered.commands)))
+  let registry :=
+    ({} : Config.Registry).replaceModes .compiled
+      (Compile.package.registered.modes ++ extra.flatMap (·.registered.modes))
   { keys with
     maps := fun state view =>
       registry.activeMaps TestScheme.scheme state view ++ keys.maps state view

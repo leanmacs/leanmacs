@@ -26,6 +26,7 @@ import Editor.Language.Grammar
 import Editor.Language.Grammar.Answer
 import Editor.Layout
 import Editor.Loop
+import Editor.Markdown.View
 import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
@@ -480,6 +481,27 @@ config (`Loop.Registered.answer`, `Editor/Command/Dispatch.lean`), and of
 where its arms for them stand towards the guard. -/
 def dispatchRegistryChecks : List Check :=
   [{  name :=
+        "a dispatched command that asks which command a buffer's modes fill a role with is answered from what the loop was told, handed the modes it asked with"
+      run :=
+        let registered : Loop.Registered :=
+          {
+            roleCommand := fun major minors role =>
+              if major == some "listing" && minors == #["one"] && role == Role.activate then
+                some "listing-visit"
+              else none }
+        let program : EditorM (Guarded (Option String × Option String) × EditorState) := do
+          (do
+                  return (←
+                        RegistryRequest.ask (.roleCommand (some "listing") #["one"] Role.activate),
+                      ←
+                        RegistryRequest.ask
+                            (.roleCommand (some "listing") #[] Role.activate))).dispatched
+              registered (← twoBuffers)
+        pure <|
+          match (program.runModel editorModel).1 with
+          | .ok (.finished answer, _) => answer == (some "listing-visit", none)
+          | _ => false },
+    { name :=
         "a dispatched command that asks for a store's codec is answered the loop's codec of that name with its owner's name, or none"
       run :=
         let codec : StoreCodec := Store.codec Test.counter
@@ -526,6 +548,40 @@ def dispatchRegistryChecks : List Check :=
           match (program.runModel editorModel).1 with
           | .ok (.finished answer, _) => answer == (some "rust", none)
           | _ => false },
+    { name :=
+        "a dispatched command that asks for the language trees is answered each language entry's grammar's tree, config's entries over the shipped ones, then each declared grammar's, once each, resolved as an injected language's: a declared, registered markdown_inline with its read rendered query, and nothing for a declared grammar whose answer is pending; a view reads the shipped trees where no loop runs it"
+      run :=
+        let table :=
+          [{ Language.toml with syntaxTree := { grammar := "toml", captures := [("x", none)] } },
+            Language.rust, { Language.rust with name := "rusty" }]
+        let read : Language.Grammar.Queries :=
+          { highlights := some "(emphasis) @e", rendered := some "(emphasis) @emphasis" }
+        let registered : Loop.Registered :=
+          { languages := table, generation := 1
+            grammars :=
+              [Language.Grammar.declare "markdown_inline" "/g/libmarkdown_inline.so",
+                Language.Grammar.declare "ini" "/g/libini.so",
+                Language.Grammar.declare "rust" "/g/librust.so"] }
+        let answers : Language.Grammar.Answers :=
+          { generation := 1
+            answers :=
+              #[("markdown_inline", .registered read), ("rust", .registered { highlights := some "(r) @r" })] }
+        let program : EditorM (Guarded (Option (List Mode.SyntaxTree)) × EditorState) := do
+          (RegistryRequest.ask .languageTrees).dispatched registered
+              { (← twoBuffers) with grammars := answers }
+        let bare : EditorM (List Mode.SyntaxTree) := Markdown.languageTable
+        pure <|
+          (match (program.runModel editorModel).1 with
+            | .ok (.finished answer, _) =>
+              answer ==
+                some
+                  [{ grammar := "toml", captures := [("x", none)] },
+                    { Language.rust.syntaxTree with highlights := some "(r) @r" },
+                    { grammar := "markdown_inline", highlights := some "(emphasis) @e"
+                      rendered := some "(emphasis) @emphasis" }]
+            | _ => false) &&
+            (bare.runModel editorModel).1.toOption ==
+              some (Language.shipped.toList.map (·.syntaxTree)) },
     { name :=
         "a dispatched command that asks for a language's indent unit is answered the unit of the loop's entry of that name, the first in the table, or none; and a target's unit is its buffer's language's, or four spaces for a buffer with no language or one the table has no entry of"
       run :=

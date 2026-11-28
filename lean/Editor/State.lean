@@ -5,14 +5,18 @@ import Editor.DisplayRules
 import Editor.Face
 import Editor.File
 import Editor.Floating
+import Editor.Fold
 import Editor.GeneratedView
 import Editor.Invocation
 import Editor.JumpList
 import Editor.Language.Grammar.Answer
 import Editor.Layout
+import Editor.Link
+import Editor.Markdown.Doc
 import Editor.Marks
 import Editor.PackageSet.Running
 import Editor.Restore.Kept
+import Editor.RichText
 import Editor.Scene
 import Editor.State.Outbox
 import Editor.TabBar
@@ -809,6 +813,51 @@ candidate list with no typed text (`EditorState.keyHints`, a
   are for a buffer its owner alone writes, such as a compilation buffer,
   which is read-only and whose spans the compile mode resets with its text
   (`packages/compile/Compile.lean`, "Locations").
+- A buffer may have **align-to stops** (`Buffer.stops`, set by
+  `setStops`, which refuses `noSuchBuffer`): byte offsets of its text, each
+  with an x in whole points, where every view of it starts a cell of a row
+  (`AlignStop`, `Editor/Scene.lean`). Like spans they are its owner's and
+  nothing moves them on an edit: a generated buffer's owner writes its
+  text, spans and stops together (`Editor/Columns.lean`).
+- A buffer may have **wrap indents** (`Buffer.indents`, set by
+  `setIndents`, which refuses `noSuchBuffer`): byte ranges of its text,
+  each with where the visual lines of the rows it covers start
+  (`WrapIndent`, `Editor/Scene.lean`). Every view of it lays those rows out
+  under them. Like spans and stops they are its owner's and nothing moves
+  them on an edit: a rendered document's owner writes its text and indents
+  together (`Editor/Markdown/View.lean`).
+- A buffer may have **links** (`Buffer.links`, set by `setLinks`, which
+  refuses `noSuchBuffer`): byte ranges of its text, each naming a target to
+  follow (`Link`, `Editor/Link.lean`). Every view of it draws them in the
+  link face under its spans, and the links mode follows and moves between
+  them (`Editor/Links.lean`). Like spans and stops they are its owner's and
+  nothing moves them on an edit.
+- A buffer may have **foldable ranges** (`Buffer.folds`, declared by
+  `setFolds`, toggled by `setFolded`, each refusing `noSuchBuffer`): byte
+  ranges of its text, each with a key, a placeholder and whether it is
+  folded (`Foldable`, `Editor/Fold.lean`). Every view of it shows its folded
+  ranges as placeholder rows (`View.folds`). Declaring again keeps the
+  state of each range whose key survives (`Fold.merge`), and toggling
+  changes no text, so the text's content and revision stay as they were.
+  Like spans and links they are its owner's and nothing moves them on an
+  edit.
+- A buffer's **parts may be written together from a rich-text
+  description** (`RichText`, `Editor/RichText.lean`; `setRichText` and
+  `appendRichText`, each refusing `noSuchBuffer`): its spans, stops, links,
+  foldable ranges and wrap indents at once, while its owner writes the text
+  through the text port. `setRichText` keeps each part that lies before the
+  start it is given and takes the rest from the description (the prefix
+  rule, `RichText.replaceFrom`); `appendRichText` lists the tail's parts,
+  moved past the text's end, after the buffer's own. Each fold whose key
+  survives keeps its state (`Fold.merge`), and both drop a rendered
+  document, so the document a buffer holds is the one its parts were last
+  written from.
+- A buffer may have a **rendered Markdown document** (`Buffer.markdown`,
+  set by `setMarkdown`, which refuses `noSuchBuffer`): the document its
+  text, spans, stops, links and folds were rendered from
+  (`Editor/Markdown/View.lean`), kept so an append renders only its tail.
+  Like the parts it made it is its owner's: an owner that also writes the
+  text by hand renders the document again.
 - A buffer may have a **gutter** (`Buffer.gutter`, set by `setGutter`,
   which refuses `noSuchBuffer`): marks, each a byte range of its text at
   the gutter's revision with a short text and a face, which every window
@@ -1322,6 +1371,21 @@ structure Buffer where
   /-- Byte ranges of its text, each with a face, set by its owner and drawn
   under the last search's matches ("Buffers", in the module docs). -/
   spans : Array Decoration := #[]
+  /-- Its align-to stops, set by its owner: where every view of it starts a
+  cell of a row ("Buffers", in the module docs). -/
+  stops : Array AlignStop := #[]
+  /-- Its wrap indents, set by its owner: where every view of it starts the
+  visual lines of the rows each covers ("Buffers", in the module docs). -/
+  indents : Array WrapIndent := #[]
+  /-- Its links, set by its owner: byte ranges of its text each naming a
+  target to follow ("Buffers", in the module docs). -/
+  links : Array Link := #[]
+  /-- Its foldable ranges, declared by its owner, each with whether it is
+  folded now ("Buffers", in the module docs). -/
+  folds : Array Foldable := #[]
+  /-- The rendered Markdown document its text and parts were made from, if
+  any ("Buffers", in the module docs). -/
+  markdown : Option Markdown.Doc := none
   /-- For an excerpt buffer, what its edits reached ("Excerpt buffers", in
   the module docs); `none` for any other buffer. -/
   excerpts : Option Buffer.Excerpts := none
@@ -2855,6 +2919,23 @@ def paddingOf (state : EditorState) (id : ViewId) : Padding :=
         else 0
       { across := state.padding, down := state.padding, top, gutter }
 
+/-- The shown folds of the view `id` with the rows they cover: its buffer's
+folded ranges a view draws as placeholders, outermost first (`Fold.shown`),
+none for the minibuffer's view and for a view there is none of. The
+scene's folds (`viewFolds`, `Loop.views`), the folds the display is asked
+about a view with (`Target.onArea`) and the range a view's decorations are
+read over (`Loop.rangeOf`) are all these. -/
+def shownFoldsOf (state : EditorState) (id : ViewId) : TextM (Array Fold.Covered) := do
+  if state.minibufferView? == some id then
+    return #[]
+  let some target := state.target? id | return #[]
+  return Fold.shown (← Fold.coveredOf target.buffer.text target.buffer.folds)
+
+/-- The folds of the view `id` as the scene draws them: its shown folds
+(`shownFoldsOf`), each its range and its placeholder (`Foldable.toFold`). -/
+def viewFolds (state : EditorState) (id : ViewId) : TextM (Array Fold) := do
+  return (← state.shownFoldsOf id).map (·.1.toFold)
+
 /-- Whether `place` is held by a marker of the text of an open buffer, or
 is detached into a file: a place a state may hold. -/
 def placeHolds (state : EditorState) (place : Place) : Bool :=
@@ -3590,6 +3671,99 @@ def markRestored (id : BufferId) (state : EditorState) : Except BufferRefusal Un
 def setSpans (id : BufferId) (spans : Array Decoration) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with spans })) state
+
+/-- Sets the align-to stops of the buffer `id` to `stops`, in place of those
+it had ("Buffers", in the module docs). Refused, with the state unchanged,
+with `noSuchBuffer` for a buffer there is none of. -/
+def setStops (id : BufferId) (stops : Array AlignStop) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with stops })) state
+
+/-- Sets the wrap indents of the buffer `id` to `indents`, in place of those
+it had ("Buffers", in the module docs). Refused, with the state unchanged,
+with `noSuchBuffer` for a buffer there is none of. -/
+def setIndents (id : BufferId) (indents : Array WrapIndent) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with indents })) state
+
+/-- Sets the links of the buffer `id` to `links`, in place of those it had
+("Buffers", in the module docs). Refused, with the state unchanged, with
+`noSuchBuffer` for a buffer there is none of. -/
+def setLinks (id : BufferId) (links : Array Link) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with links })) state
+
+/-- Declares the foldable ranges of the buffer `id` to be `declared`, in
+place of those it had: a range whose key one it had has keeps that one's
+state, and any other range takes its declared one (`Fold.merge`; "Buffers",
+in the module docs). Refused, with the state unchanged, with `noSuchBuffer`
+for a buffer there is none of. -/
+def setFolds (id : BufferId) (declared : Array Foldable) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with folds := Fold.merge buffer.folds declared }))
+    state
+
+/-- The parts of `buffer` as a rich-text description with no text: the
+text is the text port's. -/
+private def partsOf (buffer : Buffer) : RichText :=
+  { spans := buffer.spans, stops := buffer.stops, links := buffer.links, folds := buffer.folds
+    indents := buffer.indents }
+
+/-- `buffer` with its five parts those of `rich`, each fold keeping the state
+of the one of its key the buffer had (`Fold.merge`), and no rendered
+document. -/
+private def withParts (buffer : Buffer) (rich : RichText) : Buffer :=
+  { buffer with
+    spans := rich.spans, stops := rich.stops, links := rich.links
+    folds := Fold.merge buffer.folds rich.folds, indents := rich.indents, markdown := none }
+
+/-- Writes the parts of the buffer `id` from `rich` from the byte `start` on,
+by the prefix rule (`RichText.replaceFrom`): each part of the buffer's that
+lies before `start` is kept, and the rest are `rich`'s; each fold whose key
+survives keeps its state, and the rendered document is dropped ("Buffers",
+in the module docs). The text is the text port's, which the caller writes.
+Refused, with the state unchanged, with `noSuchBuffer` for a buffer there is
+none of. -/
+def setRichText (id : BufferId) (rich : RichText) (start : Nat) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id
+    (fun buffer =>
+      ((), withParts buffer (RichText.replaceFrom (partsOf buffer) start { rich with text := "" })))
+    state
+
+/-- Appends the parts of `tail`, moved `offset` bytes on, to those of the
+buffer `id`, after its own: each fold whose key survives keeps its state,
+and the rendered document is dropped ("Buffers", in the module docs). The
+text is the text port's, which the caller extends. Refused, with the state
+unchanged, with `noSuchBuffer` for a buffer there is none of. -/
+def appendRichText (id : BufferId) (tail : RichText) (offset : Nat) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id
+    (fun buffer =>
+      ((), withParts buffer ((partsOf buffer).concat ({ tail with text := "" }.shift offset))))
+    state
+
+/-- Sets the rendered Markdown document of the buffer `id` to `doc`, in
+place of any it had ("Buffers", in the module docs). Refused, with the
+state unchanged, with `noSuchBuffer` for a buffer there is none of. -/
+def setMarkdown (id : BufferId) (doc : Option Markdown.Doc) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with markdown := doc })) state
+
+/-- Folds (`folded`) or unfolds the foldable range of the buffer `id` whose
+key is `key`; a key no range has changes nothing. The text is not touched
+("Buffers", in the module docs). Refused, with the state unchanged, with
+`noSuchBuffer` for a buffer there is none of. -/
+def setFolded (id : BufferId) (key : String) (folded : Bool) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id
+    (fun buffer =>
+      ((),
+        { buffer with
+          folds :=
+            buffer.folds.map fun range =>
+              if range.key == key then { range with folded } else range }))
+    state
 
 /-- The state once `change` is told ("The version-control gutter",
 `packages/version-control/VersionControl/Gutter.lean`): a head that arrived for the latest

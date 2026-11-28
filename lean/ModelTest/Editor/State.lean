@@ -26,10 +26,12 @@ import Editor.Language
 import Editor.Layout
 import Editor.Loop
 import Editor.Loop.Driver
+import Editor.Markdown.Doc
 import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
 import Editor.Program
+import Editor.RichText
 import Editor.Scene
 import Editor.Scroll
 import Editor.State
@@ -63,7 +65,8 @@ import ModelTest.Support.Excerpt
 The model tests of `Editor/State.lean`: `windowOperationChecks`,
 `floatingWindowChecks`, `stateChecks`, `tabChecks`, `paddingChecks`,
 `heightChecks`, `titleChecks`, `readOnlyChecks`, `excerptBufferChecks`,
-`displayStateChecks`, `atPointStateChecks` and `keyHintStateChecks`.
+`displayStateChecks`, `atPointStateChecks`, `keyHintStateChecks` and
+`richTextStateChecks`.
 `readOnlyChecks` and `excerptBufferChecks` also cover
 `Editor/Command/Dispatch.lean`, and `paddingChecks`, `heightChecks` and
 `titleChecks` read the state through the loop; each is here because what it pins
@@ -528,7 +531,29 @@ def displayStateChecks : List Check :=
         pure <|
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
           | none => false
-          | some state => state.displayed windowedDisplaying == state }]
+          | some state => state.displayed windowedDisplaying == state },
+    { name :=
+        "a view's folds are its buffer's shown folds as the scene's placeholders, outermost first, with their rows; the minibuffer's view and a view there is none of have none"
+      run :=
+        pure <|
+          let range (key : String) (start stop : Nat) (folded : Bool := true) : Foldable :=
+            { start, stop, key, text := s!"[{key}]", folded }
+          -- Rows 1 to 2 (`outer`) hold row 1 (`inner`); `open` is not folded.
+          let folds := #[range "open" 0 2 false, range "inner" 3 5, range "outer" 3 9]
+          let read : TextM (Array Fold × Array (Nat × Nat) × Array Fold × Array Fold) := do
+            let initial ← EditorState.initial ⟨640, 480⟩
+            let text ← createText "ab\ncd\nef\ngh"
+            let (_, asking) := prompted initial
+            let foldedIn (buffer : Option Buffer) : Option Buffer :=
+              buffer.map fun buffer =>
+                { buffer with
+                  text, folds }
+            let state := { asking with buffers := asking.buffers.map foldedIn }
+            let minibuffer := state.minibufferView?.getD ⟨0⟩
+            let shown : Array Fold.Covered ← state.shownFoldsOf ⟨0⟩
+            return (← state.viewFolds ⟨0⟩, shown.map (·.2), ← state.viewFolds minibuffer,
+                ← state.viewFolds ⟨90⟩)
+          onTextModel read == some (#[(range "outer" 3 9).toFold], #[(1, 2)], #[], #[]) }]
 
 /-- States of the quit checks, each `twoBuffers` with its histories set by
 hand. -/
@@ -4037,5 +4062,114 @@ def keyHintStateChecks : List Check :=
               one.minibufferPlace == three.minibufferPlace &&
               closed.listRows == 0 &&
               closed.candidateListRect? == none }]
+
+/-- The parts of the buffer `id` of `state`, as a description with no text:
+the state keeps no text, which is the text port's. -/
+def richPartsOf (state : EditorState) (id : BufferId) : Option RichText :=
+  (state.buffer? id).map fun buffer =>
+    { spans := buffer.spans, stops := buffer.stops, links := buffer.links
+      folds := buffer.folds, indents := buffer.indents }
+
+/-- A description of 8 bytes, `one\ntwo\n`, with a part of each kind on
+each row and a fold `one` over its first row. -/
+def stateRich : RichText :=
+  { text := "one\ntwo\n"
+    spans := #[{ start := 0, stop := 3, face := ⟨"a"⟩ }, { start := 4, stop := 7, face := ⟨"b"⟩ }]
+    stops := #[{ offset := 1, x := 5 }, { offset := 5, x := 6 }]
+    links :=
+      #[{ start := 0, stop := 3, target := .url "a:1" },
+        { start := 4, stop := 7, target := .url "b:1" }]
+    folds :=
+      #[{ start := 0, stop := 4, key := "one", text := "[one]" },
+        { start := 4, stop := 8, key := "two", text := "[two]" }]
+    indents := #[{ start := 0, stop := 4, first := 2 }, { start := 4, stop := 8, first := 3 }] }
+
+/-- A description that disagrees with `stateRich` on every part. -/
+def stateOther : RichText :=
+  { text := "ONE\nTWO\n"
+    spans := #[{ start := 0, stop := 3, face := ⟨"c"⟩ }, { start := 4, stop := 7, face := ⟨"d"⟩ }]
+    stops := #[{ offset := 1, x := 7 }, { offset := 5, x := 8 }]
+    links :=
+      #[{ start := 0, stop := 3, target := .url "c:1" },
+        { start := 4, stop := 7, target := .url "d:1" }]
+    folds :=
+      #[{ start := 0, stop := 4, key := "one", text := "[ONE]" },
+        { start := 4, stop := 8, key := "two", text := "[TWO]" }]
+    indents := #[{ start := 0, stop := 4, first := 4 }, { start := 4, stop := 8, first := 5 }] }
+
+/-- The checks of a buffer's parts written from a rich-text description
+(`Editor/State.lean`, "Buffers"; `Editor/RichText.lean`), pure, over the
+state of two buffers. -/
+def richTextStateChecks : List Check :=
+  [{  name :=
+        "setRichText sets the buffer's five parts to the prefix rule over its own, its text left to the text port, and clears its rendered document"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, rendered) := state.setMarkdown ⟨1⟩ (some {})
+            let (first, set) := rendered.setRichText ⟨1⟩ stateRich 0
+            let (second, again) := set.setRichText ⟨1⟩ stateOther 4
+            let expected := RichText.replaceFrom { stateRich with text := "" } 4 stateOther
+            first matches .ok () && second matches .ok () &&
+              richPartsOf set ⟨1⟩ == some { stateRich with text := "" } &&
+              richPartsOf again ⟨1⟩ == some { expected with text := "" } &&
+              (again.buffer? ⟨1⟩).bind (·.markdown) == none &&
+              (rendered.buffer? ⟨1⟩).bind (·.markdown) == some {} &&
+              richPartsOf again ⟨0⟩ == richPartsOf state ⟨0⟩ },
+    { name :=
+        "a fold toggled before a setRichText that declares its key again stays folded, its range and placeholder the new declaration's"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, set) := state.setRichText ⟨1⟩ stateRich 0
+            let (_, folded) := set.setFolded ⟨1⟩ "two" true
+            let (_, again) := folded.setRichText ⟨1⟩ stateOther 0
+            ((richPartsOf again ⟨1⟩).map (·.folds)) ==
+              some
+                #[{ start := 0, stop := 4, key := "one", text := "[ONE]" },
+                  { start := 4, stop := 8, key := "two", text := "[TWO]", folded := true }] },
+    { name :=
+        "appendRichText appends the tail's parts moved past the given offset after the buffer's own, a toggled fold kept, and clears its rendered document"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, set) := state.setRichText ⟨1⟩ stateRich 0
+            let (_, folded) := set.setFolded ⟨1⟩ "one" true
+            let (_, rendered) := folded.setMarkdown ⟨1⟩ (some {})
+            let tail : RichText :=
+              { stateOther with
+                folds := #[{ start := 0, stop := 4, key := "three", text := "[three]" }] }
+            let (appended, after) := rendered.appendRichText ⟨1⟩ tail 8
+            let shifted := tail.shift 8
+            appended matches .ok () &&
+              richPartsOf after ⟨1⟩ ==
+                some
+                  { spans := stateRich.spans ++ shifted.spans
+                    stops := stateRich.stops ++ shifted.stops
+                    links := stateRich.links ++ shifted.links
+                    folds :=
+                      #[{ start := 0, stop := 4, key := "one", text := "[one]", folded := true },
+                        { start := 4, stop := 8, key := "two", text := "[two]" },
+                        { start := 8, stop := 12, key := "three", text := "[three]" }]
+                    indents := stateRich.indents ++ shifted.indents } &&
+              (after.buffer? ⟨1⟩).bind (·.markdown) == none },
+    { name :=
+        "setRichText and appendRichText of a buffer there is none of are refused noSuchBuffer, the buffers unchanged"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (set, afterSet) := state.setRichText ⟨9⟩ stateRich 0
+            let (appended, afterAppend) := state.appendRichText ⟨9⟩ stateRich 0
+            set matches .error (.noSuchBuffer ⟨9⟩) && appended matches .error (.noSuchBuffer ⟨9⟩) &&
+              afterSet.buffers == state.buffers &&
+              afterAppend.buffers == state.buffers }]
 
 end ModelTest

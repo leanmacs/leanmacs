@@ -152,7 +152,8 @@ def treeSource (tree : Mode.SyntaxTree) : String :=
   let fields :=
     [some s!"grammar := {tree.grammar.quote}", field "highlights" tree.highlights,
           field "injections" tree.injections, field "textObjects" tree.textObjects,
-          field "indents" tree.indents].filterMap
+          field "indents" tree.indents, field "rendered" tree.rendered,
+          field "renderedInjections" tree.renderedInjections].filterMap
       id
   "{ " ++ ", ".intercalate fields ++ " }"
 
@@ -213,6 +214,8 @@ def testQueryCaptureNames (grammars : TestGrammars) (grammar : String) (kind : Q
     | .injections => queries.injections
     | .textObjects => queries.textObjects
     | .indents => queries.indents
+    | .rendered => queries.rendered
+    | .renderedInjections => queries.renderedInjections
   let some source := source? | return none
   let table ← Snapshots.new
   let real ← RealSyntaxTree.new table.reader

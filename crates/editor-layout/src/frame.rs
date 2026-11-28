@@ -42,6 +42,29 @@
 //! above them; a row's hash is computed as a text row's, so an unchanged
 //! header keeps its hash.
 //!
+//! **Folds.** A view's shown folds ([`View::folds`]) are each drawn as
+//! one placeholder row in place of the rows they cover, by the rows
+//! query's rule ([`query`](crate::query), "Folds"), which the frame walks:
+//!
+//! - **The placeholder row** is a text row ([`FrameRow::is_text`]) with
+//!   [`FrameRow::fold`] naming its fold. Its bytes are the fold's in the
+//!   view's snapshot (its first row's start to the end of its last row's
+//!   content); its glyphs and runs are the first line of the fold's text,
+//!   laid out unbroken in the fold's decorations over the default face, so
+//!   one wider than the view runs past its edge, where nothing is drawn.
+//!   It is laid out through the block store and kept there: a placeholder
+//!   shown again shapes nothing, and folding or unfolding shapes no row of
+//!   the text.
+//! - **A cursor** whose head the fold covers is at the placeholder's x 0,
+//!   as wide as its first glyph.
+//! - **A selection** that covers any byte the fold covers fills the whole
+//!   placeholder line.
+//! - **What is drawn in the folded rows** (decorations, text spans, stops,
+//!   search matches) is never asked for: those rows are not laid out.
+//! - **Blocks** before the fold's first covered row are drawn above the
+//!   placeholder, and blocks before a later covered row are not drawn.
+//!   **Gutter marks** of the first covered row sit beside it.
+//!
 //! **The mode line.** A view with at least one status field has a status
 //! row ([`StatusRow`]) at the bottom of its rectangle. Each field is
 //! shaped through the `Shaper` port as a line of its own, in its face over
@@ -249,9 +272,13 @@ use editor_text::{Selection, SelectionRange, Snapshot};
 use crate::Layout;
 use std::collections::{HashMap, HashSet};
 
-use crate::blocks::{BlockKey, BlockLayout, ViewBlocks, ViewMarks, mark_block};
+use crate::blocks::{
+    BlockKey, BlockLayout, ViewBeside, ViewBlocks, ViewFolds, ViewMarks, mark_block,
+};
+use crate::folds::FoldSnapshot;
 
-use crate::cache::{FieldKept, StatusKept, state};
+use crate::align::resolved;
+use crate::cache::{FieldKept, LastFrame, StatusKept, state};
 use crate::decoration::{
     DecorationSource, FaceSpanSource, SelectionSource, Span, Styles, TextSpansSource, fonts_of,
     merge,
@@ -259,8 +286,9 @@ use crate::decoration::{
 use crate::face::{
     Color, ECHO_AREA_FACE, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle,
 };
+use crate::indent;
 use crate::line::LineEntry;
-use crate::query::{Shown, Visual, Walker};
+use crate::query::{Shown, Visual, Walker, relative_stops};
 use crate::scene::{CursorShape, Rect, Scene, Side, Size, StatusField, TextKey, View, ViewId};
 use crate::shaper::{
     FontId, FontRun, Glyph, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper,
@@ -329,6 +357,11 @@ pub struct FrameRow {
     /// gutter"), whose bytes are those of the mark's text, and `None`
     /// otherwise. A mark row is drawn like any row too.
     pub mark: Option<usize>,
+    /// Which fold's placeholder it is: `Some(i)` for the view's `folds[i]`
+    /// ([`View::folds`]; module docs, "Folds"), whose bytes are the fold's
+    /// in the view's snapshot and whose glyphs are its placeholder text's,
+    /// and `None` otherwise. A placeholder is a text row, drawn like any.
+    pub fold: Option<usize>,
 }
 
 impl FrameRow {
@@ -359,6 +392,7 @@ impl FrameRow {
             hash,
             block: None,
             mark: None,
+            fold: None,
         }
     }
 
@@ -571,6 +605,9 @@ impl Frame {
                 }
                 if let Some(mark) = row.mark {
                     let _ = write!(out, "mark {mark} ");
+                }
+                if let Some(fold) = row.fold {
+                    let _ = write!(out, "fold {fold} ");
                 }
                 out.push_str("row");
                 if row.x != 0.0 {
@@ -796,7 +833,8 @@ impl<S: Shaper> Layout<S> {
             }
         }
         self.texts.retain(|key, _| shown.contains_key(key));
-        // The blocks and the marks no view names are dropped.
+        // The blocks, the marks and the placeholders no view names are
+        // dropped.
         let named: HashSet<BlockKey> = scene
             .views
             .iter()
@@ -805,7 +843,12 @@ impl<S: Shaper> Layout<S> {
                     .marks
                     .iter()
                     .map(|mark| BlockKey::of(&mark_block(mark)));
-                view.blocks.iter().map(BlockKey::of).chain(marks)
+                let folds = view.folds.iter().map(BlockKey::placeholder);
+                view.blocks
+                    .iter()
+                    .map(BlockKey::of)
+                    .chain(marks)
+                    .chain(folds)
             })
             .collect();
         self.blocks.retain(|key, _| named.contains(key));
@@ -1157,6 +1200,8 @@ impl<S: Shaper> Layout<S> {
             .collect();
         let mut view_blocks = ViewBlocks::new(&view.blocks, snapshot, &mut self.styles);
         let mut view_marks = ViewMarks::new(&view.marks, snapshot, &mut self.styles);
+        let mut view_folds = ViewFolds::new(&view.folds, &mut self.styles);
+        let folds = FoldSnapshot::new(snapshot, &view.folds);
         let selections: Vec<Selection> = view
             .selections
             .iter()
@@ -1165,6 +1210,19 @@ impl<S: Shaper> Layout<S> {
         let selection_source = SelectionSource::new(snapshot, &selections, selection_face);
         let face_source = FaceSpanSource::new(decorations);
         let own = TextSpansSource::of(&mut self.styles, text);
+        // The stops, resolved for the snapshot, in points to keep and in
+        // pixels to lay out at.
+        let stops = resolved(snapshot, &view.stops);
+        let stop_pixels: Vec<(usize, f32)> = stops
+            .iter()
+            .map(|(offset, x)| (*offset, self.padding_pixels(*x)))
+            .collect();
+        let stops_of = |bytes: Range<usize>| relative_stops(&stop_pixels, &bytes);
+        // The indents, resolved for the snapshot, in points to keep and
+        // in pixels at the scale to lay out under.
+        let indents = indent::resolved(snapshot, &view.indents);
+        let scale = self.scale();
+        let indent_of = |row: usize, segment: usize| indents.of(row, segment, scale);
         // Every source, lowest layer first: the text's own spans, `extra`,
         // the decorations and the selections.
         let mut sources: Vec<&dyn DecorationSource> = Vec::new();
@@ -1182,8 +1240,11 @@ impl<S: Shaper> Layout<S> {
         let mut walker = Walker {
             shaper: &self.shaper,
             wrap: &mut state.wrap,
+            folds: &folds,
             base,
             fonts: &fonts,
+            stops: &stops_of,
+            indent: &indent_of,
             outcome: &mut |row, segment, outcome| {
                 seen.entry((row, segment)).or_insert(outcome);
             },
@@ -1199,9 +1260,15 @@ impl<S: Shaper> Layout<S> {
             counters: &mut self.counters,
         };
         let walked = walker
-            .shown(text_height, anchor, &mut |row| {
-                view_blocks.above(row, &mut block_layout)
-            })
+            .shown(
+                text_height,
+                anchor,
+                &mut ViewBeside {
+                    blocks: &mut view_blocks,
+                    folds: &mut view_folds,
+                    layout: &mut block_layout,
+                },
+            )
             .unwrap_or_default();
         // The text lines shown, each with its index among the frame's rows.
         let mut shown: Vec<(Visual, usize)> = Vec::new();
@@ -1227,6 +1294,45 @@ impl<S: Shaper> Layout<S> {
                     continue;
                 }
             };
+            if let Some(fold) = walker.placeholder(visual) {
+                // The fold's placeholder, in place of its rows (module
+                // docs, "Folds").
+                let Some(laid) = view_folds.line(fold.index, &mut block_layout).cloned() else {
+                    continue;
+                };
+                let mut selected = Vec::new();
+                selection_source.spans(snapshot, folds.covered_bytes(&fold), &mut selected);
+                if selected.iter().any(|span| !span.bytes.is_empty()) {
+                    frame.selections.push(Area {
+                        x: text_left,
+                        y,
+                        width: laid.line.width,
+                        height: laid.line.height,
+                    });
+                }
+                shown.push((visual, frame.rows.len()));
+                frame.rows.push(FrameRow {
+                    fold: Some(fold.index),
+                    ..FrameRow::text_row(
+                        text_left,
+                        y,
+                        fold.start..fold.stop,
+                        Arc::clone(&laid.line),
+                        laid.runs.clone(),
+                        laid.hash,
+                    )
+                });
+                push_marks(
+                    &mut frame.rows,
+                    &mut view_marks,
+                    &mut block_layout,
+                    visual.row,
+                    across,
+                    y + laid.line.baseline,
+                );
+                y += laid.line.height;
+                continue;
+            }
             let Some(entry) = walker.entry(visual.row, visual.segment) else {
                 continue;
             };
@@ -1272,23 +1378,14 @@ impl<S: Shaper> Layout<S> {
                 painted.runs,
                 painted.hash,
             ));
-            // The marks beside this row, in the gutter column, each on the
-            // row's baseline.
-            for mark in view_marks.on(visual.row) {
-                if let Some(laid) = view_marks.line(mark, &mut block_layout) {
-                    frame.rows.push(FrameRow {
-                        mark: Some(mark),
-                        ..FrameRow::text_row(
-                            across,
-                            y + line.baseline - laid.line.baseline,
-                            laid.bytes.clone(),
-                            Arc::clone(&laid.line),
-                            laid.runs.clone(),
-                            laid.hash,
-                        )
-                    });
-                }
-            }
+            push_marks(
+                &mut frame.rows,
+                &mut view_marks,
+                &mut block_layout,
+                visual.row,
+                across,
+                y + line.baseline,
+            );
             y += line.height;
         }
         // The cursors on the rows shown.
@@ -1303,8 +1400,9 @@ impl<S: Shaper> Layout<S> {
         let from = shown
             .first()
             .map_or(0, |(_, index)| frame.rows[*index].bytes.start);
+        let last_row = walker.placeholder(last).map_or(last.row, |fold| fold.last);
         let to = snapshot
-            .row_range(last.row)
+            .row_range(last_row)
             .map_or(snapshot.len(), |row| row.end);
         let advance = self.shaper.metrics(base).advance;
         for range in selections.iter().flat_map(|selection| selection.ranges()) {
@@ -1323,13 +1421,23 @@ impl<S: Shaper> Layout<S> {
             // As wide as the cell it is on, which is a share of its glyph
             // where the glyph draws several characters; at a line's end,
             // where there is no cell, as wide as a space of the base font.
-            let width = walker
-                .entry(visual.row, visual.segment)
-                .and_then(|entry| {
-                    let column = entry.column(head - row_start);
-                    entry.cell_of_column(visual.line, column)
-                })
-                .map_or(advance, |cell| cell.width);
+            // On a placeholder, which holds every position of its fold at
+            // its start, as wide as its first glyph.
+            let width = if row.fold.is_some() {
+                row.line
+                    .glyphs
+                    .iter()
+                    .min_by(|a, b| a.x.total_cmp(&b.x))
+                    .map_or(advance, |glyph| glyph.advance)
+            } else {
+                walker
+                    .entry(visual.row, visual.segment)
+                    .and_then(|entry| {
+                        let column = entry.column(head - row_start);
+                        entry.cell_of_column(visual.line, column)
+                    })
+                    .map_or(advance, |cell| cell.width)
+            };
             frame.cursors.push(CursorBox {
                 area: Area {
                     x: row.x + x,
@@ -1341,9 +1449,42 @@ impl<S: Shaper> Layout<S> {
                 paint: cursor_paint,
             });
         }
-        state.sources = Some((selection_source.clone(), face_source.clone()));
+        state.sources = Some(LastFrame {
+            selections: selection_source.clone(),
+            decorations: face_source.clone(),
+            stops,
+            indents,
+        });
         self.counters.add(&seen);
         frame
+    }
+}
+
+/// Pushes onto `rows` the marks of `marks` beside buffer row `row`, in the
+/// gutter column at `across`, each laid out by `layout` and on the
+/// baseline `baseline` (from the view's top) of the row they are beside.
+fn push_marks<S: Shaper>(
+    rows: &mut Vec<FrameRow>,
+    marks: &mut ViewMarks,
+    layout: &mut BlockLayout<'_, S>,
+    row: usize,
+    across: f32,
+    baseline: f32,
+) {
+    for mark in marks.on(row) {
+        if let Some(laid) = marks.line(mark, layout) {
+            rows.push(FrameRow {
+                mark: Some(mark),
+                ..FrameRow::text_row(
+                    across,
+                    baseline - laid.line.baseline,
+                    laid.bytes.clone(),
+                    Arc::clone(&laid.line),
+                    laid.runs.clone(),
+                    laid.hash,
+                )
+            });
+        }
     }
 }
 
@@ -1610,6 +1751,9 @@ mod tests {
             padding: Padding::default(),
             blocks: vec![],
             marks: vec![],
+            stops: vec![],
+            folds: vec![],
+            indents: vec![],
         }
     }
 

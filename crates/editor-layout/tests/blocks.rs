@@ -13,7 +13,7 @@
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Paint};
 use editor_layout::frame::{FrameRow, ViewFrame};
-use editor_layout::query::{RowRange, Spot};
+use editor_layout::query::{Around, RowRange, Spot};
 use editor_layout::scene::{
     Block, Cursor, Decoration, Padding, Rect, Scene, TextKey, TextRef, View, ViewId,
 };
@@ -265,7 +265,10 @@ fn the_rows_query_answers_the_frames_text_rows_with_blocks() {
                         height,
                         Padding::default(),
                         anchor,
-                        &blocks,
+                        Around {
+                            blocks: &blocks,
+                            folds: &[],
+                        },
                     )
                     .unwrap()
                     .into_iter()
@@ -284,7 +287,10 @@ fn the_rows_query_answers_the_frames_text_rows_with_blocks() {
                             Padding::default(),
                             anchor,
                             position,
-                            &blocks,
+                            Around {
+                                blocks: &blocks,
+                                folds: &[],
+                            },
                         )
                         .unwrap();
                     let mut text_rows = laid.rows.iter().filter(|row| row.block.is_none());
@@ -313,7 +319,15 @@ fn a_spot_below_a_block_is_lower_by_the_blocks_rows() {
     let mut layout = layout();
     let spot = |layout: &mut Layout<CellShaper>, blocks: &[Block]| {
         layout
-            .spot_with_blocks(&text, 400.0, 160.0, Padding::default(), 0, 7, blocks)
+            .spot_with_blocks(
+                &text,
+                400.0,
+                160.0,
+                Padding::default(),
+                0,
+                7,
+                Around { blocks, folds: &[] },
+            )
             .unwrap()
             .unwrap()
     };
@@ -370,12 +384,33 @@ fn a_block_in_a_taller_face_is_a_taller_row_and_the_queries_count_its_height() {
     );
     let text = text_of(EXCERPTS);
     let asked = layout
-        .rows_shown_with_blocks(&text, 400.0, 48.0, Padding::default(), 0, &blocks)
+        .rows_shown_with_blocks(
+            &text,
+            400.0,
+            48.0,
+            Padding::default(),
+            0,
+            Around {
+                blocks: &blocks,
+                folds: &[],
+            },
+        )
         .unwrap();
     assert_eq!(asked, vec![RowRange { start: 0, stop: 3 }]);
     let spot = |layout: &mut Layout<CellShaper>, position: usize| {
         layout
-            .spot_with_blocks(&text, 400.0, 48.0, Padding::default(), 0, position, &blocks)
+            .spot_with_blocks(
+                &text,
+                400.0,
+                48.0,
+                Padding::default(),
+                0,
+                position,
+                Around {
+                    blocks: &blocks,
+                    folds: &[],
+                },
+            )
             .unwrap()
     };
     let two = spot(&mut layout, 1).unwrap();

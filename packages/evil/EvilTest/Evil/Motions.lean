@@ -342,6 +342,28 @@ is pressed in a text with the cursor written into it, and each expected
 text is written by hand from Vim's documented behaviour, case by case. -/
 def evilMotionChecks : List Check :=
   [{  name :=
+        "in a buffer whose rows 2 to 4 are a folded range, j from row 1 lands on the fold's start in one step and a second j on row 5 at the column it aimed for, k mirrors this, 3 j counts the fold as one line, j on a fold that reaches the last line fails, and none of them unfolds it"
+      run :=
+        pure <|
+          let rows := "ab0\nab1\nab2\nab3\nab4\nab5\nab6"
+          let middle : Foldable :=
+            { start := 8, stop := 19, key := "f", text := "[2-4]", folded := true }
+          let last : Foldable :=
+            { start := 16, stop := 27, key := "f", text := "[4-6]", folded := true }
+          let after (fixture keys : String) (fold : Foldable := middle) :
+            Option (String × List Bool) :=
+            (foldedEvilDriver fixture #[fold]).bind fun driver =>
+              let fed := evilFed driver keys
+              (evilFolded fed).map (evilShown fed, ·)
+          let at_ (head : Nat) : String := withBar rows head
+          after (at_ 5) "j" == some (at_ 8, [true]) &&
+            after (at_ 5) "j j" == some (at_ 21, [true]) &&
+            after (at_ 21) "k" == some (at_ 8, [true]) &&
+            after (at_ 21) "k k" == some (at_ 5, [true]) &&
+            after (at_ 5) "3 j" == some (at_ 25, [true]) &&
+            after (at_ 13) "j" last == some (at_ 16, [true]) &&
+            after (at_ 13) "j j" last == some (at_ 16, [true]) },
+    { name :=
         "% goes from the first bracket of the line at or after the cursor to its partner, across lines, both ways, counting only brackets of its escapedness, and does not move with no bracket on the line or no partner; N% goes to the first non-blank of the line N percent into the text, and above 100 does not move; brackets Vim guesses are quoted are passed over, as its default cpoptions has it; /* */ is not matched, a recorded departure"
       run := evilRows percentRows },
     { name :=
@@ -984,6 +1006,42 @@ evil's commands, the text model answering the searches of literal
 patterns. -/
 def evilSearchChecks : List Check :=
   [{  name :=
+        "an accepted search whose match lies inside a folded range unfolds that range and puts the cursor on the match's first byte, n does the same for a second folded range, and a search that fails unfolds nothing"
+      run :=
+        pure <|
+          -- Rows 1 to 3 and rows 4 to 5 folded, each holding a `baz`.
+          let text := "|x0\nfoo\nbaz 1\nqux\nmid\nbaz 2\nend"
+          let folds : Array Foldable :=
+            #[{ start := 3, stop := 16, key := "one", text := "[one]", folded := true },
+              { start := 17, stop := 26, key := "two", text := "[two]", folded := true }]
+          let plain := (barred text).1
+          match foldedEvilDriver text folds with
+          | none => false
+          | some driver =>
+            let found := evilFed driver "/ b a z RET"
+            let next := evilFed found "n"
+            let missed := evilFed driver "/ z z z RET"
+            evilFolded found == some [false, true] && evilShown found == withBar plain 7 &&
+              evilSceneFolds found == some ["[two]"] &&
+              evilFolded next == some [false, false] &&
+              evilShown next == withBar plain 21 &&
+              evilSceneFolds next == some [] &&
+              evilFolded missed == some [true, true] &&
+              evilShown missed == withBar plain 0 },
+    { name :=
+        "an accepted search whose match lies inside two nested folded ranges unfolds both, the outer and the inner, and puts the cursor on the match's first byte"
+      run :=
+        pure <|
+          -- Rows 1 to 4 folded, and rows 2 to 3 inside them, the `baz` on row 3.
+          let text := "|x0\nfoo\nbar\nbaz 1\nqux\nend"
+          let folds : Array Foldable :=
+            #[{ start := 3, stop := 20, key := "outer", text := "[outer]", folded := true },
+              { start := 7, stop := 16, key := "inner", text := "[inner]", folded := true }]
+          let found := (foldedEvilDriver text folds).map (evilFed · "/ b a z RET")
+          found.bind evilFolded == some [false, false] &&
+            found.map evilShown == some (withBar (barred text).1 11) &&
+            found.bind evilSceneFolds == some [] },
+    { name :=
         "/ and ? (by invocation and by key, through the minibuffer), n, N, * and # move as Vim 9.1 documents for a literal pattern: from before, at and inside a match, cpo-c, across lines, with counts, wrapping with Vim's warning, not found with E486, n with no last search with E35, N keeping the direction, the empty pattern the last one, whole words for * and #, from the word's start, and a visual selection extended"
       run := searchRows searchMoveRows },
     { name :=

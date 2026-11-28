@@ -61,6 +61,7 @@ def recordedRequest : SyntaxTreeRequest → String
   | .keep _ kind _ => s!"keep {kind.name}"
   | .capturesOf _ kind .. => s!"capturesOf {kind.name}"
   | .refreshAfter milliseconds => s!"refreshAfter {milliseconds}"
+  | .parseOnce _ grammar _ => s!"parseOnce {grammar}"
 
 /-- `recordingSyntaxTree` is an inferred wait (`Editor/InferredWait.lean`):
 it hands on `Ffi.syntaxSettle`, the real syntax service's readout, whose

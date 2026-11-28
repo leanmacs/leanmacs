@@ -114,6 +114,15 @@ a later definition's set attributes are over an earlier one's
 | `tab-bar` | lavender on lineHighlight | the same | Not covered: shared mapping kept |
 | `tab-bar.selected` | foreground on selection, bold | the same | Not covered: shared mapping kept |
 | `compilation.error`, `compilation.warning`, `compilation.note` | fg removed, peach, added, bold | the same | Not covered: shared mapping kept |
+| `text.heading.1` to `text.heading.6` | renamed, bold; 24, 20 and 18 points for levels 1 to 3 | the same | Not covered: shared mapping kept |
+| `text.emphasis`, `text.strong` | italic; bold | the same | Not covered: shared mapping kept |
+| `text.code-span` | added, monospace | the same | Not covered: shared mapping kept |
+| `text.code-block` | bg lineHighlight, monospace | the same | Not covered: shared mapping kept |
+| `text.link` | mint, single underline | the same | Not covered: shared mapping kept |
+| `text.quote` | lavender, italic | the same | Not covered: shared mapping kept |
+| `text.list-marker` | fg peach | the same | Not covered: shared mapping kept |
+| `text.table-header` | bold | the same | Not covered: shared mapping kept |
+| `text.prose` | the prose family (`system-ui`) alone | the same | A family and no colour: shared mapping kept |
 | `syntax.attribute` | lemon | the same | tmTheme `entity.other.attribute-name` l.208 |
 | `syntax.comment` | lavender, italic | + gold, upright | tmTheme `comment` l.38, no `fontStyle` |
 | `syntax.constant` | lavender | the same | tmTheme l.71, l.82 |

@@ -51,7 +51,13 @@ def solarizedChoices (c : ShippedThemes.Solarized.Colours) :
       ("gutter", some c.base01, some c.base02), ("search-match", some c.base03, some c.yellow),
       ("review-unexamined", none, none), ("block-header", some c.base1, some c.base02),
       ("compilation.error", some c.red, none), ("compilation.warning", some c.orange, none),
-      ("compilation.note", some c.green, none)]
+      ("compilation.note", some c.green, none)] ++
+    markupHeadings.map (·, some c.blue, none) ++
+    [("text.emphasis", none, none), ("text.strong", none, none),
+      ("text.code-span", some c.green, none), ("text.code-block", none, some c.base02),
+      ("text.link", some c.cyan, none), ("text.quote", some c.base01, none),
+      ("text.list-marker", some c.orange, none), ("text.table-header", none, none),
+      ("text.prose", none, none)]
 
 /-- Whether `theme` gives each face of `solarizedChoices c` the colours
 listed, and keeps the weight, slant and underline the table keeps. -/
@@ -62,8 +68,10 @@ def solarizedChosen (theme : Theme) (c : ShippedThemes.Solarized.Colours) : Bool
         (face name).foreground == foreground && (face name).background == background) &&
     (badgeFaces ++
           ["mode-line.buffer", "minibuffer.prompt", "block-header", "compilation.error",
-            "compilation.warning", "compilation.note"]).all
+            "compilation.warning", "compilation.note", "text.strong", "text.table-header"] ++
+          markupHeadings).all
       (fun name => (face name).weight == some 700) &&
+    markupKept face &&
     (face "syntax.comment").slant == some .italic &&
     (face "review-unexamined").underline == some { style := .single, color := some c.orange }
 

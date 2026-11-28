@@ -51,6 +51,16 @@ Its state has three parts:
   driven run, the registry the job model's registrations end with is
   handed to it (the job's model answers a registration,
   `JobModel.grammars`).
+- `once`: canned answers of `parseOnce`, by host grammar and source, for
+  a grammar the model cannot parse (Markdown): each is answered as stored,
+  whatever the languages hold. A test of a rendered view sets them from the
+  checked-in fixtures (`tests/markdown/`), which the contract holds to the
+  library's answers (`ContractTest.markdownCaseChecks`). For a grammar it
+  lists the model computes `parseOnce`: the host layer alone, answered with
+  the query of the first language handed in that names the host, compiled
+  in its subset. It parses JSON only and follows no injections, so a
+  language's injections are never read and no layer below the host is
+  found.
 - `delivered`: whether the tree of each text's last edit is delivered. It
   starts `true`. A test sets it `false` to see what a command does when
   keys come faster than a reparse: `captures` and `capturesOf` are then
@@ -110,6 +120,9 @@ structure SyntaxTreeModel where
   a question of captures is refused with `notParsed` after its other
   checks. -/
   delivered : Bool := true
+  /-- The canned answers of `parseOnce`, by host grammar and source, each
+  answered as stored. -/
+  once : Array (String × String × Array SyntaxTree.Layer) := #[]
 
 namespace SyntaxTreeModel
 
@@ -317,6 +330,30 @@ def captures (model : SyntaxTreeModel) (snapshot : SnapshotId) (query : QueryId)
     throw .notParsed
   return compiled.captures (Json.parse text) first last
 
+/-- `parseOnce`: a canned answer as stored; else, for a grammar the model
+lists, the host layer over the whole text answered with the query of the
+first of `languages` that names the host, compiled in the model's subset,
+checked in the order the real binding checks: the host grammar first
+(`unknownGrammar`), then its language and its query (`noQuery`). The model
+follows no injections, so the host layer is the answer. -/
+def parseOnce (model : SyntaxTreeModel) (source named : String)
+    (languages : Array SyntaxTree.OnceLanguage) :
+    Except SyntaxTreeError (Array SyntaxTree.Layer) := do
+  if let some (_, _, layers) :=
+      model.once.find? fun (grammar, text, _) => grammar == named && text == source then
+    return layers
+  if !model.knows named then
+    throw .unknownGrammar
+  let some language := languages.find? (·.grammar == named) | throw .noQuery
+  match Query.compile language.query with
+  | .error _ =>
+    throw .noQuery
+  | .ok compiled =>
+    let stop := source.utf8ByteSize
+    return #[{
+          language := named, depth := 0, ranges := #[(0, stop)], names := compiled.names
+          captures := compiled.captures (Json.parse source) 0 stop }]
+
 /-- Answers `request` from the model as it is. -/
 def handle : (request : SyntaxTreeRequest) → SyntaxTreeModel → request.Reply × SyntaxTreeModel
   | .grammars, model => (model.grammars, model)
@@ -340,6 +377,8 @@ def handle : (request : SyntaxTreeRequest) → SyntaxTreeModel → request.Reply
   | .capturesOf snapshot kind first last, model =>
     (model.capturesOf snapshot kind first last, model)
   | .refreshAfter milliseconds, model => ((), { model with refreshAfter := some milliseconds })
+  | .parseOnce source named languages, model =>
+    (model.parseOnce source named languages, model)
 
 end SyntaxTreeModel
 

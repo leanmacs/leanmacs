@@ -9,7 +9,8 @@ what needs a file opened, which it asks of the files through the interface
 library `files-api` (`FilesApi.lean`), so that the lower one can be
 imported by the files feature. It decides nothing of its own.
 
-- **Going to a place** (`go`): a held place by `Jumps.goHeld`, and a place
+- **Going to a place** (`go`): a held place by `Jumps.goHeld`, which
+  unfolds a folded range that holds it, and a place
   in a closed file by a visit of the file at its row and column, at the
   row's first non-blank with `line`, through the files implementation's
   `visit` (`FilesApi.files?`). With no files implementation it says

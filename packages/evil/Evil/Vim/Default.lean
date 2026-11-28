@@ -146,6 +146,9 @@ Under them are config's bindings written `<leader>` and `<localleader>`,
 and a mode's suffixes; none of them holds where typing is text, so `SPC`
 is a space in insert state (`Evil/Vim.lean`, "Mode keys").
 The role `mark` is on `m`, apart from both, since neither begins with it.
+The link roles are on `] l` and `[ l`, vim-unimpaired's keys for the next
+and previous entry of the location list; no default state binds `]` or
+`[`, and `TAB` is `toggle`'s.
 
 `SchemeState.normal`, `insert`, `visual`, `visualLine` and `minibuffer`
 are the names of the five states, as config names one for a binding that
@@ -161,6 +164,8 @@ holds only there (`bindKey … (states := [.insert])`). The records of
 | `refresh` | `g r`, under the `g g` prefix |
 | `toggle` | `TAB` |
 | `mark` | `m` |
+| `next-link` | `] l`, unimpaired's next location |
+| `previous-link` | `[ l`, unimpaired's previous location |
 
 `j` and `k` replace the motions only in buffers whose modes fill those
 roles. A string `Key.parse` refuses puts its role on no key, which the
@@ -471,7 +476,8 @@ def states : States :=
 /-- The role table: each registered role and the key string it is on. -/
 def roles : List (Role × String) :=
   [(Role.nextItem, "j"), (Role.previousItem, "k"), (Role.activate, "RET"), (Role.quit, "q"),
-    (Role.refresh, "g r"), (Role.toggle, "TAB"), (Role.mark, "m")]
+    (Role.refresh, "g r"), (Role.toggle, "TAB"), (Role.mark, "m"), (Role.nextLink, "] l"),
+    (Role.previousLink, "[ l")]
 
 /-- The leader, as a key string: `SPC`, Doom's. -/
 def leader : String :=

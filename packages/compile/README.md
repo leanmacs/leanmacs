@@ -31,7 +31,7 @@ contributions. Its design record is in
      #[Editor.Compile.package]
    ```
 3. [`Compile/Compiled.lean`](Compile/Compiled.lean): the `Package` value,
-   `Editor.Compile.package`, named `compile`. Its `setup` registers nine
+   `Editor.Compile.package`, named `compile`. Its `setup` registers ten
    commands with `commandWith`, the job `compile-run` with `workJob`, the
    mode `compilation` with `defineMode`, each shipped contribution with
    `compileContribution`, and six ex names with `exCommand`.

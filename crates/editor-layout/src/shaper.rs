@@ -7,6 +7,17 @@
 //! change of width breaks the kept value again ([`ShapedLine::break_lines`])
 //! without shaping it again.
 //!
+//! The one exception is a row with align-to stops: layout cuts it at its
+//! stops into cells, shapes and breaks each cell through this port, and
+//! places the cells at their stops itself, breaking before a stop past the
+//! width, from the widths the shaper gave (`align`, and
+//! [`line`](mod@crate::line)). For that it relies on every line starting at
+//! its own left edge and holding its glyphs ([`contract::ORIGIN`]). Under
+//! a wrap indent layout also breaks a row's first visual line at one
+//! width and the rest at another ([`ShapedLine::break_lines_in`]), since
+//! the first line starts at the first-line indent and the rest at the
+//! continuation indent; the shaper still decides every break.
+//!
 //! What a shaper is handed is one segment of one buffer row, after the
 //! display layers below it: no tab (the tab layer has expanded it into
 //! spaces, `docs/design/text-and-display.md`) and no line feed. Every
@@ -369,13 +380,44 @@ pub struct Metrics {
     pub line_height: f32,
 }
 
+/// The widths a shaped line is broken at: its first visual line at one,
+/// every later line at another. `None` breaks nothing at that line.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Widths {
+    /// The width of the first visual line.
+    pub first: Option<f32>,
+    /// The width of every later visual line.
+    pub rest: Option<f32>,
+}
+
+impl Widths {
+    /// Every visual line at `width`.
+    pub const fn all(width: Option<f32>) -> Self {
+        Self {
+            first: width,
+            rest: width,
+        }
+    }
+}
+
 /// A shaped line, kept so that a change of width breaks it again without
 /// shaping it again.
 pub trait ShapedLine {
+    /// The visual lines it breaks into at `widths`: the first fits
+    /// `widths.first` and every later one `widths.rest`, each unless it
+    /// holds one cluster, so a cluster wider than its width is a line of
+    /// its own. A `None` width breaks nothing: with no first width the
+    /// whole text is one line, and with no rest width all of it after the
+    /// first line is one more. Every visual line holds at least one
+    /// cluster.
+    fn break_lines_in(&self, widths: Widths) -> Vec<VisualLine>;
+
     /// The visual lines it breaks into at `width` pixels, or into one when
-    /// `width` is `None`. Every visual line holds at least one cluster, so
-    /// a cluster wider than `width` is a line of its own.
-    fn break_lines(&self, width: Option<f32>) -> Vec<VisualLine>;
+    /// `width` is `None`: every line at the one width
+    /// ([`ShapedLine::break_lines_in`] of [`Widths::all`]).
+    fn break_lines(&self, width: Option<f32>) -> Vec<VisualLine> {
+        self.break_lines_in(Widths::all(width))
+    }
 }
 
 /// The port: shapes a segment of text.

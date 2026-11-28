@@ -22,11 +22,11 @@ use editor_ffi::document::{Document, editor_ffi_document_free, editor_ffi_docume
 use editor_ffi::log::RawWords;
 use editor_ffi::snapshot::{Snapshot, editor_ffi_document_snapshot, editor_ffi_snapshot_free};
 use editor_ffi::syntax::{
-    AttachStatus, CapturesStatus, QueryStatus, RawQuery, RawStrings, SyntaxQuery,
+    AttachStatus, CapturesStatus, OnceStatus, QueryStatus, RawQuery, RawStrings, SyntaxQuery,
     editor_ffi_syntax_attach, editor_ffi_syntax_capture_names, editor_ffi_syntax_captures,
-    editor_ffi_syntax_detach, editor_ffi_syntax_grammars, editor_ffi_syntax_query_free,
-    editor_ffi_syntax_query_new, editor_ffi_syntax_refresh_after, editor_ffi_syntax_settle,
-    kind_tag, syntaxes,
+    editor_ffi_syntax_detach, editor_ffi_syntax_grammars, editor_ffi_syntax_parse_once,
+    editor_ffi_syntax_query_free, editor_ffi_syntax_query_new, editor_ffi_syntax_refresh_after,
+    editor_ffi_syntax_settle, kind_tag, strings_words, syntaxes,
 };
 use editor_ffi::text::editor_ffi_text_free;
 use editor_syntax::{GrammarName, QueryErrorKind, Syntax};
@@ -372,4 +372,123 @@ fn a_refused_query_crosses_with_its_kind_and_offset_and_a_made_one_with_its_name
     assert_eq!(strings(unsafe { raw.assume_init() }), ["key", "value"]);
     // SAFETY: the query is live and freed once.
     unsafe { editor_ffi_syntax_query_free(made.query) };
+}
+
+/// `source` parsed once through C with the host grammar `host` and the
+/// languages `languages`, each a grammar's name, its query's source and its
+/// injections' source (the empty string none), as the list of strings
+/// they cross in: the status, the words and the strings.
+fn parse_once(source: &str, host: &str, languages: &[[&str; 3]]) -> (u64, Vec<u64>, Vec<String>) {
+    let spelled: Vec<String> = languages
+        .iter()
+        .flatten()
+        .map(|string| (*string).to_owned())
+        .collect();
+    parse_once_spelled(source, host, &spelled)
+}
+
+/// `source` parsed once through C with the host grammar `host` and the
+/// languages the list of strings `spelled` spells, three strings each: the
+/// status, the words and the strings.
+fn parse_once_spelled(
+    source: &str,
+    host: &str,
+    spelled: &[String],
+) -> (u64, Vec<u64>, Vec<String>) {
+    let words_in = strings_words(spelled);
+    let strings_in = spelled.concat();
+    let mut out = MaybeUninit::<RawWords>::uninit();
+    let mut answered = MaybeUninit::<RawStrings>::uninit();
+    // SAFETY: each buffer is alive for the call, and both records are
+    // writable.
+    let (raw, answered) = unsafe {
+        editor_ffi_syntax_parse_once(
+            source.as_ptr(),
+            source.len(),
+            host.as_ptr(),
+            host.len(),
+            words_in.as_ptr(),
+            words_in.len(),
+            strings_in.as_ptr(),
+            strings_in.len(),
+            out.as_mut_ptr(),
+            answered.as_mut_ptr(),
+        );
+        (out.assume_init(), answered.assume_init())
+    };
+    (
+        raw.status,
+        words(&take(raw.words, raw.len)),
+        strings(answered),
+    )
+}
+
+/// The fixture grammar `name`.
+fn fixture(name: &str) -> editor_syntax_fixture_grammars::Grammar {
+    ALL.into_iter()
+        .find(|grammar| grammar.name == name)
+        .expect("a fixture grammar")
+}
+
+#[test]
+fn a_markdown_text_parsed_once_through_c_answers_its_host_inline_and_rust_layers() {
+    grammars::registered();
+    let source = "Some *em*.\n\n```rust\nfn f() {}\n```\n";
+    let markdown = fixture("markdown");
+    let inline = fixture("markdown_inline");
+    let rust = fixture("rust");
+    let (status, words, strings) = parse_once(
+        source,
+        "markdown",
+        &[
+            [
+                "markdown",
+                markdown.rendered.expect("a rendered query"),
+                markdown.injections.expect("injections"),
+            ],
+            [
+                "markdown_inline",
+                inline.rendered.expect("a rendered query"),
+                inline.injections.expect("injections"),
+            ],
+            ["rust", rust.highlights, ""],
+        ],
+    );
+    assert_eq!(status, OnceStatus::Parsed as u64);
+    // Three layers: the host, the paragraph's inline text and the fence.
+    assert_eq!(words[0], 3);
+    // The host: depth 0, one range over the whole text.
+    assert_eq!(&words[1..5], [0, 1, 0, source.len() as u64]);
+    let languages: Vec<&str> = ["markdown", "markdown_inline", "rust"]
+        .into_iter()
+        .filter(|language| strings.iter().any(|string| string == language))
+        .collect();
+    assert_eq!(languages, ["markdown", "markdown_inline", "rust"]);
+    assert_eq!(strings[0], "markdown");
+    assert!(strings.contains(&"block".to_owned()));
+    assert!(strings.contains(&"keyword".to_owned()));
+}
+
+#[test]
+fn a_text_parsed_once_through_c_is_refused_an_unknown_host_and_ignores_a_language_it_lacks() {
+    grammars::registered();
+    let json = ["json", "(number) @n\n(string) @s\n", ""];
+    let (status, refused_words, refused_strings) = parse_once("{}", "no-such-grammar", &[json]);
+    assert_eq!(status, OnceStatus::UnknownGrammar as u64);
+    assert!(refused_words.is_empty() && refused_strings.is_empty());
+    let alone = parse_once("{\"a\": 1}", "json", &[json]);
+    let beside = parse_once(
+        "{\"a\": 1}",
+        "json",
+        &[json, ["no-such-grammar", "(x) @x", ""]],
+    );
+    assert_eq!(alone.0, OnceStatus::Parsed as u64);
+    assert_eq!(alone, beside);
+    // A host query that does not compile is refused as no host query.
+    let (status, _, _) = parse_once("{}", "json", &[["json", "((", ""]]);
+    assert_eq!(status, OnceStatus::NoHostQuery as u64);
+    // Strings that do not spell three to a language are refused.
+    let (status, _, _) =
+        parse_once_spelled("{}", "json", &["json".to_owned(), "(number) @n".to_owned()]);
+    assert_eq!(status, OnceStatus::BadLanguages as u64);
 }

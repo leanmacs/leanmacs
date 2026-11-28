@@ -131,8 +131,11 @@ dispatch then injects again into every other highlighted buffer too
 
 `highlights.scm`, `injections.scm`, `indents.scm` and `textobjects.scm`,
 the names nvim-treesitter and Helix use, filling `highlights`,
-`injections`, `indents` and `textObjects`. A missing file ships no query of
-its kind; any other refusal
+`injections`, `indents` and `textObjects`; and `rendered.scm` and
+`rendered-injections.scm`, this repository's, filling `rendered` and
+`renderedInjections`, which a rendered view of a text parsed once reads
+(`Editor/Markdown/Parse.lean`, `Markdown.languagesOf`). A missing file ships
+no query of its kind; any other refusal
 of the load ships none too, and is said (`unread`). Each is read under
 `queryLimit`.
 
@@ -365,7 +368,8 @@ def over (later earlier : List Language.Grammar) : List Language.Grammar :=
 kind it fills. -/
 def queryFiles : List (String × QueryKind) :=
   [("highlights.scm", .highlights), ("injections.scm", .injections), ("indents.scm", .indents),
-    ("textobjects.scm", .textObjects)]
+    ("textobjects.scm", .textObjects), ("rendered.scm", .rendered),
+    ("rendered-injections.scm", .renderedInjections)]
 
 /-- `queries` with the source of `kind` set to `source`. -/
 def Queries.set (queries : Queries) (kind : QueryKind) (source : Option String) : Queries :=
@@ -374,6 +378,8 @@ def Queries.set (queries : Queries) (kind : QueryKind) (source : Option String) 
   | .injections => { queries with injections := source }
   | .textObjects => { queries with textObjects := source }
   | .indents => { queries with indents := source }
+  | .rendered => { queries with rendered := source }
+  | .renderedInjections => { queries with renderedInjections := source }
 
 /-- `tree` with the read queries filled in where it gives no source of its
 own: the entry's own source wins over a file. -/
@@ -382,7 +388,9 @@ def Queries.over (queries : Queries) (tree : Mode.SyntaxTree) : Mode.SyntaxTree 
     highlights := tree.highlights <|> queries.highlights
     injections := tree.injections <|> queries.injections
     textObjects := tree.textObjects <|> queries.textObjects
-    indents := tree.indents <|> queries.indents }
+    indents := tree.indents <|> queries.indents
+    rendered := tree.rendered <|> queries.rendered
+    renderedInjections := tree.renderedInjections <|> queries.renderedInjections }
 
 /-- The tree a buffer whose language's tree is `tree` gets, given the
 declarations `declared` of the installed config, the recorded `answers` and

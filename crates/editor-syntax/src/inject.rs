@@ -24,10 +24,12 @@
 //!    line. Each range is cut to `within`, so a nested layer stays inside
 //!    its parent's ranges, empty ones are dropped, and the rest are sorted
 //!    and made one where they touch.
-//! 3. **A match injects nothing** when no range is left, when the ranges
-//!    are the parent's own (no progress), or when its language is not one
-//!    of the languages known: nothing aliases a name, so a fence of `rs`
-//!    injects nothing.
+//! 3. **A match injects nothing** when no range is left, or when its
+//!    language is not one of the languages known: nothing aliases a name,
+//!    so a fence of `rs` injects nothing. A layer's injection over the
+//!    layer's own ranges makes no progress and is dropped ([`layers`]);
+//!    the host's over the whole text is a layer, as the inline text of a
+//!    Markdown document that is one paragraph is.
 //! 4. **Each match is a layer of its own.** `injection.combined` is not
 //!    built: a pattern that sets it is one injection per match.
 //!
@@ -43,6 +45,11 @@
 //! tree), and a tree parsed whole equals a fresh parse with nothing to
 //! prove; reusing a layer's tree across rounds is an open question
 //! (`docs/design/rust-library.md`).
+//!
+//! [`layers`] reads the languages through [`Languages`]: the host's
+//! injections query and, by name, a language's grammar and own injections
+//! query. A session's [`Injections`] is one; a text parsed once
+//! ([`crate::once`]) hands its own table.
 //!
 //! [`fresh`] is a whole host parse and its layers: what the tests compare
 //! a session's layers with.
@@ -113,6 +120,34 @@ impl<Q> Clone for Injections<Q> {
             query: self.query.clone(),
             languages: self.languages.clone(),
         }
+    }
+}
+
+/// Where [`layers`] reads its languages from: the host's injections query
+/// and, by the name an injection gives, the grammar a language is parsed
+/// with and its own injections query. A name it has no grammar for is not
+/// a language known, so it injects nothing.
+pub trait Languages<Q> {
+    /// The host's injections query; none finds no layer.
+    fn host_injections(&self) -> Option<&Q>;
+    /// The grammar the language `name` is parsed with, if it is known.
+    fn grammar(&self, name: &str) -> Option<&GrammarName>;
+    /// The injections query the language `name`'s layers find layers of
+    /// their own with, if it has one.
+    fn injections(&self, name: &str) -> Option<&Q>;
+}
+
+impl<Q> Languages<Q> for Injections<Q> {
+    fn host_injections(&self) -> Option<&Q> {
+        self.query.as_deref()
+    }
+
+    fn grammar(&self, name: &str) -> Option<&GrammarName> {
+        self.languages.get(name).map(|language| &language.grammar)
+    }
+
+    fn injections(&self, name: &str) -> Option<&Q> {
+        self.languages.get(name)?.injections.as_deref()
     }
 }
 
@@ -237,7 +272,7 @@ pub fn found<S: Syntax>(
             })
             .collect();
         let ranges = cut_to(&content, within);
-        if ranges.is_empty() || ranges == within || !known(&language) {
+        if ranges.is_empty() || !known(&language) {
             continue;
         }
         found.push(Found { language, ranges });
@@ -246,20 +281,20 @@ pub fn found<S: Syntax>(
     found
 }
 
-/// The layers of `host`, the tree of `text`, by `injections`, as the module
+/// The layers of `host`, the tree of `text`, by `languages`, as the module
 /// docs say: in order of depth, then of start. A grammar's parser is taken
 /// from `parsers`, or opened and kept there on first use.
-pub fn layers<S: Syntax>(
+pub fn layers<S: Syntax, L: Languages<S::Query> + ?Sized>(
     syntax: &S,
-    injections: &Injections<S::Query>,
+    languages: &L,
     host: &S::Tree,
     text: &Snapshot,
     parsers: &mut BTreeMap<GrammarName, S::Parser>,
 ) -> Vec<Layer<S::Tree>> {
-    let Some(query) = &injections.query else {
+    let Some(query) = languages.host_injections() else {
         return Vec::new();
     };
-    let known = |name: &str| injections.languages.contains_key(name);
+    let known = |name: &str| languages.grammar(name).is_some();
     let whole = 0..text.len();
     let within = std::slice::from_ref(&whole);
     let mut pending: VecDeque<(u32, Found)> = found(syntax, query, host, text, within, &known)
@@ -268,28 +303,34 @@ pub fn layers<S: Syntax>(
         .collect();
     let mut layers = Vec::new();
     while let Some((depth, injection)) = pending.pop_front() {
-        let Some(language) = injections.languages.get(&injection.language) else {
+        let Some(grammar) = languages.grammar(&injection.language) else {
             continue;
         };
-        let parser = match parsers.get_mut(&language.grammar) {
+        let parser = match parsers.get_mut(grammar) {
             Some(parser) => parser,
             None => {
-                let Some(opened) = syntax.parser(&language.grammar) else {
+                let Some(opened) = syntax.parser(grammar) else {
                     continue;
                 };
-                parsers.entry(language.grammar.clone()).or_insert(opened)
+                parsers.entry(grammar.clone()).or_insert(opened)
             }
         };
         let tree = syntax.parse_in(parser, text, &injection.ranges);
         if depth < MAX_DEPTH
-            && let Some(own) = &language.injections
+            && let Some(own) = languages.injections(&injection.language)
         {
             let nested = found(syntax, own, &tree, text, &injection.ranges, &known);
-            pending.extend(nested.into_iter().map(|found| (depth + 1, found)));
+            // An injection over the layer's own ranges makes no progress.
+            pending.extend(
+                nested
+                    .into_iter()
+                    .filter(|found| found.ranges != injection.ranges)
+                    .map(|found| (depth + 1, found)),
+            );
         }
         layers.push(Layer {
             language: injection.language,
-            grammar: language.grammar.clone(),
+            grammar: grammar.clone(),
             ranges: injection.ranges,
             depth,
             tree,
@@ -518,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn ranges_are_cut_to_the_parents_and_ones_equal_to_the_parents_are_dropped() {
+    fn ranges_are_cut_to_the_parents_and_ones_equal_to_the_parents_are_kept() {
         let syntax = Canned {
             names: NAMES.to_vec(),
             matches: vec![
@@ -542,14 +583,21 @@ mod tests {
             ]
         );
         // Within two ranges, the second match is cut to them; the first is
-        // the parent's own ranges once cut, and is dropped.
+        // the parent's own ranges once cut, which `layers` drops for a
+        // layer's injections and keeps for the host's.
         assert_eq!(
             found_in(&syntax, "0123456789", &[2..4, 6..8]),
-            [injection("rust", &[3..4, 6..7])]
+            [
+                injection("rust", &[2..4, 6..8]),
+                injection("rust", &[3..4, 6..7])
+            ]
         );
         assert_eq!(
             found_in(&syntax, "0123456789", &[span(1, 9)]),
-            [injection("rust", &[span(3, 7)])]
+            [
+                injection("rust", &[span(1, 9)]),
+                injection("rust", &[span(3, 7)])
+            ]
         );
     }
 
@@ -617,8 +665,8 @@ mod tests {
 
     #[test]
     fn layers_nest_down_to_the_bound_and_no_further() {
-        // Five lists inside one another, inside a root list that is the
-        // whole text and so injects nothing.
+        // Six lists inside one another, the outermost the whole text, which
+        // the host injects as any other.
         let snapshot = Text::from("((((((a))))))").snapshot();
         let (_, layers) = fresh(&Parens, &GrammarName::new(GRAMMAR), &nested(), &snapshot).unwrap();
 
@@ -626,20 +674,50 @@ mod tests {
             .iter()
             .map(|layer| (layer.depth, layer.ranges.clone()))
             .collect();
-        // The host finds every list but its own; each layer of depth 1 or
-        // 2 finds the lists inside its own; one of depth 3 finds none.
+        // The host finds every list; each layer of depth 1 or 2 finds the
+        // lists inside its own, its own left out; one of depth 3 finds
+        // none.
         let mut expected = Vec::new();
         for depth in 1..=MAX_DEPTH {
-            for start in depth..6 {
+            for start in depth - 1..6 {
                 // A list is found once for each chain of lists from the
                 // host's down to it, `depth` long.
-                for _ in 0..binomial(start - 1, depth - 1) {
+                for _ in 0..binomial(start, depth - 1) {
                     expected.push((depth, vec![span(start as usize, 13 - start as usize)]));
                 }
             }
         }
         assert_eq!(shape, expected);
         assert!(layers.iter().all(|layer| layer.language == GRAMMAR));
+    }
+
+    #[test]
+    fn a_hosts_injection_over_the_whole_text_is_a_layer_and_a_layers_over_its_own_ranges_is_not() {
+        // The root is the whole text: the host injects it, as a Markdown
+        // document of one paragraph injects its inline text, and the layer
+        // that makes finds only its own ranges again.
+        let grammar = GrammarName::new(GRAMMAR);
+        let query = Arc::new(
+            Parens
+                .compile(
+                    &grammar,
+                    "document @injection.content #set! injection.language parens #set! injection.include-children",
+                )
+                .unwrap(),
+        );
+        let mut injections = nested();
+        injections.query = Some(query.clone());
+        if let Some(language) = injections.languages.get_mut(GRAMMAR) {
+            language.injections = Some(query);
+        }
+        let snapshot = Text::from("a (b)").snapshot();
+        let (_, layers) = fresh(&Parens, &grammar, &injections, &snapshot).unwrap();
+
+        let shape: Vec<(u32, Vec<Range<usize>>)> = layers
+            .iter()
+            .map(|layer| (layer.depth, layer.ranges.clone()))
+            .collect();
+        assert_eq!(shape, [(1, vec![span(0, 5)])]);
     }
 
     /// `n` choose `k`.
@@ -649,12 +727,15 @@ mod tests {
 
     #[test]
     fn a_layers_tree_is_the_parse_in_its_ranges() {
-        let snapshot = Text::from("(a (b c))").snapshot();
+        // The root list is not the whole text, so its inner list is the one
+        // layer of the host's.
+        let snapshot = Text::from("x (a (b c))").snapshot();
         let (_, layers) = fresh(&Parens, &GrammarName::new(GRAMMAR), &nested(), &snapshot).unwrap();
 
-        assert_eq!(layers.len(), 1);
-        let alone = Parens.parse_in(&mut ParensParser, &snapshot, &layers[0].ranges);
-        assert_eq!(layers[0].ranges, [span(3, 8)]);
-        assert_eq!(Parens.nodes(&layers[0].tree), Parens.nodes(&alone));
+        assert_eq!(layers.len(), 3);
+        let inner = &layers[1];
+        let alone = Parens.parse_in(&mut ParensParser, &snapshot, &inner.ranges);
+        assert_eq!(inner.ranges, [span(5, 10)]);
+        assert_eq!(Parens.nodes(&inner.tree), Parens.nodes(&alone));
     }
 }

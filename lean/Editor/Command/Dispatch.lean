@@ -251,6 +251,14 @@ from the next command.
     of that name in the table (config's entries first), or `none`; `=` and
     the commands that open a line ask (`Target.indentUnit`,
     `Editor/Api.lean`);
+  - each grammar's tree (`languageTrees`): the grammars of the loop's
+    table (`Loop.Registered.languages`, config's entries over the shipped
+    ones), then the declared grammars (`Loop.Registered.grammars`), once
+    each, each resolved by `Loop.Registered.injectedTreeOf` against the
+    answers the state recorded, the one rule a buffer's injected languages
+    follow, and left out where it gives none; a rendered Markdown view asks,
+    for the queries it parses with and the faces it draws a layer's
+    captures in (`Editor/Markdown/View.lean`);
   - whether a job is registered (`hasJob`, from `Loop.Registered.jobs`, as
     a start is checked): `prompt` asks it of a source that answers later;
   - which sources a category has (`categorySources`, filled from
@@ -264,6 +272,10 @@ from the next command.
     (`environmentBase`, `Config.Registry.baseName`): a command that says the
     layers asks, as the default set's standing fixture
     `tests/headless/environment-sources` does.
+  - the command a buffer's own modes fill a role with (`roleCommand`, from
+    `Config.Registry.roleCommand`), handed the buffer's major and minor
+    modes: `link-follow` asks for `activate` off a link
+    (`Editor/Links.lean`).
 - **Loading a theme** (`StateRequest.loadTheme`) is refused with
   `noSuchTheme` for a name the loop was not told a theme is registered
   under, with the state as it was. Otherwise the name is kept in the state,
@@ -602,6 +614,11 @@ structure Loop.Registered where
   (`Config.Registry.baseName`), for a command that asks
   (`RegistryRequest.environmentBase`). -/
   environmentBase : String := Process.inheritedName
+  /-- The command a buffer's own modes fill a role with, given its major mode
+  and its minor modes, the one added last first
+  (`Config.Registry.roleCommand`), for a command that asks
+  (`RegistryRequest.roleCommand`). `none` where no mode fills it. -/
+  roleCommand : Option String → Array String → Role → Option String := fun _ _ _ => none
 
 /-- The workspace settings `registered` says: config's workspace roots, the
 git program, and config's workspace listers. The marker modes are not the
@@ -613,33 +630,6 @@ one. -/
 def Loop.Registered.workspaceSettings (registered : Loop.Registered) : Workspace.Settings :=
   { roots := registered.workspaceRoots, git := registered.git
     listers := registered.workspaceListers }
-
-/-- The answer to `request`, a question to the registry or config, from what
-`registered` says ("Requests that name something registered", in the module
-docs). It reads no state. -/
-def Loop.Registered.answer (registered : Loop.Registered) :
-    (request : RegistryRequest) → request.Reply
-  | .ex name => registered.ex name
-  | .exNames => registered.exNames
-  | .themeNames => registered.themeNames
-  | .commandNames => registered.commandNames
-  | .keyBindings view => registered.keyBindings view
-  | .autoReload => registered.autoReload
-  | .workspaceSettings => (registered.workspaceSettings, registered.generation)
-  | .displayRules => registered.displayRules
-  | .shellTimeLimit => registered.shellTimeLimit
-  | .syntaxRefreshDelay => registered.syntaxRefreshDelay
-  | .languageOf path => (Language.forPath registered.languages path).map (·.name)
-  | .indentUnitOf language => (registered.languages.find? (·.name == language)).map (·.indentUnit)
-  | .hasJob name => registered.jobs name
-  | .categorySources category => registered.categorySources category
-  | .atPointSources major minors occasion =>
-    (registered.atPointNames major minors).filter fun name =>
-      (registered.atPoint name).any (·.asksOn occasion)
-  | .storeCodec name => registered.codec? name
-  | .extensions key => registered.extensions key
-  | .configExtensions key => registered.configExtensions key
-  | .environmentBase => registered.environmentBase
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -665,6 +655,46 @@ def Loop.Registered.injectedTreeOf (registered : Loop.Registered) (state : Edito
     String → Option Mode.SyntaxTree :=
   Language.Grammar.injectedTreeOf registered.grammars state.grammars registered.generation
     registered.languages
+
+/-- The tree of each grammar `registered`'s language entries name, then of
+each grammar it declares, once each and in that order, by `injectedTreeOf`;
+a grammar whose tree is none is left out. What `RegistryRequest.languageTrees`
+is answered. -/
+def Loop.Registered.languageTrees (registered : Loop.Registered) (state : EditorState) :
+    List Mode.SyntaxTree :=
+  let names :=
+    (registered.languages.map (·.syntaxTree.grammar) ++ registered.grammars.map (·.name)).foldl
+      (fun kept name => if kept.contains name then kept else kept ++ [name]) []
+  names.filterMap (registered.injectedTreeOf state)
+
+/-- The answer to `request`, a question to the registry or config, from what
+`registered` says ("Requests that name something registered", in the module
+docs), and, for the trees, the grammars' answers `state` recorded. -/
+def Loop.Registered.answer (registered : Loop.Registered) (state : EditorState) :
+    (request : RegistryRequest) → request.Reply
+  | .ex name => registered.ex name
+  | .exNames => registered.exNames
+  | .themeNames => registered.themeNames
+  | .commandNames => registered.commandNames
+  | .keyBindings view => registered.keyBindings view
+  | .autoReload => registered.autoReload
+  | .workspaceSettings => (registered.workspaceSettings, registered.generation)
+  | .displayRules => registered.displayRules
+  | .shellTimeLimit => registered.shellTimeLimit
+  | .syntaxRefreshDelay => registered.syntaxRefreshDelay
+  | .languageOf path => (Language.forPath registered.languages path).map (·.name)
+  | .indentUnitOf language => (registered.languages.find? (·.name == language)).map (·.indentUnit)
+  | .languageTrees => some (registered.languageTrees state)
+  | .hasJob name => registered.jobs name
+  | .categorySources category => registered.categorySources category
+  | .atPointSources major minors occasion =>
+    (registered.atPointNames major minors).filter fun name =>
+      (registered.atPoint name).any (·.asksOn occasion)
+  | .storeCodec name => registered.codec? name
+  | .extensions key => registered.extensions key
+  | .configExtensions key => registered.configExtensions key
+  | .environmentBase => registered.environmentBase
+  | .roleCommand major minors role => registered.roleCommand major minors role
 
 /-- The tree `buffer`'s text is parsed and drawn with, by `registered` and
 the answers `state` recorded: what its major mode's lineage says
@@ -822,7 +852,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
       dispatched registered state (next reply)
     else dispatched registered state (next (.error (.noSuchTheme name)))
   | state, .step (.registry request) next =>
-    dispatched registered state (next (registered.answer request))
+    dispatched registered state (next (registered.answer state request))
   | state, .step (.control request) next =>
     -- Exhaustive, so that a new control request cannot fall through to the
     -- guard.

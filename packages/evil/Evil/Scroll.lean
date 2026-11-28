@@ -153,7 +153,7 @@ def scroll (amount : Scroll.Amount) (down : Bool) (call : Call) : EditorM Unit :
           Display.linesFrom
             { snapshot := area.snapshot, width := area.width, across := area.padding.across,
               gutter := area.padding.gutter
-              position, lines, goal }
+              position, lines, goal, folds := area.folds }
         let moved ← move range.head (if down then (rows : Int) else -(rows : Int)) none
         let text := call.target.buffer.text
         let rule := restOf call.report

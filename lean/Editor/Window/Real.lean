@@ -2,6 +2,7 @@ import Editor.Clipboard.Real
 import Editor.Headless
 import Editor.RealHost
 import Editor.Restart.Real
+import Editor.UrlOpener.Real
 import Editor.Window
 
 /-!
@@ -19,6 +20,7 @@ There is one editor loop; this module only wires it to a window:
 |---|---|---|
 | Display | the recorder, in cells of 8 by 16 | the real binding over a display on the system's fonts, bound to the window (`Ffi.Display.newSystem`, `Ffi.Display.present`) |
 | Clipboard | the host's own | the system's (`Clipboard.Real.system`), or `Clipboard.unavailable` when it cannot be opened, which the echo area says once |
+| URL opener | none (`UrlOpener.absent`, which refuses every URL), so nothing is launched | the desktop's (`UrlOpener.Real.system`), which the jobs' `url-open` hands a link's URL to |
 | Syntax tree | the real binding over the library's syntax service (`Editor/SyntaxTree/Real.lean`), made once over the table of snapshots the loop's text binding publishes | the same |
 | Driver | the script | none: the open command with the file, when one was given, what the echo area has to say, and a reload when config is loaded at start, or the start with no config when it is not, are posted before the first event (`Options.starts`), and the window's events are the input |
 
@@ -296,7 +298,9 @@ said and the status is 1. The restart hands on the options as given
 (`options.launch`). What the host says on stderr goes through `say`.
 `afterRestore` is a test's requests, sent right after the restore, which
 holds them until it has finished (`ffi-test window-host-restart` runs
-`restart` so). -/
+`restart` so). `urlOpener` is what the jobs hand a link's URL to: `main`
+hands the desktop's (`UrlOpener.Real.system`), and a test leaves the
+default, `UrlOpener.absent`, so no window scenario launches anything. -/
 def host (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Name)
     (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (display : Ffi.Display)
     (clipboard : ClipboardHandler) (said : Array String) (shutdown : IO (Task Bool) → IO Unit)
@@ -305,10 +309,12 @@ def host (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Na
     (afterRestore : Array Headless.Request := #[])
     (replace : Restart.Invocation → IO String := Restart.noExec)
     (say : String → IO Unit := IO.eprintln) (packageSet : PackageSet.Running := {})
-    (package : Option Config.PackageFiles := none) : IO UInt32 := do
+    (package : Option Config.PackageFiles := none)
+    (urlOpener : UrlOpenerHandler := UrlOpener.absent) : IO UInt32 := do
   let shipped ←
     Headless.shipped scheme packages base (options.sysroot.getD "") options.oleans
         (options.config.getD "") IO.eprintln processes (stateDirectory := options.stateDirectory)
+        (urlOpener := urlOpener)
   let collaborators :=
     options.handedTo
       { shipped with
@@ -447,7 +453,8 @@ def main.realHost : RealHost :=
 config is elaborated on, what the build says of the editor for the files
 it generates in the config directory (`origin`) and the command line's
 `arguments`: reads the world at
-the edge, opens the system's display and clipboard, and runs `host` on the
+the edge, opens the system's display and clipboard, makes the desktop's URL
+opener, and runs `host` on the
 real window, with `shutdown`. A command line it does not take is the reason
 and the usage on stderr, and status 2. It exits explicitly, with the status
 `host` gave. When the system's quit was let go ahead, the platform may have
@@ -517,7 +524,8 @@ def main (scheme : InputScheme) (packages : Array Package) (base : Array Lean.Na
   let status ←
     host scheme packages base .winit options plan (← Ffi.Display.newSystem) clipboard said shutdown
         (.window home) (workingDirectory := environment.workingDirectory) (generator := generator)
-        (replace := Restart.real) (packageSet := packageSet) (package := package)
+        (replace := Restart.real) (packageSet := packageSet) (package := package) (urlOpener :=
+        (← UrlOpener.Real.system).handle)
   IO.Process.exit status.toUInt8
 
 end Editor.Window

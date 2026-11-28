@@ -1387,7 +1387,7 @@ highlighting after a reparse) never blocks a fast one (the selection).
 | Inline virtual text | Type hints, an evil pending-operator hint |
 | Block between lines | A review comment thread, a hunk's accept/reject controls, a permission prompt, an excerpt header |
 | Gutter mark | Diff marks, comment markers, "an agent wrote this" marks, breakpoints |
-| Replacement | Folded regions, ligature-like substitutions, inline images |
+| Replacement | Folded regions (built: "Folds, as built"), ligature-like substitutions, inline images |
 | Line attribute | Background for the current line, a dimmed unreviewed region |
 
 A **face** is a set of optional attributes (family, size, weight, slant,
@@ -1396,8 +1396,10 @@ order. Faces are named and defined in Lean.
 
 ### As built
 
-Of the kinds above, span faces, blocks between lines and gutter marks are
-built. Span faces come from three sources: the selections, the decorations
+Of the kinds above, span faces, blocks between lines, gutter marks and
+one replacement, folded regions ("Folds, as built", under "Display
+layers"), are built; ligature-like substitutions and inline images are
+not. Span faces come from three sources: the selections, the decorations
 a scene carries, and a text's own spans, a syntax's highlights, which the
 text carries through a port of layout's (`TextSpans`, on a `TextRef`; "The
 scene", as built). The rest are not.
@@ -1499,13 +1501,16 @@ as built").
 **The decorations a scene carries** come from these sources, in this order
 (`lean/Editor/Loop.lean`, "Decorations"): for an excerpt buffer, its
 sources' buffers' spans, translated to each excerpt ("As built: showing
-excerpts"); a buffer's own spans, byte ranges each with a face that the
-buffer's owner sets (`Buffer.spans`, `lean/Editor/State.lean`,
-"Buffers"), such as the compile mode's locations in a compilation buffer;
+excerpts"); a buffer's links, each in the face `text.link` ("Followable
+spans, as built"); a buffer's own spans, byte ranges each with a face that
+the buffer's owner sets (`Buffer.spans`, `lean/Editor/State.lean`,
+"Buffers"), such as the compile mode's locations in a compilation buffer
+and a rendered Markdown document's faces ("Rendered markdown, as built");
 then, over each tracked excerpt no scene has shown, a span in
 `review-unexamined` ("As built: the review buffer"); then the matches of
 the last search, in the face `search-match`. A later decoration is drawn
-over an earlier one, so a match is over a span, and the mark of what was
+over an earlier one, so a span is over a link, a match is over a span, and
+the mark of what was
 not examined is over the buffer's own spans. Each view but the minibuffer's covers the range from the
 start of its scroll anchor's row through as many text rows as it has
 display rows, and one more, which covers every visible row however the rows
@@ -1641,9 +1646,12 @@ windows; the minibuffer's
 compile mode's locations by severity (`compilation.error`,
 `compilation.warning`, `compilation.note`: the core's names, which the
 compile mode's package draws with, `packages/compile/Compile.lean`,
-"Locations"); `search-match`, the matches of the last search; and the tab
+"Locations"); `search-match`, the matches of the last search; the tab
 bar's (`tab-bar` for each chip and `tab-bar.selected` for the tab in view's,
-window management phase 5). The status fields' faces
+window management phase 5); and the markup faces, `text.heading.1` to
+`text.heading.6`, `text.emphasis`, `text.strong`, `text.code-span`,
+`text.code-block`, `text.link`, `text.quote`, `text.list-marker`,
+`text.table-header` and `text.prose` (rich-text-display phase 1, below). The status fields' faces
 of before (`status.state`, `status.name`, `status.modified`, and
 `status.changed` of the daily-driver roadmap) were replaced by these, not
 kept as aliases: a config that defined them defines faces nothing draws.
@@ -1657,6 +1665,40 @@ vocabulary's syntax captures); `diff.added`, `diff.removed`,
 `diff.changed`, `gutter`, `review-unexamined` and `block-header`. A feature
 that draws a face not listed adds it to the vocabulary and to the palette
 mapping, and so to every shipped theme.
+
+**The markup faces** are a group of the vocabulary of their own, `text.`
+and a role, beside `compilation.` and `cursor.` (not `syntax.` faces):
+
+| Face | What it styles | The capture it is drawn for in a `.md` file opened as code |
+|---|---|---|
+| `text.heading.1` … `text.heading.6` | a heading of that level, its text without the marker | `text.heading.1` … `text.heading.6` (a setext heading is level 1 or 2) |
+| `text.emphasis` | emphasised text | `text.emphasis` |
+| `text.strong` | strong text | `text.strong` |
+| `text.code-span` | an inline code span | `text.literal` (the inline grammar's; only a code span, since both grammars' queries, the repository's, capture a link's title as `text.reference`) |
+| `text.code-block` | a fenced or indented code block | `text.code-block` |
+| `text.link` | a link's text, label, destination or title | `text.reference`, `text.uri` |
+| `text.quote` | a block quote | `text.quote` |
+| `text.list-marker` | a list item's marker | `text.list-marker` |
+| `text.table-header` | a table's header row | `text.table-header` |
+| `text.prose` | prose in a proportional font | none |
+
+The capture-to-face mapping is Lean data (`Face.markupCaptures`), and the
+shipped default `Highlight.defaultFaces` is the syntax captures' mapping
+followed by it. Both Markdown grammars' highlights queries that make those
+captures are the repository's (`docs/design/rust-library.md`, the queries
+table). The shipped look is the palette mapping's (`Palette.theme`): a
+heading bold in an accent, levels 1 to 3 larger; emphasis italic, strong
+bold; a code span in an accent and a code block on the raised colour; a
+link underlined; a quote faint and italic; a list marker in an accent; a
+table's header row bold. `text.prose` sets only a family, `system-ui`
+(`Face.proseFamily`), the platform's proportional UI font, and no capture
+names it, so a `.md` file opened as code stays monospace: it is for the
+prose of generated buffers (phase 5). Faces merge attribute by attribute,
+so a code span over prose would take prose's family unless it set its own:
+the code faces set `monospace` (`Face.monospaceFamily`) themselves, and code
+drawn over the prose face stays monospace. A face's family is a family
+name or a CSS generic family name, which the shaper resolves ("Layout and
+rendering", as built, the font set).
 
 **A theme from a palette.** A shipped theme is written from a `Palette`, a
 small record of named colours (paper, ink, raised, selected, faint, strong,
@@ -1775,6 +1817,283 @@ theme in force is state of the reload reducer (`Config.State.themeName`,
 
 Not built: a face naming another as its base.
 
+### Followable spans, as built
+
+The rich text display roadmap's phase 3 built links: a byte range of a
+generated buffer's text that names a target, followed from the keyboard
+(`lean/Editor/Link.lean`, `lean/Editor/Links.lean`).
+
+- **A link is data on the buffer, beside its spans**, not a field of a
+  decoration: `Link` (`start`, `stop`, `target`) in `Buffer.links`, set by
+  `BufferId.setLinks` (the state request `setLinks`), which refuses
+  `noSuchBuffer`. A target is Lean data and never crosses into the scene;
+  `Decoration` is the scene's type, which blocks use too. Like spans and
+  stops, links are the owner's, and nothing moves them on an edit.
+- **A target** (`LinkTarget`) is a file location (an absolute path, a row
+  from 0 and a column in characters, as `Place.file` names a place), a URL,
+  a reference in a scheme (`rdm:task/x`: the scheme `rdm`, the rest
+  `task/x`) or a command with its arguments (an `Invocation`).
+- **Drawn in `text.link`.** Every view draws each link in its range as a
+  decoration in `text.link`, clipped as spans are, before the buffer's own
+  spans: a span over a link's bytes is drawn over the link face attribute
+  by attribute, so a compile-coloured location keeps its colour and the
+  link's underline still shows. The built-in theme underlines `text.link`
+  (phase 1).
+- **The links mode** (`Links.mode`, named `links`) fills `activate` with
+  `link-follow`, `next-link` with `link-next` and `previous-link` with
+  `link-previous`. Its keymaps go before the buffer's minor and major
+  modes' in any buffer that has links (`Config.Registry.activeMaps`), so
+  on a link following takes precedence over a mode's own `activate`.
+  Off a link `link-follow` runs the command the buffer's own modes fill
+  `activate` with (`RegistryRequest.roleCommand`), inside itself; with
+  none it says `link-follow: no link at the cursor`. In a buffer with
+  links whose mode fills no `activate`, `RET` off a link no longer reaches
+  the scheme's own `RET` (Vim's line down): generated buffers are
+  read-only lists, where that was accepted.
+- **Following each kind**: a location is gone to as a jump
+  (`Jumps.goTo`): the link's place is recorded and the file visited in the
+  same window, so `C-o` comes back to the link; a relative path is
+  refused, since the producer resolves paths. A URL that starts with a
+  scheme and holds no control character (`Link.urlScheme?`) is handed to
+  the job `url-open`, which asks the system's URL opener, a job service
+  since an open may block (`lean/Editor/UrlOpener.lean`;
+  `rust-library.md`, "Platform"); the job says a refusal in the echo area,
+  and only the window mode has the desktop's opener. A reference is
+  handed to the resolver registered for its scheme (`Links.Resolver`, a
+  choice extension point the core declares), and a scheme with none says
+  ``link-follow: nothing follows `<scheme>:` links``. A command is run
+  inside `link-follow` with the target's arguments.
+- **Moving**: `link-next` and `link-previous` put the cursor on the first
+  byte of the link that starts after or before it, so from inside a link
+  `link-previous` goes to its start. They do not wrap: at either end they
+  say there is no link that way and leave the cursor. The keys are the
+  roles': `M-n` and `M-p` in the test scheme, `] l` and `[ l` in the Vim
+  scheme.
+- **Registered by a package.** The core declares the names and holds the
+  decisions; the package `link-commands` registers them (`Links.setup`).
+  Leaving it out leaves link following out: links are still drawn, and a
+  mode keeps its own `activate`.
+- **The compilation buffer's locations are links** (phase 7): each
+  location's text is a link whose target is a command, `compile-visit` with
+  the scope's place and the location's index, not a file location. The
+  links mode's keymaps go first in a buffer with links, so a location
+  target would make `RET` (`link-follow`, then `Jumps.goTo`) replace the
+  compilation buffer in its own window and never make the location
+  current, which `next-error` steps from. Through the command,
+  `compile-goto-error` and the links mode's `RET` take one path: the
+  visiting view, the location made current, and the jump recorded
+  (`packages/compile/Compile.lean`, "Faces and links").
+- **Not built**: following with the mouse, links in a block, and moving
+  the excerpt buffers onto links: they still visit by a row lookup of
+  their own (`Jumps.visitLocated`; rdm task
+  `excerpt-visit-onto-span-targets`).
+
+### The rich-text description, as built
+
+The rich text display roadmap's phase 7 named one value for everything a
+generated buffer shows, and one call that writes a buffer from it
+(`lean/Editor/RichText.lean`; `BufferId.setRichText` and
+`BufferId.appendRichText`, `lean/Editor/Api.lean`). Phases 1 to 4 and 6
+each added a part through a call of its own, which stay for a producer that
+sets one part alone; a producer of a whole format builds the description
+instead.
+
+- **The value** (`RichText`) is plain data: a text and, at byte offsets of
+  it, five parts.
+  - **Face spans** (`spans`, `Decoration`): ranges each drawn in a face, in
+    order, a later span drawn over an earlier one (phase 1).
+  - **Align-to stops** (`stops`, `AlignStop`): offsets each with an x in
+    whole points where a cell of its row starts. The producer measures
+    them through the display (`Editor/Columns.lean`), so the description is
+    layout-complete (phase 2).
+  - **Span targets** (`links`, `Link`): ranges each naming a target the
+    links mode follows (phase 3, "Followable spans, as built").
+  - **Fold ranges** (`folds`, `Foldable`): ranges each with the producer's
+    key, a placeholder and a declared state. Written again, a range whose
+    key the buffer has keeps its toggled state (`Fold.merge`; phase 4,
+    "Folds, as built").
+  - **Wrap indents** (`indents`, `WrapIndent`): ranges each with where the
+    visual lines of the rows it covers start (phase 6, "Display layers",
+    as built, "Wrap indents").
+- **Two calls**, each inside `BufferId.writing`, so a read-only generated
+  buffer is written by its owner, and each refused `noSuchBuffer` with the
+  buffer unchanged:
+  - `setRichText id rich start` writes the buffer from `start` on: its
+    text from `start` (or from its end or the description's, when either is
+    shorter) is replaced with the description's, as one edit and none when
+    nothing would change, and its parts by the prefix rule. Where the text
+    is cut and what replaces it is one pure function, `RichText.textCut`,
+    which `replaceFrom` uses too, so the cut the checks pin is the one
+    that runs. With `start` 0 it sets the whole buffer;
+  - `appendRichText id tail` extends the buffer's description at its end:
+    the tail's text inserted at the end, and its parts moved past it and
+    listed after the buffer's own. Nothing before the end is edited, so a
+    streamed document updates only its tail.
+- **The prefix rule** (`RichText.replaceFrom`) is applied a part at a
+  time. A range lies before `start` when it starts before it and stops at
+  it or before; an empty range at `start` belongs to the tail; a stop lies
+  before `start` when its offset does. Each of the buffer's parts that lies
+  before `start` is kept as the buffer has it, and every part of the
+  description that does not is taken, the kept ones first, so spans keep
+  their draw order.
+- **The fold-key rule**: a kept fold whose key one of the taken folds has
+  is dropped, so each key is declared once, and the folds are then ordered
+  by start. A heading's fold that reaches past `start` is restated by the
+  new description with its new stop.
+- **It clears a rendered document.** Both calls drop `Buffer.markdown`, so
+  the document a buffer holds is always the one its parts were last written
+  from; the markdown view keeps its document again after its write.
+- **Two producers.** Markdown lowers its layout-free description to it
+  (`Doc.richText`, `Editor/Markdown/Doc.lean`), adding the stops its tables
+  were measured into, and writes the buffer with one `setRichText` from 0
+  for a render and from where the text first changes for an append
+  ("Rendered markdown, as built"). The compile mode, which never goes
+  through markdown, builds its compilation buffer from it: the header line
+  with `setRichText`, and each batch of output lines with `appendRichText`,
+  every location a span and a link (`packages/compile/Compile.lean`,
+  "Faces and links"). So the parts make a format that does not depend on
+  markdown.
+- **An in-process value, not a wire format.** It is plain Lean data for
+  generated buffers, handed from a producer to the core in one process. It
+  is not the remote-clients content vocabulary and nothing serialises it
+  ([remote-clients.md](remote-clients.md), "The vocabulary"); that
+  vocabulary stays a non-goal.
+
+### Rendered markdown, as built
+
+The rich text display roadmap's phase 5 built a rendered-markdown view: a
+Markdown document rendered into the parts a generated buffer takes, by one
+core call (`lean/Editor/Markdown/`).
+
+- **Two calls, and the document on the buffer.**
+  `BufferId.renderMarkdown id source options` renders a whole document into
+  the buffer `id`: its text, spans, align-to stops, links, foldable ranges
+  and wrap indents, written by one `BufferId.setRichText` of the document's
+  rich-text description (`Doc.richText`; "The rich-text description, as
+  built", phase 7), inside `BufferId.writing`, so a read-only buffer is
+  written by its owner. `BufferId.appendMarkdown id more` extends the
+  document the buffer holds (`Buffer.markdown`, set by the state request
+  `setMarkdown`) and is refused `notRendered` on a buffer that holds none.
+  Each is refused, with the buffer as it was, for an absent buffer and for a
+  parse the syntax tree port refused. The options are the root a relative
+  link or `path:line` is resolved against (none: not linked) and the gap
+  between table columns (16 points). The document keeps both, so an append
+  renders its tail as the first render did; a fence's faces are a function
+  of the language table, read again on each call. As with spans, stops,
+  links and folds, the buffer is its owner's: an owner that also writes the
+  text by hand renders again.
+- **Parsed once, by the library; rendered by Lean.** The text is parsed
+  once, whole, through one stateless request of the syntax tree port
+  (`SyntaxTree.parseOnce`, `rust-library.md`, "A text parsed once"), with
+  the block grammar `markdown` as the host: its layers come back as plain
+  captures, the Markdown layers' of a query kind of our own, `rendered`
+  (the `languages` package's `grammars/queries/markdown*/rendered.scm`),
+  and a fence's of its grammar's highlights. Every query is handed in as a
+  source, read from the grammar's declared query files: the view asks the
+  loop for each grammar's tree (`RegistryRequest.languageTrees`, resolved
+  as a buffer's injected languages are) and makes the languages from them
+  (`Markdown.languagesOf`), since the library ships none (the
+  shipped-grammars roadmap's phase 6). A table's cells are inline layers
+  too, by the rendered injections, which `languagesOf` puts after the block
+  grammar's injections. A view asked before the declared grammars'
+  registration has answered has no `markdown` query and is refused. A pure Lean renderer turns the
+  source and the layers into a document of top-level blocks, each rendered
+  to a piece (`Editor/Markdown/Block.lean`, `Inline.lean`), whose pieces
+  joined give a layout-free description (`Markdown.Description`): text with
+  the markup left out, face spans, table cells, links and foldable ranges.
+  The renderer's tests run on fixtures checked in with the library's
+  parses (`tests/markdown/`), held to the library by
+  `ContractTest.markdownCaseChecks`.
+- **What renders how.** Prose (everything outside code) is drawn in
+  `text.prose`, the proportional face, and every code part sets monospace
+  itself (phase 1). Spans of a block go from outer to inner:
+
+  | Block | Rendered text | Spans |
+  |---|---|---|
+  | heading | its text, without `#` or the underline | `text.heading.<level>` over it |
+  | paragraph | its inline text, a soft break a space, a hard break a line feed | — |
+  | fenced code block | its content rows, the fence lines left out | `text.code-block` over them; its layer's captures in the faces config's language table gives them |
+  | indented code block | its content rows | `text.code-block` |
+  | table | the header row, then the body rows; the delimiter row and the pipes left out; cells joined by one space | `text.table-header` over the header cells |
+  | list | an item a line: its marker, `•` (or the item's own number and `.` or `)`), a space and its blocks; continuation lines hang under the text after the marker; a nested list one indent step (16 points) in | `text.list-marker` over the marker |
+  | block quote | its blocks, the `>` markers left out; every line one step in a nesting level | `text.quote` over them |
+  | thematic break | `———` | — |
+
+  Inline, an emphasis, a strong emphasis and a code span lose their
+  delimiters and are drawn in `text.emphasis`, `text.strong` and
+  `text.code-span`; a link shows its text alone; an autolink its address
+  without the angles; a backslash escape its character. Top-level blocks
+  are one empty line apart.
+- **Links and `path:line` references** are the buffer's links
+  (`RichText.links`), drawn in `text.link` and followed by the links mode
+  (phase 3). A destination in a web scheme (`http`, `https`, `mailto`,
+  `ftp`, `file`) is a URL; `path:line[:column]`, its path holding a `/` or
+  a `.`, is a location at that row and column from 0; any other scheme is a
+  reference for its resolver (`rdm:task/x`); anything else is a path at its
+  first row. A destination in angle brackets is read without them, and a
+  backslash escape is its character; a path's `#fragment` or `?query` is
+  left out (a URL and a reference keep theirs), so `x.md:3#sec` is row 2 of
+  `x.md`. Percent-encoding is not decoded. A relative path is resolved
+  against the root. In prose and in code spans, never in fenced code, a
+  bare `http(s)://` token and a bare `path:line` are links too
+  (`Editor/Markdown/Target.lean`). An email autolink links to `mailto:`.
+- **Folds.** Each heading is a foldable range from its text to the start of
+  the next heading of the same or a higher level, or to the end, keyed
+  `heading <n>` by its ordinal, its placeholder its text in its heading face
+  and ` …`. Each fenced code block is a range over its rows, keyed
+  `code <n>`, its placeholder `<language or code>, <k> lines` (`1 line`
+  for one) in `text.code-block`; a fence with no rows renders as an empty
+  row, and its range is the empty one at that row, which covers it
+  (`0 lines`). All are declared unfolded; the write merges by key, so a
+  toggle survives an append.
+- **Tables are measured when applied.** A table in the description is rows
+  of cell ranges, layout-free. The call measures each cell with the spans
+  over it (`Columns.measureCells`, `Display.measure`), lays the columns out
+  past the widest cell of each column before and the wider of the gap and a
+  space (`Columns.starts`), and puts a stop at each later cell's first byte
+  (`Columns.stopsAt`). Columns are left-aligned. The stops are kept on their
+  block, and only the blocks an update renders are measured: a theme or
+  font change re-measures a table only when its block is rendered again.
+- **Streaming: the tail rule.** An append keeps every top-level block but
+  the last, parses the source from the last block's start with the new
+  text alone, and renders only that tail's blocks (`Doc.extend`, counted by
+  `Doc.rendered`). Markdown's block structure before the start of the last
+  top-level block cannot change on an append: a setext underline, a
+  table's delimiter row, a lazy continuation, a list's next item and an
+  unclosed fence each extend or change the last block alone. The heading
+  folds, whose ranges an append can move, and the fold keys are made from
+  every piece on each update. The buffer is written by one `setRichText`
+  from where its text first changes (`Doc.firstChanged`, the end of the
+  last block kept): no byte and no part before it is rewritten, and a
+  heading fold that crosses it is the new description's. The document an append makes describes what rendering the whole
+  source does (`ModelTest.markdownStreamChecks`). A long document is parsed
+  on the editor thread, as the request is answered on the thread that asks
+  (an open question, `rust-library.md`).
+- **What it does not render.** An image shows its description, linked to
+  its source, never the image; an image in a link's text (a badge) is not
+  linked itself, so the text links to the link's destination alone. HTML shows as its source: an HTML block in
+  `text.code-block`, inline HTML as prose. Reference-style links (and their
+  definitions), entities, strikethrough and task-list markers are shown as
+  their source (rdm task `rendered-markdown-unrendered-constructs`). GFM's
+  column alignment (`:-:`, `-:`) is read and not built: every column is
+  left-aligned. A fence is highlighted with its grammar's shipped
+  highlights alone, so a mode's own highlights source is not used for it,
+  and a grammar registered at run time, which ships none, draws its fences
+  in `text.code-block` alone (rdm task `rendered-markdown-fence-highlights`).
+- **Indents** (phase 6) are layout-free data on the piece, as links are,
+  and nothing is measured for them (`Piece.indents`, `Piece.indentedBy`;
+  "Display layers", as built, "Wrap indents"). A list item has no spaces
+  of indent: its blocks are one step in (`Options.indent`, 16 points, kept
+  on the document as the gap is), and its first row has a hanging indent
+  after its marker, space and task marker, which wins over the step on that
+  row. So a nested list's items are a step further in, each hanging under
+  its own text. A block quote's lines are a step in, first and
+  continuation alike, a nested quote's a step further: depth times the
+  step. The view writes the description's indents with its other parts,
+  in the one `setRichText`. An item's later blocks (a second paragraph, a code block)
+  start a step in, not under its text, since a lead is measured on its own
+  row (rdm task `markdown-list-item-later-blocks-hang`).
+
 ### Text is the only layout engine
 
 The library is a text display engine, not a GUI toolkit (decided
@@ -1782,17 +2101,32 @@ The library is a text display engine, not a GUI toolkit (decided
 cascade and no focus traversal. Everything shown is text, or a box that
 text layout places:
 
-- **A block is text**: a small piece of text with faces and clickable
-  spans, each span naming a command. It has no rows, columns or buttons of
-  its own. Built as text with faces ("Decorations", as built); clickable
-  spans are not built.
-- **Tables, lists and pickers** are text views over generated text.
+- **A block is text**: a small piece of text with faces. It has no rows,
+  columns or buttons of its own. Built as text with faces ("Decorations",
+  as built). Followable spans are built for a buffer's text ("Followable
+  spans, as built") and not in a block, which the cursor cannot enter.
+- **Tables, lists and pickers** are text views over generated text. A
+  rendered Markdown table is built through it: its rows are text, and its
+  columns align-to stops measured when it is applied ("Rendered markdown,
+  as built").
+- **Indented wrapping is the wrap layer's**: a wrap indent says where a
+  row's later visual lines start, in points or hanging under the text
+  after a leading span, and layout places them; nothing above it counts
+  spaces or measures a marker ("Display layers", as built, "Wrap
+  indents").
 - **Columns are aligned with align-to stops** in text layout, the one
-  primitive this adds. Tab stops are the same mechanism. Not built yet:
-  until it is, the minibuffer's completion display aligns candidate
-  annotations by padding with spaces counted in characters, which is exact
-  under the shipped monospace default face and misaligns under a
-  proportional one (rdm task `align-to-stops`).
+  primitive this adds (built by the rich text display roadmap's phase 2;
+  "Display layers", as built, "Align-to stops"). A stop (`AlignStop`, a
+  view's `stops`) names the first character of a cell of a row and the x,
+  in whole points from the start of the text row, the cell starts at; a
+  generator computes the xs from the widths the display measures
+  (`Display.measure`, `Editor/Columns.lean`) and writes them with its
+  buffer's text and spans (`BufferId.setStops`). Tab stops are to become
+  the same mechanism: the tab layer still counts a tab in spaces, and the
+  minibuffer's completion display still aligns candidate annotations by
+  padding with spaces counted in characters, which is exact under the
+  shipped monospace default face and misaligns under a proportional one
+  (rdm task `move-tabs-and-annotations-to-align-stops`).
 - **A popup** (completion, hover, a picker) is a text view in a floating
   rectangle that Lean places against a position it asks layout for
   ("Views as built", the floating layer).
@@ -1848,14 +2182,18 @@ the others are added as layers without changing the ones below.
 ### As built
 
 The display pipeline's phase 1 built the contract and two layers, in
-`crates/editor-layout` (`src/layer.rs`, `src/tabs.rs`, `src/wrap.rs`):
+`crates/editor-layout` (`src/layer.rs`, `src/tabs.rs`, `src/wrap.rs`), and
+the rich text display roadmap's phase 4 a third, the fold layer
+(`src/folds.rs`), which sits beside them ("Folds, as built", below):
 
 - **The contract** (`Layer`): `sync` takes the snapshot of the layer below
   and the edits that made it, and gives the layer's own snapshot and its
   edits, in its own point type; a point converts down and up, with a bias
   for a point the layer below has no counterpart of. Its module docs say
-  where a later layer goes: folds and inline text between the buffer and
-  the tab layer, blocks after the wrap layer; none changes a layer below.
+  where a later layer goes: inline text between the buffer and the tab
+  layer, blocks after the wrap layer; none changes a layer below. Folds,
+  first planned between the buffer and the tab layer, sit beside the tab
+  and wrap layers as built ("Folds, as built").
 - **The tab layer.** Tabs are expanded before shaping (decided in phase 1,
   2026-11-13): a tab becomes spaces up to the next multiple of the tab
   width (8 columns by default), columns counted in characters, so the
@@ -1863,8 +2201,9 @@ The display pipeline's phase 1 built the contract and two layers, in
   the stop in pixels; on a proportional font it is at the stop counted in
   spaces, the known limit of the choice. Inline boxes (a relayout pass per
   tab) and runs split at stops (layout breaking lines itself) were set
-  aside, and stay possible as the align-to-stop primitive ("Text is the
-  only layout engine"). Its points are a row, a segment and a byte column
+  aside for tabs; runs split at stops is what the align-to-stop primitive
+  was built as ("Align-to stops", below), and moving tabs onto it is rdm
+  task `move-tabs-and-annotations-to-align-stops`. Its points are a row, a segment and a byte column
   of the segment's expanded text. A row's content is its bytes without its
   line feed and without a carriage return before it; the position between
   the two is the row's end.
@@ -1887,7 +2226,118 @@ The display pipeline's phase 1 built the contract and two layers, in
   a line at a row's end holds the row's end and stays).
 
 The round trip of every position through both layers is a property test
-(`tests/layers.rs`).
+(`tests/layers.rs`), over rows with align-to stops too.
+
+**Align-to stops** (the rich text display roadmap's phase 2) are not a
+layer either: they are part of laying out one segment, in the wrap layer's
+entry (`crates/editor-layout/src/align.rs`, `src/line.rs`). A view's stops
+cut each row into cells at their offsets: cell 0 the text before the first
+stop, each later one from its stop's character to the next stop or the
+segment's end. Each cell is shaped and broken on its own through the
+`Shaper` port, which is unchanged, and layout places the pieces itself, by
+these rules, in pixels from the start of the text row (a stop's points
+times the scale, as a padding is):
+
+- Cell 0 is at x 0, broken at the width, as a row with no stop.
+- **The overflow wrap rule**: a later cell whose stop is at or past the
+  view's width, on a visual line that already holds something, breaks the
+  row before it: the cell continues at x 0 on the next visual line, broken
+  at the whole width, and so does every later cell whose stop is past the
+  width. A stop at the very start of a row never breaks before it, so no
+  empty visual line is made.
+- Otherwise a cell starts at its stop, or where the content before it
+  ends when that is further right: cells never overlap, and a cell that
+  runs past the next stop pushes the next cell right. A cell pushed to or
+  past the width breaks before it, by the overflow rule.
+- Otherwise the cell is broken at the room right of where it starts, and
+  its later visual lines hang under it at the same x, so a long cell stays
+  in its column.
+- The gap before a stop belongs to the character before it, as a tab's
+  spaces belong to the tab: the last glyph before the stop gets the
+  advance that reaches it, so a cursor on it spans the gap and an x in the
+  gap aims for it.
+- A visual line of several pieces sits on their lowest baseline and is as
+  tall as that plus the deepest any reaches below its own.
+- A stop off a character boundary is moved back to one; one with no
+  character after it in its segment does nothing; of two at one offset
+  the later listed wins.
+- In a row cut into segments, a stop is measured from the start of its
+  segment's first visual line, since each segment starts a new visual line
+  (a limit, as the forced break is). A tab inside a row with stops still
+  expands by the tab layer's rule.
+
+The rows, spot and move queries lay a row out under the stops of the last
+frame that showed the text at its revision, kept in points so a query
+after a change of scale answers at the new scale; an edit drops them until
+the next frame, as it drops the decorations a query reads. An entry cut at
+the same columns at other xs, or at another width, is broken and placed
+again without shaping. The shaper contract holds every adapter to lines
+that start at their left edge and hold their glyphs (`ORIGIN`), which the
+placing relies on.
+
+**Wrap indents** (the rich text display roadmap's phase 6) are not a layer
+either: like stops they are part of placing one segment's visual lines
+(`crates/editor-layout/src/align.rs`, "Wrap indents"; `src/indent.rs`).
+An indent (`WrapIndent`, a view's `indents`, from `Buffer.indents` set by
+`BufferId.setIndents`) covers the rows that hold a byte of its range, a
+line break being the row's it ends, or the row of its start when the range
+is empty, by the fold rule; an offset past the end is the end and one
+inside a character is moved back. Of two over a row the later listed wins.
+It gives a covered row's first visual line a first-line indent, in whole
+points, and its later lines a continuation: whole points, or the hanging
+form, a lead of `n` bytes, where the row's first `n` bytes end. Points are
+multiplied by the scale, as a stop's are. The first-line indent is a
+length only: one that started where its own leading span ends would
+depend on itself. Every row is placed by `align`, one with no stop as a
+single cell, so the arithmetic is in one function:
+
+- A covered row's first visual line starts at x `first` and is broken at
+  `width - first`; each later line starts at the continuation `C` and is
+  broken at `width - C`.
+- **The hanging form** cuts the row at its lead, as a stop cuts it: the
+  text after the leading span is placed where the span ends (the pen),
+  broken at the room right of it, and its later lines hang under it, so
+  the hang is where the span's own glyphs end whatever the font. A span
+  that reaches the width puts the text at `first` on the next line, and
+  that is its hang; a lead of no byte, or at or past the row's end, hangs
+  at `first`; a lead at a stop's column makes the stop place the cell, and
+  the hang is where that cell starts.
+- **An indent at or past the width is not applied**: that line starts at
+  x 0 and is broken at the whole width, as a stop past the width is broken
+  before, so no text goes right of the view.
+- With no width nothing breaks, and the line starts at `first`: the x a
+  move within an unwrapped line keeps is the drawn x.
+- **With stops** in the row, cell 0 starts at `first`, a cell moved down
+  by the overflow rule starts the next line at `C` and is broken at
+  `width - C`, a cell hanging under its stop keeps its stop's x, and a
+  stop's x is still from the start of the text row.
+- A composed line's glyph xs and width include its indent, so a cell, a
+  cursor, a selection and every query are at the drawn x; an x left of
+  the indent aims for the line's first character, and an empty covered
+  row's position is at `first`.
+- **Limits**: a row longer than a segment gives each later segment the
+  continuation for every line, and a hanging row's later segment hangs at
+  `first`, since a segment is laid out on its own. A tab still expands
+  from the row's start. A fold's placeholder and a block take no indent.
+
+The rows, spot and move queries lay a row out under the indents of the last
+frame that showed the text at its revision, kept in points beside its
+stops, so no caller of a query names them: evil's `j` and `k`, the follow
+and `Scroll.Area` are as they were. A query before a buffer's first frame
+sees none, as with stops. **Cache keys**: a lead is a cut, so another
+shapes the row again; pixel indents are placement, so other pixels break
+and place it again without shaping (`tests/counters.rs`). **The port**
+grows by one capability: `ShapedLine::break_lines_in` breaks a line's
+first visual line at one width and the rest at another, which a pixel
+indent whose first line and continuation differ needs and which no
+composition of single-width breaks gives; `break_lines` is its one-width
+form. The shaper contract holds every adapter to it (`INDENTED`), and
+Parley does it with its own breaker's per-line maximum. Shaping the rest
+of a row again after its first line was rejected: it would shape on every
+change of width. The display model (`lean/Editor/Display/Model.lean`)
+holds the rule in cells, reading the indents of the last scene published,
+and the display contract's "What indents are held to" holds the model, the
+real binding and the recorder to it.
 
 **Blocks are not a layer** (a departure, the excerpts roadmap's phase 3).
 The contract above says blocks would be a layer after the wrap layer, with
@@ -1898,6 +2348,124 @@ position through it for nothing. Layout's walk counts a block's lines as
 heights instead ("Decorations", as built), and blocks never enter a text's
 wrap layer: they are matched to rows afresh in each frame and query. The
 layer contract stays for folds and inline text.
+
+### Folds, as built
+
+The rich text display roadmap's phase 4 built folds: a range of a
+buffer's text shown as one placeholder row, the owner's summary line in
+its own faces (`crates/editor-layout/src/folds.rs`, `src/query.rs`,
+`src/frame.rs`; `lean/Editor/Fold.lean`, `lean/Editor/Folds.lean`).
+
+- **A fold is whole rows.** It covers the rows that hold a byte of its
+  range `[start, stop)`, a line break being the row's it ends, or the row
+  of `start` when the range is empty; an offset past the end is the end.
+  This is the gutter mark's rule.
+- **The placeholder.** Those rows are drawn as one row of the fold's text,
+  in its own decorations over the default face, laid out unbroken as one
+  visual line and clipped at the view's right edge. It holds every
+  position of the rows it covers, from the first row's start (the fold's
+  start) up to the next row's start, each at x 0. Its row in the rows
+  answer is the fold's start through the end of its last row's content.
+  It is shaped through the block store, so a fold shown again is not
+  shaped again. Decorations, spans, search matches, stops and links of the
+  folded rows are not laid out; a block before the first covered row is
+  drawn above the placeholder and one before a later covered row is not;
+  the placeholder has the gutter marks of its first covered row.
+- **Nested and overlapping ranges.** The shown folds are the folded ranges
+  in order of start (the longer first of two with one start); one whose
+  first row an earlier shown fold covers is dropped. So of two nested
+  folded ranges the outer one shows, and a range that only partly overlaps
+  a shown one leaves its later rows visible. Lean computes this
+  (`Fold.shown`) and hands a view only its shown folds
+  (`EditorState.viewFolds`, the one function the scene, the scroll
+  commands' area and a view's decoration range all read), and layout
+  applies the same rule to whatever it is handed, so the two never
+  disagree.
+- **The layer, and its departure.** A fold never changes the text of a row
+  it leaves shown, so the tab and wrap layers keep their per-row entries
+  keyed by buffer row, `TabLayer::Below` stays the buffer's snapshot, and
+  folding or unfolding shapes only the placeholder. The fold layer
+  (`FoldLayer`, implementing `Layer` over the buffer's snapshot, with
+  `FoldPoint`s of a fold row and a byte of it) therefore sits beside the
+  tab/wrap stack rather than between the buffer and the tab layer, as this
+  section first planned: it maps buffer offsets to fold points and back.
+  Layout keeps no fold layer between calls: the frame and each query build
+  a `FoldSnapshot` from the view's or the query's folds for the walk. The
+  round trip of a position through the fold layer, and through the tab and
+  wrap layers on the rows the folds leave shown, is a property test
+  (`tests/layers.rs`).
+- **The queries.** Folds ride on all three display queries
+  (`RowsQuery.folds`, `MoveQuery.folds`, `SpotQuery.folds`,
+  `lean/Editor/Display.lean`, "Folds") as well as on the scene
+  (`View.folds`), since a fold changes which rows exist. The rows answer
+  counts a placeholder as one row; a spot of a position a fold covers is
+  the placeholder's row at the padding's x; a move counts it as one row
+  and, landing on it, goes to the fold's start with its goal passed back
+  unchanged. The display contract holds the Lean model, the recorder and
+  the real layout to that rule (`lean/Editor/Display/Contract.lean`, "What
+  folds are held to"): the one contract between the pure model of the
+  position mapping and the real layer.
+- **A section's own data on the buffer.** A buffer's owner declares its
+  foldable ranges (`Foldable`: a byte range, an owner-given key, a
+  placeholder text with its faces, and whether it is folded) with
+  `BufferId.setFolds`. Declaring again merges by key (`Fold.merge`): a
+  range whose key survives keeps its current state, and only a new key
+  takes its declared one, so a regenerated buffer keeps the user's
+  toggles. Toggling (`BufferId.setFolded`) is a state request that never
+  touches the text, so its content and revision stay as they were. As with
+  spans and links, nothing moves a fold on an edit: generated buffers are
+  their owner's. Every view of the buffer carries its shown folds, and the
+  follow and the scroll commands ask the display with them.
+- **How motion, selection, jumps and search treat a fold:**
+  - *Vertical motion* steps over a folded range as one row: evil's `j` and
+    `k` (`Fold.stepRows`, `packages/evil/Evil/Motions.lean`) go from the
+    row above a fold to the fold's start in one step and to the row after
+    it in the next, keeping the wanted column across the placeholder, and
+    never unfold. A fold that reaches the last line stops `j` there.
+  - *Selection*: extending a selection across a folded range covers it
+    whole, since `j` and `k` step over it as one line and both ends lie
+    outside it. A selection end resting on a placeholder covers the range
+    whole too: layout fills the whole placeholder line when a selection
+    meets any byte the fold covers, and evil's operator over a visual
+    selection widens an end inside a shown fold to the fold's whole lines
+    (the line shape) or to its start or its last line's end (the others,
+    `Fold.cover`).
+  - *Line-wise operators* take a shown fold whole too: when the rows an
+    operator takes as whole lines start or end inside a shown fold, they
+    reach from the fold's first row or through its last (`Fold.cover`,
+    `packages/evil/Evil/Operators.lean`). So `dj` and `yj` from the row
+    above a fold take that row and the fold, `dk` from the row below takes
+    the fold and that row, and the doubled operator (`dd`, `yy`, `cc`) on a
+    placeholder takes the fold's rows, counting a fold as one line (`2dd`,
+    by `Fold.stepRows`) and, with a count above 1, giving up on a fold that
+    reaches the last line as it does on the last line.
+  - *Jumps*: a motion that is a jump and does not fail (`/`, `?`, `n`, `N`,
+    `*`, `#`, `G`, `gg`) unfolds every folded range whose rows hold the
+    place it lands on, and so does a landing through the jump list (`C-o`,
+    `C-i`) or a mark (`Jumps.goHeld`); both go through one core call,
+    `BufferId.reveal`.
+  - *Search*: an accepted search lands on its match's first byte and
+    unfolds the range that holds it (it is a jump). Matches drawn as the
+    last search's (`search-match`) never unfold. Incremental search is not
+    built; its preview, once built, must not unfold either.
+  - *Horizontal motion* from a placeholder (`l`, `w`, …) leaves the range
+    folded, and the cursor is drawn at the placeholder's start: a recorded
+    limit, as Vim's `foldopen` `hor` is not built.
+  - *Links* inside a shown fold are hidden: `link-next` and `link-previous`
+    pass over them, and `link-follow` on a placeholder finds no link and
+    runs the buffer's own `activate`.
+- **Toggling from the keyboard.** The core's folds mode fills `toggle`
+  with `fold-toggle`, which the default package `fold-commands` registers:
+  on the ranges whose rows hold the cursor's row it unfolds the outermost
+  folded one, or with none folded folds the innermost and puts the cursor
+  at its start; off every range it runs the buffer's own `toggle`. Its
+  keymaps go after the links mode's in a buffer with foldable ranges
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "Active keymaps").
+- **Not built**: fold commands beyond the toggle (fold all, unfold all),
+  folds over a range of a row rather than whole rows, `foldopen` for
+  horizontal motion, folds that move with edits of a buffer the user
+  writes, and folds in the agent conversation, which still regenerates its
+  buffer to hide a tool call (rdm task `acp-conversation-on-folds`).
 
 ## Views
 
@@ -3026,7 +3594,16 @@ part are in the module docs; these are the decisions.
   may call it, and its check is on demand (`mise run shaper-system`). A
   character is looked for in the family its run's spec names, then the
   default family, then the set's fallbacks in order, and where none has
-  it, it is the first family's missing glyph. A port for font sources was
+  it, it is the first family's missing glyph. A spec's family is a
+  family's name or a CSS generic family name (`monospace`, `system-ui`,
+  `sans-serif`, …), which the set resolves: the system's set by its
+  platform mapping (fontique's: on macOS `system-ui` is the System Font),
+  a set of given files by the families `FontSet::with_generic` gave for
+  it, and none until then. `system-ui` is followed by `sans-serif`, so a
+  platform that gives no UI family still draws prose proportionally; a
+  generic the set gives nothing for adds nothing, and the default family
+  follows. The shipped `default` face names `monospace` and the prose
+  face `system-ui` (the markup faces, "Decorations"). A port for font sources was
   set aside: it would be a port inside an adapter for one decision.
 - **A line is as tall as the fonts on it.** Parley makes every line at
   least as tall as a layout's default style, as CSS does. Left alone,
@@ -4397,9 +4974,9 @@ frame journal and the renderer's counters.
   back, and the caller places it.
 - **Tabs** (answered): expanded before shaping, in the tab layer ("Display
   layers", as built). Tab stops on a proportional font are counted in
-  spaces, not in pixels, until an align-to-stop primitive exists, and so
-  are the columns of the minibuffer display's candidate annotations (rdm
-  task `align-to-stops`).
+  spaces, not in pixels, and so are the columns of the minibuffer
+  display's candidate annotations, until they move onto the align-to stops
+  that are now built (rdm task `move-tabs-and-annotations-to-align-stops`).
 - **The other choices the survey left open** are listed in
   [rendering-prior-art.md](rendering-prior-art.md).
 - **Embedded terminals**: a fixed row count, or growing with output up to
@@ -4606,7 +5183,10 @@ frame journal and the renderer's counters.
 - **The system's default family.** The system font set's default is the
   first family fontique gives for the generic `monospace`, which on
   macOS was Courier when it was checked. Which family the editor starts
-  in, and whether config names it, is not decided.
+  in, and whether config names it, is not decided. The prose face's
+  family beside it is the generic `system-ui`, followed by `sans-serif`,
+  whatever fontique gives for them on the platform; which proportional
+  family prose is drawn in is not decided either.
 - **The system's fonts on Linux, and when they change.** No gate runs
   the system font path: `mise run shaper-system` is on demand, and it
   has been run on macOS only. The Linux build of the pin is checked by

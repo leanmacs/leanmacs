@@ -25,7 +25,8 @@ document behind it, for its edit log, through the snapshot itself.
 **Publishing** sends the scene as words, one string and the snapshot
 handles its views show (`encode`; the layout is
 `crates/editor-ffi/src/display/wire.rs`'s), and the library lays it out and
-keeps the frame. A view's scroll anchor and selections go as their markers'
+keeps the frame, and with it each view's wrap indents, which its later
+queries lay a row out under (`indentWords`; no query is sent them). A view's scroll anchor and selections go as their markers'
 numbers, which the library reads in the document of the view's snapshot as
 it is when the scene arrives. The library cannot tell whose number it is
 given, so a view whose markers are not all of one text is sent with no
@@ -157,15 +158,68 @@ def markWords (marks : Array GutterMark) : Array UInt64 × String :=
         strings ++ mark.text ++ mark.face.name))
     (#[marks.size.toUInt64], "")
 
+/-- `stops` as they cross to the library in a scene (the layout is
+`crates/editor-ffi/src/display/wire.rs`'s, a view's stops after its marks):
+their count, then for each its offset and its x in whole points, an x no
+`u32` holds sent as the largest one does, which is what the library would
+refuse otherwise. -/
+def stopWords (stops : Array AlignStop) : Array UInt64 :=
+  stops.foldl
+    (fun words aligned =>
+      words.push (RealTexts.word aligned.offset) |>.push (paddingWord aligned.x))
+    #[stops.size.toUInt64]
+
+/-- `folds` as they cross to the library (the layout is
+`crates/editor-ffi/src/display/wire.rs`'s, a view's folds after its stops):
+words, their count, then for each its start, its stop, its placeholder's
+length and its count of decorations, then each decoration's start, stop and
+face's length; and one string, each fold's placeholder and then its
+decorations' faces. A view's folds are written so into a scene
+(`encodeView`), and by themselves for every query. -/
+def foldWords (folds : Array Fold) : Array UInt64 × String :=
+  folds.foldl
+    (fun (words, strings) fold =>
+      let words :=
+        words.push (RealTexts.word fold.start) |>.push (RealTexts.word fold.stop) |>.push
+            fold.text.utf8ByteSize.toUInt64 |>.push
+          fold.decorations.size.toUInt64
+      fold.decorations.foldl
+        (fun (words, strings) decoration =>
+          (words.push (RealTexts.word decoration.start) |>.push
+                (RealTexts.word decoration.stop) |>.push
+              decoration.face.name.utf8ByteSize.toUInt64,
+            strings ++ decoration.face.name))
+        (words, strings ++ fold.text))
+    (#[folds.size.toUInt64], "")
+
+/-- `indents` as they cross to the library in a scene (the layout is
+`crates/editor-ffi/src/display/wire.rs`'s, a view's indents after its
+folds): their count, then for each its start, its stop, its first-line
+indent in whole points, its continuation's kind (0 points, 1 a lead) and
+its value. A number of points no `u32` holds is sent as the largest word,
+which the library refuses, as a stop's x is. -/
+def indentWords (indents : Array WrapIndent) : Array UInt64 :=
+  indents.foldl
+    (fun words indent =>
+      let words :=
+        words.push (RealTexts.word indent.start) |>.push (RealTexts.word indent.stop) |>.push
+          (paddingWord indent.first)
+      match indent.rest with
+      | .points x => words.push 0 |>.push (paddingWord x)
+      | .lead bytes => words.push 1 |>.push (RealTexts.word bytes))
+    #[indents.size.toUInt64]
+
 /-- The rows a view shows: `Display.rowsShown`'s answer. -/
 def rows (real : RealDisplay) (query : Display.RowsQuery) :
     IO (Except DisplayError (Array Display.Row)) := do
   let some snapshot ← real.snapshots.find? query.snapshot | return .error .noSuchSnapshot
   let (words, strings) := blockWords query.blocks
+  let (folded, foldText) := foldWords query.folds
   let answer ←
     real.display.rows snapshot (RealTexts.word query.width) (RealTexts.word query.height)
         (offset query.anchor) (paddingWord query.padding.across) (paddingWord query.padding.down)
-        (paddingWord query.padding.top) words strings (paddingWord query.padding.gutter)
+        (paddingWord query.padding.top) words strings (paddingWord query.padding.gutter) folded
+        foldText
   match answer with
   | some rows =>
     return .ok (rows.map fun row => { start := row.start.toNat, stop := row.stop.toNat })
@@ -176,9 +230,11 @@ def rows (real : RealDisplay) (query : Display.RowsQuery) :
 def move (real : RealDisplay) (query : Display.MoveQuery) :
     IO (Except DisplayError Display.Moved) := do
   let some snapshot ← real.snapshots.find? query.snapshot | return .error .noSuchSnapshot
+  let (folded, foldText) := foldWords query.folds
   let answer ←
     real.display.move snapshot (RealTexts.word query.width) (offset query.position) query.lines
-        (query.goal.map RealTexts.word) (paddingWord query.across) (paddingWord query.gutter)
+        (query.goal.map RealTexts.word) (paddingWord query.across) (paddingWord query.gutter) folded
+        foldText
   match answer with
   | some moved =>
     return .ok { position := moved.position.toNat, goal := moved.goal.toNat }
@@ -190,11 +246,12 @@ def spot (real : RealDisplay) (query : Display.SpotQuery) :
     IO (Except DisplayError (Option Display.Spot)) := do
   let some snapshot ← real.snapshots.find? query.snapshot | return .error .noSuchSnapshot
   let (words, strings) := blockWords query.blocks
+  let (folded, foldText) := foldWords query.folds
   let answer ←
     real.display.spot snapshot (RealTexts.word query.width) (RealTexts.word query.height)
         (offset query.anchor) (offset query.position) (paddingWord query.padding.across)
         (paddingWord query.padding.down) (paddingWord query.padding.top) words strings
-        (paddingWord query.padding.gutter)
+        (paddingWord query.padding.gutter) folded foldText
   match answer with
   | some spot =>
     return .ok
@@ -297,9 +354,13 @@ def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encod
       paddingWord view.padding.gutter]
   let (blocks, blockText) := blockWords view.blocks
   let (marks, markText) := markWords view.marks
-  return { encoded with
-      words := encoded.words ++ padding ++ blocks ++ marks
-      strings := encoded.strings ++ blockText ++ markText }
+  let (folds, foldText) := foldWords view.folds
+  return {
+      encoded with
+      words :=
+        encoded.words ++ padding ++ blocks ++ marks ++ stopWords view.stops ++ folds ++
+          indentWords view.indents
+      strings := encoded.strings ++ blockText ++ markText ++ foldText }
 
 /-- The library's tag of a slant. -/
 def slantTag : Slant → UInt64
@@ -449,6 +510,18 @@ def publish (real : RealDisplay) (scene : Scene) : IO Unit := do
   if unsent.isSome then
     real.theme.set none
 
+/-- Defines in the library's layout, by itself, the theme not yet sent, if
+there is one: it stays to be sent with the next publish's scene, which
+layout then takes as no change. So what is asked of layout before that
+publish is in the faces it lays out in (`heights`, `measure`). Words this
+binding wrote that the library cannot read are an error, as for
+`publish`. -/
+def defineUnsent (real : RealDisplay) : IO Unit := do
+  if let some theme← real.theme.get then
+    let defined := encodeDefinitions { words := #[], strings := "", snapshots := #[] } theme
+    unless ← real.display.define defined.words defined.strings do
+      throw (IO.userError "the library could not read a theme's words")
+
 /-- The heights the library's layout answers at its scale, in the faces
 the next publish lays out in: a theme not yet sent is defined in layout
 first, by itself, and stays to be sent with that publish's scene. So a
@@ -457,14 +530,25 @@ answered the heights of that publish's frame, the first after a re-theme
 too. Words this binding wrote that the library cannot read are an error,
 as for `publish`. -/
 def heights (real : RealDisplay) : IO Display.Heights := do
-  if let some theme← real.theme.get then
-    let defined := encodeDefinitions { words := #[], strings := "", snapshots := #[] } theme
-    unless ← real.display.define defined.words defined.strings do
-      throw (IO.userError "the library could not read a theme's words")
+  real.defineUnsent
   let heights ← real.display.heights
   return {
       text := heights.text.toNat, status := heights.status.toNat
       message := heights.message.toNat }
+
+/-- How wide a run is: `Display.measure`'s answer, from the library's
+layout, in the faces the next publish lays out in: a theme not yet sent is
+defined first, as for `heights`. The run crosses as one block before
+offset 0 (`blockWords`). Words this binding wrote that the library cannot
+read are an error, as for `publish`. -/
+def measure (real : RealDisplay) (query : Display.MeasureQuery) : IO Nat := do
+  real.defineUnsent
+  let (words, strings) :=
+    blockWords #[{ before := 0, text := query.text, decorations := query.decorations }]
+  let some width ←
+    real.display.measure words
+        strings | throw (IO.userError "the library could not read a run's words")
+  return width.toNat
 
 /-- Answers `request` from the library. -/
 def handle (real : RealDisplay) : (request : DisplayRequest) → IO request.Reply
@@ -473,6 +557,7 @@ def handle (real : RealDisplay) : (request : DisplayRequest) → IO request.Repl
   | .move query => real.move query
   | .spot query => real.spot query
   | .heights => real.heights
+  | .measure query => real.measure query
   | .frame request => do
     if let some platform := real.platform then
       Ffi.windowRequest platform (library request)

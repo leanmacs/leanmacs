@@ -48,7 +48,7 @@ host registers one are in [lean-runtime.md](lean-runtime.md), "Packages".
 **No feature is in the core's Lake package** (`lean/lakefile.lean`, the
 package `editor-core`): it registers no `Package` and has no entry module
 ("A package's entry module", below). The default package set
-(`packages/lakefile.toml`) requires the core and twenty-seven default
+(`packages/lakefile.toml`) requires the core and twenty-nine default
 packages, in this order, each with the interface packages it requires:
 
 1. `ex` (`ex-api`, `buffers-api`, `shell-api`), `frame-commands`
@@ -75,7 +75,13 @@ packages, in this order, each with the interface packages it requires:
    roadmap's phase 2 ("The core interface library `environment-api`",
    below);
 6. `login-shell`, the base of a child's environment in the window mode,
-   over the same library, that roadmap's phase 3.
+   over the same library, that roadmap's phase 3;
+7. `link-commands`, which follows a buffer's links and moves between them
+   under names the core declares (`lean/Editor/Links.lean`), the
+   rich-text display roadmap's phase 3;
+8. `fold-commands`, which folds and unfolds a buffer's sections under
+   names the core declares (`lean/Editor/Folds.lean`), that roadmap's
+   phase 4.
 
 Each has a directory under `packages/`, as each of the eighteen interface
 packages has. "The module map", below, lists them with what each
@@ -313,7 +319,8 @@ build with a message naming it.
   linux-aarch64/libtree-sitter-<name>.so
   linux-x86_64/libtree-sitter-<name>.so
   queries/highlights.scm      and injections.scm, indents.scm,
-                              textobjects.scm, each optional
+                              textobjects.scm, rendered.scm,
+                              rendered-injections.scm, each optional
 ```
 
 **The declaration.** The package declares its grammars on its
@@ -1170,7 +1177,7 @@ over the process service, a major mode, ex names and contributions.
 | `lakefile.toml` | The package: it requires the core by path and, since the minibuffer moved out (features-as-packages phase 4), the interface package `minibuffer-api`, whose names and fake its tests use; declares the library `Compile` with `globs = ["Compile.*"]`, the test library `CompileTest` and the test driver `compile-test`, and turns every linter on |
 | `Compile.lean` | The commands and the run: `compile`, `compile-command`, `recompile`, `kill-compilation`, the output's commands, the locations and the steps over them, the mode `compilation` (from `lean/Editor/Compile.lean`) |
 | `Compile/Errors.lean`, `Compile/Contribution.lean`, `Compile/Shipped.lean` | The matcher and the sites it yields; the offers and the formats in use; `cargo-mode`, `lake-mode` and `mise-mode` with rustc's and Lean's formats |
-| `Compile/Compiled.lean` | The `Package` value `Editor.Compile.package`, still named `compile`: nine commands, the job `compile-run`, the mode, the three contributions and six ex names |
+| `Compile/Compiled.lean` | The `Package` value `Editor.Compile.package`, still named `compile`: ten commands, the job `compile-run`, the mode, the three contributions and six ex names |
 | `Compile/EditorPackage.lean` | The entry module: `packages := #[Editor.Compile.package]`. It imports `Compile.Compiled`, and so the whole library, which is what config sees of the package |
 | `CompileTest/Model.lean` | The test driver's root, which runs the ten model lists, 98 checks, in the test modules that mirror the library's (`CompileTest/Compile.lean`, `CompileTest/Compile/…`), over the support in `CompileTest/Support/Compile.lean` |
 | `CompileTest/Linked.lean` | The linked test's root: it makes the hosts' context (`HostContext.run`) and starts the real services, and runs `compileHostChecks`, a compile through a host on a stepped stage, the compile over the real process service (`CompileTest/Linked/Compile.lean`) and the shipped modes on a stepped rig (`CompileTest/Linked/Compile/Shipped.lean`); 8 checks |
@@ -4727,26 +4734,30 @@ and the core's Lake package registers no `Package`.
 | The core's root: `Editor.Core` | 1 | core | no |
 | The hosts and the executable's modules, with what a host is made of and driven by: the editor queue as a port, the session journal as a port, a host stepped on its caller's thread, a driver's wait judged, and a host's activity count, which the tests' event waits are written on (`docs/design/concurrency.md`, "Stepped hosts in tests", "The idle signal"): `Editor.Executable`, `Editor.Executable.Refusal`, `Editor.Headless`, `Editor.Headless.CommandLine`, `Editor.Headless.Journal`, `Editor.Headless.Queue`, `Editor.Headless.Stepped`, `Editor.Headless.Wait`, `Editor.Job.Activity`, `Editor.Main`, `Editor.ModuleLookup`, `Editor.Version`, `Editor.Window`, `Editor.Window.Real`, `Editor.WindowCheck`, `Editor.WindowCheck.Real` | 16 | core | no |
 | The loop and its dispatch: `Editor.Command.Dispatch`, `Editor.Event.Queue`, `Editor.Loop`, `Editor.State.Outbox` | 4 | core | no |
-| The models of the ports: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Config.Elaborator.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Grep.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `Editor.SyntaxTree.Model.Json`, `Editor.SyntaxTree.Model.Query`, `Editor.SyntaxTree.Registration.Model`, `Editor.Text.Model`, `Editor.Watch.Model` | 17 | core | in tests |
-| The contracts and cases: `Editor.Api.Cases`, `Editor.Clipboard.Contract`, `Editor.Completion.AtPointContract`, `Editor.Completion.Contract`, `Editor.Completion.DisplayContract`, `Editor.Completion.StyleContract`, `Editor.Config.Elaborator.Contract`, `Editor.Display.Contract`, `Editor.File.Cases`, `Editor.Fuzzy.Contract`, `Editor.Headless.Journal.Contract`, `Editor.Headless.Queue.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.Job.FlushContract`, `Editor.Job.HandleContract`, `Editor.Job.ProtocolContract`, `Editor.Job.PumpContract`, `Editor.Job.SchedulerContract`, `Editor.SyntaxTree.Contract`, `Editor.SyntaxTree.DeliveryContract`, `Editor.Text.Contract`, `Editor.UndoTree.Cases`, `Editor.Watch.Contract` | 24 | core | in tests |
+| The models of the ports: `Editor.Clipboard.Model`, `Editor.Command.Model`, `Editor.Config.Elaborator.Model`, `Editor.Diff.Model`, `Editor.Display.Model`, `Editor.File.Model`, `Editor.FileWatch.Model`, `Editor.Fuzzy.Model`, `Editor.Grep.Model`, `Editor.Job.Model`, `Editor.Process.Model`, `Editor.SyntaxTree.Model`, `Editor.SyntaxTree.Model.Json`, `Editor.SyntaxTree.Model.Query`, `Editor.SyntaxTree.Registration.Model`, `Editor.Text.Model`, `Editor.UrlOpener.Model`, `Editor.Watch.Model` | 18 | core | in tests |
+| The contracts and cases: `Editor.Api.Cases`, `Editor.Clipboard.Contract`, `Editor.Completion.AtPointContract`, `Editor.Completion.Contract`, `Editor.Completion.DisplayContract`, `Editor.Completion.StyleContract`, `Editor.Config.Elaborator.Contract`, `Editor.Display.Contract`, `Editor.File.Cases`, `Editor.Fuzzy.Contract`, `Editor.Headless.Journal.Contract`, `Editor.Headless.Queue.Contract`, `Editor.InputScheme.Contract`, `Editor.Job.Contract`, `Editor.Job.FlushContract`, `Editor.Job.HandleContract`, `Editor.Job.ProtocolContract`, `Editor.Job.PumpContract`, `Editor.Job.SchedulerContract`, `Editor.Markdown.Cases`, `Editor.SyntaxTree.Contract`, `Editor.SyntaxTree.DeliveryContract`, `Editor.Text.Contract`, `Editor.UndoTree.Cases`, `Editor.Watch.Contract` | 25 | core | in tests |
 | The fakes, the test scheme, the loop's driver, the reading of what a package registers and the theme picture check: `Editor.Completion.Fake`, `Editor.Config.Packages`, `Editor.Headless.Journal.Fake`, `Editor.InputScheme.Test`, `Editor.Job.Fake`, `Editor.Loop.Driver`, `Editor.SyntaxTree.Fake`, `Editor.Theme.Picture` | 8 | core | in tests |
 | The linked test kit: `Editor.Test.Linked.Bench`, `Editor.Test.Linked.Frames`, `Editor.Test.Linked.Grammar`, `Editor.Test.Linked.Host`, `Editor.Test.Linked.Jobs`, `Editor.Test.Linked.Keys`, `Editor.Test.Linked.Lines`, `Editor.Test.Linked.Listings`, `Editor.Test.Linked.Rig`, `Editor.Test.Linked.Services`, `Editor.Test.Linked.Shipped`, `Editor.Test.Linked.Stepping`, `Editor.Test.Linked.Syntax`, `Editor.Test.Linked.Trees`, `Editor.Test.Linked.UserSet` | 15 | core | in a linked test |
 | The headless fixture harness, which a package set's `fixture-test` runs (`docs/dev-practices/headless-mode.md`, "How the gate runs a fixture"): a fixture's parts, its discovery, its setups, a package's fixture support (the setups and the service fakes a package brings to the stepped harness), its command line, its stepped run and its edge: `Editor.Test.Fixture.CommandLine`, `Editor.Test.Fixture.Discover`, `Editor.Test.Fixture.Fixture`, `Editor.Test.Fixture.Main`, `Editor.Test.Fixture.Setup`, `Editor.Test.Fixture.Stepped`, `Editor.Test.Fixture.Support` | 7 | core | no |
 | The model test kit: `Editor.Test.AtPoint`, `Editor.Test.Completion`, `Editor.Test.Config`, `Editor.Test.Driver`, `Editor.Test.Editing`, `Editor.Test.Ex`, `Editor.Test.Excerpt`, `Editor.Test.Files`, `Editor.Test.Frame`, `Editor.Test.Geometry`, `Editor.Test.Hosted`, `Editor.Test.Jobs`, `Editor.Test.Keys`, `Editor.Test.Listings`, `Editor.Test.Loop`, `Editor.Test.Minibuffer`, `Editor.Test.Models`, `Editor.Test.Modes`, `Editor.Test.Opener`, `Editor.Test.PackageSet`, `Editor.Test.Prompts`, `Editor.Test.Restore`, `Editor.Test.Shell`, `Editor.Test.Shipped`, `Editor.Test.Sources`, `Editor.Test.States`, `Editor.Test.Views`, `Editor.Test.Windows`, `Editor.Test.Workspace` | 29 | core | in tests |
 | The config session: `Editor.Config.Diagnostic`, `Editor.Config.Directory`, `Editor.Config.Display`, `Editor.Config.Elaborate`, `Editor.Config.ExactPath`, `Editor.Config.LakePackage`, `Editor.Config.Lakefile`, `Editor.Config.Lakefile.Toml`, `Editor.Config.Owner`, `Editor.Config.Registry`, `Editor.Config.Reload`, `Editor.Config.Session`, `Editor.Config.Stores` | 13 | core | no |
-| The raw bindings: `Editor.Ffi`, `Editor.Ffi.Clipboard`, `Editor.Ffi.Counter`, `Editor.Ffi.Diffs`, `Editor.Ffi.Display`, `Editor.Ffi.Document`, `Editor.Ffi.Events`, `Editor.Ffi.Excerpts`, `Editor.Ffi.Files`, `Editor.Ffi.Fuzzy`, `Editor.Ffi.Grep`, `Editor.Ffi.Interrupt`, `Editor.Ffi.Inverse`, `Editor.Ffi.Launch`, `Editor.Ffi.Log`, `Editor.Ffi.MainThread`, `Editor.Ffi.Marker`, `Editor.Ffi.Pair`, `Editor.Ffi.Processes`, `Editor.Ffi.Render`, `Editor.Ffi.Search`, `Editor.Ffi.Snapshot`, `Editor.Ffi.Syntax`, `Editor.Ffi.Text`, `Editor.Ffi.Timers`, `Editor.Ffi.Transaction`, `Editor.Ffi.Watches`, `Editor.Ffi.Window`, `Editor.Ffi.Words` | 29 | core | no |
-| The real bindings of the ports and what runs them: `Editor.Clipboard.InProcess`, `Editor.Clipboard.Real`, `Editor.Command.Real`, `Editor.Display.Real`, `Editor.Display.Recorder`, `Editor.Fuzzy.Real`, `Editor.Headless.Journal.Real`, `Editor.Headless.Queue.Real`, `Editor.Job.Jobs`, `Editor.Job.Pool`, `Editor.Job.Real`, `Editor.Job.Runner`, `Editor.Job.Table`, `Editor.Restart.Real`, `Editor.SyntaxTree.Real`, `Editor.Text.Real`, `Editor.Watch.Real` | 17 | core | no |
+| The raw bindings: `Editor.Ffi`, `Editor.Ffi.Clipboard`, `Editor.Ffi.Counter`, `Editor.Ffi.Diffs`, `Editor.Ffi.Display`, `Editor.Ffi.Document`, `Editor.Ffi.Events`, `Editor.Ffi.Excerpts`, `Editor.Ffi.Files`, `Editor.Ffi.Fuzzy`, `Editor.Ffi.Grep`, `Editor.Ffi.Interrupt`, `Editor.Ffi.Inverse`, `Editor.Ffi.Launch`, `Editor.Ffi.Log`, `Editor.Ffi.MainThread`, `Editor.Ffi.Marker`, `Editor.Ffi.Pair`, `Editor.Ffi.Processes`, `Editor.Ffi.Render`, `Editor.Ffi.Search`, `Editor.Ffi.Snapshot`, `Editor.Ffi.Syntax`, `Editor.Ffi.Text`, `Editor.Ffi.Timers`, `Editor.Ffi.Transaction`, `Editor.Ffi.UrlOpener`, `Editor.Ffi.Watches`, `Editor.Ffi.Window`, `Editor.Ffi.Words` | 30 | core | no |
+| The real bindings of the ports and what runs them: `Editor.Clipboard.InProcess`, `Editor.Clipboard.Real`, `Editor.Command.Real`, `Editor.Display.Real`, `Editor.Display.Recorder`, `Editor.Fuzzy.Real`, `Editor.Headless.Journal.Real`, `Editor.Headless.Queue.Real`, `Editor.Job.Jobs`, `Editor.Job.Pool`, `Editor.Job.Real`, `Editor.Job.Runner`, `Editor.Job.Table`, `Editor.Restart.Real`, `Editor.SyntaxTree.Real`, `Editor.Text.Real`, `Editor.UrlOpener.Real`, `Editor.Watch.Real` | 18 | core | no |
 | The editor API and what is proved of it: `Editor.Api`, `Editor.Api.Theorems`, `Editor.UndoTree`, `Editor.UndoTree.Theorems` | 4 | core | yes |
 | The job runner's protocol, a pure transition system the runner decides its steps with (`docs/design/concurrency.md`, "The runner's protocol, modelled"), and what is proved of it: `Editor.Job.Protocol`, `Editor.Job.Protocol.Theorems` | 2 | core | no |
 | The composite port and a command: `Editor.Command`, `Editor.Command.Append`, `Editor.Command.Call`, `Editor.Command.Control`, `Editor.Command.Registry`, `Editor.Program` | 6 | core | yes |
-| The ports: `Editor.Clipboard`, `Editor.Diff`, `Editor.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Job.Pump`, `Editor.PackageService`, `Editor.Process`, `Editor.Process.Environment`, `Editor.SyntaxTree`, `Editor.SyntaxTree.Registration`, `Editor.Text`, `Editor.Watch` | 17 | core | yes |
+| The ports: `Editor.Clipboard`, `Editor.Diff`, `Editor.Diff.Script`, `Editor.Display`, `Editor.File`, `Editor.FileWatch`, `Editor.Fuzzy`, `Editor.Grep`, `Editor.Job`, `Editor.Job.Pump`, `Editor.PackageService`, `Editor.Process`, `Editor.Process.Environment`, `Editor.SyntaxTree`, `Editor.SyntaxTree.Registration`, `Editor.Text`, `Editor.UrlOpener`, `Editor.Watch` | 18 | core | yes |
 | The word under the cursor, over the text port: `Editor.Text.Word` | 1 | core | yes |
+| Rendered markdown: a Markdown text parsed once through the syntax tree port, the pure renderer of its blocks into a layout-free description, and the one core call that writes it into a generated buffer (`docs/design/text-and-display.md`, "Rendered markdown, as built"): `Editor.Markdown.Block`, `Editor.Markdown.Description`, `Editor.Markdown.Doc`, `Editor.Markdown.Inline`, `Editor.Markdown.Parse`, `Editor.Markdown.Parsed`, `Editor.Markdown.Target`, `Editor.Markdown.View` | 8 | core | yes |
 | The typed time bounds every bounded wait takes, a hang guard or real time under test, the marks of the inferred waits, which the wait linters read to refuse one outside its modules (`docs/design/concurrency.md`, "What a test may still wait on time for"; `docs/dev-practices/inferred-waits.md`), the marks of the real hosts and services with the declaration of a module of the wiring set, which the real-host linter reads to refuse one outside it, and a root's check set (`CheckGroup`) and window scenarios (`Scenario`), from which the gate and the stress loop select the wiring set and which the wiring-set linter holds complete (`docs/dev-practices/real-thread-checks.md`). The linters themselves are the library `Lint` (`lean/Lint/Wait.lean`, `lean/Lint/RealHost.lean`, `lean/Lint/Wiring.lean`), outside the core: they import `Lean`, so the build loads them as a plugin and no module imports them: `Editor.Bound`, `Editor.InferredWait`, `Editor.RealHost` | 3 | core | yes |
 | The setup port, packages, extension points and stores: `Editor.Extension`, `Editor.Json`, `Editor.Package`, `Editor.Setup`, `Editor.Store`, `Editor.Store.Codec`, `Editor.Value` | 7 | core | yes |
 | The state, what a search of a workspace's files covers, and the names of the jobs the loop's reconcilers run: `Editor.DisplayRules`, `Editor.Event`, `Editor.ExcerptView`, `Editor.FileJobs`, `Editor.Floating`, `Editor.GeneratedView`, `Editor.Gutter`, `Editor.Gutter.Track`, `Editor.Layout`, `Editor.SearchRoot`, `Editor.State`, `Editor.State.Request`, `Editor.Workspace` | 13 | core | yes |
 | Places, jump lists and marks, and going to a place: `Editor.JumpList`, `Editor.Jumps`, `Editor.Jumps.Go`, `Editor.Marks`, `Editor.Marks.Follow` | 5 | core | yes |
-| The scene and display types: `Editor.Appearance`, `Editor.Face`, `Editor.Face.Vocabulary`, `Editor.Highlight`, `Editor.Menu`, `Editor.ModeLine`, `Editor.Scene`, `Editor.Scroll`, `Editor.TabBar` | 9 | core | yes |
-| Keys and modes: `Editor.InputScheme`, `Editor.Invocation`, `Editor.Key.Notation`, `Editor.Keymap`, `Editor.Mode`, `Editor.Role`, `Editor.Vocabulary` | 7 | core | yes |
+| A buffer's links, the targets its owner names on its text, and following and moving between them, which the package `link-commands` registers under the names the core declares: `Editor.Link`, `Editor.Links` | 2 | core | yes |
+| A buffer's foldable ranges, the sections its owner declares on its text by key, the pure functions over them (the shown folds, a step of rows over them, the range a toggle acts on), and folding and unfolding the one under the cursor, which the package `fold-commands` registers under the names the core declares: `Editor.Fold`, `Editor.Folds` | 2 | core | yes |
+| The rich-text description a generated buffer is written from in one call, its text with face spans, align-to stops, span targets, fold ranges and wrap indents, and its prefix rule (`docs/design/text-and-display.md`, "The rich-text description, as built"): `Editor.RichText` | 1 | core | yes |
+| The scene and display types: `Editor.Appearance`, `Editor.Columns`, `Editor.Face`, `Editor.Face.Vocabulary`, `Editor.Highlight`, `Editor.Menu`, `Editor.ModeLine`, `Editor.Scene`, `Editor.Scroll`, `Editor.TabBar` | 10 | core | yes |
+| Keys and modes: `Editor.InputScheme`, `Editor.Invocation`, `Editor.Key.Notation`, `Editor.Keymap`, `Editor.Mode`, `Editor.Mode.SyntaxTree`, `Editor.Role`, `Editor.Vocabulary` | 8 | core | yes |
 | Completion: `Editor.Completion`, `Editor.Completion.AtPoint`, `Editor.Completion.Candidate`, `Editor.Completion.Display`, `Editor.Completion.Filtering`, `Editor.Completion.Keys`, `Editor.Completion.Later`, `Editor.Completion.Style` | 8 | core | yes |
 | Languages, the grammars config declares, and indentation: `Editor.Indent`, `Editor.Language`, `Editor.Language.Grammar`, `Editor.Language.Grammar.Answer`, `Editor.Language.Grammar.Register`, `Editor.Language.IndentUnit` | 6 | core | yes |
 | What an ex line and a typed path are as data: `Editor.Ex.Line`, `Editor.TypedPath` | 2 | core | yes |
@@ -4784,8 +4795,9 @@ points it registers at and reads, and the names it declares or reaches.
   `FilesApi.Opened`, `FilesApi.Saved` and `FilesApi.Files` (the core's
   interface library), `EnvironmentApi.DirectorySource` and
   `EnvironmentApi.BaseSource` (the core's other), `BuffersApi.Closing` and `BuffersApi.Buffers`,
-  `ProjectApi.Workspaces`, `VcApi.Backend`, and `Compile.Contribution`
-  and `Compile.ProjectCommands` (`compile-api`'s).
+  `ProjectApi.Workspaces`, `VcApi.Backend`, `Compile.Contribution`
+  and `Compile.ProjectCommands` (`compile-api`'s), and `Editor.Links.Resolver`
+  (the core's, a choice by scheme, `lean/Editor/Links.lean`).
 - **A registration** is an `Extension.add` of a value of the point's type,
   or a call of a setup operation that is one: `compileContribution`
   (`Compile.Contribution`) and `projectCommands` (`Compile.ProjectCommands`),
@@ -4804,6 +4816,7 @@ points it registers at and reads, and the names it declares or reaches.
   | `BuffersApi.buffers?` | `BuffersApi.Buffers` | `packages/buffers-api/BuffersApi.lean` |
   | `ProjectApi.workspaces?` | `ProjectApi.Workspaces` | `packages/project-api/ProjectApi.lean` |
   | `VcApi.connect?`, which chooses among the backends a job over the point is handed | `VcApi.Backend` | `packages/vc-api/VcApi.lean` |
+  | `Links.follow`, through `Links.followTarget` | `Editor.Links.Resolver` | `lean/Editor/Links.lean` |
   | `Compile.hook` | `Compile.Contribution`, `Compile.ProjectCommands` | `packages/compile-api/CompileApi.lean` |
   | `Workspace.markerSettings`, `Compile.refreshListings`, `Compile.listWork`, each through `Compile.hook` | `Compile.Contribution`, `Compile.ProjectCommands` | `packages/compile-api/CompileApi/Listing.lean` |
 - **An interface package declares its points and registers at and reads
@@ -4817,6 +4830,10 @@ points it registers at and reads, and the names it declares or reaches.
   `EnvironmentApi.DirectorySource` and `EnvironmentApi.BaseSource`** in the
   host (`lean/Editor/Headless.lean`) and the reload reducer
   (`lean/Editor/Config/Reload.lean`), through `EnvironmentApi.ofRegistry`.
+  **The core declares `Editor.Links.Resolver`** and its reader
+  (`Links.follow`), which the package `link-commands` registers as the
+  command `link-follow`, so that package is the row that reads it; a
+  package that resolves a scheme of its own registers at it.
 
 | Package | Layer | Requires, beside the core | Extension points it registers at | Extension points it reads | Names it declares, or reaches |
 |---|---|---|---|---|---|
@@ -4865,6 +4882,8 @@ points it registers at and reads, and the names it declares or reaches.
 | `languages` | implementation | none | `defineLanguage` of `yaml`, `java`, `swift`, `ruby`, `python`, `javascript`, `typescript`, `tsx`, `c`, `cpp` and `clojure`, and the grammars `rust`, `json`, `markdown`, `markdown_inline`, `toml`, `lean`, `yaml`, `java`, `swift`, `ruby`, `python`, `javascript`, `typescript`, `tsx`, `c`, `cpp` and `clojure_orchard` (package `languages-grammars`) | none | registers the `code` mode and the languages that ship |
 | `mise` | implementation | none | `EnvironmentApi.DirectorySource` | none | declares no name; its setting, `Mise.executable`, registers at the same point |
 | `login-shell` | implementation | none | `EnvironmentApi.BaseSource` (and a default `environmentBase`) | none | declares no name; its setting, `LoginShell.timeLimit`, registers at the same point |
+| `link-commands` | implementation | none | none | `Editor.Links.Resolver` (through `Links.follow`) | registers under names the core declares (`lean/Editor/Links.lean`): `link-follow`, `link-next` and `link-previous`, the job `url-open` and the mode `links` |
+| `fold-commands` | implementation | none | none | none | registers under names the core declares (`lean/Editor/Folds.lean`): `fold-toggle` and the mode `folds` |
 
 Two first-party packages live under `packages/` and have no row, as they
 are not of the default set: the agents packages, opt-in (owner decision,

@@ -7,6 +7,7 @@ import Editor.Floating
 import Editor.Invocation
 import Editor.Language.Grammar.Answer
 import Editor.Layout
+import Editor.Link
 import Editor.Program
 import Editor.Scene
 import Editor.State
@@ -40,16 +41,21 @@ def stateRequests : List StateRequest :=
     .removeBuffer ⟨2⟩, .removeBuffer ⟨1⟩, .removeBuffer ⟨9⟩, .setHistory ⟨0⟩ (UndoTree.new ⟨0⟩ 4),
     .setHistory ⟨0⟩ (UndoTree.new ⟨1⟩ 0), .setValue ⟨0⟩ "count" (.nat 1),
     .setValue ⟨9⟩ "count" .null, .setSpans ⟨0⟩ #[{ start := 0, stop := 1, face := ⟨"a"⟩ }],
-    .setSpans ⟨9⟩ #[], .setMajorMode ⟨0⟩ "listing", .setMajorMode ⟨9⟩ "listing",
-    .addMinorMode ⟨1⟩ "one", .removeMinorMode ⟨1⟩ "one", .split ⟨0⟩ (marker 0 8) (marker 0 9),
-    .split ⟨1⟩ (marker 1 8) (marker 1 9), .split ⟨0⟩ (marker 1 8) (marker 0 9),
-    .split ⟨9⟩ (marker 0 8) (marker 0 9), .removeWindow ⟨1⟩, .removeWindow ⟨9⟩, .focus ⟨1⟩,
-    .focus ⟨9⟩, .show ⟨0⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .show ⟨0⟩ ⟨9⟩ (marker 2 0) (marker 2 1),
-    .show ⟨0⟩ ⟨2⟩ (marker 0 0) (marker 2 1), .show ⟨9⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .message "hi",
-    .startJob "count" [.nat 1], .startJob "count" [.nat 1] (some "k"), .cancelJob "k",
-    .attachFile ⟨2⟩ notePath noteStamp .crlf, .attachFile ⟨9⟩ notePath noteStamp .lf,
-    .beginSave ⟨0⟩ ⟨4⟩ ⟨0⟩, .beginSave ⟨9⟩ ⟨4⟩ ⟨0⟩, .endSave ⟨0⟩ ⟨4⟩ (some noteStamp),
-    .endSave ⟨9⟩ ⟨4⟩ none,
+    .setSpans ⟨9⟩ #[], .setStops ⟨0⟩ #[{ offset := 1, x := 40 }], .setStops ⟨9⟩ #[],
+    .setIndents ⟨0⟩ #[{ start := 0, stop := 1, first := 16, rest := .lead 2 }], .setIndents ⟨9⟩ #[],
+    .setLinks ⟨0⟩ #[{ start := 0, stop := 1, target := .url "https://example.com" }],
+    .setLinks ⟨9⟩ #[], .setFolds ⟨0⟩ #[{ start := 0, stop := 1, key := "a", text := "…" }],
+    .setFolds ⟨9⟩ #[], .setFolded ⟨0⟩ "a" true, .setFolded ⟨9⟩ "a" false,
+    .setMarkdown ⟨0⟩ (some { source := "# a" }), .setMarkdown ⟨9⟩ none, .setMajorMode ⟨0⟩ "listing",
+    .setMajorMode ⟨9⟩ "listing", .addMinorMode ⟨1⟩ "one", .removeMinorMode ⟨1⟩ "one",
+    .split ⟨0⟩ (marker 0 8) (marker 0 9), .split ⟨1⟩ (marker 1 8) (marker 1 9),
+    .split ⟨0⟩ (marker 1 8) (marker 0 9), .split ⟨9⟩ (marker 0 8) (marker 0 9), .removeWindow ⟨1⟩,
+    .removeWindow ⟨9⟩, .focus ⟨1⟩, .focus ⟨9⟩, .show ⟨0⟩ ⟨2⟩ (marker 2 0) (marker 2 1),
+    .show ⟨0⟩ ⟨9⟩ (marker 2 0) (marker 2 1), .show ⟨0⟩ ⟨2⟩ (marker 0 0) (marker 2 1),
+    .show ⟨9⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .message "hi", .startJob "count" [.nat 1],
+    .startJob "count" [.nat 1] (some "k"), .cancelJob "k", .attachFile ⟨2⟩ notePath noteStamp .crlf,
+    .attachFile ⟨9⟩ notePath noteStamp .lf, .beginSave ⟨0⟩ ⟨4⟩ ⟨0⟩, .beginSave ⟨9⟩ ⟨4⟩ ⟨0⟩,
+    .endSave ⟨0⟩ ⟨4⟩ (some noteStamp), .endSave ⟨9⟩ ⟨4⟩ none,
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 8 0) (marker 8 1),
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
     .closePrompt none, .closePrompt (some "typed"),
@@ -335,6 +341,113 @@ def stateRequestChecks : List Check :=
               (two.buffer? ⟨1⟩).map (·.spans) == some #[] &&
               replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
               same == state },
+    { name :=
+        "a buffer's stops are set, replacing those it had, and other buffers keep theirs; a buffer there is none of is refused with noSuchBuffer"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let stops : Array AlignStop := #[{ offset := 1, x := 40 }]
+            let (set, one) := state.handle (.setStops ⟨1⟩ stops)
+            let (_, two) := one.handle (.setStops ⟨1⟩ #[])
+            let (absent, same) := state.handle (.setStops ⟨9⟩ stops)
+            replied set == .inr () && (state.buffer? ⟨1⟩).map (·.stops) == some #[] &&
+              (one.buffer? ⟨1⟩).map (·.stops) == some stops &&
+              (one.buffer? ⟨0⟩).map (·.stops) == some #[] &&
+              (two.buffer? ⟨1⟩).map (·.stops) == some #[] &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state },
+    { name :=
+        "a buffer's wrap indents are set, replacing those it had, and other buffers keep theirs; a buffer there is none of is refused with noSuchBuffer"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let indents : Array WrapIndent :=
+              #[{ start := 0, stop := 2, first := 16, rest := .points 32 },
+                { start := 1, stop := 1, rest := .lead 4 }]
+            let (set, one) := state.handle (.setIndents ⟨1⟩ indents)
+            let (_, two) := one.handle (.setIndents ⟨1⟩ #[])
+            let (absent, same) := state.handle (.setIndents ⟨9⟩ indents)
+            replied set == .inr () && (state.buffer? ⟨1⟩).map (·.indents) == some #[] &&
+              (one.buffer? ⟨1⟩).map (·.indents) == some indents &&
+              (one.buffer? ⟨0⟩).map (·.indents) == some #[] &&
+              (two.buffer? ⟨1⟩).map (·.indents) == some #[] &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state },
+    { name :=
+        "a buffer's links are set, replacing those it had, and other buffers keep theirs; a buffer there is none of is refused with noSuchBuffer"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let links : Array Link :=
+              #[{ start := 0, stop := 2, target := .location "/tmp/a" 1 2 },
+                { start := 1, stop := 2, target := .command { command := "say" } }]
+            let (set, one) := state.handle (.setLinks ⟨1⟩ links)
+            let (_, two) := one.handle (.setLinks ⟨1⟩ #[])
+            let (absent, same) := state.handle (.setLinks ⟨9⟩ links)
+            replied set == .inr () && (state.buffer? ⟨1⟩).map (·.links) == some #[] &&
+              (one.buffer? ⟨1⟩).map (·.links) == some links &&
+              (one.buffer? ⟨0⟩).map (·.links) == some #[] &&
+              (two.buffer? ⟨1⟩).map (·.links) == some #[] &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state },
+    { name :=
+        "a buffer's rendered Markdown document is set, replacing any it had, and taken away, other buffers keeping none; a buffer there is none of is refused with noSuchBuffer"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let doc : Markdown.Doc := { source := "# One\n", rendered := 1 }
+            let (set, one) := state.handle (.setMarkdown ⟨1⟩ (some doc))
+            let (_, two) := one.handle (.setMarkdown ⟨1⟩ none)
+            let (absent, same) := state.handle (.setMarkdown ⟨9⟩ (some doc))
+            replied set == .inr () && (state.buffer? ⟨1⟩).map (·.markdown) == some none &&
+              (one.buffer? ⟨1⟩).map (·.markdown) == some (some doc) &&
+              (one.buffer? ⟨0⟩).map (·.markdown) == some none &&
+              (two.buffer? ⟨1⟩).map (·.markdown) == some none &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state },
+    { name :=
+        "a buffer's foldable ranges are declared, a range whose key survives keeping its toggled state and a new key its declared one, toggling one changes only its state, and a buffer there is none of is refused with noSuchBuffer for both"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let range (key : String) (start : Nat) (folded : Bool) : Foldable :=
+              { start, stop := start + 1, key, text := s!"[{key}]", folded }
+            let declared := #[range "a" 0 true, range "b" 1 false]
+            let (set, one) := state.handle (.setFolds ⟨1⟩ declared)
+            let (toggled, two) := one.handle (.setFolded ⟨1⟩ "a" false)
+            let (_, both) := two.handle (.setFolded ⟨1⟩ "b" true)
+            let (unknown, same) := both.handle (.setFolded ⟨1⟩ "z" true)
+            -- Declared again: a and b at each other's offsets, both declared
+            -- folded, and c new.
+            let again := #[range "b" 0 true, range "a" 1 true, range "c" 2 true]
+            let (_, three) := both.handle (.setFolds ⟨1⟩ again)
+            let (absent, kept) := state.handle (.setFolds ⟨9⟩ declared)
+            let (absentToggle, keptToggle) := state.handle (.setFolded ⟨9⟩ "a" true)
+            let folds (state : EditorState) := (state.buffer? ⟨1⟩).map (·.folds)
+            let others (state : EditorState) :=
+              (state.buffer? ⟨1⟩).map fun buffer => { buffer with folds := #[] }
+            replied set == .inr () && folds one == some declared && replied toggled == .inr () &&
+              folds two == some #[range "a" 0 false, range "b" 1 false] &&
+              folds both == some #[range "a" 0 false, range "b" 1 true] &&
+              replied unknown == .inr () &&
+              same == both &&
+              folds three == some #[range "b" 0 true, range "a" 1 false, range "c" 2 true] &&
+              others three == others state &&
+              (three.buffer? ⟨0⟩).map (·.folds) == some #[] &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              kept == state &&
+              replied absentToggle == .inl (.noSuchBuffer ⟨9⟩) &&
+              keptToggle == state },
     { name :=
         "the minor-mode requests are the state's operations: one added is first, one removed is gone, and a buffer there is none of is refused with noSuchBuffer"
       run :=

@@ -39,19 +39,54 @@ command loop fills from the text model when it runs both ports together.
   rows a view shows: a line's blocks are shown with its first row or not at
   all, and the first row shown has its blocks only when they fit with it.
   A spot's `k` counts the block rows shown above its row.
+- A fold (`Editor/Display.lean`, "Folds") covers the lines that hold a byte
+  of its range, or the line of its start when the range is empty
+  (`lineOf`); the folds are taken in order of start (and, of two with one
+  start, the longer first), and one whose first line an earlier one covers
+  is dropped (`foldLines`). The rows of a fold's covered lines are one
+  placeholder row (`collapse`): no characters, its range the first covered
+  line's start through the last one's stop, holding the positions up to the
+  last covered row's `upTo`. A move that lands on it goes to its start, and
+  a position on it is at cell 0. Its blocks are those before its first
+  covered line.
 - A query's padding is in points, and the model lays out at scale 1, where
   a point is a pixel: a view `width` wide with the padding `across` and a
   gutter `gutter` wide lays out as one `width - 2 * across - gutter` wide,
   and one `height` tall with the padding `down` and `top` as one
   `height - 2 * down - top` tall, each at 0 at least. A spot's x has
   `across + gutter` added back.
+- A run measures the cells of its first line, placed as a line's are (a
+  tab to the next tab stop, a wide character two cells), times `advance`:
+  its faces are not looked at, since every face is one cell here, and it
+  is in points, which at scale 1 are pixels.
+- A wrap indent (`WrapIndent`, `Editor/Scene.lean`) covers the lines that
+  hold a byte of its range, or the line of its start when the range is
+  empty, as a fold does (`coveredLines`); of two over a line the later
+  listed wins. The model reads them from the last scene published to it:
+  the last view of that scene whose snapshot is the query's, none when it
+  shows no view of the snapshot (`indentsOf`), as the real binding lays a
+  query out under the indents of the last frame that showed the text. An
+  indent at or past the width is 0. A covered line's first row starts at x
+  `first` and holds `max 1 ((width - first) / advance)` cells; each later
+  row starts at the continuation `C` and holds `max 1 ((width - C) /
+  advance)`. With `.points x`, `C` is `x`; with `.lead n` it is `first`
+  plus the cells of the line's first `n` bytes times `advance`, when that is
+  short of the width, and `first` otherwise, or for a lead of no byte or at
+  or past the line's end (a lead inside a character is moved back to its
+  start). A character is of the row its first cell, from the line's start,
+  falls in (`Geometry.rowOf`). An empty covered line's row starts at
+  `first`. What a leading span that does not fit on the first row does, and
+  a tab or a wide character in an indented line, are this model's own: the
+  contract says nothing of them. Blocks and fold placeholders take no
+  indent.
 - A position at a wrap is the start of the later row. Only a line's last row
   holds the position at the line's end, before its break.
-- The x of a position is its character's first cell in its row times
-  `advance`. Its spot is that x and the top of its row, `k * lineHeight`
-  for the `k`-th row shown, each with the padding added back, and a row's
-  height. A move aims for the cell `goal / advance` of its row and goes
-  to the character that cell is in.
+- The x of a position is where its row starts plus its character's first
+  cell in its row times `advance`. Its spot is that x and the top of its
+  row, `k * lineHeight` for the `k`-th row shown, each with the padding
+  added back, and a row's height. A move aims for the cell `(goal - x) /
+  advance` of a row that starts at `x`, its first cell for a goal left of
+  `x`, and goes to the character that cell is in.
 
 This is arithmetic of tab stops and widths, and it is here because this is
 the fake of layout. The editor above the port has none of it: it passes an
@@ -139,6 +174,12 @@ structure Laid where
   /-- Whether it is the first row of its line, the one row of a line that
   the line's blocks are drawn above. -/
   firstOfLine : Bool := true
+  /-- Whether it is a fold's placeholder row, which stands for the rows of
+  the lines the fold covers (`collapse`). -/
+  placeholder : Bool := false
+  /-- Where its first cell starts, in pixels from the start of the text row:
+  its line's wrap indent, 0 when none covers it ("The layout rule"). -/
+  x : Nat := 0
   deriving Inhabited
 
 /-- The lines of a text whose characters, from the byte offset `offset`, are
@@ -165,51 +206,197 @@ cells as fit, and at least one. -/
 def columns (cells : Display.Cells) (width : Nat) : Nat :=
   max 1 (width / cells.advance)
 
+/-- How the rows of one line are laid out: how many cells its first row
+holds and how many each later one does, and where each starts, in pixels
+from the start of the text row. -/
+structure Geometry where
+  /-- The cells its first row holds. -/
+  firstCells : Nat
+  /-- The cells each later row holds. -/
+  restCells : Nat
+  /-- Where its first row starts. -/
+  firstX : Nat := 0
+  /-- Where each later row starts. -/
+  restX : Nat := 0
+
+/-- The geometry of a line with no wrap indent: rows of `columns` cells,
+each at 0. -/
+def Geometry.plain (columns : Nat) : Geometry :=
+  { firstCells := columns, restCells := columns }
+
+/-- The row of a line laid out by `geometry` that the cell `cell`, counted
+from the line's start, is in. -/
+def Geometry.rowOf (geometry : Geometry) (cell : Nat) : Nat :=
+  if cell < geometry.firstCells then 0
+  else 1 + (cell - geometry.firstCells) / max 1 geometry.restCells
+
+/-- The first cell, counted from the line's start, of the row `row` of a
+line laid out by `geometry`. -/
+def Geometry.startOf (geometry : Geometry) (row : Nat) : Nat :=
+  if row == 0 then 0 else geometry.firstCells + (row - 1) * geometry.restCells
+
 /-- The rows of one line whose characters, from the index `first`, are those
 of `chars`, added to `laid`: a character is of the row its first cell is in
-(`cell / columns`). `stop` is the offset where the line's characters stop
+(`Geometry.rowOf`). `stop` is the offset where the line's characters stop
 and `lineUpTo` the offset the positions of its last row stop before. -/
-def layoutLine (chars : Array Placed) (columns stop lineUpTo first : Nat) (laid : Array Laid) :
-    Array Laid :=
+def layoutLine (chars : Array Placed) (geometry : Geometry) (stop lineUpTo first : Nat)
+    (laid : Array Laid) : Array Laid :=
   if inLine : first < chars.size then
-    let row := chars[first].cell / columns
-    let held := (chars.extract first chars.size).takeWhile (·.cell / columns == row)
+    let row := geometry.rowOf chars[first].cell
+    let start := geometry.startOf row
+    let held := (chars.extract first chars.size).takeWhile (geometry.rowOf ·.cell == row)
     let next := first + max 1 held.size
     let last := chars.size ≤ next
     let rowStop := if last then stop else chars[next]!.offset
-    let reach := (held.back?.map fun back => back.cell + back.span - row * columns).getD 0
-    layoutLine chars columns stop lineUpTo next
+    let reach := (held.back?.map fun back => back.cell + back.span - start).getD 0
+    layoutLine chars geometry stop lineUpTo next
       (laid.push
         { row := ⟨chars[first].offset, rowStop⟩, chars := held.map (·.offset)
-          firsts := held.map (·.cell - row * columns), reach
-          upTo := if last then lineUpTo else rowStop, lastOfLine := last })
+          firsts := held.map (·.cell - start), reach
+          upTo := if last then lineUpTo else rowStop, lastOfLine := last
+          x := if row == 0 then geometry.firstX else geometry.restX })
   else laid
 termination_by chars.size - first
 decreasing_by omega
 
-/-- The layout rule: `text` in rows of `columns` cells. A character is of the
-row its first cell is in; an empty line takes one empty row. -/
-def layout (text : String) (columns : Nat) : Array Laid :=
+/-- The layout rule: `text` in rows, each line's by `geometry`, which is
+given the line's index, its characters as placed, the offset where it
+starts and the offset where its characters stop. A character is of the row
+its first cell is in; an empty line takes one empty row, at its geometry's
+first x. -/
+def layoutWith (text : String) (geometry : Nat → Array Placed → Nat → Nat → Geometry) :
+    Array Laid :=
   Id.run do
     let lines := splitLines text.toList 0 0 #[] #[]
     let mut laid := #[]
+    let mut lineStart := 0
     for index in [0:lines.size] do
       let (chars, stop, after) := lines[index]!
       let lineUpTo := if index + 1 == lines.size then text.utf8ByteSize + 1 else after
       let first := laid.size
+      let shape := geometry index chars lineStart stop
       if chars.isEmpty then
         laid :=
           laid.push
             { row := ⟨stop, stop⟩, chars := #[], firsts := #[], reach := 0, upTo := lineUpTo
-              lastOfLine := true }
+              lastOfLine := true, x := shape.firstX }
       else
-        laid := layoutLine chars columns stop lineUpTo 0 laid
+        laid := layoutLine chars shape stop lineUpTo 0 laid
       for place in [first:laid.size] do
         laid :=
           laid.modify place
             ({ · with
               line := index, firstOfLine := place == first })
+      lineStart := after
     return laid
+
+/-- The layout rule with no wrap indent: `text` in rows of `columns`
+cells. -/
+def layout (text : String) (columns : Nat) : Array Laid :=
+  layoutWith text fun _ _ _ _ => Geometry.plain columns
+
+/-- The line of `text` that holds the byte offset `offset`: the line feeds
+before it, an offset past the end being the end. An offset inside a
+character is on that character's line, as the boundary before it is. -/
+def lineOf (text : String) (offset : Nat) : Nat :=
+  (text.toUTF8.extract 0 (min offset text.utf8ByteSize)).foldl
+    (fun lines byte => if byte == 10 then lines + 1 else lines) 0
+
+/-- The lines of `text` each fold of `folds` covers, as its first and its
+last, for the folds a view shows: taken in order of start, the longer first
+of two with one start, a fold whose first line an earlier shown one covers
+dropped. A fold covers the lines that hold a byte of `[start, stop)`, a
+line feed being the line's it ends, or the line of `start` when the range
+is empty. -/
+def foldLines (text : String) (folds : Array Fold) : Array (Nat × Nat) :=
+  let size := text.utf8ByteSize
+  let ordered :=
+    folds.insertionSort fun a b => a.start < b.start || (a.start == b.start && a.stop > b.stop)
+  ordered.foldl
+    (fun shown fold =>
+      let start := min fold.start size
+      let stop := max start (min fold.stop size)
+      let first := lineOf text start
+      let last := lineOf text (if start < stop then stop - 1 else start)
+      match shown.back? with
+      | some (_, covered) => if first ≤ covered then shown else shown.push (first, last)
+      | none => shown.push (first, last))
+    #[]
+
+/-- The first and the last line of `text` the range `[start, stop)` covers:
+the lines that hold a byte of it, a line feed being the line's it ends, or
+the line of `start` when it is empty, an offset past the end being the
+end. -/
+def coveredLines (text : String) (start stop : Nat) : Nat × Nat :=
+  let size := text.utf8ByteSize
+  let start := min start size
+  let stop := max start (min stop size)
+  (lineOf text start, lineOf text (if start < stop then stop - 1 else start))
+
+/-- The wrap indent of line `line` of `text` among `indents`: the later
+listed of those that cover it (`coveredLines`). -/
+def indentOf (text : String) (indents : Array WrapIndent) (line : Nat) : Option WrapIndent :=
+  indents.reverse.find? fun indent =>
+    let (first, last) := coveredLines text indent.start indent.stop
+    first ≤ line && line ≤ last
+
+/-- The geometry of a line under `indent` in a view `width` pixels wide in
+`cells` ("The layout rule"), whose characters as placed are `chars`, which
+starts at the offset `lineStart` and whose characters stop at `stop`. An
+indent at or past the width is 0. A hanging indent's later rows start where
+its lead's characters end on the first row, when that is short of the
+width; at the first-line indent otherwise, and for a lead of no byte or at
+or past the line's end. A lead inside a character is moved back to the
+character's start. -/
+def indentGeometry (cells : Display.Cells) (width : Nat) (indent : WrapIndent)
+    (chars : Array Placed) (lineStart stop : Nat) : Geometry :=
+  let applied (x : Nat) : Nat := if x ≥ width then 0 else x
+  let first := applied indent.first
+  let rest :=
+    match indent.rest with
+    | .points x => applied x
+    | .lead bytes =>
+      let target := lineStart + bytes
+      if bytes == 0 || stop ≤ target then first
+      else
+        -- The characters that end at or before the lead, so that one the
+        -- lead is inside is not among them.
+        let ends := (chars.extract 1 chars.size).map (·.offset) |>.push stop
+        let spanned := (chars.zip ends).filter (·.2 ≤ target)
+        let reach := (spanned.back?.map fun (char, _) => char.cell + char.span).getD 0
+        let pen := first + reach * cells.advance
+        if pen < width then pen else first
+  let room (x : Nat) : Nat := max 1 ((width - x) / cells.advance)
+  { firstCells := room first, restCells := room rest, firstX := first, restX := rest }
+
+/-- The wrap indents the model lays a query of `snapshot` out under: those
+of the last view of `snapshot` in the last scene published to it, none when
+that scene shows no view of it or none has been published. -/
+def indentsOf (model : DisplayModel) (snapshot : SnapshotId) : Array WrapIndent :=
+  match model.published.back? with
+  | none => #[]
+  | some scene => ((scene.views.filter (·.snapshot == snapshot)).back?.map (·.indents)).getD #[]
+
+/-- `laid` with the rows of each fold's covered lines (`foldLines`) made one
+placeholder row: no characters, from the first covered line's start to the
+last covered line's stop, holding the positions up to the last covered
+row's `upTo`, as the first row of the fold's first line. -/
+def collapse (laid : Array Laid) (folded : Array (Nat × Nat)) : Array Laid :=
+  if folded.isEmpty then laid
+  else
+    laid.foldl
+      (fun out row =>
+        match folded.find? fun (first, last) => first ≤ row.line && row.line ≤ last with
+        | none => out.push row
+        | some (first, last) =>
+          if row.line == first && row.firstOfLine then
+            let final := (laid.filter (·.line == last)).back?.getD row
+            out.push
+              { row := ⟨row.row.start, final.row.stop⟩, chars := #[], firsts := #[], reach := 0
+                upTo := final.upTo, lastOfLine := true, line := first, firstOfLine := true
+                placeholder := true }
+          else out)
+      #[]
 
 /-- Whether `offset` is a position of `text`: a character boundary within
 it, its end included. -/
@@ -222,21 +409,23 @@ def isPosition (text : String) (offset : Nat) : Bool :=
 def rowOf (laid : Array Laid) (offset : Nat) : Nat :=
   (laid.findIdx? fun row => row.row.start <= offset && offset < row.upTo).getD 0
 
-/-- The text of `snapshot`, laid out for a view `width` pixels wide, with the
-position `offset` checked: refused with `noSuchSnapshot` or `badPosition`. -/
-def laidOut (model : DisplayModel) (snapshot : SnapshotId) (width offset : Nat) :
-    Except DisplayError (Array Laid) := do
+/-- The text of `snapshot`, laid out for a view `width` pixels wide under
+the wrap indents of the last scene published (`indentsOf`), with `folds`
+collapsed, with the position `offset` checked: refused with
+`noSuchSnapshot` or `badPosition`. -/
+def laidOut (model : DisplayModel) (snapshot : SnapshotId) (width offset : Nat)
+    (folds : Array Fold := #[]) : Except DisplayError (Array Laid) := do
   let some text := model.text? snapshot | throw .noSuchSnapshot
   unless isPosition text offset do
     throw .badPosition
-  return layout text (columns model.cells width)
-
-/-- The line of `text` that holds the byte offset `offset`: the line feeds
-before it, an offset past the end being the end. An offset inside a
-character is on that character's line, as the boundary before it is. -/
-def lineOf (text : String) (offset : Nat) : Nat :=
-  (text.toUTF8.extract 0 (min offset text.utf8ByteSize)).foldl
-    (fun lines byte => if byte == 10 then lines + 1 else lines) 0
+  let indents := model.indentsOf snapshot
+  let plain := Geometry.plain (columns model.cells width)
+  let laid :=
+    layoutWith text fun line chars lineStart stop =>
+      match indentOf text indents line with
+      | some indent => indentGeometry model.cells width indent chars lineStart stop
+      | none => plain
+  return collapse laid (foldLines text folds)
 
 /-- How many rows of a view `columns` cells wide the blocks of `blocks`
 before the row `row` of a text laid out as `text` take: none unless it is
@@ -276,8 +465,9 @@ def shownFrom (laid : Array Laid) (first capacity : Nat) (above : Laid → Nat) 
 that holds the anchor, as many as fit its height with its blocks, fewer at
 the end of the text; the view less its padding, as points at scale 1. -/
 def shownRows (model : DisplayModel) (snapshot : SnapshotId) (width height anchor : Nat)
-    (blocks : Array Block) : Except DisplayError (Array Laid × Array (Nat × Nat)) := do
-  let laid ← model.laidOut snapshot width anchor
+    (blocks : Array Block) (folds : Array Fold := #[]) :
+    Except DisplayError (Array Laid × Array (Nat × Nat)) := do
+  let laid ← model.laidOut snapshot width anchor folds
   let text := (model.text? snapshot).getD ""
   let columns := columns model.cells width
   let shown :=
@@ -292,41 +482,52 @@ def rows (model : DisplayModel) (query : Display.RowsQuery) :
     Except DisplayError (Array Display.Row) := do
   let width := query.width - 2 * query.padding.across - query.padding.gutter
   let height := query.height - 2 * query.padding.down - query.padding.top
-  let (laid, shown) ← model.shownRows query.snapshot width height query.anchor query.blocks
+  let (laid, shown) ←
+    model.shownRows query.snapshot width height query.anchor query.blocks query.folds
   return shown.map fun (index, _) => laid[index]!.row
 
 /-- Where a position goes: to the row `query.lines` from the one that holds
 it, kept within the first and the last row, at the cell the goal aims for
-(`goal / advance`, or the position's own first cell when there is no goal):
+(`(goal - x) / advance` of a row whose first cell is at `x`, its first cell
+for a goal left of it, or the position's own first cell when there is no
+goal, whose x, its row's `x` and its cells, is the goal passed back):
 the character that cell is in. Past the row's last character it is the
 row's end on a line's last row and the row's last character on any other.
-The goal passed back is the one aimed for. -/
+On a fold's placeholder it is the fold's start. The goal passed back is the
+one aimed for. -/
 def move (model : DisplayModel) (query : Display.MoveQuery) : Except DisplayError Display.Moved :=
   do
   let laid ←
     model.laidOut query.snapshot (query.width - 2 * query.across - query.gutter) query.position
+        query.folds
   let here := rowOf laid query.position
   let held := laid[here]!
   let own := held.firsts[(held.chars.filter (· < query.position)).size]?.getD held.reach
-  let goal := query.goal.getD (own * model.cells.advance)
+  let goal := query.goal.getD (held.x + own * model.cells.advance)
   let target := (max 0 (min (here + query.lines) (laid.size - 1 : Int))).toNat
   let row := laid[target]!
-  let aimed := goal / model.cells.advance
+  -- A goal left of the row's start aims at its first cell.
+  let aimed := (goal - row.x) / model.cells.advance
   let position :=
-    if aimed < row.reach then row.chars[(row.firsts.filter (· ≤ aimed)).size - 1]?.getD row.row.stop
-    else if row.lastOfLine then row.row.stop else row.chars.back?.getD row.row.stop
+    if row.placeholder then row.row.start
+    else
+      if aimed < row.reach then
+        row.chars[(row.firsts.filter (· ≤ aimed)).size - 1]?.getD row.row.stop
+      else if row.lastOfLine then row.row.stop else row.chars.back?.getD row.row.stop
   return { position, goal }
 
 /-- Where a position is drawn in a view: on its row, when that is among the
 rows `rows` shows, at `y = down + top + k * lineHeight`, where `k` is the
 rows shown above it, block rows included, `lineHeight` tall, and at `x =
-across + gutter + cell * advance`, where `cell` is the position's first cell in its
-row as a move counts it; none when the rows shown do not hold it. -/
+across + gutter + rowX + cell * advance`, where `rowX` is where its row
+starts and `cell` the position's first cell in its row as a move counts it;
+none when the rows shown do not hold it. -/
 def spot (model : DisplayModel) (query : Display.SpotQuery) :
     Except DisplayError (Option Display.Spot) := do
   let width := query.width - 2 * query.padding.across - query.padding.gutter
   let height := query.height - 2 * query.padding.down - query.padding.top
-  let (laid, shown) ← model.shownRows query.snapshot width height query.anchor query.blocks
+  let (laid, shown) ←
+    model.shownRows query.snapshot width height query.anchor query.blocks query.folds
   discard <| model.laidOut query.snapshot width query.position
   let here := rowOf laid query.position
   let some place := shown.findIdx? (·.1 == here) | return none
@@ -335,9 +536,15 @@ def spot (model : DisplayModel) (query : Display.SpotQuery) :
   let held := laid[here]!
   let cell := held.firsts[(held.chars.filter (· < query.position)).size]?.getD held.reach
   return some
-      { x := query.padding.across + query.padding.gutter + cell * model.cells.advance
+      { x := query.padding.across + query.padding.gutter + held.x + cell * model.cells.advance
         y := query.padding.down + query.padding.top + rowsDown * model.cells.lineHeight
         height := model.cells.lineHeight }
+
+/-- How wide a run is ("The layout rule"): the cells of its first line
+times `advance`. -/
+def measure (cells : Display.Cells) (query : Display.MeasureQuery) : Nat :=
+  let first := (splitLines query.text.toList 0 0 #[] #[])[0]?.map (·.1) |>.getD #[]
+  ((first.back?.map fun last => last.cell + last.span).getD 0) * cells.advance
 
 /-- Answers `request`: a scene is recorded, a request of the window is
 recorded and answers nothing, and a query is answered from the model as it
@@ -348,6 +555,7 @@ def handle : (request : DisplayRequest) → DisplayModel → request.Reply × Di
   | .move query, model => (model.move query, model)
   | .spot query, model => (model.spot query, model)
   | .heights, model => (model.cells.heights, model)
+  | .measure query, model => (measure model.cells query, model)
   | .frame request, model => ((), { model with asked := model.asked.push request })
 
 end DisplayModel

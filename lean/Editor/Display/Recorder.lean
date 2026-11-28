@@ -11,8 +11,10 @@ question of layout. The recorder answers both, in `IO`
 
 - **a publish** is kept: the recorder holds the last scene published and how
   many have been, which the host's `scene` directive prints;
-- **a query** is answered with the display model's rule
+- **a query**, and a measure, is answered with the display model's rule
   (`Editor/Display/Model.lean`) over the text of the one snapshot it names,
+  under the wrap indents of the last scene kept, as the library lays a
+  query out under the last frame's,
   read from the library through the read half of the real binding's table
   of snapshots (`SnapshotReader`). A snapshot the table no longer holds,
   because a command released it, is refused with `noSuchSnapshot`, as the
@@ -50,11 +52,13 @@ def new (cells : Display.Cells) (snapshots : SnapshotReader) : BaseIO DisplayRec
   return { cells, snapshots, last := ← IO.mkRef none, count := ← IO.mkRef 0 }
 
 /-- A display model in the recorder's cells that knows `snapshot`'s text, as
-the library holds it now; one that knows no text when the table does not
+the library holds it now, and the last scene kept, whose wrap indents it
+lays the text out under; one that knows no text when the table does not
 hold the snapshot. -/
 def modelOf (recorder : DisplayRecorder) (snapshot : SnapshotId) : IO DisplayModel := do
-  let some held ← recorder.snapshots.find? snapshot | return { cells := recorder.cells }
-  return { cells := recorder.cells, texts := #[(snapshot, ← held.read)] }
+  let published := (← recorder.last.get).toArray
+  let some held ← recorder.snapshots.find? snapshot | return { cells := recorder.cells, published }
+  return { cells := recorder.cells, texts := #[(snapshot, ← held.read)], published }
 
 /-- Answers `request`: a publish is kept as the last scene and counted, and a
 query is answered by the model's rule over the snapshot it names. -/
@@ -69,6 +73,7 @@ def handle (recorder : DisplayRecorder) : DisplayHandler
   | .spot query => do
     return (← recorder.modelOf query.snapshot).spot query
   | .heights => return recorder.cells.heights
+  | .measure query => return DisplayModel.measure recorder.cells query
   -- There is no window to ask.
   | .frame _ => return ()
 

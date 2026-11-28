@@ -18,7 +18,8 @@
 #   types, the methods of `Path` that ask the disk, the machine's
 #   directories, environment and command line, starting or ending a
 #   process, the wall clock, each adapter's real constructor, and the
-#   third-party entry points that reach the machine's fonts or clipboard.
+#   third-party entry points that reach the machine's fonts, clipboard or
+#   URL handler.
 #
 # This is the workspace's one `clippy.toml`, and no crate has one of its
 # own (.agents/rules/structure.md, "Clippy's bans"). Clippy reads the first
@@ -93,11 +94,14 @@
 # - the outside world: the real adapters, whose job it is (`editor-fs-std`,
 #   `editor-process-std`, `editor-watch-notify`, `editor-grep-ripgrep`,
 #   `editor-launch-std`, `editor-release-std`, the fuzzy adapters, the
-#   system font set, the clipboard, the GPU and the machine's defaults),
+#   system font set, the clipboard, the URL opener, the GPU and the
+#   machine's defaults),
 #   and their contract checks on real files and processes in a temporary
 #   directory each test owns; the one place `editor-ffi` makes each real
 #   adapter for the process (its file, process, watch, grep, fuzzy,
-#   clipboard, font and window services) and its wiring test on real files;
+#   clipboard, URL opener, font and window services) and its wiring test on
+#   real files; the URL opener's own run of its contract, whose one
+#   property is refused before anything is launched;
 #   and each binary's and example's entry, which reads its own command line
 #   and exits with its outcome.
 #
@@ -112,7 +116,8 @@
 # to nothing, bites only while an `#[expect]` covers a call of it: each one
 # has a site in the workspace, but for the entry points no crate calls
 # (`parley::FontContext::new`, `fontique::Collection::load_system_fonts`
-# and `load_fonts_from_paths`), which `tests/wait-lints/` calls in
+# and `load_fonts_from_paths`, and every entry point of `open` but
+# `that_detached`, the adapter's), which `tests/wait-lints/` calls in
 # `unreached`, each under an `#[expect]` of its own. Seen to bite on
 # 2026-11-25: with `load_system_fonts` misspelled here, clippy over the
 # fixture fails with "this lint expectation is unfulfilled" at its call.
@@ -250,12 +255,22 @@ disallowed-methods = [
   { path = "editor_fuzzy_nucleo::NucleoScorer::new", allow-invalid = true, reason = "the scorer library is made in one place, the process's fuzzy service; a test runs on the scorer's fake, `InOrder`" },
   { path = "editor_fuzzy_triple_accel::TripleAccel::new", allow-invalid = true, reason = "the searcher library is made in one place, the process's fuzzy service; a test runs on the searcher's fake, `locate::Scan`" },
   { path = "editor_platform_arboard::SystemClipboard::open", allow-invalid = true, reason = "no test reads or writes the desktop's clipboard: it is opened in one place, for Lean's window mode, and by the adapter's on-demand contract; every test is on `MemoryClipboard`" },
+  { path = "editor_platform_open::SystemOpener::system", allow-invalid = true, reason = "the desktop's URL opener is made in two places: the library's binding Lean's window mode calls, and the adapter's own run of the port's contract, whose one property is refused at spawn and launches nothing; every other test is on `RecordingOpener` or `FailingOpener`" },
   { path = "editor_render_wgpu::WgpuRenderer::on_window", allow-invalid = true, reason = "no test makes a renderer on a window: the gate opens none; the process's window and the on-demand examples do, each at an `#[expect]`" },
   { path = "editor_render_wgpu::WgpuRenderer::on_this_machine", allow-invalid = true, reason = "no test asks for this machine's GPU: the gate runs wgpu on its no-op back end, and an on-demand example asks for a real one" },
   { path = "editor_raster_coretext::SystemDefaults::new", allow-invalid = true, reason = "no test reads this machine's defaults: a window's Core Text rasteriser reads them in one place, and a test runs on `defaults::fake::Canned`" },
   { path = "editor_shape_parley::FontSet::system", allow-invalid = true, reason = "no test reads the machine's fonts, which differ from machine to machine: a test is handed the fixture fonts by `FontSet::only`; the process's display and the on-demand examples read the system's" },
   # The third-party entry points behind them.
   { path = "arboard::Clipboard::new", allow-invalid = true, reason = "the system clipboard is opened in one place, `SystemClipboard::open`, which no test calls" },
+  { path = "open::that", allow-invalid = true, reason = "a URL is opened through the URL opener port, in one place, `SystemOpener::open`; a test runs on `RecordingOpener`" },
+  { path = "open::that_detached", allow-invalid = true, reason = "a URL is opened through the URL opener port, in one place, `SystemOpener::open`; a test runs on `RecordingOpener`" },
+  { path = "open::that_detached_with_timeout", allow-invalid = true, reason = "a URL is opened through the URL opener port, in one place, `SystemOpener::open`; a test runs on `RecordingOpener`" },
+  { path = "open::that_in_background", allow-invalid = true, reason = "a URL is opened through the URL opener port, in one place, `SystemOpener::open`; a test runs on `RecordingOpener`" },
+  { path = "open::with", allow-invalid = true, reason = "a URL is opened through the URL opener port, in one place, `SystemOpener::open`; a test runs on `RecordingOpener`" },
+  { path = "open::with_detached", allow-invalid = true, reason = "a URL is opened through the URL opener port, in one place, `SystemOpener::open`; a test runs on `RecordingOpener`" },
+  { path = "open::with_in_background", allow-invalid = true, reason = "a URL is opened through the URL opener port, in one place, `SystemOpener::open`; a test runs on `RecordingOpener`" },
+  { path = "open::commands", allow-invalid = true, reason = "the launchers of a URL are started through the URL opener port, in one place, `SystemOpener::open`; a test runs on `RecordingOpener`" },
+  { path = "open::with_command", allow-invalid = true, reason = "the launchers of a URL are started through the URL opener port, in one place, `SystemOpener::open`; a test runs on `RecordingOpener`" },
   { path = "parley::FontContext::new", allow-invalid = true, reason = "a font context of Parley's own making holds the system's fonts; a `FontSet` says where fonts come from" },
   { path = "fontique::Collection::load_system_fonts", allow-invalid = true, reason = "the system's fonts come only through a `FontSet`, and no test uses them" },
   { path = "fontique::Collection::load_fonts_from_paths", allow-invalid = true, reason = "fonts reach the shaper as bytes, never read from the disk by it" },

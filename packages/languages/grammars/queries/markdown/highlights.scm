@@ -1,9 +1,33 @@
-;From nvim-treesitter/nvim-treesitter
-(atx_heading
-  (inline) @text.title)
+; Markdown's block highlights, this repository's: the block grammar crate's
+; query (tree-sitter-md 0.5.4, `tree-sitter-markdown/queries/highlights.scm`,
+; from nvim-treesitter, MIT) copied and changed, because the crate's captures
+; every heading as `@text.title`, with no level, and gives a code block the
+; name an inline code span has, `@text.literal`, and a link's title that name
+; too. Lean maps these names to the
+; `text.` faces (`Highlight.defaultFaces`, lean/Editor/Highlight.lean):
+;
+; - `@text.heading.1` ... `@text.heading.6`: a heading's text, by its level;
+;   a setext heading underlined with `=` is level 1 and with `-` level 2.
+; - `@text.reference`: a link reference definition's title, drawn as a link
+;   like its label, not as a code span.
+; - `@text.code-block`: a fenced or indented code block.
+; - `@text.list-marker`: a list item's marker.
+; - `@text.quote`: a block quote.
+; - `@text.table-header`: a pipe table's header row.
+;
+; The other captures are the crate's. The inline grammar's query is the
+; repository's too (`queries/markdown_inline/highlights.scm`), whose
+; `@text.literal` is only a code span.
 
-(setext_heading
-  (paragraph) @text.title)
+(atx_heading (atx_h1_marker) heading_content: (inline) @text.heading.1)
+(atx_heading (atx_h2_marker) heading_content: (inline) @text.heading.2)
+(atx_heading (atx_h3_marker) heading_content: (inline) @text.heading.3)
+(atx_heading (atx_h4_marker) heading_content: (inline) @text.heading.4)
+(atx_heading (atx_h5_marker) heading_content: (inline) @text.heading.5)
+(atx_heading (atx_h6_marker) heading_content: (inline) @text.heading.6)
+
+(setext_heading heading_content: (paragraph) @text.heading.1 (setext_h1_underline))
+(setext_heading heading_content: (paragraph) @text.heading.2 (setext_h2_underline))
 
 [
   (atx_h1_marker)
@@ -16,11 +40,12 @@
   (setext_h2_underline)
 ] @punctuation.special
 
+(link_title) @text.reference
+
 [
-  (link_title)
   (indented_code_block)
   (fenced_code_block)
-] @text.literal
+] @text.code-block
 
 (fenced_code_block_delimiter) @punctuation.delimiter
 
@@ -36,12 +61,17 @@
   (list_marker_star)
   (list_marker_dot)
   (list_marker_parenthesis)
-  (thematic_break)
-] @punctuation.special
+] @text.list-marker
+
+(thematic_break) @punctuation.special
+
+(block_quote) @text.quote
 
 [
   (block_continuation)
   (block_quote_marker)
 ] @punctuation.special
+
+(pipe_table_header) @text.table-header
 
 (backslash_escape) @string.escape

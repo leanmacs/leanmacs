@@ -861,7 +861,33 @@ def evilOperatorChecks : List Check :=
             let deleted := evilFed driver "d l"
             evilHistory driver == some (1, false) && evilHistory deleted == some (2, false) &&
               evilText deleted == some "ac" &&
-              evilText (evilUndone deleted) == some "abc" }]
+              evilText (evilUndone deleted) == some "abc" },
+    { name :=
+        "a line-wise operator takes a folded range its ends land in whole: d j and y j from the row above rows 2 to 4 folded take rows 1 to 4, d k from the row below takes rows 2 to 5, d d and y y on the placeholder take rows 2 to 4, 2 d d counts the fold as one line from above it and from it, and 2 d d on a fold that reaches the last line gives up"
+      run :=
+        pure <|
+          let middle : Foldable :=
+            { start := 8, stop := 19, key := "f", text := "[2-4]", folded := true }
+          let lastRows : Foldable :=
+            { start := 12, stop := 23, key := "f", text := "[3-5]", folded := true }
+          let fed (fixture typed : String) (fold : Foldable := middle) : Option EvilDriver :=
+            (foldedEvilDriver fixture #[fold]).map (evilFed · typed)
+          let left (fixture typed : String) : Option EvilEdited := (fed fixture typed).map evilLeft
+          let above := "ab0\n|ab1\nab2\nab3\nab4\nab5"
+          let on := "ab0\nab1\n|ab2\nab3\nab4\nab5"
+          let below := "ab0\nab1\nab2\nab3\nab4\n|ab5"
+          let fold := "ab2\nab3\nab4\n"
+          left above "d j" == some ⟨"ab0\n|ab5", linewise ("ab1\n" ++ fold), false, ""⟩ &&
+            (left above "y j").map (·.register) == some (linewise ("ab1\n" ++ fold)) &&
+            left below "d k" == some ⟨"ab0\n|ab1", linewise (fold ++ "ab5\n"), false, ""⟩ &&
+            left on "d d" == some ⟨"ab0\nab1\n|ab5", linewise fold, false, ""⟩ &&
+            (left on "y y").map (·.register) == some (linewise fold) &&
+            left above "2 d d" == some ⟨"ab0\n|ab5", linewise ("ab1\n" ++ fold), false, ""⟩ &&
+            left on "2 d d" == some ⟨"ab0\n|ab1", linewise (fold ++ "ab5\n"), false, ""⟩ &&
+            ((fed "ab0\nab1\nab2\n|ab3\nab4\nab5" "2 d d" lastRows).map fun driver =>
+                (evilText driver, (evilLeft driver).register,
+                  (evilLeft driver).echo.endsWith Evil.noLineBelow)) ==
+              some (some "ab0\nab1\nab2\nab3\nab4\nab5", none, true) }]
 
 /-- The oracle table's rows for the operators over a visual selection: a
 `v` selection is acted on through the cell under its head, and a `V`
@@ -903,6 +929,48 @@ def evilSelectionChecks : List Check :=
             cursor "abc\nd|ef\nghi" "V d" 4 &&
             cursor "foo |bar baz qux" "v w y w" 8 &&
             cursor "foo |bar baz qux" "v w c <Escape>" 3 },
+    { name :=
+        "V j y from the row above a folded range yanks that row and every row the range covers, whole"
+      run :=
+        pure <|
+          let fold : Foldable :=
+            { start := 8, stop := 19, key := "f", text := "[2-4]", folded := true }
+          (foldedEvilDriver "ab0\n|ab1\nab2\nab3\nab4\nab5" #[fold]).map
+              (fun driver => (evilFed driver "V j y").loop.state.register? Evil.unnamed) ==
+            some (some { text := "ab1\nab2\nab3\nab4\n", linewise := true }) },
+    { name :=
+        "v j y from the row above a folded range yanks from the anchor through the end of the range's last row, v k y from the row below it from the range's first row to the anchor, and v j y with the anchor inside the range, past its first byte, from the range's first row"
+      run :=
+        pure <|
+          let fold : Foldable :=
+            { start := 8, stop := 19, key := "f", text := "[2-4]", folded := true }
+          let yanked (fixture typed : String) : Option (Option Register) :=
+            (foldedEvilDriver fixture #[fold]).map
+              (fun driver => (evilFed driver typed).loop.state.register? Evil.unnamed)
+          yanked "ab0\na|b1\nab2\nab3\nab4\nab5" "v j y" == some (charwise "b1\nab2\nab3\nab4") &&
+            yanked "ab0\nab1\nab2\nab3\nab4\na|b5" "v k y" == some (charwise "ab2\nab3\nab4\nab") &&
+            yanked "ab0\nab1\nab2\na|b3\nab4\nab5" "v j y" == some (charwise "ab2\nab3\nab4\nab") },
+    { name :=
+        "a v selection that ends on the line break of the row above a folded range touches only that row: v y and v d from an empty row, and v $ y and v $ d, leave the range alone"
+      run :=
+        pure <|
+          -- Rows 2 to 4 folded, below an empty row and below `ab1`.
+          let belowEmpty : Foldable :=
+            { start := 5, stop := 16, key := "f", text := "[2-4]", folded := true }
+          let belowFull : Foldable :=
+            { start := 8, stop := 19, key := "f", text := "[2-4]", folded := true }
+          let fed (fixture : String) (fold : Foldable) (typed : String) : Option EvilDriver :=
+            (foldedEvilDriver fixture #[fold]).map (evilFed · typed)
+          let register (driver : Option EvilDriver) : Option (Option Register) :=
+            driver.map (·.loop.state.register? Evil.unnamed)
+          let empty := "ab0\n|\nab2\nab3\nab4\nab5"
+          let full := "ab0\n|ab1\nab2\nab3\nab4\nab5"
+          register (fed empty belowEmpty "v y") == some (charwise "\n") &&
+            (fed empty belowEmpty "v d").bind evilText == some "ab0\nab2\nab3\nab4\nab5" &&
+            register (fed empty belowEmpty "v d") == some (charwise "\n") &&
+            register (fed full belowFull "v $ y") == some (charwise "ab1\n") &&
+            (fed full belowFull "v $ d").bind evilText == some "ab0\nab2\nab3\nab4\nab5" &&
+            register (fed full belowFull "v $ d") == some (charwise "ab1\n") },
     { name :=
         "a count typed before the operator of a visual selection changes nothing: the selection is what is acted on"
       run :=

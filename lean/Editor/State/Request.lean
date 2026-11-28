@@ -303,6 +303,26 @@ inductive StateRequest where
   | setReadOnly (id : BufferId) (on : Bool)
   /-- Set the spans of the buffer `id`, in place of those it had. -/
   | setSpans (id : BufferId) (spans : Array Decoration)
+  /-- Set the align-to stops of the buffer `id`, in place of those it had. -/
+  | setStops (id : BufferId) (stops : Array AlignStop)
+  /-- Set the wrap indents of the buffer `id`, in place of those it had. -/
+  | setIndents (id : BufferId) (indents : Array WrapIndent)
+  /-- Set the links of the buffer `id`, in place of those it had. -/
+  | setLinks (id : BufferId) (links : Array Link)
+  /-- Declare the foldable ranges of the buffer `id`, keeping the state of
+  each whose key survives. -/
+  | setFolds (id : BufferId) (declared : Array Foldable)
+  /-- Write the parts of the buffer `id` from the rich-text description
+  `rich`, from the byte `start` on, by the prefix rule. -/
+  | setRichText (id : BufferId) (rich : RichText) (start : Nat)
+  /-- Append the parts of the rich-text description `tail`, moved `offset`
+  bytes on, to those of the buffer `id`. -/
+  | appendRichText (id : BufferId) (tail : RichText) (offset : Nat)
+  /-- Set the rendered Markdown document of the buffer `id`, or take it
+  away. -/
+  | setMarkdown (id : BufferId) (doc : Option Markdown.Doc)
+  /-- Fold or unfold the foldable range of the buffer `id` keyed `key`. -/
+  | setFolded (id : BufferId) (key : String) (folded : Bool)
   /-- Set the gutter of the buffer `id`, or take it away. -/
   | setGutter (id : BufferId) (gutter : Option Buffer.Gutter)
   /-- Tell the version-control gutter's state what arrived. -/
@@ -470,6 +490,14 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .tellChanged _ => Except BufferRefusal Unit
   | .setReadOnly .. => Except BufferRefusal Unit
   | .setSpans .. => Except BufferRefusal Unit
+  | .setStops .. => Except BufferRefusal Unit
+  | .setIndents .. => Except BufferRefusal Unit
+  | .setLinks .. => Except BufferRefusal Unit
+  | .setFolds .. => Except BufferRefusal Unit
+  | .setRichText .. => Except BufferRefusal Unit
+  | .appendRichText .. => Except BufferRefusal Unit
+  | .setMarkdown .. => Except BufferRefusal Unit
+  | .setFolded .. => Except BufferRefusal Unit
   | .setGutter .. => Except BufferRefusal Unit
   | .gutter _ => Unit
   | .setRestore _ => Unit
@@ -579,6 +607,14 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .tellChanged id, state => state.tellChanged id
   | .setReadOnly id on, state => state.setReadOnly id on
   | .setSpans id spans, state => state.setSpans id spans
+  | .setStops id stops, state => state.setStops id stops
+  | .setIndents id indents, state => state.setIndents id indents
+  | .setLinks id links, state => state.setLinks id links
+  | .setFolds id declared, state => state.setFolds id declared
+  | .setRichText id rich start, state => state.setRichText id rich start
+  | .appendRichText id tail offset, state => state.appendRichText id tail offset
+  | .setMarkdown id doc, state => state.setMarkdown id doc
+  | .setFolded id key folded, state => state.setFolded id key folded
   | .setGutter id gutter, state => state.setGutter id gutter
   | .gutter change, state => ((), state.changeGutter change)
   | .setRestore kept, state => ((), { state with restore := kept })

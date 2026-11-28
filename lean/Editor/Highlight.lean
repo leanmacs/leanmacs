@@ -18,7 +18,15 @@ query and one face, or none, for each of its captures.
 The shipped default (`defaultFaces`) maps each capture name `c` of the face
 vocabulary's syntax captures (`Face.syntaxCaptures`,
 `Editor/Face/Vocabulary.lean`) to the face `syntax.c`. It is computed from
-that list, not copied, so it cannot drift from the vocabulary. A mode's
+that list, not copied, so it cannot drift from the vocabulary. After them
+come markdown's markup captures, each mapped to its `text.` face
+(`Face.markupCaptures`): a heading by its level, `text.emphasis`,
+`text.strong`, `text.literal` (a code span, and only that: a link's title
+is `text.reference`) to `text.code-span`,
+`text.code-block`, `text.uri` and `text.reference` to `text.link`,
+`text.quote`, `text.list-marker` and `text.table-header`. So the default is
+the syntax captures then the markup captures, and a `.md` file opened as
+code is drawn in the markup faces. A mode's
 config (`Mode.SyntaxTree.captures`) is a mapping over it: the mapping a
 capture is looked up in is config's entries, then the default's.
 
@@ -144,9 +152,11 @@ def defaultRefreshDelay : Nat :=
   500
 
 /-- The shipped default: each capture name of the face vocabulary's syntax
-captures, and its face, `syntax.` and the name. -/
+captures, and its face, `syntax.` and the name; then each of markdown's
+markup captures and its `text.` face (`Face.markupCaptures`). -/
 def defaultFaces : List (String × FaceName) :=
-  Face.syntaxCaptures.toList.map fun (capture, _) => (capture, ⟨s!"syntax.{capture}"⟩)
+  Face.syntaxCaptures.toList.map (fun (capture, _) => (capture, ⟨s!"syntax.{capture}"⟩)) ++
+    Face.markupCaptures.toList
 
 /-- The face the capture `capture` is drawn in, by config's mapping `config`
 over the shipped default (the rule of the module docs); `none` when it draws

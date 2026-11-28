@@ -66,6 +66,35 @@ fn a_fallback_family_the_files_do_not_hold_is_refused_by_name() {
 }
 
 #[test]
+fn a_generic_family_is_given_only_by_a_generic_name_and_as_families_the_files_hold() {
+    let refused = fixture_set()
+        .with_generic("proportional", &[SANS_FAMILY])
+        .err();
+    assert_eq!(
+        refused,
+        Some(FontSetError::NotAGeneric("proportional".to_owned()))
+    );
+    let refused = fixture_set()
+        .with_generic("system-ui", &[SANS_FAMILY, "Missing"])
+        .err();
+    assert_eq!(
+        refused,
+        Some(FontSetError::NoSuchFamily("Missing".to_owned()))
+    );
+    // A refusal names what was refused.
+    assert_eq!(
+        FontSetError::NotAGeneric("proportional".to_owned()).to_string(),
+        "proportional is not a generic family name"
+    );
+    // And a generic name given as families the set holds is taken.
+    assert!(
+        fixture_set()
+            .with_generic("system-ui", &[SANS_FAMILY])
+            .is_ok()
+    );
+}
+
+#[test]
 fn bytes_that_are_no_font_are_refused() {
     let refused = FontSet::only(SANS_FAMILY, &[], [b"not a font".to_vec()]).err();
     assert_eq!(refused, Some(FontSetError::NotAFont));

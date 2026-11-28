@@ -27,7 +27,12 @@ unpadded question of the smaller area" (`Display/Contract.lean`).
   left edge and the y of the top of the row that holds it, in pixels from
   the view's top left with its padding included, and that row's height;
   none when the view does not show it. A float anchored at a position is
-  placed against it (`Editor/Floating.lean`).
+  placed against it (`Editor/Floating.lean`);
+- **how wide a run is** in its faces (`Display.measure`, `Display.widthIn`):
+  its width laid out unbroken, in whole points rounded up, which a
+  generator computes a view's align-to stops from (`AlignStop`,
+  `Editor/Columns.lean`). It names no snapshot and no view: the run is a
+  string, and its faces are decorations of it over the default face.
 
 The third is a question of its own, not worked out from the first two,
 for two reasons. The padding is in points, which the display takes off
@@ -63,6 +68,46 @@ binding answers by one rule:
 - **A block holds no position.** A move goes over it as if it were not
   there, and a position converts to a row and back as without blocks.
 
+## Folds
+
+A view's folds (`Fold`, `View.folds`) are ranges of its text each drawn as
+one placeholder row. Unlike a block, a fold changes which rows exist, so the
+folds ride on all three questions (`RowsQuery.folds`, `MoveQuery.folds`,
+`SpotQuery.folds`) as well as on the scene. Every binding answers by one
+rule:
+
+- A fold covers the lines that hold a byte of its range `[start, stop)`, a
+  line break being the line's it ends, or the line of `start` when the range
+  is empty; an offset past the end is the end, and a byte inside a
+  character is on that character's line. The folds are taken in order of
+  start, the longer first of two with one start, and one whose first line an
+  earlier one covers is dropped, so a binding handed nested folds shows the
+  outer one.
+- The covered lines are one row, whatever they wrap to: the placeholder,
+  one row tall. The rows answer gives it as the first covered line's start
+  through the end of the last covered line's characters.
+- The placeholder holds every position of the lines it covers, each at x 0:
+  an anchor in them shows from the placeholder, a spot of any of them is the
+  placeholder's row at the padding's x, and a move counts the placeholder as
+  one row and, landing on it, goes to the fold's start, passing its goal
+  back unchanged.
+- A block before the first covered line is drawn above the placeholder, and
+  one before a later covered line is not drawn.
+
+## Wrap indents
+
+A view's wrap indents (`WrapIndent`, `View.indents`) say where the visual
+rows of the lines they cover start. Unlike folds they change no row's
+existence, only where a row's characters are, so no query is handed them:
+every binding lays a query of a snapshot out under the indents of the last
+scene published to it, the last view of that snapshot in it, and under none
+when that scene shows no view of it. The real binding keeps them with the
+frame it laid out (`crates/editor-layout/src/cache.rs`), the model and the
+recorder read them from the last scene (`Editor/Display/Model.lean`, "The
+layout rule"). So nothing that asks a query, evil's `j` and `k` or the
+follow, knows of indents: an x it is given back is the drawn x, the indent
+counted.
+
 Lean keeps no layout of its own: what wraps where, and how tall a row is, is
 asked here every time. Xi's experience is the reason
 (`docs/design/text-and-display.md`, "The scene").
@@ -95,7 +140,7 @@ binding:
 
 | Addition | Where | Owner |
 |---|---|---|
-| Another question of layout (the position at a point) | A constructor of `DisplayRequest`, its reply in `DisplayRequest.Reply`, its operation here, its answer in the model, the recorder and the real binding, and a property in the contract | The display pipeline adds it when something needs it; `heights` came so, for sizing a view's text area and the minibuffer's place, and `spot` for placing a float beside a position (window management, phase 4) |
+| Another question of layout (the position at a point) | A constructor of `DisplayRequest`, its reply in `DisplayRequest.Reply`, its operation here, its answer in the model, the recorder and the real binding, and a property in the contract | The display pipeline adds it when something needs it; `heights` came so, for sizing a view's text area and the minibuffer's place, `spot` for placing a float beside a position (window management, phase 4), and `measure` for computing align-to stops (rich text display, phase 2) |
 | A field of what is published | A field of `Scene` (`Editor/Scene.lean`) | The command loop |
 | A request a command makes of the display | Nothing new: a command reaches this port through the editor's composite port (`Editor/Command.lean`), which lifts every operation here | The command loop |
 | A new thing to ask of the window | A constructor of `FrameRequest`, its case in the model, the recorder, the real binding, `Ffi.WindowRequest` and `editor-ffi`'s request tags, and a variant of `editor-platform`'s `Request` | The macOS app roadmap added the first three |
@@ -189,6 +234,9 @@ structure RowsQuery where
   rule its frame draws them by (the module docs, "Blocks"). None by
   default. -/
   blocks : Array Block := #[]
+  /-- The view's folds: each shows its covered lines as one row (the module
+  docs, "Folds"). None by default. -/
+  folds : Array Fold := #[]
   deriving DecidableEq, Repr
 
 /-- Where a position goes when it moves some visual lines. -/
@@ -211,6 +259,9 @@ structure MoveQuery where
   /-- The x, in pixels from the row's start, that the move aims for: what
   the last move passed back, or `none` to aim for the position's own. -/
   goal : Option Nat
+  /-- The view's folds, as `RowsQuery.folds`: a fold is one row to a move,
+  and a move that lands on it goes to its start. -/
+  folds : Array Fold := #[]
   deriving DecidableEq, Repr
 
 /-- Where a move went. -/
@@ -239,6 +290,10 @@ structure SpotQuery where
   /-- The view's blocks, as `RowsQuery.blocks`: a position below a block
   is lower by the block's rows. -/
   blocks : Array Block := #[]
+  /-- The view's folds, as `RowsQuery.folds`: a position a fold covers is
+  drawn at its placeholder's x 0, and one below a fold is higher by the rows
+  it hides. -/
+  folds : Array Fold := #[]
   deriving DecidableEq, Repr
 
 /-- Where a position is drawn in a view, in whole pixels from the view's
@@ -251,6 +306,16 @@ structure Spot where
   /-- How tall that row is. -/
   height : Nat
   deriving DecidableEq, Repr, Inhabited
+
+/-- How wide a run is (`Display.measure`). -/
+structure MeasureQuery where
+  /-- The run: up to its first line feed, its tabs reaching to the next
+  multiple of eight cells from its start. -/
+  text : String
+  /-- Spans of `text` drawn in a face, its offsets bytes of `text`: the
+  run's faces, over the default face. None by default. -/
+  decorations : Array Decoration := #[]
+  deriving DecidableEq, Repr
 
 end Display
 
@@ -289,6 +354,8 @@ inductive DisplayRequest where
   /-- How tall a text row, a window's status row and the frame's bottom row
   are. -/
   | heights
+  /-- How wide a run is in its faces, in whole points. -/
+  | measure (query : Display.MeasureQuery)
   /-- Ask the platform's window to do something: it answers nothing. -/
   | frame (request : Display.FrameRequest)
 
@@ -299,6 +366,7 @@ def DisplayRequest.Reply : DisplayRequest → Type
   | .move _ => Except DisplayError Display.Moved
   | .spot _ => Except DisplayError (Option Display.Spot)
   | .heights => Display.Heights
+  | .measure _ => Nat
   | .frame _ => Unit
 
 /-- The display port: `DisplayRequest` and the reply to each request. -/
@@ -360,6 +428,19 @@ that sizes a view's text area as its height less its bottom row asks
 `rowsShown` for exactly the rows the frame shows. -/
 def heights : DisplayM Heights :=
   ExceptT.lift (Program.request (port := displayPort) .heights)
+
+/-- How wide `query.text` is laid out unbroken in `query.decorations`' faces
+over the default face, in whole points rounded up: what a generator
+computes a view's align-to stops from (`Editor/Columns.lean`). The run
+stops at its first line feed. It is in the faces the next frame is laid
+out in, and names no snapshot, so it is refused nothing. -/
+def measure (query : MeasureQuery) : DisplayM Nat :=
+  ExceptT.lift (Program.request (port := displayPort) (.measure query))
+
+/-- How wide `text` is in the face `face` over the default face, in whole
+points (`measure` of one decoration over the whole run). -/
+def widthIn (face : FaceName) (text : String) : DisplayM Nat :=
+  measure { text, decorations := #[{ start := 0, stop := text.utf8ByteSize, face }] }
 
 /-- Asks the platform's window to do what `request` says. It answers
 nothing and changes no answer of layout: whether the window went into

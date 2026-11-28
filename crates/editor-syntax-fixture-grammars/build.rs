@@ -34,8 +34,19 @@ const QUERIES: [(&str, &[&str]); 6] = [
         ],
     ),
     ("json", &["highlights.scm"]),
-    ("markdown", &["highlights.scm", "injections.scm"]),
-    ("markdown_inline", &["highlights.scm", "injections.scm"]),
+    (
+        "markdown",
+        &[
+            "highlights.scm",
+            "injections.scm",
+            "rendered.scm",
+            "rendered-injections.scm",
+        ],
+    ),
+    (
+        "markdown_inline",
+        &["highlights.scm", "injections.scm", "rendered.scm"],
+    ),
     ("toml", &["highlights.scm"]),
     ("lean", &["highlights.scm"]),
 ];

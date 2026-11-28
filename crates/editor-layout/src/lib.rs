@@ -73,6 +73,9 @@
 //!   rebuilt when none can be had (`tests/patches.rs`), and the bound on a
 //!   very long row (`tests/long_line.rs`);
 //! - the round trip of a position through the layers (`tests/layers.rs`);
+//! - measuring a run: its width in its faces over the default face, in
+//!   whole points rounded up, at any scale, its tabs expanded and nothing
+//!   after a line feed ([`Layout::measure`], `tests/measure.rs`);
 //! - blocks: where a view's blocks are drawn, that each of their lines
 //!   counts among the lines that fit, the first-row rule, that the rows
 //!   query and the spot count them as the frame draws them and a move
@@ -84,6 +87,36 @@
 //!   spot and move queries taking the column off as the frame does, and
 //!   mark rows kept apart from text rows ([`frame`], "The gutter";
 //!   `tests/gutter.rs`);
+//! - folds: which rows a view's folds cover and which of them show, and
+//!   the mapping of a position to a fold point and back ([`folds`]); a
+//!   fold drawn as one unbroken placeholder row in its own faces, holding
+//!   every position of its rows at x 0, the rows, move and spot queries
+//!   counting it as one line, a cursor and a selection on it, and the
+//!   blocks and gutter marks beside it ([`query`], "Folds";
+//!   `tests/folds.rs`); that folding and unfolding shapes the placeholder
+//!   alone (`tests/counters.rs`); and the round trip of a position
+//!   through the fold layer (`tests/layers.rs`);
+//! - align-to stops: a row cut at its stops into cells, each shaped on its
+//!   own and placed at its stop or after the cell before it, a stop at or
+//!   past the width breaking the row before its cell, which starts the
+//!   next visual line at x 0, a long cell hanging under its stop, and the
+//!   gap before a stop belonging to the character before it (`align`);
+//!   a view's stops in points, at the scale, the rows, spot and move
+//!   queries laying a row out under the last frame's stops, and cells of
+//!   one column lining up whatever the widths before them
+//!   (`tests/align.rs`); what a change of a stop shapes and breaks
+//!   (`tests/counters.rs`), and the round trip of a position through a
+//!   row with stops (`tests/layers.rs`);
+//! - wrap indents: which rows a view's indents cover, the later winning,
+//!   in points at the scale, and a later segment's indent ([`indent`]);
+//!   where a covered row's first and later visual lines start and where
+//!   they break, the hanging form's lead, an indent at or past the width
+//!   not applied, and indents with stops (`align`); the visual lines,
+//!   cursors, rows, spot and move queries at the drawn x, the queries
+//!   laying a row out under the last frame's indents, at the scale as it
+//!   is now (`tests/indent.rs`); what a change of an indent shapes and
+//!   breaks (`tests/counters.rs`), and the round trip of a position
+//!   through an indented row (`tests/layers.rs`);
 //! - translated spans: a text made of pieces of other texts draws each
 //!   source's own spans at every piece of it, cut at the pieces' edges,
 //!   each source resolved once, and keeps the contract of
@@ -92,11 +125,14 @@
 //! The adapter-neutral rules of shaping are [`shaper::contract`]'s, which
 //! every real adapter runs. No crate downstream pins the fake's geometry.
 
+mod align;
 mod blocks;
 pub mod cache;
 pub mod decoration;
 pub mod face;
+pub mod folds;
 pub mod frame;
+pub mod indent;
 pub mod layer;
 pub mod line;
 pub mod query;
@@ -107,16 +143,32 @@ pub mod translated;
 pub mod wrap;
 
 use std::collections::HashMap;
+use std::ops::Range;
 
-use crate::blocks::{BlockLayout, Blocks, ViewBlocks};
+use crate::blocks::{BlockLayout, Blocks, ViewBeside, ViewBlocks, ViewFolds};
 use crate::cache::{Counters, StatusKept, Texts, state};
-use crate::decoration::{DecorationSource, Styles, TextSpansSource, fonts_of};
+use crate::folds::FoldSnapshot;
+use editor_text::Text;
+
+use crate::decoration::{
+    DecorationSource, FaceSpanSource, Span, Styles, TextSpansSource, fonts_of,
+};
 use crate::face::{FaceDef, SELECTION_FACE};
-use crate::query::{Moved, QueryError, RowRange, Shown, Spot, Walker};
-use crate::scene::{Block, Padding, TextKey, TextRef, ViewId};
-use crate::shaper::{FontId, Shaper};
-use crate::tabs::{DEFAULT_TAB_WIDTH, row_content, segment_count};
+use crate::line::font_runs;
+use crate::query::{
+    Around, Beside, Moved, QueryError, RowRange, Shown, Spot, Walker, relative_stops,
+};
+use crate::scene::{Decoration, Padding, TextKey, TextRef, ViewId};
+use crate::shaper::{FontId, ShapeInput, ShapedLine, Shaper};
+use crate::tabs::{DEFAULT_TAB_WIDTH, boundary_at_or_before, expand, row_content, segment_count};
 use crate::wrap::Outcome;
+
+/// `points` in pixels at `scale`: the points times the scale, unrounded.
+/// The one rule [`Layout::padding_pixels`] and the stops a query lays a
+/// row out under both follow.
+fn pixels(points: u32, scale: f32) -> f32 {
+    points as f32 * scale
+}
 
 /// Layout: a shaper and what is laid out with it.
 pub struct Layout<S: Shaper> {
@@ -251,7 +303,7 @@ impl<S: Shaper> Layout<S> {
     /// off through this, so the two cannot disagree ([`frame`], "The
     /// padding").
     pub fn padding_pixels(&self, points: u32) -> f32 {
-        points as f32 * self.scale()
+        pixels(points, self.scale())
     }
 
     /// The rows of `text` a view `width` pixels wide and `height` tall,
@@ -269,13 +321,14 @@ impl<S: Shaper> Layout<S> {
         padding: Padding,
         anchor: usize,
     ) -> Result<Vec<RowRange>, QueryError> {
-        self.rows_shown_with_blocks(text, width, height, padding, anchor, &[])
+        self.rows_shown_with_blocks(text, width, height, padding, anchor, Around::default())
     }
 
-    /// [`Layout::rows_shown`] in a view with `blocks` between its rows:
-    /// the text rows it shows, each block line counted among the lines
-    /// that fit by the rule the frame shows them by ([`query`], "Blocks").
-    /// With no block it is [`Layout::rows_shown`].
+    /// [`Layout::rows_shown`] in a view with `around`'s blocks between its
+    /// rows and its folds: the text rows it shows, each block line counted
+    /// among the lines that fit by the rule the frame shows them by, and
+    /// each shown fold one row ([`query`], "Blocks" and "Folds"). With no
+    /// block and no fold it is [`Layout::rows_shown`].
     pub fn rows_shown_with_blocks(
         &mut self,
         text: &TextRef,
@@ -283,12 +336,12 @@ impl<S: Shaper> Layout<S> {
         height: f32,
         padding: Padding,
         anchor: usize,
-        blocks: &[Block],
+        around: Around<'_>,
     ) -> Result<Vec<RowRange>, QueryError> {
         let width = self.text_width(width, padding);
         let height = self.text_height(height, padding);
-        self.query(text, width, blocks, |walker, above| {
-            let shown = walker.shown(height, anchor, above)?;
+        self.query(text, width, around, |walker, beside| {
+            let shown = walker.shown(height, anchor, beside)?;
             Ok(shown
                 .into_iter()
                 .filter_map(|shown| match shown {
@@ -320,13 +373,28 @@ impl<S: Shaper> Layout<S> {
             across,
             ..Padding::default()
         };
-        self.lines_from_padded(text, width, padding, position, lines, goal)
+        self.lines_from_padded(
+            text,
+            width,
+            padding,
+            position,
+            lines,
+            goal,
+            Around::default(),
+        )
     }
 
     /// [`Layout::lines_from`] in a view whose content is inset by
-    /// `padding`: the width it wraps at is `width` less twice
-    /// [`Layout::padding_pixels`] of `across` and once of `gutter`, as the
-    /// frame's. The padding down is not looked at: a move takes no height.
+    /// `padding`, with `around`'s folds: the width it wraps at is `width`
+    /// less twice [`Layout::padding_pixels`] of `across` and once of
+    /// `gutter`, as the frame's, and each shown fold is one line, landed on
+    /// at its start ([`query`], "Folds"). The padding down is not looked
+    /// at: a move takes no height. Nor are `around`'s blocks: a block holds
+    /// no position.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a view's geometry, its folds and the move, each an input of where the move lands"
+    )]
     pub fn lines_from_padded(
         &mut self,
         text: &TextRef,
@@ -335,9 +403,14 @@ impl<S: Shaper> Layout<S> {
         position: usize,
         lines: i64,
         goal: Option<f32>,
+        around: Around<'_>,
     ) -> Result<Moved, QueryError> {
         let width = self.text_width(width, padding);
-        self.query(text, width, &[], |walker, _| {
+        let folds = Around {
+            blocks: &[],
+            folds: around.folds,
+        };
+        self.query(text, width, folds, |walker, _| {
             walker.lines_from(position, lines, goal)
         })
     }
@@ -362,16 +435,25 @@ impl<S: Shaper> Layout<S> {
         anchor: usize,
         position: usize,
     ) -> Result<Option<Spot>, QueryError> {
-        self.spot_with_blocks(text, width, height, padding, anchor, position, &[])
+        self.spot_with_blocks(
+            text,
+            width,
+            height,
+            padding,
+            anchor,
+            position,
+            Around::default(),
+        )
     }
 
-    /// [`Layout::spot`] in a view with `blocks` between its rows: a
-    /// position below a block is lower by the block's lines, each at the
-    /// height the frame draws it at ([`query`], "Blocks"). With no block
-    /// it is [`Layout::spot`].
+    /// [`Layout::spot`] in a view with `around`'s blocks between its rows
+    /// and its folds: a position below a block is lower by the block's
+    /// lines, each at the height the frame draws it at, and a position a
+    /// fold covers is at its placeholder's x 0 ([`query`], "Blocks" and
+    /// "Folds"). With no block and no fold it is [`Layout::spot`].
     #[expect(
         clippy::too_many_arguments,
-        reason = "a view's geometry, its blocks and the position, each an input of where the position is drawn"
+        reason = "a view's geometry, its blocks and folds and the position, each an input of where the position is drawn"
     )]
     pub fn spot_with_blocks(
         &mut self,
@@ -381,21 +463,74 @@ impl<S: Shaper> Layout<S> {
         padding: Padding,
         anchor: usize,
         position: usize,
-        blocks: &[Block],
+        around: Around<'_>,
     ) -> Result<Option<Spot>, QueryError> {
         let left = self.text_left(padding);
         let down = self.first_row(padding);
         let width = self.text_width(width, padding);
         let height = self.text_height(height, padding);
-        self.query(text, width, blocks, |walker, above| {
+        self.query(text, width, around, |walker, beside| {
             Ok(walker
-                .spot(height, anchor, position, above)?
+                .spot(height, anchor, position, beside)?
                 .map(|spot| Spot {
                     x: left + spot.x,
                     y: down + spot.y,
                     height: spot.height,
                 }))
         })
+    }
+
+    /// How wide `text` is, laid out in `decorations` (bytes of `text`,
+    /// each a face) over the default face, unbroken: in whole points, so a
+    /// caller that computes align-to stops from it never handles a scale
+    /// ([`scene`], "Align-to stops").
+    ///
+    /// The run is `text` up to its first line feed, without a carriage
+    /// return before it, its tabs expanded from column 0 by the tab
+    /// layer's rule ([`tabs`]). Its faces are resolved as a block's are,
+    /// in the faces as last defined and at the scale last set, so it
+    /// measures what a row of the same text in the same faces draws.
+    /// The width is in pixels divided by the scale, rounded to the
+    /// nearest 64th and then up to a whole point. Nothing is kept, and no
+    /// counter counts it.
+    pub fn measure(&mut self, text: &str, decorations: &[Decoration]) -> u32 {
+        let run = text.split('\n').next().unwrap_or_default();
+        let run = if run.len() < text.len() {
+            run.strip_suffix('\r').unwrap_or(run)
+        } else {
+            run
+        };
+        let snapshot = Text::from(run).snapshot();
+        let spans: Vec<Span> = decorations
+            .iter()
+            .map(|decoration| {
+                let start = boundary_at_or_before(&snapshot, decoration.start);
+                Span {
+                    bytes: start..boundary_at_or_before(&snapshot, decoration.stop).max(start),
+                    face: self.styles.intern(&decoration.face),
+                }
+            })
+            .collect();
+        let source = FaceSpanSource::new(spans);
+        let sources: [&dyn DecorationSource; 1] = [&source];
+        let fonts = fonts_of(
+            &sources,
+            &snapshot,
+            0..run.len(),
+            &self.styles,
+            &self.shaper,
+            self.base,
+        );
+        let expanded = expand(run, self.tab_width);
+        let runs = font_runs(&expanded, run.len(), &fonts, self.base);
+        let shaped = self.shaper.shape(&ShapeInput {
+            text: expanded.text().to_owned(),
+            runs,
+        });
+        let width: f32 = shaped.break_lines(None).iter().map(|line| line.width).sum();
+        let sixty_fourths = (f64::from(width) / f64::from(self.scale()) * 64.0).round();
+        // A float cast to a whole number stops at the number's ends.
+        (sixty_fourths / 64.0).ceil() as u32
     }
 
     /// `extent` less `points` of padding at each end, in pixels at the
@@ -434,18 +569,21 @@ impl<S: Shaper> Layout<S> {
     /// Runs `ask` on a walker over what is kept of `text` at `width`, with
     /// the text's own spans resolved for its snapshot, as the frame of that
     /// snapshot resolves them, under the selections and decorations of the
-    /// last frame that showed it, in the faces as they are now, and with
-    /// the lines of `blocks` before each row (the walk's `above`), and
-    /// counts the work.
+    /// last frame that showed it, in the faces as they are now, with the
+    /// lines of `around`'s blocks before each row and its folds shown
+    /// (the walk's `beside`), and counts the work.
     fn query<T>(
         &mut self,
         text: &TextRef,
         width: f32,
-        blocks: &[Block],
-        ask: impl FnOnce(&mut Walker<'_, S>, &mut dyn FnMut(usize) -> Vec<Shown>) -> T,
+        around: Around<'_>,
+        ask: impl FnOnce(&mut Walker<'_, S>, &mut dyn Beside) -> T,
     ) -> T {
         let own = TextSpansSource::of(&mut self.styles, text);
-        let mut view_blocks = ViewBlocks::new(blocks, &text.snapshot, &mut self.styles);
+        let mut view_blocks = ViewBlocks::new(around.blocks, &text.snapshot, &mut self.styles);
+        let mut view_folds = ViewFolds::new(around.folds, &mut self.styles);
+        let folds = FoldSnapshot::new(&text.snapshot, around.folds);
+        let scale = self.scale();
         let mut state = state(&mut self.texts, text, self.tab_width, Some(width));
         let state = &mut *state;
         // Lowest layer first: the text's own spans, the decorations, then
@@ -454,10 +592,23 @@ impl<S: Shaper> Layout<S> {
         if let Some(own) = &own {
             sources.push(own);
         }
-        if let Some((selections, decorations)) = &state.sources {
-            sources.push(decorations);
-            sources.push(selections);
+        // The last frame's stops, in pixels at the scale as it is now.
+        let mut stops: Vec<(usize, f32)> = Vec::new();
+        if let Some(last) = &state.sources {
+            sources.push(&last.decorations);
+            sources.push(&last.selections);
+            stops.extend(
+                last.stops
+                    .iter()
+                    .map(|(offset, x)| (*offset, pixels(*x, scale))),
+            );
         }
+        let stops_of = |bytes: Range<usize>| relative_stops(&stops, &bytes);
+        // The last frame's indents, at the scale as it is now.
+        let indents = state.sources.as_ref().map(|last| &last.indents);
+        let indent_of = |row: usize, segment: usize| {
+            indents.and_then(|indents| indents.of(row, segment, scale))
+        };
         let (styles, shaper, base) = (&self.styles, &self.shaper, self.base);
         let snapshot = &text.snapshot;
         let fonts = |bytes| fonts_of(&sources, snapshot, bytes, styles, shaper, base);
@@ -470,19 +621,26 @@ impl<S: Shaper> Layout<S> {
             width,
             counters: &mut self.counters,
         };
-        let mut above = |row| view_blocks.above(row, &mut block_layout);
+        let mut beside = ViewBeside {
+            blocks: &mut view_blocks,
+            folds: &mut view_folds,
+            layout: &mut block_layout,
+        };
         let mut seen: HashMap<(usize, usize), Outcome> = HashMap::new();
         let answer = ask(
             &mut Walker {
                 shaper,
                 wrap: &mut state.wrap,
+                folds: &folds,
                 base,
                 fonts: &fonts,
+                stops: &stops_of,
+                indent: &indent_of,
                 outcome: &mut |row, segment, outcome| {
                     seen.entry((row, segment)).or_insert(outcome);
                 },
             },
-            &mut above,
+            &mut beside,
         );
         self.counters.add(&seen);
         answer

@@ -50,7 +50,26 @@ def highlightFaceChecks : List Check :=
         pure
           (Face.syntaxCaptures.all
               (fun (capture, _) => faceOf [] capture == s!"syntax.{capture}") &&
-            Highlight.defaultFaces.map (·.2) == (Face.syntaxEntries.map (·.name)).toList) },
+            Highlight.defaultFaces.map (·.2) ==
+              (Face.syntaxEntries.map (·.name)).toList ++ (Face.markupCaptures.map (·.2)).toList) },
+    { name := "by the shipped default, markdown's captures are drawn in the text faces"
+      run :=
+        let headings :=
+          (List.range 6).all fun index =>
+            faceOf [] s!"text.heading.{index + 1}" == s!"text.heading.{index + 1}"
+        pure
+          (headings && faceOf [] "text.emphasis" == "text.emphasis" &&
+            faceOf [] "text.strong" == "text.strong" &&
+            faceOf [] "text.literal" == "text.code-span" &&
+            faceOf [] "text.code-block" == "text.code-block" &&
+            faceOf [] "text.uri" == "text.link" &&
+            faceOf [] "text.reference" == "text.link" &&
+            faceOf [] "text.quote" == "text.quote" &&
+            faceOf [] "text.list-marker" == "text.list-marker" &&
+            faceOf [] "text.table-header" == "text.table-header" &&
+            Face.markupCaptures.all (fun (_, face) => Face.vocabularyNames.contains face) &&
+            faceOf [] "text.unknown" == "-" &&
+            faceOf [] "text" == "-") },
     { name :=
         "a dotted capture with no mapping of its own is drawn in its first component's face, and a capture nothing maps draws nothing"
       run :=

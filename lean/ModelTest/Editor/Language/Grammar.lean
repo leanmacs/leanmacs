@@ -119,6 +119,35 @@ def grammarDeclarationChecks : List Check :=
             injected {} languages "ini" == none &&
             injected (answered (.refused (.refused .notFound) false)) languages "ini" == none) },
     { name :=
+        "a declared grammar's rendered.scm and rendered-injections.scm are query files of the rendered kinds, read into the tree a buffer and an injected language get, a tree's own source winning"
+      run :=
+        let declared := [Language.Grammar.declare "markdown" "/g/libmarkdown.so"]
+        let read : Language.Grammar.Queries :=
+          { highlights := some "(document) @d", rendered := some "(section) @block"
+            renderedInjections := some "(pipe_table_cell) @injection.content" }
+        let answers : Language.Grammar.Answers :=
+          { generation := 2, answers := #[("markdown", .registered read)] }
+        let own : Language :=
+          { name := "markdown", patterns := []
+            syntaxTree := { grammar := "markdown", rendered := some "(own) @own" } }
+        pure
+          (Language.Grammar.queryFiles.contains ("rendered.scm", .rendered) &&
+            Language.Grammar.queryFiles.contains
+              ("rendered-injections.scm", .renderedInjections) &&
+            Language.Grammar.treeOf declared answers 2 { grammar := "markdown" } ==
+              some
+                { grammar := "markdown", highlights := some "(document) @d"
+                  rendered := some "(section) @block"
+                  renderedInjections := some "(pipe_table_cell) @injection.content" } &&
+            Language.Grammar.injectedTreeOf declared answers 2 [own] "markdown" ==
+              some
+                { grammar := "markdown", highlights := some "(document) @d"
+                  rendered := some "(own) @own"
+                  renderedInjections := some "(pipe_table_cell) @injection.content" } &&
+            (Language.Grammar.Queries.set {} .renderedInjections (some "(x) @x")).renderedInjections ==
+              some "(x) @x" &&
+            (Language.Grammar.Queries.set {} .rendered (some "(x) @x")).rendered == some "(x) @x") },
+    { name :=
         "a refusal's sentence names the grammar, the error and what stays: the grammar registered before, when the service still lists the name, or no syntax tree for its languages; a query file's refusal names the grammar, the file and the error"
       run :=
         let error : GrammarError := .refused .notFound

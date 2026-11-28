@@ -8,7 +8,8 @@
 //! since they depend on no package (`editor-syntax-treesitter`'s crate
 //! docs, "How grammars are loaded"):
 //! the adapter's own tests (`tests/contract.rs`, `tests/injections.rs`,
-//! `tests/refresh.rs`, its unit tests and the `round` example) and
+//! `tests/refresh.rs`, `tests/highlights.rs`, `tests/rendered.rs`, its unit
+//! tests and the `round` example) and
 //! `editor-ffi`'s, each by a dev-dependency; and Lean's test programs,
 //! which `mise run ffi-test` hands [`DIRECTORY`], printed by this crate's
 //! binary. The editor never links it (`deny.toml`).
@@ -97,6 +98,13 @@ pub struct Grammar {
     pub text_objects: Option<&'static str>,
     /// Its indents query, `queries/<name>/indents.scm`, if it has one.
     pub indents: Option<&'static str>,
+    /// Its rendered query, `queries/<name>/rendered.scm`, if it has one:
+    /// which nodes a rendered view of a text reads.
+    pub rendered: Option<&'static str>,
+    /// Its rendered injections, `queries/<name>/rendered-injections.scm`,
+    /// if it has one: the pattern a text parsed once for a rendered view
+    /// finds its layers with after its injections.
+    pub rendered_injections: Option<&'static str>,
 }
 
 /// Rust, with its crate's highlights and injections and the repository's
@@ -110,6 +118,8 @@ pub const RUST: Grammar = Grammar {
     injections: Some(query!("rust", "injections")),
     text_objects: Some(query!("rust", "textobjects")),
     indents: Some(query!("rust", "indents")),
+    rendered: None,
+    rendered_injections: None,
 };
 
 /// JSON, with its crate's highlights.
@@ -122,9 +132,12 @@ pub const JSON: Grammar = Grammar {
     injections: None,
     text_objects: None,
     indents: None,
+    rendered: None,
+    rendered_injections: None,
 };
 
-/// Markdown's block grammar, with its highlights and injections.
+/// Markdown's block grammar, with its highlights and injections, and the
+/// repository's rendered query and rendered injections.
 pub const MARKDOWN: Grammar = Grammar {
     name: "markdown",
     symbol: "tree_sitter_markdown",
@@ -134,10 +147,12 @@ pub const MARKDOWN: Grammar = Grammar {
     injections: Some(query!("markdown", "injections")),
     text_objects: None,
     indents: None,
+    rendered: Some(query!("markdown", "rendered")),
+    rendered_injections: Some(query!("markdown", "rendered-injections")),
 };
 
-/// Markdown's inline grammar, with its highlights and injections; reparsed
-/// whole.
+/// Markdown's inline grammar, with its highlights and injections and the
+/// repository's rendered query; reparsed whole.
 pub const MARKDOWN_INLINE: Grammar = Grammar {
     name: "markdown_inline",
     symbol: "tree_sitter_markdown_inline",
@@ -147,6 +162,8 @@ pub const MARKDOWN_INLINE: Grammar = Grammar {
     injections: Some(query!("markdown_inline", "injections")),
     text_objects: None,
     indents: None,
+    rendered: Some(query!("markdown_inline", "rendered")),
+    rendered_injections: None,
 };
 
 /// TOML, with its crate's highlights.
@@ -159,6 +176,8 @@ pub const TOML: Grammar = Grammar {
     injections: None,
     text_objects: None,
     indents: None,
+    rendered: None,
+    rendered_injections: None,
 };
 
 /// Lean 4, with upstream's highlights.
@@ -171,6 +190,8 @@ pub const LEAN: Grammar = Grammar {
     injections: None,
     text_objects: None,
     indents: None,
+    rendered: None,
+    rendered_injections: None,
 };
 
 /// The six, `json` first, in the order the syntax adapter's table listed
@@ -221,6 +242,8 @@ mod tests {
                 ("injections", grammar.injections),
                 ("textobjects", grammar.text_objects),
                 ("indents", grammar.indents),
+                ("rendered", grammar.rendered),
+                ("rendered-injections", grammar.rendered_injections),
             ] {
                 let file = queries.join(format!("{kind}.scm"));
                 assert_eq!(
@@ -242,6 +265,8 @@ mod tests {
                 ("injections", grammar.injections),
                 ("textobjects", grammar.text_objects),
                 ("indents", grammar.indents),
+                ("rendered", grammar.rendered),
+                ("rendered-injections", grammar.rendered_injections),
             ] {
                 assert_eq!(
                     read(&queries.join(format!("{kind}.scm"))).as_deref(),

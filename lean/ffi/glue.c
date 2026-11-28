@@ -955,6 +955,12 @@ uint64_t editor_ffi_syntax_kept_names(const editor_ffi_snapshot *snapshot,
 void editor_ffi_syntax_kept_captures(const editor_ffi_snapshot *snapshot,
                                      uint8_t kind, size_t start, size_t end,
                                      editor_ffi_raw_words *out);
+void editor_ffi_syntax_parse_once(const uint8_t *source, size_t source_len,
+                                  const uint8_t *host, size_t host_len,
+                                  const uint8_t *words, size_t words_len,
+                                  const uint8_t *strings, size_t strings_len,
+                                  editor_ffi_raw_words *out,
+                                  editor_ffi_raw_strings *names);
 
 static lean_external_class *syntax_query_class;
 static pthread_once_t syntax_query_class_once = PTHREAD_ONCE_INIT;
@@ -1199,6 +1205,27 @@ lean_obj_res editor_glue_syntax_kept_captures(b_lean_obj_arg snapshot,
   editor_ffi_syntax_kept_captures(lean_get_external_data(snapshot), kind, start,
                                   stop, &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.syntaxParseOnceRaw : @& String → @& String → @& ByteArray →
+// @& String → IO RawOnce`. The parse runs on this thread.
+lean_obj_res editor_glue_syntax_parse_once(b_lean_obj_arg source,
+                                           b_lean_obj_arg host,
+                                           b_lean_obj_arg words,
+                                           b_lean_obj_arg strings) {
+  editor_ffi_raw_words raw;
+  editor_ffi_raw_strings names;
+  editor_ffi_syntax_parse_once(
+      string_bytes(source), string_len(source), string_bytes(host),
+      string_len(host), byte_array_bytes(words), byte_array_len(words),
+      string_bytes(strings), string_len(strings), &raw, &names);
+  // `RawOnce`: the object fields `words` and `strings`, then `status`.
+  lean_object *once = lean_alloc_ctor(0, 2, sizeof(uint64_t));
+  lean_ctor_set(once, 0, byte_array_copy(raw.words, raw.len));
+  lean_ctor_set(once, 1, raw_strings_take(names));
+  lean_ctor_set_uint64(once, uint64_field(2, 0), raw.status);
+  editor_ffi_text_free(raw.words, raw.len);
+  return lean_io_result_mk_ok(once);
 }
 
 // `Editor.Ffi.syntaxSettle : @& Snapshot → UInt64 → IO Bool`
@@ -2159,12 +2186,16 @@ void editor_ffi_display_rows(const editor_ffi_display *display,
                              uint64_t down, uint64_t top, uint64_t gutter,
                              size_t anchor, const uint8_t *block_words,
                              size_t block_words_len, const uint8_t *block_text,
-                             size_t block_text_len, editor_ffi_raw_words *out);
+                             size_t block_text_len, const uint8_t *fold_words,
+                             size_t fold_words_len, const uint8_t *fold_text,
+                             size_t fold_text_len, editor_ffi_raw_words *out);
 void editor_ffi_display_move(const editor_ffi_display *display,
                              const editor_ffi_snapshot *snapshot,
                              uint64_t width, uint64_t across, uint64_t gutter,
                              size_t position, int64_t lines, bool goal_present,
-                             uint64_t goal, editor_ffi_raw_words *out);
+                             uint64_t goal, const uint8_t *fold_words,
+                             size_t fold_words_len, const uint8_t *fold_text,
+                             size_t fold_text_len, editor_ffi_raw_words *out);
 void editor_ffi_display_spot(const editor_ffi_display *display,
                              const editor_ffi_snapshot *snapshot,
                              uint64_t width, uint64_t height, uint64_t across,
@@ -2172,7 +2203,13 @@ void editor_ffi_display_spot(const editor_ffi_display *display,
                              size_t anchor, size_t position,
                              const uint8_t *block_words, size_t block_words_len,
                              const uint8_t *block_text, size_t block_text_len,
+                             const uint8_t *fold_words, size_t fold_words_len,
+                             const uint8_t *fold_text, size_t fold_text_len,
                              editor_ffi_raw_words *out);
+void editor_ffi_display_measure(const editor_ffi_display *display,
+                                const uint8_t *run_words, size_t run_words_len,
+                                const uint8_t *run_text, size_t run_text_len,
+                                editor_ffi_raw_words *out);
 bool editor_ffi_display_publish(const editor_ffi_display *display,
                                 const uint8_t *words, size_t words_len,
                                 const uint8_t *strings, size_t strings_len,
@@ -2225,54 +2262,80 @@ lean_obj_res editor_glue_display_live(void) {
 }
 
 // `Editor.Ffi.Display.rowsRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
-// UInt64 → UInt64 → UInt64 → UInt64 → USize → @& ByteArray → @& String → IO
-// RawWords`. The last two are the view's blocks, borrowed for the call.
-lean_obj_res editor_glue_display_rows(b_lean_obj_arg display,
-                                      b_lean_obj_arg snapshot, uint64_t width,
-                                      uint64_t height, uint64_t across,
-                                      uint64_t down, uint64_t top,
-                                      uint64_t gutter, size_t anchor,
-                                      b_lean_obj_arg block_words,
-                                      b_lean_obj_arg block_text) {
+// UInt64 → UInt64 → UInt64 → UInt64 → USize → @& ByteArray → @& String → @&
+// ByteArray → @& String → IO RawWords`. The last four are the view's blocks
+// and its folds, borrowed for the call.
+lean_obj_res
+editor_glue_display_rows(b_lean_obj_arg display, b_lean_obj_arg snapshot,
+                         uint64_t width, uint64_t height, uint64_t across,
+                         uint64_t down, uint64_t top, uint64_t gutter,
+                         size_t anchor, b_lean_obj_arg block_words,
+                         b_lean_obj_arg block_text, b_lean_obj_arg fold_words,
+                         b_lean_obj_arg fold_text) {
   editor_ffi_raw_words raw;
   editor_ffi_display_rows(
       lean_get_external_data(display), lean_get_external_data(snapshot), width,
       height, across, down, top, gutter, anchor, byte_array_bytes(block_words),
       byte_array_len(block_words), string_bytes(block_text),
-      string_len(block_text), &raw);
+      string_len(block_text), byte_array_bytes(fold_words),
+      byte_array_len(fold_words), string_bytes(fold_text),
+      string_len(fold_text), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
 // `Editor.Ffi.Display.moveRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
-// UInt64 → USize → UInt64 → Bool → UInt64 → IO RawWords`. The lines are a
-// two's complement number in a `UInt64`.
+// UInt64 → USize → UInt64 → Bool → UInt64 → @& ByteArray → @& String → IO
+// RawWords`. The lines are a two's complement number in a `UInt64`, and the
+// last two are the view's folds, borrowed for the call.
 lean_obj_res editor_glue_display_move(b_lean_obj_arg display,
                                       b_lean_obj_arg snapshot, uint64_t width,
                                       uint64_t across, uint64_t gutter,
                                       size_t position, uint64_t lines,
-                                      uint8_t goal_present, uint64_t goal) {
+                                      uint8_t goal_present, uint64_t goal,
+                                      b_lean_obj_arg fold_words,
+                                      b_lean_obj_arg fold_text) {
   editor_ffi_raw_words raw;
   editor_ffi_display_move(
       lean_get_external_data(display), lean_get_external_data(snapshot), width,
-      across, gutter, position, (int64_t)lines, goal_present, goal, &raw);
+      across, gutter, position, (int64_t)lines, goal_present, goal,
+      byte_array_bytes(fold_words), byte_array_len(fold_words),
+      string_bytes(fold_text), string_len(fold_text), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
 // `Editor.Ffi.Display.spotRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
 // UInt64 → UInt64 → UInt64 → UInt64 → USize → USize → @& ByteArray → @&
-// String → IO RawWords`. The last two are the view's blocks, borrowed for the
-// call.
-lean_obj_res editor_glue_display_spot(
-    b_lean_obj_arg display, b_lean_obj_arg snapshot, uint64_t width,
-    uint64_t height, uint64_t across, uint64_t down, uint64_t top,
-    uint64_t gutter, size_t anchor, size_t position, b_lean_obj_arg block_words,
-    b_lean_obj_arg block_text) {
+// String → @& ByteArray → @& String → IO RawWords`. The last four are the
+// view's blocks and its folds, borrowed for the call.
+lean_obj_res
+editor_glue_display_spot(b_lean_obj_arg display, b_lean_obj_arg snapshot,
+                         uint64_t width, uint64_t height, uint64_t across,
+                         uint64_t down, uint64_t top, uint64_t gutter,
+                         size_t anchor, size_t position,
+                         b_lean_obj_arg block_words, b_lean_obj_arg block_text,
+                         b_lean_obj_arg fold_words, b_lean_obj_arg fold_text) {
   editor_ffi_raw_words raw;
   editor_ffi_display_spot(
       lean_get_external_data(display), lean_get_external_data(snapshot), width,
       height, across, down, top, gutter, anchor, position,
       byte_array_bytes(block_words), byte_array_len(block_words),
-      string_bytes(block_text), string_len(block_text), &raw);
+      string_bytes(block_text), string_len(block_text),
+      byte_array_bytes(fold_words), byte_array_len(fold_words),
+      string_bytes(fold_text), string_len(fold_text), &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.Display.measureRaw : @& Display → @& ByteArray → @& String →
+// IO RawWords`. The run crosses as one block's words and text, borrowed for
+// the call.
+lean_obj_res editor_glue_display_measure(b_lean_obj_arg display,
+                                         b_lean_obj_arg run_words,
+                                         b_lean_obj_arg run_text) {
+  editor_ffi_raw_words raw;
+  editor_ffi_display_measure(lean_get_external_data(display),
+                             byte_array_bytes(run_words),
+                             byte_array_len(run_words), string_bytes(run_text),
+                             string_len(run_text), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
@@ -2670,6 +2733,98 @@ lean_obj_res editor_glue_clipboard_write(b_lean_obj_arg clipboard,
 // `Editor.Ffi.Clipboard.live : IO UInt64`
 lean_obj_res editor_glue_clipboard_live(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_clipboard_live()));
+}
+
+// ---- The URL opener ----
+//
+// A URL opener handle is the library's, held by Lean as an external object
+// freed by its finaliser, as a clipboard is.
+
+// The Rust library's URL opener.
+typedef struct editor_ffi_url_opener editor_ffi_url_opener;
+editor_ffi_url_opener *editor_ffi_url_opener_recording(void);
+editor_ffi_url_opener *editor_ffi_url_opener_failing(const uint8_t *reason,
+                                                     size_t reason_len);
+editor_ffi_url_opener *editor_ffi_url_opener_system(void);
+bool editor_ffi_url_opener_open(const editor_ffi_url_opener *opener,
+                                const uint8_t *url, size_t url_len,
+                                editor_ffi_raw_text *out);
+bool editor_ffi_url_opener_opened(const editor_ffi_url_opener *opener,
+                                  editor_ffi_raw_text *out);
+void editor_ffi_url_opener_free(editor_ffi_url_opener *opener);
+uint64_t editor_ffi_url_opener_live(void);
+
+static lean_external_class *url_opener_class;
+static pthread_once_t url_opener_class_once = PTHREAD_ONCE_INIT;
+
+// Runs when Lean drops the last reference to a URL opener.
+static void url_opener_finalize(void *opener) {
+  editor_ffi_url_opener_free(opener);
+}
+
+// A URL opener holds no Lean objects, so there is nothing to visit.
+static void url_opener_foreach(void *opener, b_lean_obj_arg visitor) {
+  (void)opener;
+  (void)visitor;
+}
+
+static void url_opener_class_register(void) {
+  url_opener_class =
+      lean_register_external_class(url_opener_finalize, url_opener_foreach);
+}
+
+// A new external object over `opener`.
+static lean_obj_res url_opener_handed(editor_ffi_url_opener *opener) {
+  pthread_once(&url_opener_class_once, url_opener_class_register);
+  return lean_io_result_mk_ok(lean_alloc_external(url_opener_class, opener));
+}
+
+// `Editor.Ffi.UrlOpener.recording : IO UrlOpener`
+lean_obj_res editor_glue_url_opener_recording(void) {
+  return url_opener_handed(editor_ffi_url_opener_recording());
+}
+
+// `Editor.Ffi.UrlOpener.failing : @& String → IO UrlOpener`
+lean_obj_res editor_glue_url_opener_failing(b_lean_obj_arg reason) {
+  return url_opener_handed(
+      editor_ffi_url_opener_failing(string_bytes(reason), string_len(reason)));
+}
+
+// `Editor.Ffi.UrlOpener.system : IO UrlOpener`
+lean_obj_res editor_glue_url_opener_system(void) {
+  return url_opener_handed(editor_ffi_url_opener_system());
+}
+
+// `Editor.Ffi.UrlOpener.openUrl : @& UrlOpener → @& String → IO (Option
+// String)`: `none` when the system took it, and `some` of the reason
+// otherwise.
+lean_obj_res editor_glue_url_opener_open(b_lean_obj_arg opener,
+                                         b_lean_obj_arg url) {
+  editor_ffi_raw_text reason;
+  if (editor_ffi_url_opener_open(lean_get_external_data(opener),
+                                 string_bytes(url), string_len(url), &reason)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *some = lean_alloc_ctor(1, 1, 0);
+  lean_ctor_set(some, 0, text_take(reason));
+  return lean_io_result_mk_ok(some);
+}
+
+// `Editor.Ffi.UrlOpener.openedRaw : @& UrlOpener → IO (Option String)`:
+// `some` of what a recording opener was handed, and `none` for any other.
+lean_obj_res editor_glue_url_opener_opened(b_lean_obj_arg opener) {
+  editor_ffi_raw_text opened;
+  if (!editor_ffi_url_opener_opened(lean_get_external_data(opener), &opened)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *some = lean_alloc_ctor(1, 1, 0);
+  lean_ctor_set(some, 0, text_take(opened));
+  return lean_io_result_mk_ok(some);
+}
+
+// `Editor.Ffi.UrlOpener.live : IO UInt64`
+lean_obj_res editor_glue_url_opener_live(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_url_opener_live()));
 }
 
 // ---- The exec and the main bundle ----

@@ -53,8 +53,9 @@ drawn is the package's grammars alone. The root,
     the shipped language `markdown` and every registered language handed
     to the kit for its injected languages. The block grammar captures
     nothing on a plain paragraph, and the inline grammar's `@text.*`
-    captures map to no face (`Language.markdown` sets no capture mapping),
-    so the check holds the captures that do map: each emphasis and
+    captures map to the `text.` faces (`Highlight.defaultFaces`), which
+    the check's theme does not define, so they draw in the ink; the check
+    holds the captures whose faces it does define: each emphasis and
     code-span delimiter in the punctuation face's colour and the
     backslash escape in the string face's. They are drawn only if the
     block grammar's injection reached `markdown_inline` and the injected
@@ -161,7 +162,7 @@ def yamlTheme : Theme :=
     { name := ⟨"syntax.string"⟩, face := { foreground := some (Color.rgb 0 0xcc 0) } },
     { name := ⟨"syntax.number"⟩, face := { foreground := some (Color.rgb 0 0 0xcc) } }]
 
--- inferred-waits W95: stays (a grammar the set's build compiled, over the real binding, its own text settled on its own snapshot, through `declaredDrawn`)
+-- inferred-waits W97: stays (a grammar the set's build compiled, over the real binding, its own text settled on its own snapshot, through `declaredDrawn`)
 set_option linter.inferredWait false in
 /-- The check of AC 3: the package's grammar `yaml`, resolved against the
 staged directory as the set's build left it, highlights the YAML fixture
@@ -229,7 +230,7 @@ def registeredFromStaged : IO (Option (Array Language.Grammar × List Language �
       [("languages", staged)]
   return some (state.registry.grammarTable.toArray, state.registry.languageTable, refused)
 
--- inferred-waits W95: stays (a grammar the set's build compiled, over the real binding, its own text settled on its own snapshot, through `declaredDrawn`)
+-- inferred-waits W97: stays (a grammar the set's build compiled, over the real binding, its own text settled on its own snapshot, through `declaredDrawn`)
 set_option linter.inferredWait false in
 /-- The check of AC 3 for a `.rs` file: the package's grammar `rust`,
 resolved against the staged directory as the set's build left it,
@@ -261,7 +262,7 @@ def rustDrawnCheck (context : Context) : Check :=
             (frame.splitOn closing).length == 2)
           s!"refused={refused} frame={frame}" }
 
--- inferred-waits W95: stays (a grammar the set's build compiled, over the real binding, its own text settled on its own snapshot, through `declaredDrawn`)
+-- inferred-waits W97: stays (a grammar the set's build compiled, over the real binding, its own text settled on its own snapshot, through `declaredDrawn`)
 set_option linter.inferredWait false in
 /-- The check of AC 3 for a Markdown file's inline markup: the package's
 grammars `markdown` and `markdown_inline`, resolved against the staged
@@ -336,7 +337,7 @@ def pythonFenceTheme : Theme :=
   #[{ name := ⟨"syntax.punctuation"⟩, face := { foreground := some (Color.rgb 0 0xcc 0) } },
     { name := ⟨"syntax.number"⟩, face := { foreground := some (Color.rgb 0 0 0xcc) } }]
 
--- inferred-waits W95: stays (a grammar the set's build compiled, over the real binding, its own text settled on its own snapshot, through `declaredDrawn`)
+-- inferred-waits W97: stays (a grammar the set's build compiled, over the real binding, its own text settled on its own snapshot, through `declaredDrawn`)
 set_option linter.inferredWait false in
 /-- The check of AC 3: the package's grammar `python`, resolved against the
 staged directory as the set's build left it, highlights the Python fixture
@@ -369,7 +370,7 @@ def pythonDrawnCheck (context : Context) : Check :=
             (frame.splitOn returned).length == 2)
           s!"refused={refused} frame={frame}" }
 
--- inferred-waits W95: stays (a grammar the set's build compiled, over the real binding, its own text settled on its own snapshot, through `declaredDrawn`)
+-- inferred-waits W97: stays (a grammar the set's build compiled, over the real binding, its own text settled on its own snapshot, through `declaredDrawn`)
 set_option linter.inferredWait false in
 /-- The check of AC 3 for a Markdown fence of Python: the package's grammar
 `python`, injected into a fence by the `markdown` grammar's injections,

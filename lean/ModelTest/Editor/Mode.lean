@@ -177,13 +177,14 @@ def modeRecordChecks : List Check :=
           ([("frobnicate", 0), ("C-x", 1), ("S-a", 2), ("C-x C-s", 3)].all fun (name, index) =>
             ((described[index]?).getD "").contains name) },
     { name :=
-        "the registered roles are next-item, previous-item, activate, quit, refresh, toggle and mark, each a name of its own"
+        "the registered roles are next-item, previous-item, activate, quit, refresh, toggle, mark, next-link and previous-link, each a name of its own"
       run :=
         pure
           (Role.registered.map (·.name) ==
-              ["next-item", "previous-item", "activate", "quit", "refresh", "toggle", "mark"] &&
+              ["next-item", "previous-item", "activate", "quit", "refresh", "toggle", "mark",
+                "next-link", "previous-link"] &&
             [Role.nextItem, Role.previousItem, Role.activate, Role.quit, Role.refresh, Role.toggle,
-                Role.mark] ==
+                Role.mark, Role.nextLink, Role.previousLink] ==
               Role.registered) }]
 
 /-- The checks of a mode's descriptions (`Mode.roleDescs`,

@@ -368,7 +368,56 @@ def projectModeChecks : List Check :=
               (candidatesOf again).map (·.all.map (·.text)) == some #["fmt (mise-mode)"] &&
               startedCount again (miseList "/m") == 2 &&
               startedCount twice (miseList "/m") == 1 &&
-              startedCount afterReload (miseList "/m") == 2 }]
+              startedCount afterReload (miseList "/m") == 2 },
+    { name :=
+        "a step to rustc's location, whose lead row is above it, puts the compilation buffer's cursor on the path in  --> src/main.rs:4:18, the location's first byte and its link's, not at the lead row's start; activate there follows the link and visits the file"
+      run :=
+        pure <|
+          match projectDriver with
+          | none => false
+          | some driver =>
+            let source :=
+              String.join ((List.range 6).map fun _ => "fn main() { let x: i32 = 1; }\n")
+            let driver :=
+              { driver with
+                jobs :=
+                  { driver.jobs with
+                    files := driver.jobs.files.withFile "/c/src/main.rs" source.toUTF8
+                    processes :=
+                      { driver.jobs.processes with
+                        streams :=
+                          #[{   command := shellCommand "/c" "cargo build"
+                                steps := linesSteps rustcLines.toList }] ++
+                            driver.jobs.processes.streams } } }
+            let ran :=
+              drained (fedTo (settledAfter driver "C-p c") (exLine "compile-command build")).1
+            let stepped := drained (pressedOn ran "C-k n")
+            let elsewhere := settledAfter stepped "C-p l"
+            let followed := drained (pressedOn elsewhere "C-k o RET")
+            let view :=
+              (stepped.loop.state.windows.find? fun window =>
+                    (stepped.loop.state.buffer? window.buffer).any
+                      (·.name == "*compilation: c@main*")).map
+                (·.id)
+            let compiled := view.bind fun view => (showing stepped view).bind (·.text)
+            let offsetOf (needle : String) : Option Nat :=
+              compiled.map fun text => ((text.splitOn needle)[0]?.map (·.utf8ByteSize)).getD 0
+            let record := Compile.recordOf stepped.loop.state (.workspace (.local "/c"))
+            let site := record.locations[0]?
+            view.isSome &&
+              (site.map fun site => (site.format, site.first, site.last)) == some ("rustc", 1, 7) &&
+              site.map (·.start) == offsetOf "src/main.rs:4:18" &&
+              offsetOf "error[E0308]" != offsetOf "src/main.rs:4:18" &&
+              ((view.bind (showing stepped ·)).bind (·.cursors)).map (·.map (·.head)) ==
+                (site.map fun site => #[site.start]) &&
+              ((showing elsewhere ⟨0⟩).bind (·.buffer.file)).map (·.path.toString) ==
+                some "/l/Foo/Bar.lean" &&
+              ((showing followed ⟨0⟩).bind (·.buffer.file)).map (·.path.toString) ==
+                some "/c/src/main.rs" &&
+              ((showing followed ⟨0⟩).bind (·.cursors)).map (·.map (·.head)) ==
+                some #[3 * 30 + 17] &&
+              followed.loop.state.frame.focused == ⟨0⟩ &&
+              (Compile.recordOf followed.loop.state (.workspace (.local "/c"))).current == some 0 }]
 
 /-- The checks of the reader of mise's task list (`Compile.miseTasks`,
 `Compile/Shipped.lean`), over the JSON reader: pure. -/

@@ -154,7 +154,7 @@ stepped, when the scene is asked, which is the interleaving a `settle` or a
 end line, the echo says the file is not there. -/
 def compileHostChecks (context : HostContext) : List Check :=
   [{  name :=
-        "a compile through the host on a stepped stage: compile runs the child, whose error line is shown in the compilation buffer as a compilation.error once the clock passes the run's pause; kill-compilation withdraws the child's wait and says Compilation killed; recompile starts a second run"
+        "a compile through the host on a stepped stage: compile runs the child, whose error line is shown in the compilation buffer as a compilation.error over its link once the clock passes the run's pause; kill-compilation withdraws the child's wait and says Compilation killed; recompile starts a second run"
       run :=
         withCompileHost context context.packages fun session processes => do
           session.ask [.reload]
@@ -179,7 +179,7 @@ def compileHostChecks (context : HostContext) : List Check :=
           saw
               (holding output s!"job 1 {Compile.runJob}: started" &&
                 holding compiled "exec sleep 600\\nsrc/a.rs:3:5: error: boom\\n\", scroll 0" &&
-                holding compiled ": compilation.error" &&
+                holding compiled "text.link 68..80 compilation.error 68..80" &&
                 holding compiled "mode-line.inactive \"*compilation:" &&
                 !withdrawn.isEmpty &&
                 holding killed ": Compilation killed after" &&

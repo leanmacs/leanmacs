@@ -191,7 +191,8 @@ def registeredProblem (reply : Language.Grammar.Reply) (queries : Language.Gramm
     return some "no highlights query"
   let sources : List (QueryKind × Option String) :=
     [(.highlights, queries.highlights), (.injections, queries.injections),
-      (.textObjects, queries.textObjects), (.indents, queries.indents)]
+      (.textObjects, queries.textObjects), (.indents, queries.indents),
+      (.rendered, queries.rendered), (.renderedInjections, queries.renderedInjections)]
   for (kind, source) in sources do
     let some source := source | continue
     match ← SyntaxTree.lift (Highlight.withQuery reply.grammar.name source fun _ => pure ()) with

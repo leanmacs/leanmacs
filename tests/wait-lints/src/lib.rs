@@ -200,6 +200,46 @@ pub fn unreached(collection: &mut parley::fontique::Collection) {
         reason = "shows the ban on `fontique::Collection::load_fonts_from_paths` bites"
     )]
     collection.load_fonts_from_paths(Vec::<std::path::PathBuf>::new());
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "shows the ban on `open::that` bites"
+    )]
+    let _ = open::that("");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "shows the ban on `open::that_detached_with_timeout` bites"
+    )]
+    let _ = open::that_detached_with_timeout("", Duration::ZERO);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "shows the ban on `open::that_in_background` bites"
+    )]
+    let _ = open::that_in_background("");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "shows the ban on `open::with` bites"
+    )]
+    let _ = open::with("", "");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "shows the ban on `open::with_detached` bites"
+    )]
+    let _ = open::with_detached("", "");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "shows the ban on `open::with_in_background` bites"
+    )]
+    let _ = open::with_in_background("", "");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "shows the ban on `open::commands` bites"
+    )]
+    let _ = open::commands("");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "shows the ban on `open::with_command` bites"
+    )]
+    let _ = open::with_command("", "");
 }
 
 /// Each C function Lean calls to wait, once, its `bound_ms` made from the

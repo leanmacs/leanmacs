@@ -43,6 +43,10 @@ structure Language.Grammar.Queries where
   textObjects : Option String := none
   /-- `indents.scm`. -/
   indents : Option String := none
+  /-- `rendered.scm`. -/
+  rendered : Option String := none
+  /-- `rendered-injections.scm`. -/
+  renderedInjections : Option String := none
   deriving DecidableEq, Repr
 
 /-- What the registration of one declared grammar answered. -/

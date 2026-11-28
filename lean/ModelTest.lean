@@ -16,6 +16,7 @@ import ModelTest.Editor.Appearance
 import ModelTest.Editor.Bound
 import ModelTest.Editor.Clipboard.Contract
 import ModelTest.Editor.Clipboard.Model
+import ModelTest.Editor.Columns
 import ModelTest.Editor.Command
 import ModelTest.Editor.Command.Append
 import ModelTest.Editor.Command.Call
@@ -55,6 +56,8 @@ import ModelTest.Editor.File.Model
 import ModelTest.Editor.FileJobs
 import ModelTest.Editor.FileWatch.Model
 import ModelTest.Editor.Floating
+import ModelTest.Editor.Fold
+import ModelTest.Editor.Folds
 import ModelTest.Editor.Fuzzy.Contract
 import ModelTest.Editor.Fuzzy.Model
 import ModelTest.Editor.Grep.Model
@@ -94,8 +97,15 @@ import ModelTest.Editor.Language.Grammar
 import ModelTest.Editor.Language.Grammar.Answer
 import ModelTest.Editor.Language.Grammar.Register
 import ModelTest.Editor.Layout
+import ModelTest.Editor.Link
+import ModelTest.Editor.Links
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
+import ModelTest.Editor.Markdown.Cases
+import ModelTest.Editor.Markdown.Doc
+import ModelTest.Editor.Markdown.Parse
+import ModelTest.Editor.Markdown.Target
+import ModelTest.Editor.Markdown.View
 import ModelTest.Editor.Marks
 import ModelTest.Editor.Marks.Follow
 import ModelTest.Editor.Menu
@@ -123,6 +133,7 @@ import ModelTest.Editor.Restore.Restart
 import ModelTest.Editor.Restore.Run
 import ModelTest.Editor.Restore.Value
 import ModelTest.Editor.Restore.Workspaces
+import ModelTest.Editor.RichText
 import ModelTest.Editor.Scene
 import ModelTest.Editor.Scroll
 import ModelTest.Editor.SearchRoot
@@ -203,7 +214,9 @@ against its model here, in cells of two sizes (`displayFailures`). The real
 binding's run of it is the display pipeline's. `sceneChecks` and
 `displayChecks` are what only the model shows: the scenes published to it,
 and its exact layout rule. `faceChecks` are the checks of faces as data and
-of the built-in theme (`Editor/Face.lean`).
+of the built-in theme (`Editor/Face.lean`), the markup faces' families and
+looks among them: the prose face names the prose family alone, and the code
+faces the monospace family, so code over prose over default is monospace.
 
 The policy by which a view follows its cursor (`Editor/Scroll.lean`) is
 programs over the display port, and is checked on the display model alone
@@ -554,6 +567,12 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   row once due, with no input row, gives way to an open prompt, grows and
   never shrinks while open, and a delay of another generation that
   changes nothing;
+- `richTextStateChecks`: a buffer's parts written from a rich-text
+  description (`Editor/State.lean`, "Buffers"), pure: `setRichText` setting
+  the five parts by the prefix rule over the buffer's own and clearing its
+  rendered document, a toggled fold whose key is declared again staying
+  folded, `appendRichText` appending the tail's parts past the offset, and
+  both refusing `noSuchBuffer` with the buffers unchanged;
 - `laterChecks`, `completionJobChecks` and `laterLoopChecks`: sources that
   answer later (`Editor/Completion/Later.lean`), their orders and batches
   as arguments and their jobs on the job model; the reconciler of a
@@ -635,6 +654,22 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
 - `orGiveUpChecks`: giving up on a layout refusal (`orGiveUp`,
   `Editor/Api.lean`): the command ends with the refusal's sentence, and a
   value is handed on;
+- `richTextCallChecks`: one call writing a generated buffer from a
+  rich-text description (`BufferId.setRichText`, `Editor/Api.lean`), on the
+  stepped loop over the models: a read-only buffer holds the description's
+  text and every part, with no rendered document, the next scene draws
+  them, a fold declared folded shows its placeholder, and a buffer there is
+  none of is refused `noSuchBuffer` with nothing changed;
+  `richTextAppendChecks`, a description extended at its tail
+  (`BufferId.appendRichText`): no edit of the text before the tail, each
+  part's prefix exactly the head's and the rest the tail's moved past it,
+  a fold toggled in the prefix still folded, and the scene drawing both
+  halves; and a write from the head's end (`setRichText … start`) whose
+  description disagrees on the prefix keeping the buffer's bytes and parts
+  there, the parts from there on and the fold crossing it the
+  description's; and a write from 0, then from 9, whose text from there
+  the buffer already holds making no edit and leaving the text's revision
+  as it was, while each still writes its parts;
 - `quitChecks`: the quit rule and its name, the core's (`Editor/Quit.lean`),
   on a driver whose `quit` runs the rule: with nothing unsaved the editor
   leaves, and a refusal is said under the core's name;
@@ -647,8 +682,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   quit the system did not ask asks the frame nothing;
 - `faceVocabularyChecks`: the face vocabulary (`Editor/Face/Vocabulary.lean`)
   names each face once with its meaning, marks its cursor faces, and
-  lists every face the mode line and the loop draw, layout's four and the
-  faces declared ahead (the faces the Vim scheme draws are held to it by
+  lists every face the mode line and the loop draw, layout's four, the
+  markup faces (`text.`, the prose face among them) and the faces declared
+  ahead (the faces the Vim scheme draws are held to it by
   `vimDefaultChecks`); the completeness check (`Editor/Theme/Check.lean`)
   holds a theme to the vocabulary's cursor faces or to the ones a scheme
   written there lists, and finds each
@@ -937,7 +973,11 @@ The job port's contract (`Editor/Job/Contract.lean`) is run here against the
 model and against the runner over the fake clock, and its file properties
 against the model of files and against the runner over the fake of the file
 service, in a made-up directory: no file is touched. `contract-test` runs
-the same lists against the runner over the Rust library's services.
+the same lists against the runner over the Rust library's services. Its URL
+opener properties (`urlOpenerJobFailures`) run against the job model's
+opener and the runner given the opener's model, which record what they
+take, so nothing is launched; `urlOpenerWaitChecks` pins that an open
+moves neither clock and registers no wait.
 
 The cases that cross the text port and the job port
 (`Editor/File/Cases.lean`) are played here on the two models
@@ -1276,8 +1316,9 @@ names a scheme's key:
   tree; and config's declaration of a package grammar's name registered in
   its place;
 - `modeRegistryChecks`: modes in the registry
-  (`Editor/Config/Registry.lean`): a mode's lineage, and the active keymaps
-  of a view, in precedence order;
+  (`Editor/Config/Registry.lean`): a mode's lineage, the active keymaps
+  of a view, in precedence order, the links mode's first in a buffer with
+  links, and the command a buffer's own modes fill a role with;
 - `modeDispatchChecks`: keys in the loop over the registry's active
   keymaps, on the editor's models: a role's key runs the major mode's
   command in a view of its buffer and the global binding elsewhere, a minor
@@ -1291,7 +1332,8 @@ names a scheme's key:
   query then; and highlighting again, which detaches and enters again only
   the buffers whose language names the grammars, with no on-enter action;
 - `highlightFaceChecks`: the capture-to-face rule (`Editor/Highlight.lean`),
-  pure: the shipped default from the face vocabulary, the fallback of a
+  pure: the shipped default from the face vocabulary, markdown's captures
+  drawn in the `text.` faces by it, the fallback of a
   dotted capture to its first component, and config's mapping over both;
 - `highlightEnterChecks`: a major mode with a syntax tree, on the editor's
   models through the loop's dispatch: a tree that names no highlights
@@ -1381,6 +1423,126 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   base contracts on the model rigs, a base whose program is probed among
   them, and the contracts fail a package that
   registers nothing and a source that ignores its output;
+- `linkChecks`: the lookups over a buffer's links (`Editor/Link.lean`),
+  which link holds an offset and the next and previous from one, and the
+  check a URL passes before it is handed to the system opener;
+  `linkFollowChecks` and `linkMoveChecks`, following and moving between a
+  buffer's links (`Editor/Links.lean`) on a hosted driver over the core's
+  `Links.setup`: each kind of target followed by `activate`'s key, the
+  links mode's precedence over a mode's own `activate` and the mode's
+  handler off a link, a mode of the buffer's own that fills `activate` with
+  `link-follow` itself not running it again, a location's jump and `C-o`
+  back, each refusal, and the link roles' keys stepping across links and stopping at either end;
+- `foldChecks`: the pure functions over a buffer's foldable ranges
+  (`Editor/Fold.lean`): a declaration merged by key, the shown folds of
+  nested and overlapping ranges, a step of rows over shown folds, the range
+  a toggle acts on, and the rows a range covers through the text model;
+  `foldToggleChecks` and `foldRegenerateChecks`, `fold-toggle`
+  (`Editor/Folds.lean`) on a hosted driver over the core's `Folds.setup`:
+  a folded range unfolded and an unfolded one folded by the `toggle` role's
+  key with the text and its revision unchanged, nested ranges unfolded
+  outer first, the buffer's own `toggle` off every range, a mode of the
+  buffer's own that fills `toggle` with `fold-toggle` itself not running
+  it again, and a regeneration keeping each surviving key's toggled state;
+- `columnsChecks`: the column arithmetic of align-to stops
+  (`Editor/Columns.lean`), pure and on the display model, and a generated
+  buffer's stops and spans reaching its view; `stopChecks`, beside the
+  decoration checks, a buffer's stops reaching every view of it in its
+  range and none the minibuffer's; `indentChecks`, beside them, a buffer's
+  wrap indents whose ranges touch a view's range reaching it, and none the
+  minibuffer's; `linkDecorationChecks`, beside them, a
+  buffer's links drawn in `text.link` under its spans in the same range,
+  and none in the minibuffer's view; `foldViewChecks`, beside them, a
+  buffer's folded ranges reaching its view as placeholders the display
+  model shows as one row each, and the range decorations are read over
+  counting a fold as one row;
+- `markdownCaseChecks`: the Markdown fixtures under `tests/markdown/`
+  (`Editor/Markdown/Cases.lean`): each layers file decodes, round-trips
+  through `encode`, and the syntax tree model with the canned answers
+  answers each fixture's text its layers, the same layers
+  `ContractTest.markdownCaseChecks` holds the library to;
+- `markdownParseChecks`: the languages a Markdown text is parsed once with
+  (`Markdown.languagesOf`, `Editor/Markdown/Parse.lean`): the host's
+  rendered query, with its injections and its rendered injections joined;
+  the inline grammar's rendered query; each other grammar once, in order,
+  with its highlights; and a tree with no query it needs left out;
+- `markdownTargetChecks`: what a Markdown link's destination and a bare
+  reference in rendered text name (`Editor/Markdown/Target.lean`): each web
+  scheme a URL, any other scheme a reference, `path:line[:column]` a
+  location with its row and column from 0, a relative path resolved against
+  the root and unlinked with none, a destination's angle brackets,
+  escapes, fragment and query, and the token rule's edges;
+- `markdownProseChecks` and `markdownHeadingChecks`: the Markdown renderer
+  (`Editor/Markdown/Doc.lean` and the modules it imports) over the fixtures'
+  canned layers: the exact rendered text of `prose.md`, `code.md` and
+  `headings.md` with the markup left out, prose under `text.prose` and no
+  code-block byte under it, a fence's captures in their faces and an
+  unknown language's in `text.code-block` alone, a fence inside a list
+  item, each heading under its level's face, and emphasis, strong and a
+  code span under theirs; `markdownTableChecks`, a table's rows and cells
+  with the pipes and the delimiter row gone, its header under
+  `text.table-header` and a cell's code span rendered; `markdownLinkChecks`,
+  each kind of link in `links.md` over its text with its exact target, the
+  bare URL and the `path:line` in prose and in a code span, an image linked
+  to its source, an image in a link's text linked to the link's destination
+  alone, a reference link left as its source, and a relative one
+  unlinked with no root; `markdownFoldChecks`, the exact foldable ranges of
+  `folds.md`: each heading's to the next of the same or a higher level and
+  each fence's over its rows, an empty fence's over its empty row, their
+  keys and placeholders, every one unfolded; `markdownListChecks`, `lists.md`'s exact text, no
+  spaces of indent, a bullet as `•`, an ordered item's number kept, a quote's
+  `>` and a thematic break's markup gone, `text.list-marker` over each
+  marker alone and `text.quote` over the quote and the nested quote;
+  `markdownIndentChecks`, `lists.md`'s indents: each item hanging after its
+  marker and space, a nested item's first line 16 points in, a quote's lines
+  16 and a nested quote's 32, no other line indented, and `stream.md`'s
+  indents the same whole and streamed; `markdownStreamChecks`, `stream.md` streamed in chunks: each
+  append parses exactly its checked-in tail and renders only that tail's
+  blocks, counted by `Doc.rendered`, the document it ends with describes
+  the whole render, a kept heading's fold grows over the appended blocks,
+  and no byte before `Doc.firstChanged` changes; and `reply.md` streamed
+  from an empty render through one unfinished paragraph, each append
+  rendering only its tail's blocks from a first changed offset of 0, ending
+  with the whole render; `markdownRichTextChecks`, `stream.md`'s document
+  lowered to the core's rich-text description (`Doc.richText`): its
+  description's text, spans, links, folds and indents unchanged, and its
+  blocks' stops at offsets of the whole text;
+- `markdownViewChecks`: the one core call that renders Markdown into a
+  generated buffer (`Editor/Markdown/View.lean`), on the stepped loop over
+  the models, the syntax tree model answering the fixtures' canned layers:
+  one `renderMarkdown` of `view.md` sets the buffer's text, spans, links
+  and folds to its description's and keeps the document, the next scene
+  draws them, the rendered heading's face resolves larger than the body's,
+  and each refusal leaves the buffer as it was, `renderMarkdown`'s and
+  `appendMarkdown`'s (a tail with no parse, an absent buffer, one never
+  rendered) alike, a rendered buffer holding its document's rich-text
+  description (`Doc.richText`) in all six parts, and a `setRichText` over a
+  rendered buffer dropping its document, so an append is refused
+  `notRendered`; `markdownTableViewChecks`, a
+  rendered table's stops at its measured columns, on the buffer and its
+  view, and a table after other blocks at its cells' offsets in the whole
+  text; `markdownAppendChecks`, `appendMarkdown` rendering only the tail's
+  blocks, rewriting no byte before the first changed offset, ending with
+  the whole render's text, spans, links and stops (a relative link in a later
+  chunk resolved against the first render's root), and keeping a toggled
+  fold of the prefix folded; and a reply appended to an empty render, one
+  unfinished paragraph then the rest, ending with the text, spans, links
+  and stops a whole render of `reply.md` puts; `markdownIndentViewChecks`,
+  `lists.md` rendered into a buffer with its description's indents on the
+  buffer and its view, and, laid out by the display model under the scene
+  published, a wrapped nested item continuing under its text and every row
+  of a wrapped nested quote 32 points in;
+- `richTextChecks`: the rich-text description (`Editor/RichText.lean`),
+  pure: `shift` moving every offset of every part and no placeholder's own
+  span, `append` placing the second's parts past the first's text,
+  `textCut` cutting a held text at the start, at its own end when it is
+  shorter or at the description's when that is, and the prefix rule's
+  text half `BufferId.setRichText` edits a buffer by, and
+  `replaceFrom`'s prefix rule: the held text and each held part that lies
+  before the start kept, a part crossing the start and an empty part at it
+  taken from the description, a held fold whose key a taken fold has
+  dropped, the folds ordered by start, a start of 0 giving the description,
+  and the end of both texts keeping the held parts that end there;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1548,6 +1710,7 @@ pure code on a promise: pure code blocked in `Task.get` on a pool thread
 makes Lean add a thread to the pool, which a later burst can land on. -/
 def checks : List Check :=
   typedPathChecks ++ poolChecks ++ programChecks ++ jobModelChecks ++ snapshotReadChecks ++
+    urlOpenerWaitChecks ++
     protocolChecks ++
     waitChecks ++
     activityChecks ++
@@ -1694,6 +1857,8 @@ def checks : List Check :=
     callChecks ++
     orGiveUpChecks ++
     apiStateChecks ++
+    richTextCallChecks ++
+    richTextAppendChecks ++
     insertExcerptChecks ++
     journalFormatChecks ++
     restoreDocumentChecks ++
@@ -1718,6 +1883,7 @@ def checks : List Check :=
     atPointContractChecks ++
     atPointStateChecks ++
     keyHintStateChecks ++
+    richTextStateChecks ++
     atPointLoopChecks ++
     atPointAskChecks ++
     atPointByItselfChecks ++
@@ -1731,6 +1897,34 @@ def checks : List Check :=
     appearanceChecks ++
     faceVocabularyChecks ++
     searchDecorationChecks ++
+    stopChecks ++
+    indentChecks ++
+    foldViewChecks ++
+    linkDecorationChecks ++
+    columnsChecks ++
+    linkChecks ++
+    linkFollowChecks ++
+    linkMoveChecks ++
+    foldChecks ++
+    foldToggleChecks ++
+    foldRegenerateChecks ++
+    markdownCaseChecks ++
+    markdownParseChecks ++
+    markdownTargetChecks ++
+    markdownProseChecks ++
+    markdownHeadingChecks ++
+    markdownTableChecks ++
+    markdownLinkChecks ++
+    markdownFoldChecks ++
+    markdownListChecks ++
+    markdownIndentChecks ++
+    markdownStreamChecks ++
+    markdownRichTextChecks ++
+    markdownViewChecks ++
+    markdownTableViewChecks ++
+    markdownAppendChecks ++
+    markdownIndentViewChecks ++
+    richTextChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++
@@ -1775,6 +1969,7 @@ def main : IO UInt32 := do
       (← ModelTest.jobRunnerFailures) ++
       (← ModelTest.postFailures) ++
       (← ModelTest.fuzzyJobFailures) ++
+      (← ModelTest.urlOpenerJobFailures) ++
       (← ModelTest.grammarJobFailures) ++
       (← ModelTest.fileFailures) ++
       (← ModelTest.processFailures) ++
@@ -1793,6 +1988,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {(Editor.JobContract.grammarProperties ModelTest.modelFixture).length} grammar properties of the job model and of the job runner over the fake grammar service, each with the fixture grammar library's table, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.postProperties.length} post properties of both, and {Editor.JobContract.snapshotProperties.length} snapshot properties of both, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties of both, and {Editor.JobContract.urlOpenerProperties.length} URL opener properties of both, and {(Editor.JobContract.grammarProperties ModelTest.modelFixture).length} grammar properties of the job model and of the job runner over the fake grammar service, each with the fixture grammar library's table, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.grepProperties.length} search properties of both, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
   (← IO.getStdout).flush
   IO.Process.exit 0

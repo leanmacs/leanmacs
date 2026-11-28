@@ -1,0 +1,39 @@
+[package]
+name = "editor-platform-open"
+version = "0.1.0"
+description = "The URL opener port's real adapter, over the open crate"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The URL opener port, its fakes and its contract. This crate implements the
+# port, and its tests run the contract on the system opener.
+editor-platform = { path = "../editor-platform" }
+# The desktop's handler for a URL, on every platform. Kept behind the port:
+# no type of open's is public here, and `deny.toml` lets no other crate
+# depend on it. Pinned exactly; 5.4.5 was the newest release on 2026-11-27,
+# read from crates.io.
+#
+# Why this library: it is the maintained one, and it knows each platform's
+# launcher: `/usr/bin/open` on macOS; on Linux and the BSDs `xdg-open`,
+# then `gio open`, `gnome-open` and KDE's openers, trying the next when one
+# fails at once; under WSL, PowerShell first, to reach the Windows side's
+# handler. `that_detached` reaps the launcher it starts, so no zombie is
+# left. Its Linux dependency is `is-wsl`, to tell a WSL session; on macOS
+# it is `libc` alone.
+#
+# Its default features are off, and it has none we want: both are
+# Windows' (`shellexecute-on-windows`, and `insecure`, which brings back
+# the old `cmd /c start` launcher).
+#
+# Set aside on 2026-11-27: `webbrowser`, which is for web browsers alone,
+# where a link may name any scheme the desktop handles (`mailto:`); and
+# `opener`, which does the same job with more besides (revealing a file in
+# its folder) that the port does not ask for. Calling each platform's
+# launcher ourselves would be writing `open` again, its Linux fallbacks
+# and WSL included.
+open = { version = "=5.4.5", default-features = false }
+
+[lints]
+workspace = true

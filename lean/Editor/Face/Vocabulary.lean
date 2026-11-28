@@ -30,6 +30,14 @@ check (`Themes.problems`, `Editor/Theme/Check.lean`) holds that it does.
   `compilation.warning`, `compilation.note`; `Compile.Severity.face`), the
   matches of the last search (`Loop.searchMatchFace`), and the tab bar's
   chips (`TabBar.face`, `TabBar.selectedFace`, `Editor/TabBar.lean`).
+- **The markup faces** (`markupEntries`), a group of their own beside
+  `compilation.` and `cursor.`: `text.heading.1` to `text.heading.6`,
+  `text.emphasis`, `text.strong`, `text.code-span`, `text.code-block`,
+  `text.link`, `text.quote`, `text.list-marker` and `text.table-header`,
+  drawn now in a markdown file opened as code, where markdown's captures
+  name them (`Highlight.defaultFaces`, from `markupCaptures`), and
+  `text.prose`, the proportional face of generated buffers' prose, declared
+  ahead.
 - **What is declared ahead.** The faces of features not built yet, so a
   shipped theme colours them before the feature lands: one `syntax.` face
   for each top-level name of tree-sitter's
@@ -80,6 +88,60 @@ def syntaxEntries : Array Entry :=
     { name := ⟨s!"syntax.{capture}"⟩
       meaning :=
         s!"Text tree-sitter captures as `{capture}`, {what}: drawn by the syntax-tree-sitter roadmap, declared ahead." }
+
+/-- The markup faces: `text.` and a role of marked-up text, each drawn in a
+code view where markdown's captures name it (`Highlight.defaultFaces`) and
+in rendered markdown from the rich-text-display roadmap's phase 5, and the
+prose face, declared ahead. -/
+def markupEntries : Array Entry :=
+  let drawn (what : String) (captures : String) : String :=
+    s!"{what}: drawn in a markdown file opened as code, where the grammar captures it as {captures} (`Highlight.defaultFaces`), and in rendered markdown from the rich-text-display roadmap's phase 5."
+  let headings :=
+    (Array.range 6).map fun index =>
+      let level := index + 1
+      { name := ⟨s!"text.heading.{level}"⟩
+        meaning := drawn s!"A heading of level {level}" s!"`text.heading.{level}`" : Entry }
+  headings ++
+    #[{ name := ⟨"text.emphasis"⟩, meaning := drawn "Emphasised text" "`text.emphasis`" },
+      { name := ⟨"text.strong"⟩, meaning := drawn "Strong text" "`text.strong`" },
+      { name := ⟨"text.code-span"⟩
+        meaning :=
+          drawn "An inline code span, in the monospace family so it stays monospace over prose"
+            "`text.literal`" },
+      { name := ⟨"text.code-block"⟩
+        meaning :=
+          drawn
+            "A fenced or indented code block, in the monospace family so it stays monospace over prose"
+            "`text.code-block`" },
+      { name := ⟨"text.link"⟩
+        meaning :=
+          drawn "A link's text, label, destination or title" "`text.uri` or `text.reference`" },
+      { name := ⟨"text.quote"⟩, meaning := drawn "A block quote" "`text.quote`" },
+      { name := ⟨"text.list-marker"⟩
+        meaning := drawn "A list item's marker" "`text.list-marker`" },
+      { name := ⟨"text.table-header"⟩
+        meaning := drawn "A table's header row" "`text.table-header`" },
+      { name := ⟨"text.prose"⟩
+        meaning :=
+          "The proportional face a generated buffer's prose is drawn in, setting only the prose family (`Face.proseFamily`); no capture names it, so a markdown file opened as code stays monospace. The code faces set the monospace family, so code over it stays monospace. Declared ahead of the rich-text-display roadmap's phase 5." }]
+
+/-- Each capture name of markdown's highlights queries that draws a markup
+face, with that face: the block grammar's (the repository's query, the
+`languages` package's `grammars/queries/markdown/highlights.scm`) and the
+inline grammar's (the repository's query too,
+`grammars/queries/markdown_inline/highlights.scm`). Both
+capture a link's title as `text.reference`, so `text.literal` is only a code
+span. The shipped capture-to-face mapping
+(`Highlight.defaultFaces`) is the syntax captures' then these. `text.prose`
+has no capture: a markdown file opened as code stays monospace. -/
+def markupCaptures : Array (String × FaceName) :=
+  (Array.range 6).map
+      (fun index => (s!"text.heading.{index + 1}", ⟨s!"text.heading.{index + 1}"⟩)) ++
+    #[("text.emphasis", ⟨"text.emphasis"⟩), ("text.strong", ⟨"text.strong"⟩),
+      ("text.literal", ⟨"text.code-span"⟩), ("text.code-block", ⟨"text.code-block"⟩),
+      ("text.uri", ⟨"text.link"⟩), ("text.reference", ⟨"text.link"⟩),
+      ("text.quote", ⟨"text.quote"⟩), ("text.list-marker", ⟨"text.list-marker"⟩),
+      ("text.table-header", ⟨"text.table-header"⟩)]
 
 /-- The vocabulary: every face a shipped theme defines, in order. -/
 def vocabulary : Array Entry :=
@@ -174,7 +236,7 @@ def vocabulary : Array Entry :=
       { name := ⟨"compilation.note"⟩
         meaning :=
           "The location text of a note in a compilation buffer, a span the compile mode sets (`Compile.Severity.face`)." }] ++
-    syntaxEntries ++
+    markupEntries ++ syntaxEntries ++
     #[{ name := ⟨"diff.added"⟩
         meaning := "Text a diff adds: drawn by a diff view, declared ahead." },
       { name := ⟨"diff.removed"⟩

@@ -19,6 +19,7 @@ import ContractTest.Editor.Job.ProtocolContract
 import ContractTest.Editor.Job.PumpContract
 import ContractTest.Editor.Job.Real
 import ContractTest.Editor.Language.Grammar
+import ContractTest.Editor.Markdown.Cases
 import ContractTest.Editor.Restart.Launch
 import ContractTest.Editor.Restore.Run
 import ContractTest.Editor.SyntaxTree.Contract
@@ -26,6 +27,7 @@ import ContractTest.Editor.SyntaxTree.DeliveryContract
 import ContractTest.Editor.SyntaxTree.Real
 import ContractTest.Editor.Test.Linked.Services
 import ContractTest.Editor.Text.Contract
+import ContractTest.Editor.UrlOpener.Real
 import ContractTest.Editor.Watch.Contract
 import ContractTest.Editor.Watch.Real
 import ContractTest.Lint.Wait
@@ -99,7 +101,10 @@ only `main`, which runs them in the order its doc gives.
   (`JobContract.postProperties`, `postFailures`), each job spawned with a
   host that records the posts it is handed, and the fuzzy properties
   (`JobContract.fuzzyProperties`, `fuzzyJobFailures`), with the library's
-  matcher (`Fuzzy.real`) as the runner's fuzzy service, and the snapshot
+  matcher (`Fuzzy.real`) as the runner's fuzzy service, and the URL opener
+  properties (`JobContract.urlOpenerProperties`, `urlOpenerJobFailures`),
+  with the library's recording and failing openers as the runner's URL
+  opener, through the glue, so nothing is launched, and the snapshot
   properties (`JobContract.snapshotProperties`, `snapshotJobFailures`), with
   a real table of snapshots read through `Job.realSnapshots`, and the grammar
   properties (`JobContract.grammarProperties`, `grammarJobFailures`), over
@@ -226,6 +231,11 @@ at the same two cell sizes (`recorderFailures`). `recorderChecks` pins what
 only the recorder shows: that it keeps and counts what is published, and
 that it reads the table of snapshots as it is when asked.
 
+`urlOpenerChecks` pins what crosses the boundary to the library's URL
+opener (`Editor/UrlOpener/Real.lean`), over its recording and failing
+openers: each URL a recording opener took read back intact and in order,
+and a refusal's reason, not ASCII, intact.
+
 The clipboard interface's contract (`Editor/Clipboard/Contract.lean`) is run
 against the clipboard a host with no window keeps
 (`Editor/Clipboard/InProcess.lean`), one clipboard for the whole list, so
@@ -297,6 +307,13 @@ captured, a query of one grammar asked of a text parsed with another, and a
 text edited through its document reparsed, its new function's name captured
 once the tree of the edit is delivered. That the text of a file the file
 service loaded is of no document is `ffi-test`'s (`FfiTest.syntaxChecks`).
+
+`markdownCaseChecks` (`ContractTest/Editor/Markdown/Cases.lean`) holds the
+library to answer each Markdown fixture under `tests/markdown/`, parsed once
+as a rendered view parses it, exactly the layers checked in beside it, the
+canned answers `model-test`'s rendered-markdown checks run on; a fixture it
+answers otherwise has the library's answer printed, for a person to read
+before checking it in.
 
 `grammarDeclarationChecks` (`ContractTest/Editor/Language/Grammar.lean`)
 is the wiring of a grammar config declares over the real library: the
@@ -450,6 +467,7 @@ def main (arguments : List String) : IO UInt32 := do
   let jobFailed ← ContractTest.jobFailures services
   let postFailed ← ContractTest.postFailures services
   let fuzzyJobFailed ← ContractTest.fuzzyJobFailures services
+  let urlOpenerJobFailed ← ContractTest.urlOpenerJobFailures services
   let grammarJobFailed ← ContractTest.grammarJobFailures services grammarFixture
   let grammarChecks := ContractTest.grammarChecks ()
   let grammarCheckFailed ← ContractTest.checkFailures grammarChecks
@@ -498,6 +516,8 @@ def main (arguments : List String) : IO UInt32 := do
   let realClipboardFailed ← ContractTest.realClipboardFailures
   let clipboardChecks := ContractTest.clipboardChecks
   let clipboardCheckFailed ← ContractTest.checkFailures clipboardChecks
+  let urlOpenerChecks := ContractTest.urlOpenerChecks
+  let urlOpenerCheckFailed ← ContractTest.checkFailures urlOpenerChecks
   let fuzzyFailed ← ContractTest.fuzzyFailures
   let styleFailed ← ContractTest.styleFailures
   let fuzzyChecks := ContractTest.fuzzyChecks
@@ -512,6 +532,8 @@ def main (arguments : List String) : IO UInt32 := do
   let grammarDeclarationChecks :=
     ContractTest.grammarDeclarationChecks completions grammarFixture syntaxFixtures
   let grammarDeclarationFailed ← ContractTest.checkFailures grammarDeclarationChecks
+  let markdownCaseChecks := ContractTest.markdownCaseChecks testGrammars
+  let markdownCaseFailed ← ContractTest.checkFailures markdownCaseChecks
   let watchFailed ← ContractTest.watchFailures services.timers
   let watchChecks := ContractTest.watchChecks services.timers
   let watchCheckFailed ← ContractTest.checkFailures watchChecks
@@ -520,6 +542,7 @@ def main (arguments : List String) : IO UInt32 := do
   let failed :=
     textFailed.map (s!"the real text binding: {·}") ++ pairCheckFailed ++ jobFailed ++ postFailed ++
       fuzzyJobFailed ++
+      urlOpenerJobFailed ++
       grammarJobFailed ++
       grammarCheckFailed ++
       snapshotJobFailed ++
@@ -549,6 +572,7 @@ def main (arguments : List String) : IO UInt32 := do
       clipboardFailed ++
       realClipboardFailed ++
       clipboardCheckFailed ++
+      urlOpenerCheckFailed ++
       fuzzyFailed ++
       styleFailed ++
       fuzzyCheckFailed ++
@@ -556,6 +580,7 @@ def main (arguments : List String) : IO UInt32 := do
       syntaxTreeCheckFailed ++
       syntaxDeliveryFailed ++
       grammarDeclarationFailed ++
+      markdownCaseFailed ++
       watchFailed ++
       watchCheckFailed ++
       apiFailed ++
@@ -565,6 +590,6 @@ def main (arguments : List String) : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties over the library's matcher, and {(Editor.JobContract.grammarProperties grammarFixture).length} grammar properties over the library's grammar registrations, on the fixture grammar library, with {grammarChecks.length} checks of the grammar service's adapter, and {Editor.JobContract.snapshotProperties.length} snapshot properties over a published table, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.grepProperties.length} search properties over the grep service, on real files, with {grepChecks.length} checks of the grep service's adapter, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter, {flushContractChecks.length} of the services' flushes, {handleContractChecks.length} of a file request's handle, {journalContractChecks.length} of the session journal over it, {pumpContractChecks.length} of the completion pump over the library's queue, {linkedServicesChecks.length} of a test directory's bracket over the file service, and {filteringChecks.length} of a source a command filters, with fzf standing in as a fixture, and {launchRecordChecks.length} of the launch fixtures the launcher reads, and {restoreRunChecks.length} of session restore over the file service, through a restart, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {protocolContractChecks.length} of the runner's protocol over the timer and file services, on real threads, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, {Editor.Completion.StyleContract.properties.length} properties of the completion styles hold of the core's own style over it, and {fuzzyChecks.length} checks of a command's ranking and locating passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed, and {syntaxDeliveryChecks.length} of its deliveries, and {grammarDeclarationChecks.length} of a declared grammar registered, read and drawn through it; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, {pairChecks.length} check of its bracket walk against the text model passed, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.postProperties.length} post properties, and {Editor.JobContract.fuzzyProperties.length} fuzzy properties over the library's matcher, and {Editor.JobContract.urlOpenerProperties.length} URL opener properties over the library's recording and failing openers, and {(Editor.JobContract.grammarProperties grammarFixture).length} grammar properties over the library's grammar registrations, on the fixture grammar library, with {grammarChecks.length} checks of the grammar service's adapter, and {Editor.JobContract.snapshotProperties.length} snapshot properties over a published table, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.grepProperties.length} search properties over the grep service, on real files, with {grepChecks.length} checks of the grep service's adapter, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter, {flushContractChecks.length} of the services' flushes, {handleContractChecks.length} of a file request's handle, {journalContractChecks.length} of the session journal over it, {pumpContractChecks.length} of the completion pump over the library's queue, {linkedServicesChecks.length} of a test directory's bracket over the file service, and {filteringChecks.length} of a source a command filters, with fzf standing in as a fixture, and {launchRecordChecks.length} of the launch fixtures the launcher reads, and {restoreRunChecks.length} of session restore over the file service, through a restart, and {Editor.JobContract.fileWatchProperties.length} watch properties over the watch service, on real files, with {fileWatchChecks.length} checks of the watch service's adapter; {checks.length} checks of the timer service passed, {protocolContractChecks.length} of the runner's protocol over the timer and file services, on real threads, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {urlOpenerChecks.length} checks of the URL opener's real binding passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, {Editor.Completion.StyleContract.properties.length} properties of the completion styles hold of the core's own style over it, and {fuzzyChecks.length} checks of a command's ranking and locating passed; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its real binding over the library's syntax service, and {syntaxTreeChecks.length} checks of it passed, and {syntaxDeliveryChecks.length} of its deliveries, and {grammarDeclarationChecks.length} of a declared grammar registered, read and drawn through it, and {markdownCaseChecks.length} of the Markdown fixtures parsed once through it; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

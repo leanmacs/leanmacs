@@ -1519,6 +1519,44 @@ interface in Lean:
 - **Not built**: binding the adapter to the clipboard interface, and any
   C function or Lean for it (the display pipeline's phase 6).
 
+The URL opener is a port of its own beside the clipboard, which hands a URL
+to the desktop's handler for it (the rich-text display's phase 3, for a
+link's URL target; `docs/design/text-and-display.md`, "Followable spans, as
+built"):
+
+- **The port** is `editor_platform::url_opener::UrlOpener`: `open` hands a
+  URL to the system and says whether the system took it, which says
+  nothing of whether a program then opened it. Which URLs are opened, and
+  the check a URL passes first (a scheme, no control character), is Lean's
+  (`lean/Editor/Link.lean`, `lean/Editor/Links.lean`).
+- **It is reached from a job, never a command.** An open may block: on
+  macOS `/usr/bin/open` returns once LaunchServices has the request, and on
+  Linux each launcher is watched for up to 250 ms for an early failure. A
+  command may not wait and a job may (`lean/Editor/Process.lean`), so
+  `link-follow` starts the job `url-open`, which asks the job service
+  `JobRequest.urlOpener` (`lean/Editor/UrlOpener.lean`).
+- **The fakes** are `RecordingOpener`, which keeps each URL it takes in
+  order, and `FailingOpener`, which refuses every one with its reason.
+  `RecordingOpener` refuses a URL holding a NUL byte, as the system does,
+  so the fake takes nothing the system refuses.
+- **The contract** (`url_opener::contract`) holds only what an opener can
+  be held to without launching anything: a URL holding a NUL byte is
+  refused, with a reason that is not empty.
+- **The adapter** is `editor-platform-open`, over the `open` crate, pinned
+  exactly, with its default features off: `SystemOpener` hands the URL to
+  `open::that_detached`, which starts the platform's launcher detached and
+  reaps it. Only `editor-ffi` links it (`deny.toml`), and only Lean's window
+  mode makes it (`editor_ffi_url_opener_system`); the headless mode's jobs
+  have no opener.
+- **Where it is checked.** The adapter runs the contract in its own tests:
+  the NUL byte is refused at the launcher's spawn, before any program
+  starts. That a well-formed URL reaches the desktop's handler is the
+  adapter's one call into `open`, held by review: any other run would open
+  a browser on the machine running the gate. The C functions are tested over
+  the two fakes (`crates/editor-ffi/tests/url_opener.rs`), and Lean's
+  binding over them through the glue (`ContractTest.urlOpenerChecks`,
+  `ContractTest.urlOpenerJobFailures`).
+
 ## Text utilities
 
 | Service | Notes |
@@ -2789,21 +2827,56 @@ its buffer's text (`lean/Editor/Highlight.lean`).
 Built by the syntax roadmap's phase 3 (2026-11-16).
 
 **Where each query comes from.** The port's `QueryKind` is `Highlights`,
-`Injections`, `TextObjects` and `Indents`. Until the shipped-grammars
-roadmap's phase 4 the adapter's table listed, for each grammar, the
-queries it shipped by kind; since then the `languages` package keeps the
-same files in its `grammars/queries/<name>/`, as the table below lists. A
-grammar crate's own query is used wherever it ships one, as phase 2
-decided for highlights:
+`Injections`, `TextObjects`, `Indents`, `Rendered` and
+`RenderedInjections`. Until the shipped-grammars roadmap's phase 4 the
+adapter's table listed, for each grammar, the queries it shipped by kind;
+since then the `languages` package keeps the same files in its
+`grammars/queries/<name>/`, as the table below lists, and each query
+below is the package's, read in Lean through the grammar's declaration and
+handed to the port as a source. A grammar crate's own query is used
+wherever it ships one, as phase 2 decided for highlights:
 
-| Grammar | Highlights | Injections | Text objects | Indents |
-|---|---|---|---|---|
-| `rust` | the crate's | the crate's (a macro's or a macro rule's token tree, as Rust, its children included) | ours | ours |
-| `json` | the crate's | none | none | none |
-| `markdown` | the crate's, of the block grammar | the crate's, of the block grammar (a fence's code in the language its info string names, and each `(inline)` node as `markdown_inline`) | none | none |
-| `markdown_inline` | the crate's, of the inline grammar | the crate's, of the inline grammar (`html` and `latex`, which the service has not, so nothing) | none | none |
-| `toml` | the crate's | none | none | none |
-| `lean` | upstream's, vendored with the grammar | none | none | none |
+| Grammar | Highlights | Injections | Text objects | Indents | Rendered |
+|---|---|---|---|---|---|
+| `rust` | the crate's | the crate's (a macro's or a macro rule's token tree, as Rust, its children included) | ours | ours | none |
+| `json` | the crate's | none | none | none | none |
+| `markdown` | ours, the crate's block query changed (below) | the crate's, of the block grammar (a fence's code in the language its info string names, and each `(inline)` node as `markdown_inline`) | none | none | ours, with its rendered injections |
+| `markdown_inline` | ours, the crate's inline query changed (below) | the crate's, of the inline grammar (`html` and `latex`, which the service has not, so nothing) | none | none | ours |
+| `toml` | the crate's | none | none | none | none |
+| `lean` | upstream's, vendored with the grammar | none | none | none | none |
+
+The rendered queries (`grammars/queries/markdown/rendered.scm`,
+`grammars/queries/markdown_inline/rendered.scm`) are a kind of our own, as
+Rust's indents and text objects are: which nodes a rendered view of
+Markdown reads, its blocks, its spans and the markup it leaves out, each
+opening with a comment naming the Lean module that reads it
+(`lean/Editor/Markdown/Parsed.lean`). The highlights captures cannot carry
+that structure: top-level blocks, table cells and rows, every delimiter to
+leave out, a link's destination apart from its text. A declared grammar
+reads them as two more query files, `rendered.scm` (`.rendered`) and
+`rendered-injections.scm` (`.renderedInjections`), beside the other
+kinds' (`lean/Editor/Language/Grammar.lean`, `queryFiles`).
+
+**A text parsed once** (the rich text display roadmap's phase 5, moved
+onto handed-in sources by the shipped-grammars roadmap's phase 6).
+`editor_syntax::once::parse` parses a text whole with a host grammar, finds
+its layers by the injection rule over a table of languages (each a grammar,
+the query its layers are answered with and its own injections query,
+through `inject::Languages`), and answers each layer, the host first at
+depth 0, with its query's captures over the hull of its ranges, uncut. It
+keeps nothing. `editor_ffi_syntax_parse_once` is its C function: each
+language it is handed is three strings, a registered grammar's name, the
+source of the query its layers are answered with and the source of its
+injections (the empty string none). The rendered host's injections are
+composed in Lean (`Markdown.languagesOf`, `lean/Editor/Markdown/Parse.lean`):
+the block grammar's injections, then `rendered-injections.scm`, which makes
+each table cell an inline layer. The queries it compiles are kept
+process-wide, keyed by the grammar's name, the source it was registered
+from and the query's source, so a grammar registered again from another
+library never meets a query compiled for the old one. It runs on the
+calling thread, the editor thread, and touches no session and no worker:
+what the rendered-markdown view asks (`text-and-display.md`, "Rendered
+markdown, as built").
 
 `tree-sitter-rust` 0.24.2 ships no `indents.scm` or `textobjects.scm`, so
 Rust's are this repository's (`packages/languages/grammars/queries/rust/`
@@ -2875,9 +2948,34 @@ captures (emphasis, code spans, links). It is of policy `Whole`: in sweeps
 of random incremental reparses on 2026-11-16, 598 of 4,000, and 136 of
 6,400 in a second, gave a tree other than a fresh parse's with no error in
 it, so it fails `GRAMMAR_QUALITY`. A layer is parsed whole each round
-anyway, so the policy changes nothing for it as a layer. The default face
-mapping has no entry for its `text.*` captures, so they draw nothing until
-config maps them; `punctuation.delimiter` draws in `syntax.punctuation`. A
+anyway, so the policy changes nothing for it as a layer. The block
+grammar's highlights query is the repository's,
+`crates/editor-syntax-treesitter/queries/markdown/highlights.scm` when it
+was written (rich-text-display phase 1, 2026-11-27), the `languages`
+package's `grammars/queries/markdown/highlights.scm` since the
+shipped-grammars roadmap's phase 6: the crate's block query copied
+with its provenance (tree-sitter-md 0.5.4, from nvim-treesitter) and
+changed, because the crate's captures every heading as `@text.title`, with
+no level, and gives a code block `@text.literal`, the name the inline
+grammar gives a code span, so neither a heading's level nor a block apart
+from a span could be styled. Ours captures a heading's text by its level
+(`@text.heading.1` … `@text.heading.6`, a setext heading 1 or 2), a fenced
+or indented code block as `@text.code-block`, a list marker as
+`@text.list-marker`, a block quote as `@text.quote` and a pipe table's
+header row as `@text.table-header`, and keeps the crate's other captures;
+a link reference definition's title is `@text.reference`, a link, where
+the crate's gives it `@text.literal`; `tests/highlights.rs` pins them. The
+inline grammar's highlights query is the repository's too,
+`grammars/queries/markdown_inline/highlights.scm` in the package (under
+the adapter's `queries/` when the phase's code review wrote it): the crate's inline query copied with its
+provenance and changed only so a link's title is `@text.reference` beside
+the link's text and label, where the crate's gives it `@text.literal`, the
+name of a code span, which would draw a title in the code-span face; ours
+keeps `@text.literal` for a code span alone, and the crate's other
+captures. The default face mapping (`Highlight.defaultFaces`, from
+`Face.markupCaptures`) draws these and the inline grammar's captures in the
+`text.` faces ([text-and-display.md](text-and-display.md), "The markup
+faces"); `punctuation.delimiter` draws in `syntax.punctuation`. A
 Markdown tree may say it has an error with no error node the walk shows (a
 heading marker that ends the text); its round keeps it as it keeps any
 incremental tree.
@@ -2923,8 +3021,10 @@ the ranges of its `injection.content` captures, each node's named children
 taken out unless the pattern sets `injection.include-children` (so a
 fence's code keeps its punctuation and leaves out a block quote's `> `),
 cut to the parent's ranges and made one where they touch. A match injects
-nothing with no language, no range left, ranges that are the parent's own,
-or a language not known: nothing aliases a name. Each match is a layer of
+nothing with no language, no range left, or a language not known: nothing
+aliases a name. A layer's injection over the layer's own ranges makes no
+progress and is dropped; the host's over the whole text is a layer, as the
+inline text of a Markdown document that is one paragraph is. Each match is a layer of
 its own; `injection.combined` is not built.
 
 **Layers in a round.** A session's round finds the new tree's layers, and
@@ -3043,6 +3143,11 @@ better generic primitive, not a feature-specific service.
 
 ## Open questions
 
+- **A long document parsed once off the editor thread.** A text parsed once
+  (`editor_ffi_syntax_parse_once`) is answered on the thread that asks: a
+  rendered-markdown view parses the whole document on its first render and
+  then only each append's tail. A long document's first render would be
+  better parsed in a job, its answer applied when it arrives.
 - **Threads or an async runtime inside the library.** Lean pulls events, so
   the library needs no scheduler of its own. Plain threads and channels are
   the starting point; an async runtime (tokio) would only be justified by

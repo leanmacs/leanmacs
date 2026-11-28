@@ -2004,7 +2004,7 @@ whole way, is Vim's:
 | Key | Motion | Composed from | Count |
 |---|---|---|---|
 | `h`, `l` | `left`, `right` | `previousCell`, `nextCell`, stopped at the line's start and at where its content ends | Repeats. Goes as far as the line allows |
-| `j`, `k` | `down`, `up` | `rowsDown`, `rowsUp` to the line's start, then the display's position at the wanted column of that line ("The wanted column") | Rows. Stops at the last line and at the first |
+| `j`, `k` | `down`, `up` | `rowsDown`, `rowsUp` to the line's start, then the display's position at the wanted column of that line ("The wanted column"); in a buffer with shown folds a folded range is one line, and a line that starts a fold is rested on at the fold's start, its placeholder ([text-and-display.md](text-and-display.md), "Folds, as built") | Rows, a folded range one row. Stops at the last line and at the first; a fold that reaches the last line stops `j` |
 | `w`, `b`, `e`, `W`, `B`, `E` | `word-forward`, `word-backward`, `word-end` and the three `bigword` names | `nextWordStart`, `previousWordStart`, `nextWordEnd` of a word or a WORD | Repeats. Stops when the position no longer changes |
 | `0` | `line-start` | `lineStart` | None is ever given: a `0` after a digit is part of the count. A count is ignored |
 | `^` | `line-first-non-blank` | `lineFirstNonBlank` | Ignored, as Vim documents |
@@ -2067,6 +2067,12 @@ options (`cpoptions` with `c`, `wrapscan`, `magic`, `noignorecase`):
 - **Under an operator every search is exclusive**, so the two rules for an
   exclusive motion that ends in column 1 apply: `d*` from a line's start to
   the next line's start deletes the line, line-wise.
+- **A search that lands inside a folded range unfolds it**, as every jump
+  motion that does not fail does (`BufferId.reveal`), and the cursor rests
+  on the match's first byte; one that fails unfolds nothing. Matches drawn
+  as the last search's never unfold, and an incremental search's preview,
+  once built, must not either ([text-and-display.md](text-and-display.md),
+  "Folds, as built").
 - **Every search is a jump** (`Vocabulary.Motion.jumps`): `/`, `?`, `n`,
   `N`, `*` and `#` record where they start from in the window's jump list
   when they find a match ("The jump list and marks").
@@ -3427,11 +3433,18 @@ of, and it does not need to.
 Built (`Role.registered`; the tables are `TestScheme.roles` and
 `Vim.Default.roles`, with the leaders beside them).
 
-**The starting set** is seven roles, the ones the table above names:
-`next-item`, `previous-item`, `activate`, `quit`, `refresh`, `toggle` and
-`mark`. They are the actions list-like special buffers share (what
-evil-collection rebinds most), and no other action has two unrelated users
-yet.
+**The set** is nine roles, the ones the table below names. The first
+seven, `next-item`, `previous-item`, `activate`, `quit`, `refresh`,
+`toggle` and `mark`, are the actions list-like special buffers share (what
+evil-collection rebinds most). The last two, `next-link` and
+`previous-link`, move between a buffer's links (`Editor/Link.lean`): they
+recur in every generated buffer with links, whatever its mode, filled by
+the links mode, whose keymaps go first where a buffer has links ("Active
+keymaps", "The links mode"). No other action has two unrelated users yet.
+`toggle` is also taken by the folds mode (`lean/Editor/Folds.lean`), whose
+keymaps go after the links mode's where a buffer has foldable ranges: there
+it folds or unfolds the section under the cursor, and off every range runs
+the buffer's own `toggle` ("Active keymaps", "The folds mode").
 
 **The rule for adding a role.** A role is a standard action that recurs,
 with one meaning, in modes that have nothing else in common. An action of
@@ -3466,6 +3479,8 @@ changes every mode that fills it.
 | `refresh` | `<F5>` | `g r` |
 | `toggle` | `TAB` | `TAB` |
 | `mark` | `C-SPC` | `m` |
+| `next-link` | `M-n` | `] l` |
+| `previous-link` | `M-p` | `[ l` |
 | **leader** | `C-c` | `SPC` |
 | **localleader** | `C-c` (`<leader>`) | `SPC m` (`<leader> m`) |
 
@@ -3475,6 +3490,10 @@ changes every mode that fills it.
 - **The Vim scheme's are evil-collection's usual keys for list buffers.**
   `j` and `k` replace the motions only in buffers whose modes fill those
   roles, which is the design's intent; `g r` merges with the `g g` prefix.
+  The link roles are on `] l` and `[ l`, vim-unimpaired's keys for the
+  location list; no default state binds `]` or `[`, and `TAB` stays
+  `toggle`'s, which folds take: the folds mode fills it with `fold-toggle`
+  in a buffer with foldable ranges.
 - **The Vim scheme's leader is `SPC` and its localleader `SPC m`**, Doom
   Emacs's. `SPC` begins no binding of any default state, so a sequence
   under it reaches nothing of the scheme's; neither leader holds where
@@ -3741,8 +3760,10 @@ otherwise be a cycle).
     the registry (`Registry.grammars`), config's over a package's by name.
   - *The query files* are `highlights.scm`, `injections.scm`,
     `indents.scm` and `textobjects.scm`, the names nvim-treesitter and
-    Helix use, read from the query directory and filled into the
-    language's tree where the entry gives no source of its own: the
+    Helix use, and `rendered.scm` and `rendered-injections.scm`, this
+    repository's, which a rendered Markdown view parses with
+    (`Markdown.languagesOf`), read from the query directory and filled into
+    the language's tree where the entry gives no source of its own: the
     entry's own override wins over a file. A missing file ships no query of
     its kind.
   - *Injected languages.* The declared queries also fill an injected
@@ -3858,7 +3879,9 @@ One pure function resolves what is active for a view, in precedence order:
 ```lean
 def Config.Registry.activeMaps (registry : Registry) (scheme : InputScheme)
     (state : EditorState) (view : ViewId) : List (Keymap scheme.Binding)
--- the open prompt's category, then minor modes, then the major mode, then global
+-- the open prompt's category, then the links mode where the buffer has links,
+-- then the folds mode where it has foldable ranges, then minor modes, then the
+-- major mode, then global
 ```
 
 As built. The global keymap is every owner's key bindings
@@ -3877,6 +3900,32 @@ walked after the active ones ("Which keymaps a key is looked up in").
   first, then the major mode's, then the global keymap (every owner's key
   bindings in no prompt category). A view with no window has the global
   keymap alone.
+- **The links mode** comes before the minor modes in a view whose buffer
+  has links (`Buffer.links`; `text-and-display.md`, "Followable spans, as
+  built"): the keymaps of the mode registered as `Links.modeName`
+  (`links`), after a prompt's category keymap. It fills `activate`,
+  `next-link` and `previous-link` (`lean/Editor/Links.lean`), so on a link
+  following takes precedence over a mode's own `activate`. Off a link
+  `link-follow` falls back to the buffer's own: it asks the registry which
+  command the buffer's modes fill `activate` with
+  (`RegistryRequest.roleCommand`, answered by `Registry.roleCommand` in
+  the same order, minor modes first, each lineage nearest first, never
+  the links mode) and runs it inside itself. With no mode of that name
+  registered, the package `link-commands` left out, it contributes
+  nothing and every mode behaves as before. Built by the rich text
+  display roadmap's phase 3.
+- **The folds mode** comes after the links mode and before the minor modes
+  in a view whose buffer has foldable ranges (`Buffer.folds`;
+  `text-and-display.md`, "Folds, as built"): the keymaps of the mode
+  registered as `Folds.modeName` (`folds`). It fills `toggle` with
+  `fold-toggle` (`lean/Editor/Folds.lean`), which folds or unfolds the
+  section under the cursor and, off every foldable range, runs the command
+  the buffer's own modes fill `toggle` with (`RegistryRequest.roleCommand`,
+  which never asks the folds mode either), guarded against calling itself.
+  A buffer with no foldable range, such as `version-control`'s status
+  buffer or acp's conversation, keeps its own `toggle`. With the package
+  `fold-commands` left out it contributes nothing. Built by the rich text
+  display roadmap's phase 4.
 - **A prompt category's keymap comes first** for the open prompt's
   minibuffer view, when the prompt has a category
   (`Prompt.candidates.category`): `Registry.categoryKeymap`, every owner's
@@ -4388,7 +4437,10 @@ asked and what accepting gives).
   does not exist (`open-file-new-file`). Of phase 4's display:
   - **Align-to stops in pixels.** Annotations are aligned in characters,
     exact under the monospace default face; a proportional default face
-    would misalign them (rdm task `align-to-stops`).
+    would misalign them. Align-to stops are built in layout now
+    (`docs/design/text-and-display.md`, "Display layers"); moving the
+    annotation column onto them is rdm task
+    `move-tabs-and-annotations-to-align-stops`.
   - **A view that does not wrap.** A candidate row wider than the strip
     wraps and pushes the last rows below the strip's edge; the fix is a
     view field the scene and layout would carry, which is Rust work.
@@ -4899,16 +4951,38 @@ buffer while editing goes on.
   file through the line or column, is a span of the compilation buffer in
   a face by severity: `compilation.error`, `compilation.warning`,
   `compilation.note`, drawn under the last search's matches
-  ([text-and-display.md](text-and-display.md), "Decorations"). A rerun in
-  a workspace resets that workspace's list only.
+  ([text-and-display.md](text-and-display.md), "Decorations"), and a link
+  over the same bytes, drawn in `text.link`, whose target is the command
+  `compile-visit` with the workspace's place and the location's index. The
+  buffer is built from rich-text descriptions
+  ([text-and-display.md](text-and-display.md), "The rich-text description,
+  as built"): the header line written alone, and each batch of lines
+  appended with its spans and links. A rerun in a workspace resets that
+  workspace's list only, and the buffer's spans and links with its text.
 - **Stepping.** Each workspace's list has a current location, none at
   first. `next-error` and `previous-error` step through the focused
   buffer's workspace's list, so a buffer of another worktree or project
   steps through its own, and stop with a message at either end; in a
-  compilation buffer, `activate` (`compile-goto-error`, `RET`) visits the
-  location on the cursor's line. Each sets the current location and puts
-  the compilation buffer's cursor on its first line; moving that cursor by
-  hand changes nothing.
+  compilation buffer, `activate` (`compile-goto-error`, `RET`) follows the
+  link at the cursor, a location's, to `compile-visit`, which visits it:
+  the link's target, not the cursor's row, decides. Off a link, on a
+  location's message or a joined continuation row among it, it says
+  `compile-goto-error: no location at the cursor` (visiting the nearest
+  location before the cursor, as Emacs does, is rdm task
+  `compile-goto-error-nearest-location`). Each sets the current location
+  and puts the compilation buffer's cursor on the location's first byte,
+  its link's start, so `RET` after a step is on the link; for a lead
+  format, rustc's, that is the path on the ` -->` line, not the lead's
+  row. Moving that cursor by hand changes nothing.
+- **Through the links mode.** Where the package `link-commands` is in the
+  set, the links mode's keymaps go first in a compilation buffer, which
+  has links: `RET` is `link-follow`, which on a location follows the same
+  link to `compile-visit`, and off one runs the mode's own `activate`,
+  `compile-goto-error`, which says there is no location. `] l` and `[ l`
+  (the roles `next-link` and `previous-link`) move between the locations.
+  The target is a command, not a file location, because a location target
+  would be visited in the compilation buffer's own window and never made
+  current.
 - **Visiting** opens the location's file (`Files.visit`) and puts the
   cursor on its line and column, the column in characters less the
   format's column base (1 for `general`). From a compilation buffer the

@@ -23,7 +23,10 @@ pub(crate) enum DefaultFamily {
 
 /// The fonts a shaper draws in, and the order it looks for a character in
 /// them: the family a run's spec names, then the default family, then the
-/// fallback families in the order given.
+/// fallback families in the order given. A spec may name a CSS generic
+/// family (`system-ui`, `monospace`, ...): the families the set gives for
+/// it, by the platform for [`FontSet::system`] and by
+/// [`FontSet::with_generic`] for a set of given files.
 pub struct FontSet {
     /// The fonts.
     pub(crate) collection: Collection,
@@ -45,6 +48,9 @@ pub enum FontSetError {
     /// A family named as the default or as a fallback is in none of the
     /// files: its name, as it was given.
     NoSuchFamily(String),
+    /// A name given as a generic family is not one of CSS's generic family
+    /// names: the name, as it was given.
+    NotAGeneric(String),
 }
 
 impl fmt::Display for FontSetError {
@@ -52,6 +58,7 @@ impl fmt::Display for FontSetError {
         match self {
             Self::NotAFont => formatter.write_str("a file is not a font"),
             Self::NoSuchFamily(name) => write!(formatter, "no font file holds the family {name}"),
+            Self::NotAGeneric(name) => write!(formatter, "{name} is not a generic family name"),
         }
     }
 }
@@ -146,6 +153,30 @@ impl FontSet {
             default_name,
             families,
         }
+    }
+
+    /// This set with the generic family `generic`, a CSS generic family
+    /// name such as `system-ui` or `monospace`, given as `families` in
+    /// that order: a spec naming `generic` is shaped in them (the crate's
+    /// docs, "How a text is shaped"). A set of
+    /// given files gives no generic family until it is given one here.
+    ///
+    /// Refused when `generic` is no generic family name, and when one of
+    /// `families` is a family the set does not hold.
+    pub fn with_generic(mut self, generic: &str, families: &[&str]) -> Result<Self, FontSetError> {
+        let parsed = GenericFamily::parse(generic)
+            .ok_or_else(|| FontSetError::NotAGeneric(generic.to_owned()))?;
+        let mut ids = Vec::with_capacity(families.len());
+        for name in families {
+            let id = self
+                .collection
+                .family_id(name)
+                .ok_or_else(|| FontSetError::NoSuchFamily((*name).to_owned()))?;
+            ids.push(id);
+        }
+        self.collection
+            .set_generic_families(parsed, ids.into_iter());
+        Ok(self)
     }
 
     /// The names of the families it holds, sorted.

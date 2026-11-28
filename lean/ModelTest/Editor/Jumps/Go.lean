@@ -21,12 +21,33 @@ def goJumpsAfter (keys : String) : Option ((List String × Nat) × String) := do
   let driver ← goJumpedFrom keys
   return (← jumpsOf driver, ← cursorOf driver)
 
+/-- On `foldedJumpState`: whether `C-o` (`Jumps.move` by -1), from 0 after a
+jump recorded at 7, inside the folded range, was taken, then what
+`foldedJumpSeen` reads after it, and after `Jumps.goTo` a place held at 9
+once the range is folded again and the cursor back at 0. -/
+def foldedJumps : Option (Bool × (Bool × Nat) × (Bool × Nat)) :=
+  let program : EditorM (Bool × (Bool × Nat) × (Bool × Nat)) := do
+    Jumps.placeCursor ⟨0⟩ 7
+    Jumps.record ⟨0⟩
+    Jumps.placeCursor ⟨0⟩ 0
+    let moved ← Jumps.move ⟨0⟩ (-1)
+    let back ← foldedJumpSeen
+    discard <| (⟨0⟩ : BufferId).setFolded "f" true
+    Jumps.placeCursor ⟨0⟩ 0
+    let marker ← (⟨0⟩ : TextId).mark (.anchor { offset := 9, bias := .after })
+    Jumps.goTo ⟨0⟩ (.held ⟨0⟩ marker) false
+    return (moved, back, ← foldedJumpSeen)
+  (dispatchedFrom program foldedJumpState).map (·.1)
+
 /-- The checks of moving through a window's jump list to a place in another
 buffer or in a closed file, and of going to a place as a jump, on the
 loop's driver over the editor's models and the file model
 (`goDriver`). -/
 def jumpGoChecks : List Check :=
   [{  name :=
+        "C-o onto a place inside a folded range, and a jump to a held place inside one, unfold the range and land on the place"
+      run := return foldedJumps == some (true, (false, 7), (false, 9)) },
+    { name :=
         "a move onto an entry of another open buffer shows that buffer, at the entry"
       run :=
         return (goJumpedFrom "C-j 3 C-j n C-j o").map (fun driver => (jumpsOf driver, cursorOf driver)) ==

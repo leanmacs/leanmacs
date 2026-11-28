@@ -26,6 +26,13 @@
 //! it, `gutter` and then its own face ([`mark_block`]), so it is keyed by
 //! its text and its face, and two marks of one text and face share one
 //! entry and one row hash. Only a mark's first visual line is drawn.
+//!
+//! **Fold placeholders** ([`Fold`]) are laid out through the same store
+//! too, unbroken: the first line of a fold's text, in its decorations over
+//! the default face, as one visual line whatever the view's width
+//! ([`ViewFolds`]). A placeholder is keyed apart from a block of the same
+//! text and decorations, so the two never share an entry, and one shown
+//! again is not shaped again.
 
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -37,9 +44,11 @@ use editor_text::{Snapshot, Text};
 use crate::cache::{Counters, TextState};
 use crate::decoration::{DecorationSource, FaceSpanSource, Span, Styles, fonts_of};
 use crate::face::{FaceId, Paint};
+use crate::folds::FoldSnapshot;
 use crate::frame::paint_line;
+use crate::query::Beside;
 use crate::query::{Shown, Walker};
-use crate::scene::{Block, Decoration, GutterMark};
+use crate::scene::{Block, Decoration, Fold, GutterMark};
 use crate::shaper::{FontId, Shaper, VisualLine};
 use crate::tabs::boundary_at_or_before;
 use crate::wrap::Outcome;
@@ -51,7 +60,20 @@ pub(crate) struct BlockKey(u64);
 impl BlockKey {
     /// The key of `block`. Where it is drawn is not in it.
     pub(crate) fn of(block: &Block) -> Self {
+        Self::tagged(block, false)
+    }
+
+    /// The key of `fold`'s placeholder ([`placeholder_block`]), laid out
+    /// unbroken.
+    pub(crate) fn placeholder(fold: &Fold) -> Self {
+        Self::tagged(&placeholder_block(fold), true)
+    }
+
+    /// The key of `block` laid out unbroken, as a fold's placeholder, or
+    /// at a width, as a block or a mark.
+    fn tagged(block: &Block, unbroken: bool) -> Self {
         let mut hasher = DefaultHasher::new();
+        unbroken.hash(&mut hasher);
         block.text.hash(&mut hasher);
         for decoration in &block.decorations {
             (decoration.start, decoration.stop, &decoration.face).hash(&mut hasher);
@@ -97,14 +119,28 @@ pub(crate) struct BlockLayout<'a, S: Shaper> {
 
 impl<S: Shaper> BlockLayout<'_, S> {
     /// The visual lines of `block`, whose decorations are `spans` (bytes
-    /// of its text, with their faces interned), top to bottom.
+    /// of its text, with their faces interned), top to bottom, at the
+    /// view's text width.
     fn lay(&mut self, block: &Block, spans: &[(Range<usize>, FaceId)]) -> Vec<BlockLine> {
-        let (tab_width, width) = (self.tab_width, self.width);
-        let state = self.store.entry(BlockKey::of(block)).or_insert_with(|| {
+        self.lay_at(block, spans, Some(self.width))
+    }
+
+    /// The visual lines of `block` as [`BlockLayout::lay`] gives them,
+    /// broken at `width`, or unbroken with none.
+    fn lay_at(
+        &mut self,
+        block: &Block,
+        spans: &[(Range<usize>, FaceId)],
+        width: Option<f32>,
+    ) -> Vec<BlockLine> {
+        let tab_width = self.tab_width;
+        let key = BlockKey::tagged(block, width.is_none());
+        let state = self.store.entry(key).or_insert_with(|| {
             let snapshot = Text::from(block.text.as_str()).snapshot();
-            TextState::fresh(&snapshot, tab_width, Some(width))
+            TextState::fresh(&snapshot, tab_width, width)
         });
-        state.wrap.set_width(Some(width));
+        state.wrap.set_width(width);
+        let none = FoldSnapshot::none(state.wrap.tabs().buffer());
         let snapshot = state.wrap.tabs().buffer().clone();
         let source = FaceSpanSource::new(
             spans
@@ -127,8 +163,11 @@ impl<S: Shaper> BlockLayout<'_, S> {
             let mut walker = Walker {
                 shaper,
                 wrap: &mut state.wrap,
+                folds: &none,
                 base,
                 fonts: &fonts,
+                stops: &|_| Vec::new(),
+                indent: &|_, _| None,
                 outcome: &mut |row, segment, outcome| {
                     seen.entry((row, segment)).or_insert(outcome);
                 },
@@ -261,6 +300,102 @@ impl ViewMarks {
                     .next()
             })
             .as_ref()
+    }
+}
+
+/// The block `fold`'s placeholder is laid out as: the first line of its
+/// text, without a carriage return before the line feed, in its
+/// decorations.
+pub(crate) fn placeholder_block(fold: &Fold) -> Block {
+    let line = fold.text.split('\n').next().unwrap_or_default();
+    let line = if line.len() < fold.text.len() {
+        line.strip_suffix('\r').unwrap_or(line)
+    } else {
+        line
+    };
+    Block {
+        before: 0,
+        text: line.to_owned(),
+        decorations: fold.decorations.clone(),
+    }
+}
+
+/// A view's folds for one frame or query: each placeholder laid out when
+/// the walk first reaches it (module docs, "Fold placeholders").
+pub(crate) struct ViewFolds {
+    /// Each fold's placeholder as the block its text is laid out as: the
+    /// first line of its text, and its decorations.
+    blocks: Vec<Block>,
+    /// Each block's decorations, their faces interned.
+    spans: Vec<Vec<(Range<usize>, FaceId)>>,
+    /// The placeholder line of each fold laid out so far.
+    laid: HashMap<usize, Option<BlockLine>>,
+}
+
+impl ViewFolds {
+    /// The placeholders of `folds`, their faces interned into `styles`.
+    pub(crate) fn new(folds: &[Fold], styles: &mut Styles) -> Self {
+        let blocks: Vec<Block> = folds.iter().map(placeholder_block).collect();
+        let spans = blocks
+            .iter()
+            .map(|block| {
+                block
+                    .decorations
+                    .iter()
+                    .map(|decoration| {
+                        (
+                            decoration.start..decoration.stop,
+                            styles.intern(&decoration.face),
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        Self {
+            blocks,
+            spans,
+            laid: HashMap::new(),
+        }
+    }
+
+    /// The placeholder line of fold `fold`, laid out unbroken by `layout`
+    /// when it is first asked for.
+    pub(crate) fn line<S: Shaper>(
+        &mut self,
+        fold: usize,
+        layout: &mut BlockLayout<'_, S>,
+    ) -> Option<&BlockLine> {
+        let (blocks, spans) = (&self.blocks, &self.spans);
+        self.laid
+            .entry(fold)
+            .or_insert_with(|| {
+                let block = blocks.get(fold)?;
+                layout.lay_at(block, &spans[fold], None).into_iter().next()
+            })
+            .as_ref()
+    }
+}
+
+/// What a walk of a view's text is handed beside it: its blocks and its
+/// fold placeholders, laid out through one block layout.
+pub(crate) struct ViewBeside<'r, 'a, 'l, S: Shaper> {
+    /// The view's blocks.
+    pub blocks: &'r mut ViewBlocks<'a>,
+    /// The view's fold placeholders.
+    pub folds: &'r mut ViewFolds,
+    /// What both are laid out with.
+    pub layout: &'r mut BlockLayout<'l, S>,
+}
+
+impl<S: Shaper> Beside for ViewBeside<'_, '_, '_, S> {
+    fn above(&mut self, row: usize) -> Vec<Shown> {
+        self.blocks.above(row, self.layout)
+    }
+
+    fn placeholder(&mut self, fold: usize) -> f32 {
+        self.folds
+            .line(fold, self.layout)
+            .map_or(0.0, |laid| laid.line.height)
     }
 }
 

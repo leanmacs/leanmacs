@@ -1,7 +1,7 @@
 [package]
 name = "editor-platform"
 version = "0.1.0"
-description = "The platform's ports: the window (what it reports) and the clipboard, each with its fake and its contract"
+description = "The platform's ports: the window (what it reports), the clipboard and the URL opener, each with its fake and its contract"
 edition.workspace = true
 license.workspace = true
 publish = false

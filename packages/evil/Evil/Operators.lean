@@ -45,11 +45,22 @@ of one (`Evil.lean`), so the caller supplies the vocabulary.
   compiles to, what the selection covers. A selection of the line shape
   is the lines of its two ends. Any other is
   what the text port says its primary range covers by its shape
-  (`TextId.extents`), stopped where the last line's content ends; the two
+  (`TextId.extents`), stopped where the last line's content ends. An end
+  inside a shown fold (`BufferId.shownFolds`) takes the fold whole
+  (`Fold.cover`): for the line shape, the fold's first or last line; for
+  the others, the fold's start or where its last line's content ends; the two
   rules below for a stretch that stops at a line's start and for a
   deletion over lines are a motion's and are not applied, as Vim applies
   neither in Visual mode. A count is ignored. The window then keeps no
   wanted column.
+- **Whole lines take a shown fold whole**: a motion's stretch of whole
+  lines whose first or last row is inside a shown fold reaches from the
+  fold's first row or through its last (`Fold.cover`), so `dj` from the
+  row above a fold takes the fold. The doubled operator starts at the
+  first row of a fold that holds the head's row and counts a fold as one
+  line (`Fold.stepRows`), so `dd` on a placeholder takes the fold's rows,
+  and its count gives up on a fold that reaches the last line as on the
+  last line.
 - **The operator's key left the visual state**, so the command is told
   normal state's report, or insert state's for a change, and what it
   leaves is one cursor of that shape.
@@ -553,6 +564,14 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
   -- once the operator has acted when the cursor did not move.
   let previous ← Jumps.previousOf call.target.window.id
   let jumped := kind == "motion" && (motions.find? (·.name == name)).any (·.jumps)
+  -- A row inside a shown fold stands for the fold whole: whole lines reach
+  -- from its first row and through its last.
+  let shown ← call.target.window.buffer.shownFolds
+  let firstOf (row : Nat) : Nat := ((Fold.cover shown row).map (·.2.1)).getD row
+  let lastOf (row : Nat) : Nat := ((Fold.cover shown row).map (·.2.2)).getD row
+  let widened : Vocabulary.Stretch → Vocabulary.Stretch
+    | .lines first last => .lines (firstOf first) (lastOf last)
+    | other => other
   -- What the echo area is to say once the operator has acted: what the
   -- motion handed back to be said.
   let (operand, said) : Vocabulary.Operand × Option String ←
@@ -585,22 +604,24 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
       if motion.jumps then
         Jumps.record call.target.window.id
       pure
-          ({ stretch := ← stretch operator text head taken, head, rest := min head taken.head,
-             register, before },
+          ({ stretch := widened (← stretch operator text head taken), head,
+             rest := min head taken.head, register, before },
             taken.said)
     | "lines" =>
       -- The doubled operator: the head's line and `count - 1` lines below,
-      -- stopped at the last line. Vim goes down those lines first, which
-      -- fails on the last line and cancels the operator.
-      let first ← rowOf text head
+      -- stopped at the last line, a shown fold counting as one line. Vim
+      -- goes down those lines first, which fails on the last line and
+      -- cancels the operator.
+      let first := firstOf (← rowOf text head)
       let last ← lastLine text
-      if count > 1 && first ≥ last then
+      if count > 1 && lastOf first ≥ last then
         giveUp noLineBelow
       pure
-          ({ stretch := .lines first (max first (min (first + count - 1) last)), head, rest := head,
-             register, before },
+          ({ stretch := .lines first (lastOf (Fold.stepRows shown first (count - 1) last true)),
+             head, rest := head, register, before },
             none)
     | "selection" =>
+      -- An end inside a shown fold takes the fold whole.
       if before.shape == .line then
         -- The lines of the selection's two ends. A yank leaves the cursor
         -- at the start of the anchor's line, or on the head when the head
@@ -613,8 +634,8 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
         pure
             ({
                 stretch :=
-                  .lines (← rowOf text (min range.anchor head))
-                    (← rowOf text (max range.anchor head)),
+                  .lines (firstOf (← rowOf text (min range.anchor head)))
+                    (lastOf (← rowOf text (max range.anchor head))),
                 head, rest, register, before },
               none)
       else
@@ -626,8 +647,26 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
                 ranges := #[range], primary := 0 }
         let some extent := covered[0]? | throw .badSelection
         let limit ← text.motion .lineEnd (← text.offsetOf ⟨← lastLine text, 0⟩)
-        let stop := min extent.stop limit
-        let start := min extent.start stop
+        let startRow ← rowOf text extent.start
+        -- The row of the last byte covered: the stop is exclusive, and a
+        -- range that ends on a line break stops at the next row's start.
+        let stopRow ←
+          if extent.stop > extent.start then
+            rowOf text (extent.stop - 1)
+          else
+            pure startRow
+        let widenedStart ←
+          if (Fold.cover shown startRow).isSome then
+            text.offsetOf ⟨firstOf startRow, 0⟩
+          else
+            pure extent.start
+        let widenedStop ←
+          if (Fold.cover shown stopRow).isSome then
+            text.motion .lineEnd (← text.offsetOf ⟨lastOf stopRow, 0⟩)
+          else
+            pure extent.stop
+        let stop := min widenedStop limit
+        let start := min widenedStart stop
         pure
             ({ stretch := .cells ⟨start, stop⟩ .exclusive, head, rest := start, register, before },
               none)

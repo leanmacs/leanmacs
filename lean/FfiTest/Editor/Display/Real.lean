@@ -118,13 +118,15 @@ def emptyScene : Editor.Scene :=
 (`Editor.RealDisplay.encode`) that the display fixture does not make: a
 pending prefix and a preedit, a view whose snapshot the table does not
 hold, and a view whose markers are of two texts; and of a theme: its
-definitions as words, when it is sent and when it is not, and the names
-layout reads by itself. The words are compared with the library's layout
-written out here once (`crates/editor-ffi/src/display/wire.rs`), since the
-library writes back what it was sent whatever it was. What a frame holds
-is layout's rule: a view's rows are compared with the rows query's answer,
-and a frame with another frame, never with a colour or a size written
-here. -/
+definitions as words, when it is sent and when it is not, the names
+layout reads by itself, and the faces a run in a theme not yet sent is
+measured in (`Editor.RealDisplay.measure`). The words are compared with the
+library's layout written out here once
+(`crates/editor-ffi/src/display/wire.rs`), since the library writes back
+what it was sent whatever it was. What a frame holds is layout's rule: a
+view's rows are compared with the rows query's answer, a width measured
+with where a published frame draws, and a frame with another frame, never
+with a colour or a size written here. -/
 def sceneChecks (_ : Unit) : List Check :=
   [{  name :=
         "a scene with a pending prefix, a preedit, a title, a menu bar with each kind of item, a view of a snapshot the table does not hold, a view whose markers are of two texts and a divider is the words and the string of the library's layout"
@@ -145,19 +147,22 @@ def sceneChecks (_ : Unit) : List Check :=
             0, 0, 0, 3]
         -- No snapshot; its scroll marker; no selection; a block cursor; no
         -- status field and no status face; padded 8 across, 4 down and 28
-        -- at the top, with no gutter; no block and no mark.
+        -- at the top, with no gutter; no block, no mark, no stop, no fold
+        -- and no indent.
         let first : Array UInt64 :=
-          #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4, 28, 0, 0, 0]
+          #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0, 8, 4, 28, 0, 0, 0, 0, 0, 0]
         -- The first handle; its scroll marker and its selection; a bar
         -- cursor; a decoration; a left status field with no padding and a
-        -- right one padded 4; a status face; and no block and no mark.
+        -- right one padded 4; a status face; and no block, no mark, no
+        -- stop, no fold and no indent.
         let second : Array UInt64 :=
           #[2, 0, 48, 32, 48, 1, 0, 1, anchor, 1, selection, 1, 2, 1, 0, 2, 2, 2, 6, 4, 0, 0, 3, 3,
-            1, 4, 1, 3, 0, 0, 0, 0, 0, 0]
+            1, 4, 1, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- The second handle; no scroll marker and no selection; an
-        -- underline cursor; no block and no mark.
+        -- underline cursor; no block, no mark, no stop, no fold and no
+        -- indent.
         let third : Array UInt64 :=
-          #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+          #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- One divider: its rectangle and its face's length.
         let dividers : Array UInt64 := #[1, 0, 46, 32, 2, 4]
         -- No faces: as last published.
@@ -190,9 +195,10 @@ def sceneChecks (_ : Unit) : List Check :=
           real.rows { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0, blocks }
         let wordsBlocks : Array UInt64 := #[1, 3, 3, 1, 0, 3, 1]
         let held ← fixture.document.read
-        -- The blocks, then no mark, the divider and no faces, end the words.
-        let tail := encoded.words.extract (encoded.words.size - 15) encoded.words.size
-        return tail == wordsBlocks ++ #[0, 1, 0, 46, 32, 2, 4, 0] &&
+        -- The blocks, then no mark, no stop, no fold, no indent, the
+        -- divider and no faces, end the words.
+        let tail := encoded.words.extract (encoded.words.size - 18) encoded.words.size
+        return tail == wordsBlocks ++ #[0, 0, 0, 0, 1, 0, 46, 32, 2, 4, 0] &&
             encoded.strings.endsWith "héhrule" &&
             back.map (·.1) == some ((← real.encode scene (some #[])).words) &&
             (frame.splitOn "  block 0 row").length == 2 &&
@@ -223,15 +229,142 @@ def sceneChecks (_ : Unit) : List Check :=
           real.rows
               { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0
                 padding := { gutter := 8 } }
-        -- The marks, then the divider and no faces, end the words.
-        let tail := encoded.words.extract (encoded.words.size - 16) encoded.words.size
+        -- The marks, then no stop, no fold, no indent, the divider and no
+        -- faces, end the words.
+        let tail := encoded.words.extract (encoded.words.size - 19) encoded.words.size
         let wordsMarks : Array UInt64 := #[2, 0, 3, 1, 10, 6, 6, 1, 12]
-        return tail == wordsMarks ++ #[1, 0, 46, 32, 2, 4, 0] &&
+        return tail == wordsMarks ++ #[0, 0, 0, 1, 0, 46, 32, 2, 4, 0] &&
             encoded.strings.endsWith "+diff.added-diff.removedrule" &&
             back.map (·.1) == some ((← real.encode scene (some #[])).words) &&
             (frame.splitOn "  mark ").length == 3 &&
             shown == asked.toOption.map (·.map fun row => (row.start, row.stop)) &&
             shown.isSome },
+    { name :=
+        "a view's align-to stops cross after its marks, each its offset and its x in points, an x no u32 holds as the largest, come back as sent, and the library lays the view's rows out under them"
+      run := do
+        let fixture ← sceneFixture
+        let real := fixture.real
+        -- `cd` starts at 3: at a stop 24 points in, it is drawn right of
+        -- where it is drawn with none.
+        let stops : Array Editor.AlignStop := #[{ offset := 3, x := 24 }]
+        let scene := fixture.mixed
+        let stopped (stops : Array Editor.AlignStop) : Editor.Scene :=
+          { scene with
+            views :=
+              scene.views.modify 2 fun view =>
+                { view with
+                  scroll := SceneFixture.own fixture.top, stops } }
+        let encoded ← real.encode (stopped stops) none
+        let past ← real.encode (stopped #[{ offset := 3, x := 2 ^ 40 }]) none
+        real.publish (stopped #[])
+        let bare ← real.display.frameText
+        real.publish (stopped stops)
+        let back ← real.display.scene
+        let frame ← real.display.frameText
+        let held ← fixture.document.read
+        -- The stops, then no fold, no indent, the divider and no faces,
+        -- end the words.
+        let tail := encoded.words.extract (encoded.words.size - 12) encoded.words.size
+        let pastTail := past.words.extract (past.words.size - 12) past.words.size
+        return tail == #[1, 3, 24, 0, 0, 1, 0, 46, 32, 2, 4, 0] &&
+            pastTail == #[1, 3, (2 ^ 32 - 1 : Nat).toUInt64, 0, 0, 1, 0, 46, 32, 2, 4, 0] &&
+            -- The theme went with the first publish, so not with this one.
+            back.map (·.1) == some encoded.words &&
+            frame != bare &&
+            held ==
+              "ab
+cd
+ef" },
+    { name :=
+        "a view's folds cross after its stops, each its range, its placeholder and its decorations, come back as sent, and are drawn as one placeholder row, which the rows, move and spot queries, asked with them, count as one row"
+      run := do
+        let fixture ← sceneFixture
+        let real := fixture.real
+        -- `cd` and `ef` folded into one row.
+        let folds : Array Editor.Fold :=
+          #[{ start := 3, stop := 8, text := "▸ é",
+              decorations := #[{ start := 0, stop := 3, face := ⟨"f"⟩ }] }]
+        let scene := fixture.mixed
+        let folded (folds : Array Editor.Fold) : Editor.Scene :=
+          { scene with
+            views :=
+              scene.views.modify 2 fun view =>
+                { view with
+                  scroll := SceneFixture.own fixture.top, folds } }
+        let encoded ← real.encode (folded folds) none
+        real.publish (folded #[])
+        let bare ← real.display.frameText
+        real.publish (folded folds)
+        let back ← real.display.scene
+        let frame ← real.display.frameText
+        let shown ← fixture.shown 3
+        let asked ←
+          real.rows { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0, folds }
+        let moved ←
+          real.move
+              { snapshot := fixture.snapshot, width := 32, position := 1, lines := 1, goal := none
+                folds }
+        let spot ←
+          real.spot
+              { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0
+                position := 7, folds }
+        let held ← fixture.document.read
+        -- The fold, then no indent, the divider and no faces, end the
+        -- words.
+        let tail := encoded.words.extract (encoded.words.size - 16) encoded.words.size
+        return tail == #[1, 3, 8, 6, 1, 0, 3, 1, 0, 1, 0, 46, 32, 2, 4, 0] &&
+            encoded.strings.endsWith "▸ éfrule" &&
+            back.map (·.1) == some encoded.words &&
+            frame != bare &&
+            (frame.splitOn "fold 0 ").length == 2 &&
+            shown == some #[(0, 2), (3, 8)] &&
+            asked.toOption.map (·.map fun row => (row.start, row.stop)) == some #[(0, 2), (3, 8)] &&
+            moved.toOption.map (·.position) == some 3 &&
+            spot.toOption.join.map (fun spot => (spot.x, spot.y)) == some (0, 16) &&
+            held == "ab\ncd\nef" },
+    { name :=
+        "a view's wrap indents cross after its folds, each its range, its first-line indent and its continuation, one too large as the largest word, come back as sent, and the library lays the row's continuation lines out under them, which the rows and spot queries agree with"
+      run := do
+        let fixture ← sceneFixture
+        let real := fixture.real
+        -- `cd` 24 points in, in a view 32 wide, holds `c` alone on its first
+        -- line, and `d` goes to the next line, 8 points in.
+        let indents : Array Editor.WrapIndent :=
+          #[{ start := 3, stop := 4, first := 24, rest := .points 8 }]
+        let scene := fixture.mixed
+        let indented (indents : Array Editor.WrapIndent) : Editor.Scene :=
+          { scene with
+            views :=
+              scene.views.modify 2 fun view =>
+                { view with
+                  scroll := SceneFixture.own fixture.top, indents } }
+        let encoded ← real.encode (indented indents) none
+        let past ←
+          real.encode
+              (indented #[{ start := 3, stop := 4, first := 2 ^ 40, rest := .lead (2 ^ 70) }]) none
+        real.publish (indented #[])
+        let bare ← real.display.frameText
+        real.publish (indented indents)
+        let back ← real.display.scene
+        let frame ← real.display.frameText
+        let asked ←
+          real.rows { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0 }
+        let spot ←
+          real.spot
+              { snapshot := fixture.snapshot, width := 32, height := 48, anchor := 0
+                position := 4 }
+        -- The indent, then the divider and no faces, end the words.
+        let tail := encoded.words.extract (encoded.words.size - 13) encoded.words.size
+        let pastTail := past.words.extract (past.words.size - 13) past.words.size
+        return tail == #[1, 3, 4, 24, 0, 8, 1, 0, 46, 32, 2, 4, 0] &&
+            pastTail ==
+              #[1, 3, 4, (2 ^ 32 - 1 : Nat).toUInt64, 1, 0xFFFF_FFFF_FFFF_FFFF, 1, 0, 46, 32, 2, 4,
+                0] &&
+            back.map (·.1) == some encoded.words &&
+            frame != bare &&
+            asked.toOption.map (·.map fun row => (row.start, row.stop)) ==
+              some #[(0, 2), (3, 4), (4, 5)] &&
+            spot.toOption.join.map (fun spot => (spot.x, spot.y)) == some (8, 32) },
     { name :=
         "published, that scene comes back as sent; the view of the unknown snapshot shows nothing, the view after it shows its text from its anchor, and the view whose markers are of two texts shows its text from the start with no selection"
       run := do
@@ -346,6 +479,38 @@ def sceneChecks (_ : Unit) : List Check :=
             inSecond != inFirst &&
             withNoneAgain == withNone &&
             stillSecond == inSecond &&
+            held == "ab\ncd\nef" },
+    { name :=
+        "a run decorated in a face of a theme not yet sent is measured in that face's font, wider than the run bare, and as wide as a frame published next draws it"
+      run := do
+        -- `kw` is twice the base size, so its glyphs are wider.
+        let theme : Editor.Theme := #[{ name := ⟨"kw"⟩, face := { size := some 32 } }]
+        let fixture ← sceneFixture theme
+        let real := fixture.real
+        let bare ← real.measure { text := "ab" }
+        let faced ←
+          real.measure { text := "ab", decorations := #[{ start := 0, stop := 2, face := ⟨"kw"⟩ }] }
+        -- View 2 alone, from the start, `ab` in `kw` as decorated, wide
+        -- enough that the row holds it.
+        let scene := fixture.scene (SceneFixture.own fixture.top) #[]
+        let wide : Editor.Rect := { x := 0, y := 0, width := 128, height := 48 }
+        let scene :=
+          { scene with
+            size := { width := 128, height := 48 }
+            views :=
+              (scene.views.extract 1 2).map fun view =>
+                { view with
+                  scroll := SceneFixture.own fixture.top, rect := wide }
+            dividers := #[] }
+        real.publish scene
+        -- Where the line feed after `ab` is drawn: as far right as `ab` is
+        -- wide.
+        let drawn ←
+          real.spot
+              { snapshot := fixture.snapshot, width := 128, height := 32, anchor := 0
+                position := 2 }
+        let held ← fixture.document.read
+        return faced != bare && drawn.toOption.join.map (·.x) == some faced &&
             held == "ab\ncd\nef" },
     { name :=
         "of the built-in theme's names, layout reads default, selection and mode-line by itself: with each renamed in turn the frame is another, and with echo-area renamed, which nothing draws, it is the built-in theme's"

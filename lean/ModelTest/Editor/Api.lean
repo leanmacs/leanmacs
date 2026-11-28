@@ -21,6 +21,7 @@ import Editor.Loop
 import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Program
+import Editor.RichText
 import Editor.Scene
 import Editor.State
 import Editor.Test.Completion
@@ -50,7 +51,9 @@ import ModelTest.Support.Excerpt
 The model tests of `Editor/Api.lean`: `apiStateChecks`,
 `insertExcerptChecks` and `insertCandidateChecks`, which run `insertCandidate` and the accept of a
 partial candidate through the minibuffer's commands under the Vim scheme that
-ships. The root module `ModelTest` runs them; its module doc says what each
+ships; and `richTextCallChecks` and `richTextAppendChecks`, which write a
+read-only buffer from a rich-text description on the stepped loop over the
+models. The root module `ModelTest` runs them; its module doc says what each
 shows.
 -/
 
@@ -599,5 +602,349 @@ def orGiveUpChecks : List Check :=
               echoOf (fedTo driver (presses "C-a")).1 ==
                 some "give: the last window cannot be closed" &&
               echoOf (fedTo driver (presses "C-b")).1 == some "passed 3" }]
+
+/-- The head of the rich-text call checks: two rows, `head one` and `head
+two`, with a span over `head`, a stop, a link over `one` to an absolute
+path, a hanging indent over the second row, a fold `head` over the first
+row and a fold `whole` over both, every one unfolded. -/
+def richHead : RichText :=
+  { text := "head one\nhead two\n"
+    spans := #[{ start := 0, stop := 4, face := ⟨"rich.head"⟩ }]
+    stops := #[{ offset := 5, x := 40 }]
+    links := #[{ start := 5, stop := 8, target := .location "/rich/head.txt" 1 2 }]
+    folds :=
+      #[{ start := 0, stop := 9, key := "head", text := "[head]" },
+        { start := 0, stop := 18, key := "whole", text := "[whole]" }]
+    indents := #[{ start := 9, stop := 18, first := 0, rest := .lead 5 }] }
+
+/-- The tail of the rich-text call checks, a row `tail` with a part of each
+kind of its own. -/
+def richTail : RichText :=
+  { text := "tail\n"
+    spans := #[{ start := 0, stop := 4, face := ⟨"rich.tail"⟩ }]
+    stops := #[{ offset := 1, x := 10 }]
+    links := #[{ start := 0, stop := 4, target := .url "https://example.com/tail" }]
+    folds := #[{ start := 0, stop := 5, key := "tail", text := "[tail]" }]
+    indents := #[{ start := 0, stop := 5, first := 4 }] }
+
+/-- The description `rich-redo` writes from the end of `richHead`'s text: it
+disagrees with the head in its text's bytes (`HEAD`) and in every part
+before that end (another face, stop x, link target and indent, and `head`
+declared unfolded with another placeholder); its fold `whole` crosses that
+end, and its tail, `redo`, is new. -/
+def richRedo : RichText :=
+  { text := "HEAD one\nhead two\nredo\n"
+    spans :=
+      #[{ start := 0, stop := 4, face := ⟨"rich.redo"⟩ },
+        { start := 18, stop := 22, face := ⟨"rich.new"⟩ }]
+    stops := #[{ offset := 5, x := 99 }, { offset := 19, x := 3 }]
+    links :=
+      #[{ start := 5, stop := 8, target := .url "https://example.com/redo" },
+        { start := 18, stop := 22, target := .url "https://example.com/new" }]
+    folds :=
+      #[{ start := 0, stop := 9, key := "head", text := "[HEAD]" },
+        { start := 0, stop := 23, key := "whole", text := "[redo whole]" },
+        { start := 18, stop := 23, key := "new", text := "[new]" }]
+    indents :=
+      #[{ start := 9, stop := 18, first := 7, rest := .points 7 },
+        { start := 18, stop := 23, first := 2 }] }
+
+/-- The description `rich-same` writes over `richHead`'s text: its text
+disagrees with the head's only in its first row's bytes (`HEAD`), and each
+of its parts is its own, one on the first row and one on the second. -/
+def richSame : RichText :=
+  { text := "HEAD one\nhead two\n"
+    spans :=
+      #[{ start := 0, stop := 4, face := ⟨"rich.same"⟩ },
+        { start := 9, stop := 13, face := ⟨"rich.same.two"⟩ }]
+    stops := #[{ offset := 10, x := 7 }]
+    links := #[{ start := 9, stop := 13, target := .url "https://example.com/same" }]
+    folds := #[{ start := 9, stop := 18, key := "two", text := "[two]" }]
+    indents := #[{ start := 9, stop := 18, first := 3 }] }
+
+/-- What a rich-text call answered, as words: `ok`, or its refusal. -/
+def richWords : Except BufferRefusal Unit → String
+  | .ok () => "ok"
+  | .error (.noSuchBuffer _) => "noSuchBuffer"
+  | .error _ => "refused"
+
+/-- Keeps, as the value `name` of `buffer`, the smallest start of an edit of
+its text since the revision its value `revision` holds, or a million with
+none; then keeps the text's revision now as `revision`. -/
+def keepEdited (buffer : BufferId) (name : String) : EditorM Unit := do
+  let .ok text ← buffer.text | return
+  if let some (.nat revision)← buffer.value? "revision" then
+    let patch ← text.changesSince revision
+    discard <| buffer.setValue name (.nat ((patch.edits.map (·.old.start)).foldl min 1000000))
+  discard <| buffer.setValue "revision" (.nat (← text.revision))
+
+/-- Makes a read-only buffer `rich`, shows it in `call`'s window, and writes
+it from `rich`, keeping the answer as its value `result`. -/
+def richSet (call : Call) (rich : RichText) : EditorM (Option BufferId) := do
+  let .ok buffer ← createBuffer "rich" | return none
+  discard <| buffer.setReadOnly true
+  discard <| call.target.window.id.show buffer
+  discard <| buffer.setValue "result" (.str (richWords (← buffer.setRichText rich)))
+  return some buffer
+
+/-- The commands of the rich-text call checks:
+
+- `rich-set` makes a read-only buffer `rich`, shows it, and writes it from
+  `richHead`;
+- `rich-folded` does the same from `richHead` with `head` declared folded;
+- `rich-absent` writes and appends to a buffer there is none of, keeping
+  each answer on `rich` as `absent-set` and `absent-append`;
+- `rich-head` is `rich-set`, then keeps the text's revision as `revision`
+  and folds `head`;
+- `rich-tail` appends `richTail` to `rich`, and keeps the smallest start of
+  an edit since `revision` as `edited` (`keepEdited`);
+- `rich-redo` writes `rich` from `richRedo` from the end of `richHead`'s
+  text, and keeps the smallest start of an edit since the tail as
+  `redone`;
+- `rich-same` writes `rich` from 0 from `richSame` with `richHead`'s text,
+  keeping the smallest start of an edit since `revision` as `same`, then
+  from 9 from `richSame` with other spans, whose text from 9 is the
+  buffer's, keeping the smallest start of an edit since as `same-tail`;
+  each answer is kept as `same-result` and `same-tail-result`. -/
+def richTextCommands : List (String × Dispatched) :=
+  [("rich-set", fun call => do
+      discard <| richSet call richHead
+      return none),
+    ("rich-folded", fun call => do
+      discard <|
+          richSet call
+            { richHead with
+              folds := richHead.folds.map fun fold => { fold with folded := fold.key == "head" } }
+      return none),
+    ("rich-absent", fun _ => do
+      let some rich ← findBuffer "rich" | return none
+      let absent : BufferId := ⟨99⟩
+      discard <| rich.setValue "absent-set" (.str (richWords (← absent.setRichText richHead)))
+      discard <| rich.setValue "absent-append" (.str (richWords (← absent.appendRichText richTail)))
+      return none),
+    ("rich-head", fun call => do
+      let some rich ← richSet call richHead | return none
+      keepEdited rich "unused"
+      discard <| rich.setFolded "head" true
+      return none),
+    ("rich-tail", fun _ => do
+      let some rich ← findBuffer "rich" | return none
+      discard <| rich.setValue "result" (.str (richWords (← rich.appendRichText richTail)))
+      keepEdited rich "edited"
+      return none),
+    ("rich-redo", fun _ => do
+      let some rich ← findBuffer "rich" | return none
+      discard <|
+          rich.setValue "result"
+            (.str (richWords (← rich.setRichText richRedo richHead.text.utf8ByteSize)))
+      keepEdited rich "redone"
+      return none),
+    ("rich-same", fun _ => do
+      let some rich ← findBuffer "rich" | return none
+      discard <|
+          rich.setValue "same-result"
+            (.str (richWords (← rich.setRichText { richSame with text := richHead.text })))
+      keepEdited rich "same"
+      discard <|
+          rich.setValue "same-tail-result"
+            (.str
+              (richWords
+                (←
+                  rich.setRichText
+                      { richSame with
+                        spans :=
+                          #[{ start := 0, stop := 4, face := ⟨"rich.ignored"⟩ },
+                            { start := 9, stop := 13, face := ⟨"rich.again"⟩ }] }
+                      9)))
+      keepEdited rich "same-tail"
+      return none)]
+
+/-- A driver whose window shows an empty buffer, with each of
+`richTextCommands` on a key (`C-c` and a letter); `none` if making the state
+was refused. -/
+def richDriver : Option TestDriver :=
+  let keys :=
+    dispatchKeys
+      [("C-c s", invoke "rich-set"), ("C-c f", invoke "rich-folded"),
+        ("C-c x", invoke "rich-absent"), ("C-c h", invoke "rich-head"),
+        ("C-c t", invoke "rich-tail"), ("C-c r", invoke "rich-redo"), ("C-c m", invoke "rich-same")]
+      richTextCommands
+  (Loop.Driver.over keys (fun _ => none) (EditorState.initial ⟨640, 480⟩) editorModel).toOption
+
+/-- `richDriver` fed the key strings `keys`. -/
+def richFed (keys : String) : Option TestDriver :=
+  richDriver.map fun driver => (fedTo driver (presses keys)).1
+
+/-- The buffer `rich` of `driver`. -/
+def richBuffer (driver : TestDriver) : Option Buffer := do
+  driver.loop.state.buffer? (← driver.loop.state.findBuffer "rich")
+
+/-- What the buffer `rich` of `driver` holds in its text model. -/
+def richContents (driver : TestDriver) : Option String := do
+  let buffer ← richBuffer driver
+  (driver.model.texts.texts[buffer.text.index]?).join.map (·.contents)
+
+/-- The value `name` of the buffer `rich` of `driver`. -/
+def richValue (driver : TestDriver) (name : String) : Option Value := do
+  driver.loop.state.value? (← driver.loop.state.findBuffer "rich") name
+
+/-- The view 0 of the last scene `driver` published. -/
+def richView (driver : TestDriver) : Option View :=
+  driver.model.display.scenes.back?.bind fun scene => scene.views.find? (·.id == ⟨0⟩)
+
+/-- Whether `view` draws every part of `rich` but its folds: each span, a
+link decoration over each link, its stops and its indents. -/
+def drawsRich (view : View) (rich : RichText) : Bool :=
+  rich.spans.all view.decorations.contains &&
+    rich.links.all
+      (fun link =>
+        view.decorations.contains { start := link.start, stop := link.stop, face := Link.face }) &&
+    rich.stops.all view.stops.contains &&
+    rich.indents.all view.indents.contains
+
+/-- The checks that one call writes every part of a generated buffer from a
+rich-text description (**criterion 1** of the rich-text roadmap's phase 7). -/
+def richTextCallChecks : List Check :=
+  let set := richFed "C-c s"
+  [{  name :=
+        "after rich-set the read-only buffer holds richHead's text and its spans, stops, links, folds and indents, with no rendered document, and the call answered ok"
+      run :=
+        pure <|
+          match set with
+          | none => false
+          | some driver =>
+            match richBuffer driver with
+            | none => false
+            | some buffer =>
+              richValue driver "result" == some (.str "ok") && buffer.readOnly &&
+                richContents driver == some richHead.text &&
+                buffer.spans == richHead.spans &&
+                buffer.stops == richHead.stops &&
+                buffer.links == richHead.links &&
+                buffer.folds == richHead.folds &&
+                buffer.indents == richHead.indents &&
+                buffer.markdown == none },
+    { name :=
+        "the next scene's view of the buffer carries every span, text.link over the link, the stops and the indents, and no fold, since every range is declared unfolded"
+      run :=
+        pure <|
+          match set.bind richView with
+          | none => false
+          | some view => drawsRich view richHead && view.folds.isEmpty },
+    { name := "with head declared folded the view's folds hold its placeholder"
+      run :=
+        pure <|
+          match (richFed "C-c f").bind richView with
+          | none => false
+          | some view => view.folds.map (·.text) == #["[head]"] },
+    { name :=
+        "a write and an append of a buffer there is none of answer noSuchBuffer and change nothing"
+      run :=
+        pure <|
+          match set, set.map fun driver => (fedTo driver (presses "C-c x")).1 with
+          | some before, some after =>
+            richValue after "absent-set" == some (.str "noSuchBuffer") &&
+              richValue after "absent-append" == some (.str "noSuchBuffer") &&
+              richContents after == richContents before &&
+              after.loop.state.buffers.size == before.loop.state.buffers.size &&
+              ((richBuffer after).map fun buffer =>
+                  (buffer.spans, buffer.stops, buffer.links, buffer.folds, buffer.indents)) ==
+                ((richBuffer before).map fun buffer =>
+                  (buffer.spans, buffer.stops, buffer.links, buffer.folds, buffer.indents))
+          | _, _ => false }]
+
+/-- The checks that a description extended at its tail updates only the
+buffer's tail, and that a write from a start keeps the buffer's prefix
+(**criterion 2** of the rich-text roadmap's phase 7). -/
+def richTextAppendChecks : List Check :=
+  let size := richHead.text.utf8ByteSize
+  let shifted := richTail.shift size
+  let appended := richFed "C-c h C-c t"
+  let redone := richFed "C-c h C-c t C-c r"
+  [{  name :=
+        "after rich-head then rich-tail the text is the head then the tail, and the text's log has no edit before the tail"
+      run :=
+        pure <|
+          match appended with
+          | none => false
+          | some driver =>
+            richValue driver "result" == some (.str "ok") &&
+              richContents driver == some (richHead.text ++ richTail.text) &&
+              match richValue driver "edited" with
+              | some (.nat edited) => edited ≥ size
+              | _ => false },
+    { name :=
+        "after the append each part before the head's end is exactly the head's, in order, and the rest the tail's moved past it; head is still folded, as toggled"
+      run :=
+        pure <|
+          match appended.bind richBuffer with
+          | none => false
+          | some buffer =>
+            buffer.spans == richHead.spans ++ shifted.spans &&
+              buffer.stops == richHead.stops ++ shifted.stops &&
+              buffer.links == richHead.links ++ shifted.links &&
+              buffer.indents == richHead.indents ++ shifted.indents &&
+              buffer.folds ==
+                #[{ start := 0, stop := 9, key := "head", text := "[head]", folded := true },
+                    { start := 0, stop := 18, key := "whole", text := "[whole]" }] ++
+                  shifted.folds },
+    { name := "the scene's view after the append carries both halves"
+      run :=
+        pure <|
+          match appended.bind richView with
+          | none => false
+          | some view =>
+            drawsRich view richHead && drawsRich view shifted &&
+              view.folds.map (·.text) == #["[head]"] },
+    { name :=
+        "a write from the head's end whose description disagrees on the prefix keeps the buffer's bytes before it, with no edit there, and every prefix part as the buffer had it; from there on, and the fold crossing it, are the description's, each key declared once"
+      run :=
+        pure <|
+          match redone with
+          | none => false
+          | some driver =>
+            match richBuffer driver with
+            | none => false
+            | some buffer =>
+              let fromEnd (rich : RichText) : RichText := RichText.replaceFrom {} size rich
+              let tail := fromEnd richRedo
+              richValue driver "result" == some (.str "ok") &&
+                richContents driver == some (richHead.text ++ "redo\n") &&
+                (match richValue driver "redone" with
+                | some (.nat redone) => redone ≥ size
+                | _ => false) &&
+                buffer.spans == richHead.spans ++ tail.spans &&
+                buffer.stops == richHead.stops ++ tail.stops &&
+                buffer.links == richHead.links ++ tail.links &&
+                buffer.indents == richHead.indents ++ tail.indents &&
+                buffer.folds ==
+                  #[{ start := 0, stop := 9, key := "head", text := "[head]", folded := true },
+                    { start := 0, stop := 23, key := "whole", text := "[redo whole]" },
+                    { start := 18, stop := 23, key := "new", text := "[new]" }] &&
+                tail.spans == #[{ start := 18, stop := 22, face := ⟨"rich.new"⟩ }] },
+    { name :=
+        "a write from 0 whose text the buffer already holds, and then one from 9 whose text from 9 the buffer holds, make no edit and leave the text's revision as it was, while each writes its parts: the first all of the description's, the second the buffer's before 9 and the description's from 9 on"
+      run :=
+        pure <|
+          match richFed "C-c h", richFed "C-c h C-c m" with
+          | some head, some same =>
+            match richBuffer same with
+            | none => false
+            | some buffer =>
+              richValue same "same-result" == some (.str "ok") &&
+                richValue same "same-tail-result" == some (.str "ok") &&
+                richContents same == some richHead.text &&
+                richValue same "same" == some (.nat 1000000) &&
+                richValue same "same-tail" == some (.nat 1000000) &&
+                (richValue head "revision").isSome &&
+                richValue same "revision" == richValue head "revision" &&
+                buffer.spans ==
+                  #[{ start := 0, stop := 4, face := ⟨"rich.same"⟩ },
+                    { start := 9, stop := 13, face := ⟨"rich.again"⟩ }] &&
+                buffer.stops == richSame.stops &&
+                buffer.links == richSame.links &&
+                buffer.folds == richSame.folds &&
+                buffer.indents == richSame.indents
+          | _, _ => false }]
 
 end ModelTest

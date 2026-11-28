@@ -25,6 +25,8 @@ tests draw with exactly what ships:
 <DIRECTORY>/queries/<name>/injections.scm    rust, markdown, markdown_inline
 <DIRECTORY>/queries/rust/textobjects.scm
 <DIRECTORY>/queries/rust/indents.scm
+<DIRECTORY>/queries/<name>/rendered.scm      markdown, markdown_inline
+<DIRECTORY>/queries/markdown/rendered-injections.scm
 ```
 
 This is the layout of a package's staged `grammars/` directory, so a Lean

@@ -64,6 +64,23 @@ scheme's key grammar (`Editor/InputScheme.lean`).
 - **`capturesOf snapshot kind start stop`** answers the capture names of the
   query the text keeps of `kind` and its captures in the range, as
   `captures` answers them (`Kept`).
+- **`parseOnce source grammar languages`** answers the layers of `source`,
+  a text handed in, not one a snapshot is of, parsed once, whole, with
+  `grammar`: the host first, at depth 0 over the whole text, then each
+  layer its language's injections find, down to the library's bound, by
+  depth and then by start. Each of `languages` is a language known
+  (`OnceLanguage`): a grammar's name, the source of the query its layers
+  are answered with, and the source of its injections, if any, which the
+  caller reads from the grammar's query files (the library ships none). A
+  layer is answered with its query's capture names and its captures over
+  the hull of its ranges (`Layer`). A language whose grammar the service
+  lacks, or whose query or injections do not compile, is not a language
+  known, and its layers are not found; the first of a name is used. It
+  keeps nothing and is answered on the asking thread: what a rendered view
+  of a generated text asks (`Editor/Markdown/Parse.lean`, which composes
+  Markdown's rendered injections). It is refused `unknownGrammar` for a
+  host grammar the service lacks, and `noQuery` when `languages` does not
+  name the host, or the host's query does not compile.
 - **`refreshAfter milliseconds`**: texts parsed incrementally are parsed
   whole once they have gone `milliseconds` unchanged after an edit, from
   now on, for every text. An edit's tree is the incremental reparse, which
@@ -95,7 +112,8 @@ A refusal is a value: each reply is an `Except SyntaxTreeError`.
 - `noShippedQuery`: the grammar is published with no query of that kind.
 - `badFaces`: the faces are not one for each of the query's capture
   names.
-- `noQuery`: the text keeps no query of that kind.
+- `noQuery`: the text keeps no query of that kind; or, of a text parsed
+  once, no language handed in gives the host a query that compiles.
 
 A structural question (`capturesOf`) before the reparse of its snapshot is
 delivered is refused with `notParsed`, never answered from an older tree:
@@ -137,15 +155,23 @@ inductive QueryKind where
   | textObjects
   /-- Which nodes indent the rows they hold: `indents.scm`. -/
   | indents
+  /-- Which nodes a rendered view reads: its blocks, its spans and the
+  markup it leaves out: `rendered.scm`. -/
+  | rendered
+  /-- What a text parsed once for a rendered view finds its layers with
+  after the grammar's injections: `rendered-injections.scm`. -/
+  | renderedInjections
   deriving DecidableEq, Repr
 
 /-- The kind's name, as a user reads it: `highlights`, `injections`,
-`textObjects`, `indents`. -/
+`textObjects`, `indents`, `rendered`, `renderedInjections`. -/
 def QueryKind.name : QueryKind → String
   | .highlights => "highlights"
   | .injections => "injections"
   | .textObjects => "textObjects"
   | .indents => "indents"
+  | .rendered => "rendered"
+  | .renderedInjections => "renderedInjections"
 
 /-- The name of a compiled query the syntax service holds. It is plain data,
 so a request can carry it. -/
@@ -201,7 +227,8 @@ inductive SyntaxTreeError where
   | noShippedQuery
   /-- The faces are not one for each of the query's capture names. -/
   | badFaces
-  /-- The text keeps no query of that kind. -/
+  /-- The text keeps no query of that kind; or, of a text parsed once, no
+  language handed in gives the host a query that compiles. -/
   | noQuery
   deriving DecidableEq, Repr
 
@@ -218,7 +245,7 @@ def SyntaxTreeError.describe : SyntaxTreeError → String
   | .query kind offset => s!"the query is not one: {repr kind} at byte {offset}"
   | .noShippedQuery => "the grammar ships no such query"
   | .badFaces => "the faces are not one for each capture name"
-  | .noQuery => "the text keeps no query of that kind"
+  | .noQuery => "no query of that kind is kept, or handed in for the host"
 
 namespace SyntaxTree
 
@@ -242,6 +269,38 @@ structure Kept where
   /-- The capture names, in the order they first appear in the source. -/
   names : Array String
   /-- The captures, each once, in the order `captures` answers. -/
+  captures : Array Capture
+  deriving DecidableEq, Repr
+
+/-- A language of a text parsed once (`parseOnce`), handed in with its
+sources: a grammar's name, the source of the query its layers are answered
+with, and the source of the injections they find layers of their own with,
+`none` for none. -/
+structure OnceLanguage where
+  /-- The grammar's name. -/
+  grammar : String
+  /-- The source of the query its layers are answered with. -/
+  query : String
+  /-- The source of its injections; `none` for none. -/
+  injections : Option String := none
+  deriving DecidableEq, Repr
+
+/-- A layer of a text parsed once (`parseOnce`), the host included: its
+language, how deep it is, the ranges of the text it is of, and its
+language's query's capture names and its captures over them. -/
+structure Layer where
+  /-- The language's name, as the language handed in gave it. -/
+  language : String
+  /-- How deep it is: 0 for the host, 1 for an injection of the host's. -/
+  depth : Nat
+  /-- The ranges of the text it is of, each a start and a stop, sorted and
+  apart. -/
+  ranges : Array (Nat × Nat)
+  /-- Its query's capture names, which a capture names one of by its
+  index. -/
+  names : Array String
+  /-- Its query's captures over the hull of its ranges, each once, in the
+  order `captures` answers. -/
   captures : Array Capture
   deriving DecidableEq, Repr
 
@@ -286,6 +345,9 @@ inductive SyntaxTreeRequest where
   /-- Parse a text whole once it has gone `milliseconds` unchanged after an
   edit, from now on, for every text. -/
   | refreshAfter (milliseconds : Nat)
+  /-- The layers of `source` parsed once with `grammar`, each of
+  `languages` a language known, answered with its query. -/
+  | parseOnce (source grammar : String) (languages : Array SyntaxTree.OnceLanguage)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request. -/
@@ -304,6 +366,7 @@ def SyntaxTreeRequest.Reply : SyntaxTreeRequest → Type
   | .keep _ _ _ => Except SyntaxTreeError Unit
   | .capturesOf _ _ _ _ => Except SyntaxTreeError SyntaxTree.Kept
   | .refreshAfter _ => Unit
+  | .parseOnce _ _ _ => Except SyntaxTreeError (Array SyntaxTree.Layer)
 
 /-- The syntax tree port: `SyntaxTreeRequest` and the reply to each request. -/
 abbrev syntaxTreePort : Port :=
@@ -409,6 +472,17 @@ refused. -/
 def refreshAfter (milliseconds : Nat) : SyntaxTreeM Unit :=
   ExceptT.lift (Program.request (port := syntaxTreePort) (.refreshAfter milliseconds))
 
+/-- The layers of `source` parsed once, whole, with `grammar`: the host
+first, then each layer by depth and start, each of `languages` a language
+known, answered with its query and finding layers with its injections ("The
+requests", in the module docs). It keeps nothing and is answered on the
+asking thread. Refused with `unknownGrammar` for a host grammar the service
+lacks, and `noQuery` when `languages` does not name the host, or the host's
+query does not compile. -/
+def parseOnce (source grammar : String) (languages : Array OnceLanguage) :
+    SyntaxTreeM (Array Layer) :=
+  ExceptT.mk (Program.request (port := syntaxTreePort) (.parseOnce source grammar languages))
+
 /-- Whether a node over `start`..`stop` is in the range `first`..`last`: it
 shares a byte with it, or, when the node or the range is empty, it starts
 within it, its ends included. The Rust core's `query::overlaps`. -/
@@ -435,7 +509,8 @@ end SyntaxTree
 grammars, so an attach and a compile are refused with `unknownGrammar`, as
 is a shipped query; it holds no query, so a question of one, an injection, a
 language, a keep and a question of a kept query are refused with
-`noSuchQuery`; and a detach, a release and a refresh delay do nothing. What a command run
+`noSuchQuery`; a text parsed once is refused with `unknownGrammar`; and a
+detach, a release and a refresh delay do nothing. What a command run
 where no host handed one in reaches (`EditorM.runReal`,
 `Editor/Command/Real.lean`). -/
 def SyntaxTree.none : SyntaxTreeHandler
@@ -453,6 +528,7 @@ def SyntaxTree.none : SyntaxTreeHandler
   | .keep _ _ _ => pure (.error .noSuchQuery)
   | .capturesOf _ _ _ _ => pure (.error .noSuchQuery)
   | .refreshAfter _ => pure ()
+  | .parseOnce _ _ _ => pure (.error .unknownGrammar)
 
 /-- Runs a syntax tree program against `handler`: its result, or the refusal
 it failed with. -/

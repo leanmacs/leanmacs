@@ -1,0 +1,59 @@
+# The link commands: following a buffer's links and moving between them
+# from the keyboard (`link-follow`, `link-next`, `link-previous`), the job
+# `url-open` that hands a URL to the system's opener, and the links mode
+# whose keymaps go first in a buffer with links: a default package, a Lake
+# package outside the core that the default package set requires
+# (../lakefile.toml; docs/design/packages.md, "The package set and its
+# build"). The core declares the names and holds every decision
+# (lean/Editor/Links.lean); this package registers them (`Links.setup`), as
+# `restore` and `package-set` register under names the core declares. The
+# gate's package steps build, test, lint and format-check it through the
+# fixture set, which requires the default set (tools/package-set.sh), and
+# review holds what it imports of the core to the rule in
+# `.agents/rules/structure.md`.
+#
+# - `LinkCommands` is the package's library: `LinkCommands.lean`, its
+#   `setup`, `LinkCommands/Compiled.lean`, the `Package` value, and its
+#   entry module `LinkCommands/EditorPackage.lean`, which the package-set
+#   build reads. Its `globs` hold every module under `LinkCommands`, so the
+#   library's build reaches each one. It requires the core alone.
+# - `link-commands-test` is its test driver (`lake test`): the tests that
+#   need no Rust library, rooted at `LinkCommandsTest/Model.lean`. It is no
+#   default target, as the core's `model-test` is not: `mise run lean`
+#   links with the system compiler, which this executable has no flags for.
+# - `LinkCommandsTest` holds the test modules.
+#
+# It has no headless fixture and no linked test of its own.
+#
+# Every Lean linter is on and a warning fails the build, as in the core,
+# and the build's own linters, the wait linters, are loaded as a Lean plugin
+# as the core's libraries load them (`plugins`; lean/Lint/Wait.lean).
+#
+# It is an implementation package (docs/design/extension-points.md, "Three
+# layers"): it declares no `keywords`, so no package may import its modules,
+# and the three-layer rule (.agents/rules/structure.md) holds it to that.
+#
+# After changing a `require`, run in lean/:
+#   lake -d ../packages/link-commands update --keep-toolchain
+# then the same for every set that reaches this package (../, tests/packages), and commit each lake-manifest.json.
+name = "link-commands"
+testDriver = "«link-commands-test»"
+defaultTargets = ["LinkCommands", "LinkCommandsTest"]
+leanOptions = { linter.all = true, warningAsError = true }
+plugins = ["@editor-core/lintShared"]
+
+[[require]]
+name = "editor-core"
+path = "../../lean"
+
+[[lean_lib]]
+name = "LinkCommands"
+globs = ["LinkCommands.*"]
+
+[[lean_lib]]
+name = "LinkCommandsTest"
+globs = ["LinkCommandsTest.+"]
+
+[[lean_exe]]
+name = "link-commands-test"
+root = "LinkCommandsTest.Model"

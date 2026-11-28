@@ -1177,6 +1177,33 @@ its decorations (`Gutter.marksOf`, `Editor/Gutter.lean`), and its window's
 padding has the gutter's column (`EditorState.paddingOf`), so the follow
 asks the display with it.
 
+A view of a buffer with align-to stops (`Buffer.stops`) has those whose
+offset is in the same range as its decorations (`View.stops`, `stopsOf`),
+as they are: like spans, nothing moves them. The minibuffer's view has
+none. Layout places the cells of the rows they fall on at them
+(`crates/editor-layout/src/align.rs`); the queries the follow asks lay a
+row out under the stops of the last frame that showed the text at its
+revision, so they need none of their own.
+
+A view of a buffer with wrap indents (`Buffer.indents`) has those whose
+range touches the same range as its decorations (`View.indents`,
+`indentsOf`), in order and as they are: like stops, nothing moves them. The
+minibuffer's view has none. Layout starts the visual lines of the rows they
+cover where they say (`crates/editor-layout/src/align.rs`, "Wrap indents"),
+and the follow's queries lay a row out under the indents of the last frame
+that showed the text at its revision, as they do its stops.
+
+**Folds.** A view of a buffer with foldable ranges (`Buffer.folds`,
+`Editor/Fold.lean`) has its shown folds (`View.folds`, `views`): its
+folded ranges, outermost first, as the scene's placeholders
+(`EditorState.viewFolds`), none for the minibuffer's view. The follow asks the display
+with them (`follow`), so a folded range counts as one row there, and the
+range a view's decorations, marks and stops are read over counts a shown
+fold as one row too (`rangeOf`, `Fold.stepRows`), so a view showing a fold
+still has the decorations of the rows after it. Layout draws nothing of a
+folded row but its placeholder (`docs/design/text-and-display.md`, "Folds,
+as built").
+
 - **Every view but the minibuffer's** covers the range from the start of
   its scroll anchor's row to the start of the row `rows + 1` text rows
   below, or the text's end, where `rows` is the view's height over the
@@ -1186,6 +1213,12 @@ asks the display with it.
   fold are drawn too.
 - **The spans** that meet the range are kept, each clipped to it, in order,
   and one left empty is dropped (`spansIn`), with or without a last search.
+- **The links** (`Buffer.links`, `Editor/Link.lean`) are drawn by the same
+  rule, each a decoration in `Link.face` (`text.link`), before the
+  buffer's spans: a span over a link's bytes is drawn over the link face
+  attribute by attribute, so a compile-coloured location keeps its colour
+  and the link's underline still shows. Only the range crosses into the
+  scene; the target stays Lean data.
 - **The matches** are what its snapshot answers for the pattern in the
   range (`SnapshotId.matches`).
 - **It is read after the follow** (step 3 of "After each event"), so the
@@ -1887,12 +1920,15 @@ def views (loop : Loop scheme) (modeLine : ModeLine := ModeLine.standard) :
       -- An excerpt buffer's headers, placed by the snapshot shown, so the
       -- follow asks with them (`ExcerptView.blocksOf`).
       let blocks ← ExcerptView.blocksOf target.buffer snapshot
+      -- The buffer's shown folds, so every view of it draws its folded
+      -- ranges as placeholders and the follow asks with them.
+      let folds ← state.viewFolds id
       views :=
         views.push
           { id, rect, snapshot, scroll := target.window.scroll,
             selections := #[target.window.selection]
             cursor := report.cursor, decorations := #[], status, statusFace
-            padding := state.paddingOf id, blocks }
+            padding := state.paddingOf id, blocks, folds }
   return (views, shown, refusal)
 
 /-- The face the matches of the last search are drawn in. -/
@@ -1910,20 +1946,28 @@ def spansIn (spans : Array Decoration) (start stop : Nat) : Array Decoration :=
 
 /-- The range of `view`'s snapshot its decorations and its gutter marks are
 read over ("Decorations", in the module docs): from the row of its scroll
-anchor through `rect.height / heights.text + 1` rows below, or the text's
-end; `none` when its anchor is not a marker of its text. -/
+anchor through `rect.height / heights.text + 1` rows below, a shown fold
+counting as one row (`Fold.stepRows`), or the text's end; `none` when its
+anchor is not a marker of its text. -/
 def rangeOf (state : EditorState) (view : View) : TextM (Option (Nat × Nat)) := do
   let some target := state.target? view.id | return none
   let .anchor anchor ← target.buffer.text.marker view.scroll | return none
   let snapshot := view.snapshot
-  let row := (← snapshot.pointOf anchor.offset).row
+  let shown ← state.shownFoldsOf view.id
+  let count ← snapshot.rowCount
+  -- An anchor in a fold shows from the fold's first row.
+  let row := Fold.stepRows shown (← snapshot.pointOf anchor.offset).row 0 (count - 1) true
   -- A view of `n` display rows shows at most `n` text rows from its
   -- anchor's, however its rows wrap; one more is drawn, which nothing sees.
+  -- A shown fold is one of them, and its rows end the range only past its
+  -- last.
   let rows := view.rect.height / max 1 state.heights.text + 1
+  let last := Fold.stepRows shown row rows (count - 1) true
+  let last := ((Fold.cover shown last).map (·.2.2)).getD last
   let start ← snapshot.offsetOf ⟨row, 0⟩
   let stop ←
-    if row + rows + 1 < (← snapshot.rowCount) then
-      snapshot.offsetOf ⟨row + rows + 1, 0⟩
+    if last + 1 < count then
+      snapshot.offsetOf ⟨last + 1, 0⟩
     else
       snapshot.byteLength
   return some (start, stop)
@@ -1945,8 +1989,8 @@ def marksOf (state : EditorState) (view : View) : TextM (Array GutterMark) := do
 /-- The decorations of `view` in `state` ("Decorations", in the module docs),
 for a view that is not the minibuffer's, over the range from the row of the
 view's scroll anchor through `rect.height / heights.text + 1` rows below:
-for an excerpt buffer, its sources' spans, then its buffer's spans in that
-range (`spansIn`), then what is not examined of its tracked excerpts
+for an excerpt buffer, its sources' spans, then its buffer's links in that
+range in `Link.face`, then its buffer's spans there (`spansIn`), then what is not examined of its tracked excerpts
 (`ExcerptView.unexaminedOf`), then, when there is a last search, each match
 of its pattern there that is not empty, in `searchMatchFace`, in order. A pattern the syntax refuses draws no match,
 and a text that refuses draws nothing. -/
@@ -1962,7 +2006,14 @@ def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration)
     -- What no scene has shown of a tracked excerpt, read before this
     -- scene marks what its rows show.
     let unexamined := spansIn (← ExcerptView.unexaminedOf target.buffer snapshot) start stop
-    let spans := sources ++ spansIn target.buffer.spans start stop ++ unexamined
+    -- Its links, in the link face, under its own spans, which are drawn
+    -- over them attribute by attribute.
+    let links :=
+      spansIn
+        (target.buffer.links.map fun link =>
+          { start := link.start, stop := link.stop, face := Link.face })
+        start stop
+    let spans := sources ++ links ++ spansIn target.buffer.spans start stop ++ unexamined
     let some search := state.lastSearch | return spans
     match ← snapshot.matches search.pattern start stop with
     | .ranges all =>
@@ -1974,12 +2025,45 @@ def decorationsOf (state : EditorState) (view : View) : TextM (Array Decoration)
   catch _ =>
     return #[]
 
-/-- `views` with their decorations (`decorationsOf`) and their gutter marks
-(`marksOf`), each read with its scroll anchor where the follow left it. -/
+/-- The align-to stops of `view` in `state` ("Decorations", in the module
+docs): its buffer's stops whose offset is in its range, in order; none for
+the minibuffer's view, and for a text that refuses. -/
+def stopsOf (state : EditorState) (view : View) : TextM (Array AlignStop) := do
+  if state.prompt.map (·.view) == some view.id then
+    return #[]
+  let some target := state.target? view.id | return #[]
+  if target.buffer.stops.isEmpty then
+    return #[]
+  try
+    let some (start, stop) ← rangeOf state view | return #[]
+    return target.buffer.stops.filter fun aligned => start ≤ aligned.offset && aligned.offset < stop
+  catch _ =>
+    return #[]
+
+/-- The wrap indents of `view` in `state` ("Decorations", in the module
+docs): its buffer's indents whose range touches its range (starts before its
+stop, and stops at or after its start), in order; none for the minibuffer's
+view, and for a text that refuses. -/
+def indentsOf (state : EditorState) (view : View) : TextM (Array WrapIndent) := do
+  if state.prompt.map (·.view) == some view.id then
+    return #[]
+  let some target := state.target? view.id | return #[]
+  if target.buffer.indents.isEmpty then
+    return #[]
+  try
+    let some (start, stop) ← rangeOf state view | return #[]
+    return target.buffer.indents.filter fun indent => indent.start < stop && start ≤ indent.stop
+  catch _ =>
+    return #[]
+
+/-- `views` with their decorations (`decorationsOf`), their gutter marks
+(`marksOf`), their align-to stops (`stopsOf`) and their wrap indents
+(`indentsOf`), each read with its scroll anchor where the follow left it. -/
 def decorated (state : EditorState) (views : Array View) : TextM (Array View) :=
   views.mapM fun view =>
     return { view with
-        decorations := ← decorationsOf state view, marks := ← marksOf state view }
+        decorations := ← decorationsOf state view, marks := ← marksOf state view
+        stops := ← stopsOf state view, indents := ← indentsOf state view }
 
 /-- The face the dividers between tiled windows are drawn in, Emacs's
 `window-divider`: the divider is filled in its foreground. -/
@@ -2280,7 +2364,7 @@ def follow (margin : Nat) (bottom : Nat) (view : View) : EditorM Unit := do
     return
   let text := view.scroll.text
   let .anchor anchor ← text.marker view.scroll | throw .noSuchMarker
-  let area := Scroll.Area.ofRect view.snapshot view.rect bottom view.padding view.blocks
+  let area := Scroll.Area.ofRect view.snapshot view.rect bottom view.padding view.blocks view.folds
   let shown ← area.rows anchor.offset
   if shown.isEmpty then
     return
@@ -2393,7 +2477,7 @@ def spots (state : EditorState) (views : Array View) :
           let .anchor scroll ← shown.scroll.text.marker shown.scroll | throw .noSuchMarker
           let area :=
             Scroll.Area.ofRect shown.snapshot shown.rect (state.bottomRow view) shown.padding
-              shown.blocks
+              shown.blocks shown.folds
           area.spot scroll.offset anchor.offset
     return some (float.view, (answer : Except TextError (Option Display.Spot)).toOption.join)
 
@@ -2504,7 +2588,7 @@ def viewedBy (state : EditorState) (views : Array View) :
       let placed ← view.snapshot.excerpts
       let area :=
         Scroll.Area.ofRect view.snapshot view.rect (state.bottomRow view.id) view.padding
-          view.blocks
+          view.blocks view.folds
       return ExcerptView.shown placed (← area.rows anchor.offset)
     let .ok indices ← (observing asked : EditorM (Except TextError (Array Nat))) | continue
     let id := target.window.buffer

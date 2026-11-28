@@ -14,7 +14,7 @@ use std::sync::Arc;
 use super::fake::{CellLine, CellShaper};
 use super::{
     FontId, FontSpec, Glyph, Metrics, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper,
-    VisualLine,
+    VisualLine, Widths,
 };
 
 /// The fake, but for the texts it has a script for.
@@ -83,10 +83,10 @@ pub(crate) enum ScriptedLine {
 }
 
 impl ShapedLine for ScriptedLine {
-    fn break_lines(&self, width: Option<f32>) -> Vec<VisualLine> {
+    fn break_lines_in(&self, widths: Widths) -> Vec<VisualLine> {
         match self {
             Self::Scripted(lines) => lines.clone(),
-            Self::Cells(line) => line.break_lines(width),
+            Self::Cells(line) => line.break_lines_in(widths),
         }
     }
 }

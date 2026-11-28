@@ -9,6 +9,7 @@ import Editor.Completion.StyleContract
 import Editor.Config.Elaborator.Contract
 import Editor.Config.Elaborator.Model
 import Editor.Display.Contract
+import Editor.Folds
 import Editor.Headless.Journal.Contract
 import Editor.Headless.Queue.Contract
 import Editor.Indent
@@ -19,8 +20,10 @@ import Editor.Job.Protocol.Theorems
 import Editor.Job.ProtocolContract
 import Editor.Job.PumpContract
 import Editor.Job.SchedulerContract
-import Editor.Jumps.Go
+import Editor.Links
 import Editor.Main
+import Editor.Markdown.Cases
+import Editor.Markdown.View
 import Editor.PackageLibrary
 import Editor.SearchRoot
 import Editor.SyntaxTree.DeliveryContract

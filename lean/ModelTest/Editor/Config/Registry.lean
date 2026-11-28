@@ -16,6 +16,7 @@ import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.Extension
 import Editor.Face
+import Editor.Fold
 import Editor.Fuzzy
 import Editor.Fuzzy.Model
 import Editor.InputScheme
@@ -24,6 +25,7 @@ import Editor.Invocation
 import Editor.Job
 import Editor.Keymap
 import Editor.Layout
+import Editor.Link
 import Editor.Menu
 import Editor.Mode
 import Editor.ModeLine
@@ -1023,17 +1025,17 @@ def registryChecks : List Check :=
           (numbers (registry.extensionsAt key) == #[1, 2, 3, 4] &&
             numbers (registry.configExtensionsAt key) == #[3, 4] &&
             numbers (registry.configExtensionsAt other) == #[9] &&
-            numbers (registry.registered.answer (.configExtensions key)) == #[3, 4] &&
-            numbers (registry.registered.answer (.extensions key)) == #[1, 2, 3, 4] &&
+            numbers (registry.registered.answer EditorState.none (.configExtensions key)) == #[3, 4] &&
+            numbers (registry.registered.answer EditorState.none (.extensions key)) == #[1, 2, 3, 4] &&
             numbers (RegistryRequest.bare (.configExtensions key)) == #[]) },
     { name :=
         "the loop is told the name of the base a host installs: config's choice when it made one, else the latest package's default, else inherited"
       run :=
         let defaulted : Config.Registry := { baseDefaults := #["first", "second"] }
         pure
-          (({} : Config.Registry).registered.answer .environmentBase == Process.inheritedName &&
-            defaulted.registered.answer .environmentBase == "second" &&
-            { defaulted with environmentBase := some "chosen" }.registered.answer
+          (({} : Config.Registry).registered.answer EditorState.none .environmentBase == Process.inheritedName &&
+            defaulted.registered.answer EditorState.none .environmentBase == "second" &&
+            { defaulted with environmentBase := some "chosen" }.registered.answer EditorState.none
                 .environmentBase ==
               "chosen") },
     { name :=
@@ -1153,7 +1155,84 @@ def modeRegistryChecks : List Check :=
           | none => false
           | some state =>
             (modeRegistry.activeMaps TestScheme.scheme state ⟨9⟩).length == 1 &&
-              activeLookup modeRegistry state ⟨9⟩ Role.nextItem == .bound (invoke "global-next") }]
+              activeLookup modeRegistry state ⟨9⟩ Role.nextItem == .bound (invoke "global-next") },
+    { name :=
+        "in a buffer with links the links mode's keymaps go before its minor and major modes', and with no links, or no links mode registered, the buffer's own modes resolve as before"
+      run :=
+        let links := modeRegistry.replaceModes .config #[filling Links.modeName [Role.activate]]
+        let linked (state : EditorState) : EditorState :=
+          { state with
+            buffers :=
+              state.buffers.modify 0
+                (·.map
+                  ({ · with
+                    links :=
+                      #[{ start := 0, stop := 1, target := .command { command := "x" } }] })) }
+        pure <|
+          match onTextModel (withModes "major" ["m1"]) with
+          | none => false
+          | some state =>
+            activeLookup links (linked state) ⟨0⟩ Role.activate ==
+                .bound (filled Links.modeName Role.activate) &&
+              activeLookup links (linked state) ⟨0⟩ Role.nextItem ==
+                .bound (filled "m1" Role.nextItem) &&
+              activeLookup links state ⟨0⟩ Role.activate == .bound (filled "major" Role.activate) &&
+              activeLookup modeRegistry (linked state) ⟨0⟩ Role.activate ==
+                .bound (filled "major" Role.activate) },
+    { name :=
+        "in a buffer with foldable ranges the folds mode's keymaps go after the links mode's and before its minor and major modes', and with no foldable range, or no folds mode registered, not at all; the command a role is filled with never comes from the folds mode"
+      run :=
+        let both :=
+          modeRegistry.replaceModes .config
+            #[filling Links.modeName [Role.activate],
+              filling Folds.modeName [Role.toggle, Role.activate, Role.nextItem]]
+        let folding (links : Bool) (state : EditorState) : EditorState :=
+          { state with
+            buffers :=
+              state.buffers.modify 0
+                (·.map fun buffer =>
+                  { buffer with
+                    folds := #[{ start := 0, stop := 1, key := "k", text := "…" }]
+                    links :=
+                      if links then
+                        #[{ start := 0, stop := 1, target := .command { command := "x" } }]
+                      else #[] }) }
+        pure <|
+          match onTextModel (withModes "major" ["m1"]) with
+          | none => false
+          | some state =>
+            activeLookup both (folding true state) ⟨0⟩ Role.activate ==
+                .bound (filled Links.modeName Role.activate) &&
+              activeLookup both (folding false state) ⟨0⟩ Role.activate ==
+                .bound (filled Folds.modeName Role.activate) &&
+              activeLookup both (folding true state) ⟨0⟩ Role.toggle ==
+                .bound (filled Folds.modeName Role.toggle) &&
+              activeLookup both (folding true state) ⟨0⟩ Role.nextItem ==
+                .bound (filled Folds.modeName Role.nextItem) &&
+              activeLookup both state ⟨0⟩ Role.nextItem == .bound (filled "m1" Role.nextItem) &&
+              activeLookup both state ⟨0⟩ Role.activate == .bound (filled "major" Role.activate) &&
+              activeLookup modeRegistry (folding false state) ⟨0⟩ Role.nextItem ==
+                .bound (filled "m1" Role.nextItem) &&
+              both.roleCommand (some "major") #["m1"] Role.toggle == none &&
+              both.roleCommand (some "major") #["m1"] Role.nextItem ==
+                some (filled "m1" Role.nextItem).command },
+    { name :=
+        "the command a buffer's modes fill a role with is a minor mode's, the last added first, over the major mode's, a derived mode's over its parent's, never the links mode's, and none when no mode fills it"
+      run :=
+        let links := modeRegistry.replaceModes .config #[filling Links.modeName [Role.mark]]
+        pure
+          (links.roleCommand (some "major") #["m2", "m1"] Role.nextItem ==
+              some (filled "m2" Role.nextItem).command &&
+            links.roleCommand (some "major") #["m2", "m1"] Role.previousItem ==
+              some (filled "m1" Role.previousItem).command &&
+            links.roleCommand (some "major") #["m1"] Role.activate ==
+              some (filled "major" Role.activate).command &&
+            links.roleCommand (some "child") #[] Role.refresh ==
+              some (filled "base" Role.refresh).command &&
+            links.roleCommand (some "child") #[] Role.mark ==
+              some (filled "child" Role.mark).command &&
+            links.roleCommand (some "major") #[] Role.mark == none &&
+            links.roleCommand none #[] Role.activate == none) }]
 
 /-- The checks of what the registry holds for the key hints: a binding's
 description on its keymap, and the prefix names, by owner, expanded against

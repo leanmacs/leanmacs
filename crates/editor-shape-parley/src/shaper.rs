@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use editor_layout::shaper::{
     FontId, FontRun, FontSpec, Glyph, LineHeight, Metrics, ResolvedFont, ResolvedFontId,
-    ShapeInput, ShapedLine, Shaper, Slant, VisualLine,
+    ShapeInput, ShapedLine, Shaper, Slant, VisualLine, Widths,
 };
 use parley::fontique::{GenericFamily, SourceCache};
 use parley::{
@@ -170,6 +170,11 @@ fn stand_ins(text: &str) -> Cow<'_, str> {
 /// for in (the spec's own, then `default`, then `fallbacks` in order), the
 /// size in pixels, the weight, the style and the line height.
 ///
+/// A spec's family that is a CSS generic family name (`monospace`,
+/// `system-ui`, `sans-serif`, ...; [`spec_families`]) is that generic
+/// family, whatever families the set gives for it; any other is a family
+/// by its name.
+///
 /// The matches on [`Slant`] and [`LineHeight`] are exhaustive on purpose:
 /// this is where each value of a font attribute of the port is stated to
 /// Parley, so a new one must be stated here too.
@@ -186,7 +191,7 @@ fn properties<'a>(
     let families: Vec<FontFamilyName<'a>> = spec
         .family
         .iter()
-        .map(named)
+        .flat_map(|name| spec_families(name))
         .chain([default])
         .chain(fallbacks.iter().map(named))
         .collect();
@@ -206,6 +211,23 @@ fn properties<'a>(
             LineHeight::Pixels(pixels) => parley::LineHeight::Absolute(pixels.as_pixels()),
         }),
     ]
+}
+
+/// The families a spec's family `name` stands for, in the order a
+/// character is looked for in them: a generic family name is that
+/// generic family, and `system-ui` is followed by `sans-serif`, so a set
+/// that gives no UI family still shapes it in its proportional family
+/// rather than falling to the default; any other name is the family of
+/// that name.
+fn spec_families(name: &str) -> Vec<FontFamilyName<'_>> {
+    match GenericFamily::parse(name) {
+        Some(GenericFamily::SystemUi) => vec![
+            FontFamilyName::Generic(GenericFamily::SystemUi),
+            FontFamilyName::Generic(GenericFamily::SansSerif),
+        ],
+        Some(generic) => vec![FontFamilyName::Generic(generic)],
+        None => vec![FontFamilyName::named(name)],
+    }
 }
 
 /// What placing a cluster's glyphs on a line needs of the cluster:
@@ -460,9 +482,22 @@ impl ParleyLine {
 }
 
 impl ShapedLine for ParleyLine {
-    fn break_lines(&self, width: Option<f32>) -> Vec<VisualLine> {
+    /// Parley's breaker takes each line's maximum as it goes: the first
+    /// line is broken at the first width, under a layout maximum of the
+    /// larger of the two widths (Parley holds a line's maximum to at most
+    /// the layout's), and the rest by Parley's own `break_remaining` at
+    /// the rest width, which also places an inline box, though a shaped
+    /// line has none. A yield that is no line, which only an inline box
+    /// gives, is yielded again to `break_remaining`.
+    fn break_lines_in(&self, widths: Widths) -> Vec<VisualLine> {
+        let room = |width: Option<f32>| width.unwrap_or(f32::MAX);
         let mut layout = self.layout.lock().unwrap_or_else(PoisonError::into_inner);
-        layout.break_all_lines(width);
+        let mut breaker = layout.break_lines();
+        let state = breaker.state_mut();
+        state.set_layout_max_advance(room(widths.first).max(room(widths.rest)));
+        state.set_line_max_advance(room(widths.first));
+        breaker.break_next();
+        breaker.break_remaining(room(widths.rest));
         layout.lines().map(|line| self.visual_line(&line)).collect()
     }
 }

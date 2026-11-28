@@ -119,7 +119,7 @@ and the answer as words, and its status. -/
 @[extern "editor_glue_display_rows"]
 private opaque Display.rowsRaw (display : @& Display) (snapshot : @& Snapshot)
     (width height across down top gutter : UInt64) (anchor : USize) (blockWords : @& ByteArray)
-    (blockText : @& String) : IO RawWords
+    (blockText : @& String) (foldWords : @& ByteArray) (foldText : @& String) : IO RawWords
 
 /-- The rows a view `width` pixels wide and `height` tall, its content inset
 `across` and `down` points from its edges and its rows a further `top`
@@ -133,21 +133,26 @@ in the layout a view's blocks take in a scene after its padding
 with the blocks drawn between them. Words that spell no blocks are
 answered as a bad anchor is, `none`. None by default. `gutter` is the width of
 the view's gutter column, in points, a further inset of its text from its
-left; none by default. -/
+left; none by default. `foldWords` and `foldText` are the view's folds, in
+the layout a view's folds take in a scene after its stops: each is one row.
+Words that spell no folds are answered as a bad anchor is. None by
+default. -/
 def Display.rows (display : Display) (snapshot : Snapshot) (width height : UInt64) (anchor : USize)
     (across down top : UInt64 := 0) (blockWords : Array UInt64 := #[0]) (blockText : String := "")
-    (gutter : UInt64 := 0) : IO (Option (Array DisplayRow)) := do
+    (gutter : UInt64 := 0) (foldWords : Array UInt64 := #[0]) (foldText : String := "") :
+    IO (Option (Array DisplayRow)) := do
   rowsOf?
       (←
         display.rowsRaw snapshot width height across down top gutter anchor
-            (blockWords.foldl pushWord ByteArray.empty) blockText)
+            (blockWords.foldl pushWord ByteArray.empty) blockText
+            (foldWords.foldl pushWord ByteArray.empty) foldText)
 
 /-- `Display.move` as it crosses: the lines as a 64-bit two's complement
 number, the goal as a presence flag and a value, and the answer as words. -/
 @[extern "editor_glue_display_move"]
 private opaque Display.moveRaw (display : @& Display) (snapshot : @& Snapshot)
     (width across gutter : UInt64) (position : USize) (lines : UInt64) (goalPresent : Bool)
-    (goal : UInt64) : IO RawWords
+    (goal : UInt64) (foldWords : @& ByteArray) (foldText : @& String) : IO RawWords
 
 /-- The position of `snapshot` `lines` visual rows below `position` (above
 when negative) in a view `width` pixels wide whose text is inset `across`
@@ -155,14 +160,17 @@ points each side, aiming for `goal`, or for the position's own x when there
 is none; and the goal to pass on. A count of lines past what 64 bits hold
 is cut to the largest, which is past every text's first and last row
 anyway. `none` when `position` is not a position of the text. `gutter` is the
-width of the view's gutter column, in points, taken off the width once. -/
+width of the view's gutter column, in points, taken off the width once. The
+folds are as for `Display.rows`: each is one row to the move. -/
 def Display.move (display : Display) (snapshot : Snapshot) (width : UInt64) (position : USize)
-    (lines : Int) (goal : Option UInt64) (across : UInt64 := 0) (gutter : UInt64 := 0) :
-    IO (Option DisplayMoved) := do
+    (lines : Int) (goal : Option UInt64) (across : UInt64 := 0) (gutter : UInt64 := 0)
+    (foldWords : Array UInt64 := #[0]) (foldText : String := "") : IO (Option DisplayMoved) := do
   let bound : Int := 2 ^ 63
   let clamped := max (-bound) (min lines (bound - 1))
   let word := if clamped < 0 then (2 ^ 64 + clamped).toNat.toUInt64 else clamped.toNat.toUInt64
-  let raw ← display.moveRaw snapshot width across gutter position word goal.isSome (goal.getD 0)
+  let raw ←
+    display.moveRaw snapshot width across gutter position word goal.isSome (goal.getD 0)
+        (foldWords.foldl pushWord ByteArray.empty) foldText
   if raw.status != 0 then
     return none
   match wordsOf? raw.words with
@@ -188,20 +196,24 @@ and the answer as words, and its status. -/
 @[extern "editor_glue_display_spot"]
 private opaque Display.spotRaw (display : @& Display) (snapshot : @& Snapshot)
     (width height across down top gutter : UInt64) (anchor position : USize)
-    (blockWords : @& ByteArray) (blockText : @& String) : IO RawWords
+    (blockWords : @& ByteArray) (blockText : @& String) (foldWords : @& ByteArray)
+    (foldText : @& String) : IO RawWords
 
 /-- Where `position` of `snapshot` is drawn in a view `width` pixels wide
 and `height` tall, padded as for `Display.rows`, that shows from the visual
 row that holds `anchor`: `some none` when the view does not show it, and
 `none` when `anchor` or `position` is not a position of the text. Words
-that do not spell a spot are an error. The blocks are as for
-`Display.rows`: a position below a block is lower by the block's rows. -/
+that do not spell a spot are an error. The blocks and the folds are as for
+`Display.rows`: a position below a block is lower by the block's rows, and
+one a fold covers is at its placeholder's start. -/
 def Display.spot (display : Display) (snapshot : Snapshot) (width height : UInt64)
     (anchor position : USize) (across down top : UInt64 := 0) (blockWords : Array UInt64 := #[0])
-    (blockText : String := "") (gutter : UInt64 := 0) : IO (Option (Option DisplaySpot)) := do
+    (blockText : String := "") (gutter : UInt64 := 0) (foldWords : Array UInt64 := #[0])
+    (foldText : String := "") : IO (Option (Option DisplaySpot)) := do
   let raw ←
     display.spotRaw snapshot width height across down top gutter anchor position
         (blockWords.foldl pushWord ByteArray.empty) blockText
+        (foldWords.foldl pushWord ByteArray.empty) foldText
   if raw.status != 0 then
     return none
   match wordsOf? raw.words with
@@ -211,6 +223,31 @@ def Display.spot (display : Display) (snapshot : Snapshot) (width height : UInt6
     return some (some { x, y, height })
   | _ =>
     throw (IO.userError "the library's words do not spell a spot")
+
+/-- `Display.measure` as it crosses: the run as one block's words and
+string, and the answer as words, and its status. -/
+@[extern "editor_glue_display_measure"]
+private opaque Display.measureRaw (display : @& Display) (runWords : @& ByteArray)
+    (runText : @& String) : IO RawWords
+
+/-- How wide a run is laid out in its faces over the default face, unbroken,
+in whole points rounded up: the width a generator computes align-to stops
+from. The run is the one block `runWords` and `runText` spell, in the
+layout a view's blocks take in a scene after its padding
+(`crates/editor-ffi/src/display/wire.rs`), drawn before offset 0: its text
+is the run and its decorations the run's faces. `none` when the words
+spell no block, more than one, or one drawn before another offset. Words
+that do not spell a width are an error. -/
+def Display.measure (display : Display) (runWords : Array UInt64) (runText : String) :
+    IO (Option UInt64) := do
+  let raw ← display.measureRaw (runWords.foldl pushWord ByteArray.empty) runText
+  if raw.status != 0 then
+    return none
+  match wordsOf? raw.words with
+  | some #[width] =>
+    return some width
+  | _ =>
+    throw (IO.userError "the library's words do not spell a width")
 
 /-- `Display.publish` as it crosses: the words as bytes, the string, and the
 snapshot handles, which the glue passes as a C array. -/

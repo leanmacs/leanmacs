@@ -130,6 +130,16 @@
 # another crate, it fails ("crate 'editor-platform-arboard = 0.1.0' is
 # explicitly banned").
 #
+# For the URL opener (2026-11-27, the rich-text display's phase 3), whose
+# entries came in the commit that added its adapter, `editor-platform-open`,
+# and the commit in which `editor-ffi` came to depend on it, one commit
+# here. The port is in `editor-platform`, so the adapter is a wrapper of
+# that crate's entry. `open`'s wrapper is the adapter alone, and the
+# adapter's is `editor-ffi`, as `arboard`'s and `editor-platform-arboard`'s
+# are. `open`'s own dependencies (`libc`, and on Linux `is-wsl` with
+# `is-docker` and `once_cell`) have no entry: they are reached only
+# through `open`.
+#
 # For `raw-window-handle` (2026-11-14), whose entry came in the commit in
 # which an adapter first named its types: `editor-platform-winit` turns
 # the handles winit gives into the port's `NativeWindow`, through winit's
@@ -697,8 +707,10 @@ deny = [
   { crate = "objc2-foundation", wrappers = ["editor-platform-winit", "arboard", "fontique", "objc2-app-kit", "objc2-metal", "objc2-quartz-core", "objc2-ui-kit", "raw-window-metal", "wgpu-hal", "winit-appkit", "winit-common", "winit-uikit"], reason = "Foundation is named by the window adapter alone, for its application delegate's URLs and defaults and the edge insets of the corner clearance's reading (src/corner.rs), and by its contract example, to send the quit Apple Event; every other crate of the workspace reaches the system through a port; the other wrappers are the third-party crates that depend on it" },
   { crate = "objc2", wrappers = ["editor-platform-winit", "arboard", "block2", "dispatch2", "fontique", "objc2-app-kit", "objc2-core-foundation", "objc2-core-graphics", "objc2-foundation", "objc2-metal", "objc2-quartz-core", "objc2-ui-kit", "raw-window-metal", "wgpu-hal", "winit-appkit", "winit-common", "winit-uikit"], reason = "the Objective-C runtime is named by the window adapter alone, to define its application delegate, which also answers the system's asks to terminate; every other crate of the workspace reaches the system through a port; the other wrappers are the third-party crates that depend on it" },
   { crate = "editor-platform-winit", wrappers = ["editor-ffi"], reason = "the window adapter is linked only by the crate that wires the library together; everything else reaches a window through the port" },
-  { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit", "editor-platform-arboard", "editor-render-wgpu"], reason = "the window port has two users, its adapter and the crate that runs it onto the event queue; the clipboard port beside it has one, its adapter; and the crate of the renderer's real adapters takes one type of it, `NativeWindow`, to make a surface on a window; another is a decision, so it is made here" },
+  { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit", "editor-platform-arboard", "editor-platform-open", "editor-render-wgpu"], reason = "the window port has two users, its adapter and the crate that runs it onto the event queue; the clipboard port and the URL opener port beside it have one each, its adapter; and the crate of the renderer's real adapters takes one type of it, `NativeWindow`, to make a surface on a window; another is a decision, so it is made here" },
   { crate = "arboard", wrappers = ["editor-platform-arboard"], reason = "arboard stays behind the clipboard port: only its adapter crate may name its types" },
+  { crate = "open", wrappers = ["editor-platform-open"], reason = "open stays behind the URL opener port: only its adapter crate may name it" },
+  { crate = "editor-platform-open", wrappers = ["editor-ffi"], reason = "the URL opener's adapter is linked only by the crate that wires the library together, for the opener Lean's window mode hands its jobs; everything else reaches the desktop's handler through the port, and every test through its recording or failing opener" },
   { crate = "editor-platform-arboard", wrappers = ["editor-ffi"], reason = "the clipboard adapter is linked only by the crate that wires the library together, for the clipboard Lean's window mode opens; everything else reaches a clipboard through the port, and every test through its memory clipboard" },
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
   { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout", "editor-syntax", "editor-syntax-treesitter"], reason = "text storage has three users, the crate that puts a text behind a handle for Lean, layout, which reads its snapshots, patches and selections as plain values, and the syntax core, which parses snapshots and reparses from the edit log's patches; the file port it defines has one adapter, which implements it; and the syntax port's adapter reads a snapshot's chunks into the parser and takes the port's edits and points in its types; another is a decision, so it is made here" },

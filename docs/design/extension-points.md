@@ -273,6 +273,16 @@ had. Its one shipped value is the login-shell package's `login-shell`,
 the default base because its package calls `environmentBase` (a
 package's call is a default, which config's overrides).
 
+The core declares one choice of its own, `Links.Resolver`
+(`lean/Editor/Links.lean`; [text-and-display.md](text-and-display.md),
+"Followable spans, as built"): the resolver of a scheme of link
+references, chosen by the reference's scheme (`rdm` of `rdm:task/x`) with
+`Extension.named`, so config's resolver of a scheme replaces a package's.
+A resolver acts: it is handed the call and the reference's rest, and may
+follow a target it resolved with `Links.followTarget`. A scheme nothing
+resolves is said in the echo area. Its reader, `link-follow`, is
+registered by the package `link-commands`.
+
 **A package's setting** is a function config calls to register config's
 value at a point in place of the package's, as `Mise.executable` does. It
 registers with `Extension.setting`, which names the setting beside the

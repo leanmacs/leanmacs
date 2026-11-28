@@ -18,12 +18,13 @@ import Editor.Test.Linked.Jobs
 import Editor.Test.Linked.Services
 import Editor.Text
 import Editor.Text.Real
+import Editor.UrlOpener.Real
 
 /-!
 # Contract tests: `Editor/Job/Contract.lean`
 
 The tests of `Editor/Job/Contract.lean`: `jobFailures`, `postFailures`,
-`snapshotJobFailures`, `fuzzyJobFailures`, `grammarJobFailures`, `fileFailures`, `processFailures` and
+`snapshotJobFailures`, `fuzzyJobFailures`, `urlOpenerJobFailures`, `grammarJobFailures`, `fileFailures`, `processFailures` and
 `fileWatchFailures`, the job port's contract against the runner over the
 library's services. The root module `ContractTest` runs them; its module doc
 says what each shows.
@@ -84,6 +85,31 @@ runner given the library's matcher (`Fuzzy.real`). -/
 def fuzzyJobFailures (services : Job.Services) : IO (List String) := do
   let failed ← JobContract.failures (runOnTimers services) JobContract.fuzzyProperties
   return failed.map (s!"the job runner over the library's matcher: {·}")
+
+/-- The names of the job port's URL opener properties that do not hold of
+the runner given the library's openers through the glue: its recording
+opener (`UrlOpener.Real.recording`) for a property whose opener takes every
+URL, and its failing one (`UrlOpener.Real.failing`) for one that refuses, so
+no run reaches the desktop's opener. What the recording opener took is read
+back through the library; a failing one took nothing. -/
+def urlOpenerJobFailures (services : Job.Services) : IO (List String) := do
+  let failed ←
+    JobContract.urlOpenerFailures
+        (fun refusal job => do
+          let real ←
+            match refusal with
+            | some reason =>
+              UrlOpener.Real.failing reason
+            | none =>
+              UrlOpener.Real.recording
+          let outcome ← runOnTimers { services with urlOpener := real.handle } job
+          let held :=
+            match outcome with
+            | .finished held => some held
+            | _ => none
+          return (held, (← real.opened).getD #[]))
+        JobContract.urlOpenerProperties
+  return failed.map (s!"the job runner over the library's openers: {·}")
 
 /-- What must hold of the library's grammar registrations once the grammar
 properties have run: it is about the library's count, so the port cannot

@@ -561,3 +561,51 @@ fn a_glyph_drawn_above_where_it_would_be_has_a_dy_less_than_nothing() {
     assert_eq!(over_small.dy, 0.0, "{over_small:?}");
     assert!(over_capital.dy < 0.0, "{over_capital:?}");
 }
+
+/// A set of the proportional and the monospace fixture, the monospace
+/// family its default, with each of `generics` given as the family
+/// beside it.
+fn generic_set(generics: &[(&str, &str)]) -> ParleyShaper {
+    let mut fonts =
+        FontSet::only(MONO_FAMILY, &[], [SANS.to_vec(), MONO.to_vec()]).expect("the fixture fonts");
+    for (generic, family) in generics {
+        fonts = fonts
+            .with_generic(generic, &[family])
+            .expect("a generic family");
+    }
+    ParleyShaper::new(fonts)
+}
+
+/// The file the glyph of `a` is drawn from when it is shaped in a font
+/// of the family `name`, as `shaper` gives it.
+fn a_drawn_from(shaper: &ParleyShaper, name: &str, file: &[u8]) -> bool {
+    let font = shaper.font(&family(name));
+    let line = one_line(shaper, &in_font("a", font));
+    drawn_from(&font_of(shaper, &line.glyphs[0]), file)
+}
+
+#[test]
+fn a_spec_naming_a_generic_family_is_shaped_in_the_family_the_set_gives_for_it() {
+    // The default is the monospace fixture, so a run in the proportional
+    // one is drawn there only because `system-ui` is given as it.
+    let shaper = generic_set(&[("system-ui", SANS_FAMILY), ("monospace", MONO_FAMILY)]);
+    assert!(a_drawn_from(&shaper, "system-ui", SANS));
+    assert!(a_drawn_from(&shaper, "monospace", MONO));
+    // A generic name is read as CSS reads it, whatever its case.
+    assert!(a_drawn_from(&shaper, "System-UI", SANS));
+}
+
+#[test]
+fn a_spec_naming_system_ui_where_the_set_gives_none_is_shaped_in_its_sans_serif() {
+    let shaper = generic_set(&[("sans-serif", SANS_FAMILY)]);
+    assert!(a_drawn_from(&shaper, "system-ui", SANS));
+    assert!(a_drawn_from(&shaper, "sans-serif", SANS));
+}
+
+#[test]
+fn a_generic_family_the_set_gives_nothing_for_falls_to_the_default() {
+    let shaper = generic_set(&[]);
+    assert!(a_drawn_from(&shaper, "system-ui", MONO));
+    assert!(a_drawn_from(&shaper, "monospace", MONO));
+    assert!(a_drawn_from(&shaper, "sans-serif", MONO));
+}

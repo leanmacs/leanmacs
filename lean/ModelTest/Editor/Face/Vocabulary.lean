@@ -112,6 +112,15 @@ def faceVocabularyChecks : List Check :=
             TabBar.face != TabBar.selectedFace &&
             [TabBar.face, TabBar.selectedFace].all fun name =>
               Theme.builtin.any (·.name == name)) },
+    { name :=
+        "the vocabulary lists the markup faces: a heading face for each level 1 to 6, emphasis, strong, code span, code block, link, quote, list marker, table header, and the prose face"
+      run :=
+        let headings := (List.range 6).map fun level => s!"text.heading.{level + 1}"
+        let markup :=
+          headings ++
+            ["text.emphasis", "text.strong", "text.code-span", "text.code-block", "text.link",
+              "text.quote", "text.list-marker", "text.table-header", "text.prose"]
+        pure (markup.all fun name => Face.vocabularyNames.contains ⟨name⟩) },
     { name := "the vocabulary lists the four names layout reads by itself"
       run :=
         pure

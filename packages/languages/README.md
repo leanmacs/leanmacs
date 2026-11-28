@@ -76,8 +76,8 @@ shipped: the editor reads neither.
 |---|---|---|---|---|---|
 | `rust` | crate `tree-sitter-rust` =0.24.2 | the crate's `highlights.scm` and `injections.scm`; the repository's own `textobjects.scm` and `indents.scm` | <https://github.com/tree-sitter/tree-sitter-rust> | MIT | [`grammars/licenses/tree-sitter-rust`](grammars/licenses/tree-sitter-rust), the crate's `LICENSE` |
 | `json` | crate `tree-sitter-json` =0.24.8 | the crate's `highlights.scm` | <https://github.com/tree-sitter/tree-sitter-json> | MIT | [`grammars/licenses/tree-sitter-json`](grammars/licenses/tree-sitter-json), upstream's at `v0.24.8` |
-| `markdown` | crate `tree-sitter-md` =0.5.4, `tree-sitter-markdown/` | the subdirectory's `highlights.scm` and `injections.scm` | <https://github.com/tree-sitter-grammars/tree-sitter-markdown> | MIT | [`grammars/licenses/tree-sitter-md`](grammars/licenses/tree-sitter-md), upstream's at `v0.5.4` |
-| `markdown_inline` | crate `tree-sitter-md` =0.5.4, `tree-sitter-markdown-inline/` | the subdirectory's `highlights.scm` and `injections.scm` | as `markdown` | MIT | as `markdown` |
+| `markdown` | crate `tree-sitter-md` =0.5.4, `tree-sitter-markdown/` | the subdirectory's `injections.scm`; the repository's own `highlights.scm` (the subdirectory's, copied with its provenance and changed so a heading is captured by its level, a code block apart from a code span, and a link reference definition's title as a link), `rendered.scm` and `rendered-injections.scm` | <https://github.com/tree-sitter-grammars/tree-sitter-markdown> | MIT | [`grammars/licenses/tree-sitter-md`](grammars/licenses/tree-sitter-md), upstream's at `v0.5.4` |
+| `markdown_inline` | crate `tree-sitter-md` =0.5.4, `tree-sitter-markdown-inline/` | the subdirectory's `injections.scm`; the repository's own `highlights.scm` (the subdirectory's, copied with its provenance and changed so a link's title is captured as a link, not as a code span) and `rendered.scm` | as `markdown` | MIT | as `markdown` |
 | `toml` | crate `tree-sitter-toml-ng` =0.7.0 | the crate's `highlights.scm` | <https://github.com/tree-sitter-grammars/tree-sitter-toml> | MIT | [`grammars/licenses/tree-sitter-toml-ng`](grammars/licenses/tree-sitter-toml-ng), upstream's at `v0.7.0` |
 | `lean` | directory `vendor/tree-sitter-lean` (`tree-sitter-lean` 0.2.0, commit `0d28e5d6`) | the copy's `highlights.scm` alone | <https://github.com/Julian/tree-sitter-lean> | MIT | [`grammars/licenses/tree-sitter-lean`](grammars/licenses/tree-sitter-lean), the copy's `LICENSE` |
 | `yaml` | crate `tree-sitter-yaml` =0.7.2 | the crate's `highlights.scm` | <https://github.com/tree-sitter-grammars/tree-sitter-yaml> | MIT | [`grammars/licenses/tree-sitter-yaml`](grammars/licenses/tree-sitter-yaml) |
@@ -96,7 +96,9 @@ shipped: the editor reads neither.
 `lean`, update the vendored copy as [`vendor/README.md`](../../vendor/README.md)
 says), copy its queries from the new version into `grammars/queries/<name>/`
 over the old ones (`rust`'s `textobjects.scm` and `indents.scm` are the
-repository's own: check them against the new node types), refresh its
+repository's own, as are `markdown`'s and `markdown_inline`'s
+`highlights.scm`, `rendered.scm` and `rendered-injections.scm`: check them
+against the new node types), refresh its
 notice in `grammars/licenses/`, and update the row above. Make a joined
 `highlights.scm` again from its parts, in the order of the row, with `cat`
 (`typescript`'s, `tsx`'s and `cpp`'s take parts of another grammar's crate:

@@ -30,6 +30,8 @@ packages = { select = ["keyword:editor-interface", "keyword:editor-input-scheme"
   "pkg:files",
   "pkg:frame-commands",
   "pkg:languages",
+  "pkg:fold-commands",
+  "pkg:link-commands",
   "pkg:login-shell",
   "pkg:menu",
   "pkg:minibuffer",
@@ -53,7 +55,7 @@ toolchain = ["external:Init", "external:Std", "external:Lean", "external:Lake"]
 linked-kit = ["mod:Editor.Test.Linked"]
 
 doubles = { select = [
-  "mod:Editor.Completion.Fake!", "mod:Editor.Job.Fake!",
+  "mod:Editor.Completion.Fake!", "mod:Editor.Job.Fake!", "mod:Editor.Markdown.Cases!",
   "mod:Editor.SyntaxTree.Fake!", "mod:Editor.Headless.Journal.Fake!", "mod:Editor.InputScheme.Test!",
   "mod:Editor.Loop.Driver!", "mod:Editor.Config.Packages!", "mod:Editor.Theme.Picture!",
   "mod:Editor.Test",
@@ -72,6 +74,7 @@ doubles = { select = [
   "mod:Editor.SyntaxTree.Model",
   "mod:Editor.SyntaxTree.Registration.Model",
   "mod:Editor.Text.Model",
+  "mod:Editor.UrlOpener.Model",
   "mod:Editor.Watch.Model",
   "mod:Editor.Clipboard.Contract!",
   "mod:Editor.Completion.AtPointContract!",
@@ -120,6 +123,7 @@ internal = { select = [
   "mod:Editor.Restart.Real!",
   "mod:Editor.SyntaxTree.Real!",
   "mod:Editor.Text.Real!",
+  "mod:Editor.UrlOpener.Real!",
   "mod:Editor.Watch.Real!",
   "mod:Editor.Clipboard.InProcess!", "mod:Editor.Display.Recorder!", "mod:Editor.Job.Runner!",
   "mod:Editor.Job.Jobs!", "mod:Editor.Job.Table!", "mod:Editor.Job.Pool!",
@@ -140,12 +144,13 @@ linked-root-extra = { select = ["mod:Editor!", "mod:Editor.Headless!",
   "mod:Editor.Restart.Real!",
   "mod:Editor.SyntaxTree.Real!",
   "mod:Editor.Text.Real!",
+  "mod:Editor.UrlOpener.Real!",
   "mod:Editor.Watch.Real!",
   "mod:Editor.Window.Real!",
   "mod:Editor.WindowCheck.Real!",
 ], except = ["mod:Editor.Window.Real!", "mod:Editor.WindowCheck.Real!"] }
 
-package-tests = ["mod:AtPointApiTest", "mod:AtPointTest", "mod:BindingSearchApiTest", "mod:BindingSearchTest", "mod:BuffersApiTest", "mod:BuffersTest", "mod:CompileApiTest", "mod:CompileTest", "mod:CompletionApiTest", "mod:CompletionTest", "mod:EvilApiTest", "mod:EvilTest", "mod:ExApiTest", "mod:ExTest", "mod:ExecuteCommandApiTest", "mod:ExecuteCommandTest", "mod:FilesTest", "mod:FrameCommandsApiTest", "mod:FrameCommandsTest", "mod:LanguagesTest", "mod:LoginShellTest", "mod:MenuTest", "mod:MinibufferApiTest", "mod:MinibufferTest", "mod:MiseTest", "mod:ModeLineTest", "mod:PackageSetTest", "mod:ProjectApiTest", "mod:ProjectSearchApiTest", "mod:ProjectSearchTest", "mod:RestoreTest", "mod:ShellApiTest", "mod:ShellTest", "mod:ShippedThemesTest", "mod:TabCommandsApiTest", "mod:TabCommandsTest", "mod:ThemesApiTest", "mod:ThemesTest", "mod:VcApiTest", "mod:VersionControlTest", "mod:WindowCommandsApiTest", "mod:WindowCommandsTest", "mod:WorkingSetApiTest", "mod:WorkingSetTest", "mod:WorkspaceTest"]
+package-tests = ["mod:AtPointApiTest", "mod:AtPointTest", "mod:BindingSearchApiTest", "mod:BindingSearchTest", "mod:BuffersApiTest", "mod:BuffersTest", "mod:CompileApiTest", "mod:CompileTest", "mod:CompletionApiTest", "mod:CompletionTest", "mod:EvilApiTest", "mod:EvilTest", "mod:ExApiTest", "mod:ExTest", "mod:ExecuteCommandApiTest", "mod:ExecuteCommandTest", "mod:FilesTest", "mod:FoldCommandsTest", "mod:FrameCommandsApiTest", "mod:FrameCommandsTest", "mod:LanguagesTest", "mod:LinkCommandsTest", "mod:LoginShellTest", "mod:MenuTest", "mod:MinibufferApiTest", "mod:MinibufferTest", "mod:MiseTest", "mod:ModeLineTest", "mod:PackageSetTest", "mod:ProjectApiTest", "mod:ProjectSearchApiTest", "mod:ProjectSearchTest", "mod:RestoreTest", "mod:ShellApiTest", "mod:ShellTest", "mod:ShippedThemesTest", "mod:TabCommandsApiTest", "mod:TabCommandsTest", "mod:ThemesApiTest", "mod:ThemesTest", "mod:VcApiTest", "mod:VersionControlTest", "mod:WindowCommandsApiTest", "mod:WindowCommandsTest", "mod:WorkingSetApiTest", "mod:WorkingSetTest", "mod:WorkspaceTest"]
 package-linked = ["mod:CompileTest.Linked", "mod:CompletionTest.Linked", "mod:EvilTest.Linked", "mod:ExTest.Linked", "mod:FilesTest.Linked", "mod:LanguagesTest.Linked", "mod:LoginShellTest.Linked", "mod:MiseTest.Linked", "mod:ProjectSearchTest.Linked", "mod:ShellTest.Linked", "mod:ShippedThemesTest.Linked", "mod:ThemesTest.Linked", "mod:VcApiTest.Linked", "mod:VersionControlTest.Linked", "mod:WorkingSetTest.Linked", "mod:WorkspaceTest.Linked"]
 package-linked-roots = ["mod:CompileTest.Linked!", "mod:CompletionTest.Linked!", "mod:EvilTest.Linked!", "mod:ExTest.Linked!", "mod:FilesTest.Linked!", "mod:LanguagesTest.Linked!", "mod:LoginShellTest.Linked!", "mod:MiseTest.Linked!", "mod:ProjectSearchTest.Linked!", "mod:ShellTest.Linked!", "mod:ShippedThemesTest.Linked!", "mod:ThemesTest.Linked!", "mod:VersionControlTest.Linked!", "mod:WorkingSetTest.Linked!", "mod:WorkspaceTest.Linked!"]
 
@@ -278,9 +283,11 @@ roots = [
   "mod:ExecuteCommandApiTest.Model!",
   "mod:ExecuteCommandTest.Model!",
   "mod:FilesTest.Model!",
+  "mod:FoldCommandsTest.Model!",
   "mod:FrameCommandsApiTest.Model!",
   "mod:FrameCommandsTest.Model!",
   "mod:LanguagesTest.Model!",
+  "mod:LinkCommandsTest.Model!",
   "mod:LoginShellTest.Model!",
   "mod:MenuTest.Model!",
   "mod:MinibufferApiTest.Model!",
@@ -341,6 +348,8 @@ targets = [
   "pkg:frame-commands",
   "pkg:frame-commands-api",
   "pkg:languages",
+  "pkg:fold-commands",
+  "pkg:link-commands",
   "pkg:login-shell",
   "pkg:menu",
   "pkg:minibuffer",

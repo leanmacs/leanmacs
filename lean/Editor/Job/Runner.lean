@@ -339,15 +339,22 @@ at once and registers no wait. It is `IO`, and may throw: the runner
 catches what it throws and answers the job `.error`, `fuzzy: ` and the
 message, since an answer cannot throw.
 
+The system's URL opener is a `UrlOpenerHandler` (`Editor/UrlOpener.lean`),
+which answers on the job's own thread, as the matcher does, and registers
+no wait: an open may block until the system has the request, which is why
+it is a job's. What it throws is answered as a refusal.
+
 `Services` is what a runner is given: the table, the clock, the files, the
 processes, the file watches, the diffs, the searches, the grammar
-registrations, the environments and the matcher. A runner that is given no file service has `Files.absent`,
+registrations, the environments, the matcher and the URL opener. A runner that is given no file service has `Files.absent`,
 and one that is given no process service has `Processes.absent`, each of
 which refuses every request as failed, at once: an error as a value, and
 the job goes on; one that is given no watch service has
 `FileWatches.absent`, which does the same. One that is given no matcher
 has `Fuzzy.absent`, which throws, so a fuzzy request there is answered an
 error, and never a model's order as if it were a library's.
+One that is given no URL opener has `UrlOpener.absent`, which refuses every
+URL, so a host with no window launches nothing.
 
 A snapshot read is answered by `snapshots`, a function from a snapshot's id
 to its text, at once and with no wait. One that is given none answers
@@ -900,6 +907,9 @@ structure Services where
   environments : Environments := Environments.inherited
   /-- The fuzzy matcher. A runner that is given none has `Fuzzy.absent`. -/
   fuzzy : FuzzyHandler := Fuzzy.absent
+  /-- The system's URL opener. A runner that is given none has
+  `UrlOpener.absent`, which refuses every URL. -/
+  urlOpener : UrlOpenerHandler := UrlOpener.absent
   /-- The text of a snapshot a command took, as the published table holds
   it now (`JobRequest.snapshot`); `none` for an id that names nothing or
   was released. A runner that is given none answers `none` for every id. -/
@@ -1418,6 +1428,14 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
       return .now (.ok reply)
     | .error error =>
       return .now (.error s!"fuzzy: {error}")
+  | .urlOpener request => do
+    -- The opener answers on the job's thread, and may block until the system
+    -- has the request; what it throws is a refusal, as a value.
+    match ← (handle.services.urlOpener request).toBaseIO with
+    | .ok reply =>
+      return .now reply
+    | .error error =>
+      return .now (request.thrown s!"{error}")
   | .snapshot id => return .now (← handle.services.snapshots id)
   | .package request => do
     -- A service the runner was not given starts nothing, as a child the

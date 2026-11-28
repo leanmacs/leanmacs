@@ -17,6 +17,7 @@ import Editor.Ffi.Render
 import Editor.Ffi.Search
 import Editor.Ffi.Syntax
 import Editor.Ffi.Timers
+import Editor.Ffi.UrlOpener
 import Editor.Ffi.Watches
 import Editor.Ffi.Window
 
@@ -58,6 +59,7 @@ command layout `Launch` takes) come with the families that build on them.
 | `Editor/Ffi/Display.lean` | `display.rs` and `display/wire.rs` | "Handles", "Plain data" |
 | `Editor/Ffi/Render.lean` | `render.rs` | "The window" |
 | `Editor/Ffi/Clipboard.lean` | `clipboard.rs` | "Handles" |
+| `Editor/Ffi/UrlOpener.lean` | `url_opener.rs` | "Handles" |
 | `Editor/Ffi/Fuzzy.lean` | `fuzzy.rs` | "Plain data" |
 | `Editor/Ffi/Pair.lean` | `pair.rs`, through `snapshot.rs`'s externs | "Plain data" |
 | `Editor/Ffi/Search.lean` | `search.rs` | "Plain data" |

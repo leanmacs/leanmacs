@@ -20,12 +20,15 @@
 //! synthesis); the rule is that the shaper describes it ([`RESOLVED`]):
 //! the glyph names an entry of the table as it was when its line was
 //! shaped, and the table keeps every entry as it was for the generation.
+//! A line broken at two widths ([`ShapedLine::break_lines_in`]) breaks its
+//! first line as at the first width alone and every later one within the
+//! second ([`INDENTED`]), so a wrap indent's lines are the shaper's.
 
 use std::sync::Arc;
 
 use super::{
     FontId, FontRun, FontSpec, Length, LineHeight, ResolvedFont, ShapeInput, ShapedLine, Shaper,
-    Slant, VisualLine, Weight,
+    Slant, VisualLine, Weight, Widths,
 };
 
 /// The visual lines cover the input's bytes in order, with no gap and no
@@ -55,9 +58,26 @@ pub const RESOLVED: &str = "every glyph is drawn in a font the shaper describes,
 pub const ORDERED: &str =
     "a line's glyphs are in order from its left edge, none starting before the one before it";
 
+/// A line starts at its left edge and holds its glyphs: what layout
+/// relies on to place the cells of a row at align-to stops (the port's
+/// module docs, [`shaper`](crate::shaper)).
+pub const ORIGIN: &str =
+    "a line's first glyph's pen is at 0, and no glyph ends past the line's width";
+
+/// Broken at two widths, a line's first visual line is as it is at the
+/// first width alone, and its later lines fit the second: what layout
+/// relies on to start a row's first line at a wrap indent's first-line
+/// indent and the rest at its continuation indent (the port's module
+/// docs, [`shaper`](crate::shaper)).
+pub const INDENTED: &str = "broken at a first width and a rest width, the first line is the first line broken at the first width alone, every later line fits the rest width unless it holds one cluster, and the lines cover the input";
+
+/// How far a glyph may be from where [`ORIGIN`] puts it, in pixels: a
+/// 64th, so that float noise in an adapter's sums is no fault.
+const ORIGIN_TOLERANCE: f32 = 1.0 / 64.0;
+
 /// Every property, by name.
-pub const PROPERTIES: [&str; 9] = [
-    COVER, FIT, UNBROKEN, KEPT, CLUSTERS, HEIGHTS, FONTS, RESOLVED, ORDERED,
+pub const PROPERTIES: [&str; 11] = [
+    COVER, FIT, UNBROKEN, KEPT, CLUSTERS, HEIGHTS, FONTS, RESOLVED, ORDERED, ORIGIN, INDENTED,
 ];
 
 /// The texts the properties are run over: empty, one character, a long
@@ -130,10 +150,15 @@ pub fn check<S: Shaper>(shaper: &S) -> Vec<&'static str> {
             failed[8] |= !lines
                 .iter()
                 .all(|line| line.glyphs.windows(2).all(|pair| pair[0].x <= pair[1].x));
+            failed[9] |= !lines.iter().all(starts_at_its_edge);
             // Broken at every other width first, then at this one.
             for other in widths() {
                 kept.break_lines(other);
                 failed[3] |= kept.break_lines(width) != shaper.shape(&input).break_lines(width);
+            }
+            // The first line at this width, the rest at every other.
+            for rest in widths() {
+                failed[10] |= !indented(&kept, width, rest, text.len());
             }
         }
         failed[7] |= !described.still(shaper);
@@ -235,6 +260,33 @@ fn fonts_are_told_apart<S: Shaper>(shaper: &S) -> bool {
         && distinct
 }
 
+/// Whether `line`'s first glyph from its left edge has its pen at 0 and
+/// none of its glyphs ends past its width, each within
+/// [`ORIGIN_TOLERANCE`]. The leftmost pen is found whatever order the
+/// glyphs are listed in, which is [`ORDERED`]'s to hold.
+fn starts_at_its_edge(line: &VisualLine) -> bool {
+    let leftmost = line.glyphs.iter().map(|glyph| glyph.x).reduce(f32::min);
+    let first = leftmost.is_none_or(|x| x.abs() <= ORIGIN_TOLERANCE);
+    let held = line
+        .glyphs
+        .iter()
+        .all(|glyph| glyph.x + glyph.advance <= line.width + ORIGIN_TOLERANCE);
+    first && held
+}
+
+/// Whether `line`, `len` bytes long, broken with its first visual line at
+/// `first` and the rest at `rest`, has the first line it has broken at
+/// `first` alone, every later line fitting `rest`, and lines that cover
+/// it ([`INDENTED`]).
+fn indented<L: ShapedLine>(line: &L, first: Option<f32>, rest: Option<f32>, len: usize) -> bool {
+    let lines = line.break_lines_in(Widths { first, rest });
+    let alone = line.break_lines(first);
+    let later = lines.get(1..).unwrap_or_default();
+    lines.first() == alone.first()
+        && rest.is_none_or(|rest| fits(later, rest))
+        && covers(&lines, len)
+}
+
 /// Whether `lines` cover `0..len` in order, with no gap and no overlap,
 /// and each holds a byte unless the text is empty.
 fn covers(lines: &[VisualLine], len: usize) -> bool {
@@ -263,14 +315,16 @@ fn fits(lines: &[VisualLine], width: f32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Range;
     use std::sync::{Arc, Mutex};
 
-    use super::{CLUSTERS, COVER, FIT, FONTS, HEIGHTS, KEPT, ORDERED, RESOLVED, UNBROKEN, check};
+    use super::{
+        CLUSTERS, COVER, FIT, FONTS, HEIGHTS, INDENTED, KEPT, ORDERED, ORIGIN, RESOLVED, UNBROKEN,
+        check,
+    };
     use crate::shaper::fake::{CellLine, CellShaper};
     use crate::shaper::{
-        FontId, FontSpec, Glyph, Metrics, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine,
-        Shaper, VisualLine,
+        FontId, FontSpec, Metrics, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper,
+        VisualLine, Widths,
     };
 
     /// How a [`Wrong`] shaper breaks the contract.
@@ -298,43 +352,44 @@ mod tests {
         /// Its lines list their glyphs from the right edge to the left.
         Reverses,
         /// It breaks after a carriage return, U+2028 and U+2029, as a
-        /// paragraph layout does, even with no width.
+        /// paragraph layout does, even with no width: each paragraph is
+        /// shaped on its own, and its lines are the fake's at the widths
+        /// their places among the lines give them.
         BreaksAtReturns,
+        /// Every glyph of its lines is a pixel right of where the fake
+        /// puts it, the line's width unchanged.
+        Indents,
+        /// Its lines' widths are a pixel short of their last glyph's end.
+        Overruns,
+        /// Broken at two widths, it breaks every line at the first.
+        OneWidth,
     }
 
-    /// `line` cut after each of its glyphs that is a carriage return,
-    /// U+2028 or U+2029 and not its last: each piece a line of its own,
-    /// its glyphs placed from its left edge.
-    fn cut_at_returns(line: &VisualLine) -> Vec<VisualLine> {
-        let piece = |bytes: Range<usize>, glyphs: Vec<Glyph>, width: f32| VisualLine {
-            bytes,
-            glyphs,
-            width,
-            height: line.height,
-            baseline: line.baseline,
-        };
+    /// The paragraphs of `text` as a paragraph layout cuts it: after each
+    /// carriage return, U+2028 and U+2029 that is not its last character,
+    /// each with its first byte.
+    fn paragraphs(text: &str) -> Vec<(usize, &str)> {
         let mut pieces = Vec::new();
-        let mut glyphs = Vec::new();
-        let (mut start, mut left) = (line.bytes.start, 0.0);
-        for (index, glyph) in line.glyphs.iter().enumerate() {
-            glyphs.push(Glyph {
-                x: glyph.x - left,
-                ..*glyph
-            });
-            // The fake's glyph id is its character.
-            let breaks = ['\r', '\u{2028}', '\u{2029}']
-                .map(u32::from)
-                .contains(&glyph.id);
-            if let Some(next) = line.glyphs.get(index + 1)
-                && breaks
-            {
-                let done = std::mem::take(&mut glyphs);
-                pieces.push(piece(start..next.cluster, done, next.x - left));
-                (start, left) = (next.cluster, next.x);
+        let mut start = 0;
+        for (offset, character) in text.char_indices() {
+            let end = offset + character.len_utf8();
+            if ['\r', '\u{2028}', '\u{2029}'].contains(&character) && end < text.len() {
+                pieces.push((start, &text[start..end]));
+                start = end;
             }
         }
-        pieces.push(piece(start..line.bytes.end, glyphs, line.width - left));
+        pieces.push((start, &text[start..]));
         pieces
+    }
+
+    /// `line`, a line of the paragraph whose first byte is `start`, with
+    /// its bytes and clusters made the whole text's.
+    fn moved(mut line: VisualLine, start: usize) -> VisualLine {
+        line.bytes = line.bytes.start + start..line.bytes.end + start;
+        for glyph in &mut line.glyphs {
+            glyph.cluster += start;
+        }
+        line
     }
 
     /// A shaper that is the fake with one fault.
@@ -349,20 +404,35 @@ mod tests {
     struct WrongLine {
         fault: Fault,
         line: CellLine,
-        first: Mutex<Option<Option<f32>>>,
+        first: Mutex<Option<Widths>>,
+        /// For [`Fault::BreaksAtReturns`], each paragraph of the text
+        /// shaped on its own, with its first byte; none for another fault.
+        paragraphs: Vec<(usize, CellLine)>,
     }
 
     impl ShapedLine for WrongLine {
-        fn break_lines(&self, width: Option<f32>) -> Vec<VisualLine> {
-            let width = match self.fault {
-                Fault::NeverBreaks => None,
-                Fault::AlwaysBreaks => Some(0.0),
-                Fault::RemembersItsFirstWidth => *self.first.lock().unwrap().get_or_insert(width),
-                _ => width,
+        fn break_lines_in(&self, widths: Widths) -> Vec<VisualLine> {
+            let widths = match self.fault {
+                Fault::NeverBreaks => Widths::all(None),
+                Fault::AlwaysBreaks => Widths::all(Some(0.0)),
+                Fault::RemembersItsFirstWidth => *self.first.lock().unwrap().get_or_insert(widths),
+                Fault::OneWidth => Widths::all(widths.first),
+                _ => widths,
             };
-            let mut lines = self.line.break_lines(width);
+            let mut lines = self.line.break_lines_in(widths);
             if self.fault == Fault::BreaksAtReturns {
-                lines = lines.iter().flat_map(cut_at_returns).collect();
+                // The first paragraph's lines at the widths, and every
+                // later paragraph's at the rest width.
+                lines = Vec::new();
+                for (index, (start, paragraph)) in self.paragraphs.iter().enumerate() {
+                    let at = if index == 0 {
+                        widths
+                    } else {
+                        Widths::all(widths.rest)
+                    };
+                    let broken = paragraph.break_lines_in(at);
+                    lines.extend(broken.into_iter().map(|line| moved(line, *start)));
+                }
             }
             for line in &mut lines {
                 match self.fault {
@@ -373,6 +443,16 @@ mod tests {
                         }
                     }
                     Fault::Flat => line.height = 0.0,
+                    Fault::Indents => {
+                        for glyph in &mut line.glyphs {
+                            glyph.x += 1.0;
+                        }
+                    }
+                    Fault::Overruns => {
+                        if let Some(last) = line.glyphs.last() {
+                            line.width = last.x + last.advance - 1.0;
+                        }
+                    }
                     Fault::UnknownFont => {
                         for glyph in &mut line.glyphs {
                             glyph.font = ResolvedFontId(glyph.font.0 + 1000);
@@ -394,10 +474,24 @@ mod tests {
         type Shaped = WrongLine;
 
         fn shape(&self, input: &ShapeInput) -> WrongLine {
+            let paragraphs = match self.fault {
+                Fault::BreaksAtReturns => paragraphs(&input.text)
+                    .into_iter()
+                    .map(|(start, text)| {
+                        let input = ShapeInput {
+                            text: text.to_owned(),
+                            runs: Vec::new(),
+                        };
+                        (start, self.fake.shape(&input))
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
             WrongLine {
                 fault: self.fault,
                 line: self.fake.shape(input),
                 first: Mutex::new(None),
+                paragraphs,
             }
         }
 
@@ -460,6 +554,21 @@ mod tests {
     #[test]
     fn a_shaper_that_breaks_at_a_return_or_a_separator_is_not_one_line() {
         assert_eq!(failures(Fault::BreaksAtReturns), vec![UNBROKEN]);
+    }
+
+    #[test]
+    fn a_shaper_whose_first_glyph_is_not_at_its_lines_left_edge_fails_the_origin_rule() {
+        assert_eq!(failures(Fault::Indents), vec![ORIGIN]);
+    }
+
+    #[test]
+    fn a_shaper_whose_glyphs_end_past_their_lines_width_fails_the_origin_rule() {
+        assert_eq!(failures(Fault::Overruns), vec![ORIGIN]);
+    }
+
+    #[test]
+    fn a_shaper_that_breaks_every_line_at_the_first_width_fails_the_indent_rule() {
+        assert_eq!(failures(Fault::OneWidth), vec![INDENTED]);
     }
 
     #[test]

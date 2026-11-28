@@ -1,6 +1,11 @@
 //! Property tests of the display layers' conversions: a buffer position
 //! converted up through the layers and back is the position.
 //!
+//! The fold layer sits beside the tab and wrap layers, not under them
+//! (`folds`'s module docs, "Where it sits"), so its property is its own
+//! round trip, and the tab and wrap round trip run on the rows the folds
+//! leave shown.
+//!
 //! Every property runs through [`check`], which fixes the number of cases
 //! and the generator's seed, and turns failure persistence off so no file
 //! is written beside the sources. The `proptest!` macro is not used, since
@@ -9,10 +14,15 @@
 //! The texts favour what breaks a conversion: tabs at every column, a
 //! carriage return before a line feed and alone, characters of one to four
 //! bytes, empty rows, and one case in eight a row longer than a segment.
+//! The tab and wrap round trip runs with and without align-to stops and
+//! wrap indents.
 
 use std::fmt::Debug;
 
+use editor_layout::folds::FoldLayer;
+use editor_layout::indent::{SegmentIndent, SegmentRest};
 use editor_layout::layer::{Bias, Layer};
+use editor_layout::scene::Fold;
 use editor_layout::shaper::FontId;
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::tabs::{SEGMENT_BYTES, TabLayer};
@@ -123,21 +133,81 @@ fn a_column_inside_a_tabs_spaces_goes_back_to_the_tab() {
     });
 }
 
+/// A wrap indent for a segment whose text is `segment`, by `kind`: none;
+/// a first-line indent of 20 pixels and a continuation of 40; a first-line
+/// indent past the narrower widths and a continuation of 15; or a hang
+/// after the segment's `kind - 2`th character with a first-line indent of
+/// 10, which past the segment's end hangs at 10.
+fn indent_of(segment: &str, kind: usize) -> Option<SegmentIndent> {
+    let pixels = |first, rest| SegmentIndent {
+        first,
+        rest: SegmentRest::Pixels(rest),
+    };
+    match kind {
+        0 => None,
+        1 => Some(pixels(20.0, 40.0)),
+        2 => Some(pixels(45.0, 15.0)),
+        _ => {
+            let lead = segment
+                .char_indices()
+                .nth(kind - 2)
+                .map_or(segment.len(), |(offset, _)| offset);
+            Some(SegmentIndent {
+                first: 10.0,
+                rest: SegmentRest::Lead(lead),
+            })
+        }
+    }
+}
+
+/// Align-to stops for a segment whose text is `segment`: one at every
+/// `every`th character from the second, each at `step` pixels times its
+/// count, so that some fall past a width and some before the text they
+/// follow ends. None when `every` is 0.
+fn stops_of(segment: &str, every: usize, step: f32) -> Vec<(usize, f32)> {
+    if every == 0 {
+        return Vec::new();
+    }
+    segment
+        .char_indices()
+        .skip(1)
+        .step_by(every)
+        .enumerate()
+        .map(|(index, (offset, _))| (offset, step * (index + 1) as f32))
+        .collect()
+}
+
 #[test]
 fn a_position_converted_through_tabs_and_wrap_and_back_is_the_position() {
     let widths = select(vec![None, Some(1.0), Some(30.0), Some(55.0), Some(400.0)]);
+    // No stop, or stops at every few characters: the round trip holds
+    // with a row's cells placed at stops as without, and under a wrap
+    // indent, pixels or hanging, as without.
+    let stops = (select(vec![0usize, 1, 3, 5]), select(vec![15.0f32, 40.0]));
+    let indents = select(vec![0usize, 1, 2, 3, 5]);
     check(
-        64,
-        (texts(), 1usize..9, widths),
-        |(text, tab_width, width)| {
+        128,
+        (texts(), 1usize..9, widths, stops, indents),
+        |(text, tab_width, width, (every, step), kind)| {
             let shaper = CellShaper::new(10.0, 16.0);
             let snapshot = Text::from(text.as_str()).snapshot();
             let tabs = TabLayer::new(snapshot.clone(), tab_width);
             let mut wrap = WrapLayer::new(tabs.snapshot().clone(), width);
             for offset in positions(&snapshot) {
                 let tab = tabs.to_layer(offset, Bias::Before).unwrap();
-                wrap.entry(&shaper, tab.row, tab.segment, &[], FontId::default())
-                    .unwrap();
+                let (bytes, _) = tabs.snapshot().segment(tab.row, tab.segment).unwrap();
+                let source = snapshot.slice_to_string(bytes).unwrap();
+                let stops = stops_of(&source, every, step);
+                wrap.entry(
+                    &shaper,
+                    tab.row,
+                    tab.segment,
+                    &[],
+                    FontId::default(),
+                    &stops,
+                    indent_of(&source, kind),
+                )
+                .unwrap();
                 let point = wrap
                     .to_layer(tab, Bias::Before)
                     .ok_or_else(|| TestCaseError::fail(format!("no wrap point at {offset}")))?;
@@ -150,6 +220,87 @@ fn a_position_converted_through_tabs_and_wrap_and_back_is_the_position() {
                     offset
                 };
                 prop_assert_eq!(back, Some(expected), "at {} ({:?})", offset, point);
+            }
+            Ok(())
+        },
+    );
+}
+
+/// Up to three folds over a text `len` bytes long: each a start at a
+/// share of the text and a length, so that some are empty, some nest or
+/// overlap and some run past the end.
+fn folds() -> impl Strategy<Value = Vec<(usize, usize)>> {
+    vec((0usize..=100, 0usize..30), 0..4)
+}
+
+#[test]
+fn a_position_converted_through_the_fold_layer_and_back_is_the_position_or_its_folds_end() {
+    let widths = select(vec![None, Some(30.0), Some(400.0)]);
+    check(
+        96,
+        (texts(), folds(), 1usize..9, widths),
+        |(text, shares, tab_width, width)| {
+            let shaper = CellShaper::new(10.0, 16.0);
+            let snapshot = Text::from(text.as_str()).snapshot();
+            let folds: Vec<Fold> = shares
+                .iter()
+                .map(|&(share, length)| {
+                    let start = snapshot.len() * share / 100;
+                    Fold {
+                        start,
+                        stop: start + length,
+                        ..Fold::default()
+                    }
+                })
+                .collect();
+            let layer = FoldLayer::new(&snapshot, folds);
+            let tabs = TabLayer::new(snapshot.clone(), tab_width);
+            let mut wrap = WrapLayer::new(tabs.snapshot().clone(), width);
+            for offset in positions(&snapshot) {
+                let point = layer
+                    .to_layer(offset, Bias::Before)
+                    .ok_or_else(|| TestCaseError::fail(format!("no fold point at {offset}")))?;
+                if let Some(fold) = layer.snapshot().fold_holding(offset) {
+                    // A covered position is at its placeholder, which goes
+                    // back to the fold's start before and its last row's
+                    // end after.
+                    prop_assert_eq!(point.offset, 0, "at {}", offset);
+                    prop_assert_eq!(layer.to_below(point, Bias::Before), Some(fold.start));
+                    prop_assert_eq!(layer.to_below(point, Bias::After), Some(fold.stop));
+                    continue;
+                }
+                for bias in [Bias::Before, Bias::After] {
+                    prop_assert_eq!(
+                        layer.to_below(point, bias),
+                        Some(offset),
+                        "at {} ({:?})",
+                        offset,
+                        point
+                    );
+                }
+                // On a shown row, the tab and wrap layers' round trip holds
+                // as without folds.
+                let tab = tabs.to_layer(offset, Bias::Before).unwrap();
+                wrap.entry(
+                    &shaper,
+                    tab.row,
+                    tab.segment,
+                    &[],
+                    FontId::default(),
+                    &[],
+                    None,
+                )
+                .unwrap();
+                let back = wrap
+                    .to_layer(tab, Bias::Before)
+                    .and_then(|point| wrap.to_below(point, Bias::Before))
+                    .and_then(|tab| tabs.to_below(tab, Bias::Before));
+                let expected = if inside_a_line_break(&text, offset) {
+                    offset - 1
+                } else {
+                    offset
+                };
+                prop_assert_eq!(back, Some(expected), "at {}", offset);
             }
             Ok(())
         },

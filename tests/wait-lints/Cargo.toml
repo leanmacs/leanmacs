@@ -49,3 +49,8 @@ editor-package = { path = "../../crates/editor-package" }
 # `unreached`). The root lock's version, pinned as `editor-shape-parley`
 # pins it; `parley::fontique` is fontique.
 parley = "=0.13.0"
+# The library behind the URL opener, for its entry points that start a
+# launcher, which no crate of the workspace calls but the adapter's one,
+# `that_detached` (`src/lib.rs`, `unreached`). The root lock's version,
+# pinned as `editor-platform-open` pins it.
+open = { version = "=5.4.5", default-features = false }

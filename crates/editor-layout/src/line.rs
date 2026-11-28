@@ -8,6 +8,31 @@
 //! shares the shaped line ([`LineEntry::rebreak`]), so a frame that holds
 //! the old one keeps it as it was.
 //!
+//! # Align-to stops
+//!
+//! A segment laid out with align-to stops ([`Source::stops`]) is cut at
+//! their columns into cells, each shaped on its own in the font runs that
+//! fall in it, and its visual lines are the cells' pieces placed by
+//! `align`'s rules. The entry keeps each cell's
+//! shaped line and the cut, with each stop's x: the same cut at other xs,
+//! or at another width, is broken and placed again without shaping
+//! ([`LineEntry::rebreak_with`]); another cut is shaped again. A stop at
+//! the segment's end, or past it, has no character after it in the
+//! segment and does nothing.
+//!
+//! # Wrap indents
+//!
+//! A segment laid out under a wrap indent ([`Source::indent`]) has its
+//! visual lines placed by `align`'s rules ("Wrap indents"): the first at
+//! the first-line indent, broken at the room right of it, and the rest at
+//! the continuation indent. A hanging indent's lead cuts the segment as a
+//! stop does, into the leading span and the text after it, each shaped
+//! on its own, unless a stop is at its column. The entry keeps the indent:
+//! another lead is another cut, which shapes it again, and other pixels
+//! break and place it again without shaping ([`LineEntry::rebreak_with`]).
+//! A row with no stop and no lead is shaped as one line and placed as the
+//! one cell of the row, so every row is placed by the same rules.
+//!
 //! # Cells
 //!
 //! A position, a cursor and a selection are found by a visual line's
@@ -31,6 +56,11 @@
 //! - The x of a position is its cell's left edge, and of a line's end the
 //!   line's width; an x aims for the cell it is in.
 //!
+//! In a row with align-to stops, the last glyph before a stop on the line
+//! it shares with the stop's cell is as wide as the gap to the stop
+//! (`align`), so its cell is too: a cursor on that
+//! character spans the gap, and an x in the gap aims for it.
+//!
 //! On a shaper that gives a glyph for each character, in the order of the
 //! text, a cell is a glyph. Three things need the direction of a cluster,
 //! which the port's glyph does not carry, and are not right for
@@ -50,6 +80,13 @@
 //!   the tab's position is on the visual line its first space is on. The
 //!   later line still draws the rest of the tab's spaces
 //!   ([`LineEntry::drawn_bytes`]).
+//! - A position at a break before a stop's cell (the overflow rule of
+//!   `align`) is the start of the later line, as at a
+//!   wrap.
+//! - A visual line's glyphs and width include the indent it starts at, so
+//!   an x left of the indent aims for the line's first character, and an
+//!   empty row under an indent has its position at the first-line indent,
+//!   its line's width.
 //! - Every visual line holds a position, so each can be scrolled to and a
 //!   move of one line reaches the next. A line the shaper breaks off inside
 //!   a tab's spaces, which the tab's spaces end as well, would hold none,
@@ -61,6 +98,8 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use crate::align::{Cut, Kind, Placement, Rest, place};
+use crate::indent::{SegmentIndent, SegmentRest};
 use crate::layer::Bias;
 use crate::shaper::{FontId, FontRun, ShapeInput, ShapedLine, Shaper, VisualLine};
 use crate::tabs::Expanded;
@@ -185,6 +224,25 @@ impl Cells {
     }
 }
 
+/// What a segment was shaped into: one line, or one for each cell of a
+/// row cut at its align-to stops.
+enum Shaped<L> {
+    /// The whole segment, shaped as one line.
+    Whole(Arc<L>),
+    /// Each cell of the cut, shaped on its own, by the cut's order; none
+    /// for a cell of no column.
+    Cells(Arc<[Option<L>]>),
+}
+
+impl<L> Clone for Shaped<L> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Whole(line) => Self::Whole(Arc::clone(line)),
+            Self::Cells(cells) => Self::Cells(Arc::clone(cells)),
+        }
+    }
+}
+
 /// One laid-out segment of a buffer row.
 pub struct LineEntry<L> {
     /// The segment's bytes, relative to its row's start.
@@ -193,10 +251,15 @@ pub struct LineEntry<L> {
     expanded: Expanded,
     /// The font runs it was shaped with, in the expanded text.
     runs: Vec<FontRun>,
+    /// The cells it is cut into at its stops and its lead, with each
+    /// stop's x; none when it has no stop or lead that does anything.
+    cuts: Vec<Cut>,
+    /// The wrap indent it is placed under.
+    indent: Option<SegmentIndent>,
     /// The shaper's generation it was shaped under.
     generation: u64,
-    /// The shaped line.
-    shaped: Arc<L>,
+    /// What it was shaped into.
+    shaped: Shaped<L>,
     /// The width it is broken at.
     width: Option<f32>,
     /// Its visual lines at that width.
@@ -221,6 +284,92 @@ pub struct Source<'a> {
     pub fonts: &'a [(Range<usize>, FontId)],
     /// The base font: the font of every byte no span of `fonts` covers.
     pub base: FontId,
+    /// Its align-to stops: each a byte offset relative to the segment's
+    /// start, a character boundary, and an x in pixels from the start of
+    /// the segment's first visual line, in the order of their offsets
+    /// with none twice at one offset (`align`).
+    pub stops: &'a [(usize, f32)],
+    /// Its wrap indent, if one covers its row (`indent`).
+    pub indent: Option<SegmentIndent>,
+}
+
+/// The cells of a segment `len` bytes long whose text expanded is
+/// `expanded`, cut at `stops` (bytes relative to the segment's start, in
+/// order) and at the lead of `indent`: cell 0 from the start to the first
+/// cut, each later one from its cut to the next or the end. A stop or a
+/// lead at or past the end has no character after it and does nothing,
+/// nor does a lead of no byte; of two stops at one column the later wins,
+/// and a lead at a stop's column marks the stop's cell as the hang. None
+/// when nothing cuts it.
+pub(crate) fn cuts_of(
+    expanded: &Expanded,
+    len: usize,
+    stops: &[(usize, f32)],
+    indent: Option<SegmentIndent>,
+) -> Vec<Cut> {
+    let mut starts: Vec<(usize, Kind)> = Vec::new();
+    for &(offset, x) in stops.iter().filter(|(offset, _)| *offset < len) {
+        let column = expanded.column(offset);
+        let kind = Kind::Stop { x, hangs: false };
+        match starts.last_mut() {
+            Some(last) if last.0 == column => last.1 = kind,
+            _ => starts.push((column, kind)),
+        }
+    }
+    if let Some(SegmentIndent {
+        rest: SegmentRest::Lead(lead),
+        ..
+    }) = indent
+        && 0 < lead
+        && lead < len
+    {
+        let column = expanded.column(lead);
+        let at = starts.partition_point(|(start, _)| *start < column);
+        match starts.get_mut(at) {
+            Some((start, Kind::Stop { hangs, .. })) if *start == column => *hangs = true,
+            _ => starts.insert(at, (column, Kind::Lead)),
+        }
+    }
+    let Some(&(first, _)) = starts.first() else {
+        return Vec::new();
+    };
+    let end = expanded.text().len();
+    let mut cuts = vec![Cut {
+        columns: 0..first,
+        kind: Kind::First,
+    }];
+    for (index, &(column, kind)) in starts.iter().enumerate() {
+        let next = starts.get(index + 1).map_or(end, |(next, _)| *next);
+        cuts.push(Cut {
+            columns: column..next,
+            kind,
+        });
+    }
+    cuts
+}
+
+/// Where the lines of a segment under `indent` start, by `align`'s rules.
+fn placement(indent: Option<SegmentIndent>) -> Placement {
+    indent.map_or(Placement::NONE, |indent| Placement {
+        first: indent.first,
+        rest: match indent.rest {
+            SegmentRest::Pixels(x) => Rest::Pixels(x),
+            SegmentRest::Lead(_) => Rest::Lead,
+        },
+    })
+}
+
+/// The font runs of `runs` that fall in `columns`, clipped to them and
+/// made relative to their start.
+fn cell_runs(runs: &[FontRun], columns: &Range<usize>) -> Vec<FontRun> {
+    runs.iter()
+        .filter(|run| run.bytes.start < columns.end && columns.start < run.bytes.end)
+        .map(|run| FontRun {
+            bytes: run.bytes.start.max(columns.start) - columns.start
+                ..run.bytes.end.min(columns.end) - columns.start,
+            font: run.font,
+        })
+        .collect()
 }
 
 /// The font runs of a segment `len` bytes long whose text expanded is
@@ -278,21 +427,53 @@ pub fn font_runs(
     runs
 }
 
-/// The visual lines `shaped` breaks into at `width`, each one that holds a
-/// position: `expanded` is the text it was shaped from, and `last` whether
-/// the segment is its row's last.
+/// The visual lines `shaped`, shaped from `expanded`, breaks into at
+/// `width` under `placement`, placed by `align`'s rules: its cells by
+/// `cuts` when it was shaped cell by cell, and the whole line as the one
+/// cell of the row when it was not.
+fn broken<L: ShapedLine>(
+    shaped: &Shaped<L>,
+    cuts: &[Cut],
+    placement: Placement,
+    expanded: &Expanded,
+    width: Option<f32>,
+) -> Vec<VisualLine> {
+    match shaped {
+        Shaped::Whole(line) => {
+            let whole = [Cut {
+                columns: 0..expanded.text().len(),
+                kind: Kind::First,
+            }];
+            place(&whole, width, placement, |_, widths| {
+                line.break_lines_in(widths)
+            })
+        }
+        Shaped::Cells(cells) => place(cuts, width, placement, |index, widths| {
+            cells
+                .get(index)
+                .and_then(Option::as_ref)
+                .map_or_else(Vec::new, |cell: &L| cell.break_lines_in(widths))
+        }),
+    }
+}
+
+/// The visual lines `shaped` breaks into at `width` under `indent`, its
+/// cells placed by `cuts`, each one that holds a position: `expanded` is the text it was
+/// shaped from, and `last` whether the segment is its row's last.
 ///
 /// A line the shaper breaks off inside a tab's spaces starts after the tab.
 /// When the tab's spaces reach its end too, no position is on it, unless it
 /// ends the row and so holds the row's end: such a line is left out, and
 /// those spaces of the tab are not drawn. The first line is always kept.
 fn visual_lines<L: ShapedLine>(
-    shaped: &L,
+    shaped: &Shaped<L>,
+    cuts: &[Cut],
+    indent: Option<SegmentIndent>,
     expanded: &Expanded,
     width: Option<f32>,
     last: bool,
 ) -> Vec<Arc<VisualLine>> {
-    let lines = shaped.break_lines(width);
+    let lines = broken(shaped, cuts, placement(indent), expanded, width);
     let count = lines.len();
     lines
         .into_iter()
@@ -320,14 +501,45 @@ pub fn lay_out<S: Shaper>(
         source.fonts,
         source.base,
     );
-    let shaped = Arc::new(shaper.shape(&ShapeInput {
-        text: source.expanded.text().to_owned(),
-        runs: runs.clone(),
-    }));
-    let lines = visual_lines(&*shaped, &source.expanded, width, source.last);
+    let cuts = cuts_of(
+        &source.expanded,
+        source.bytes.len(),
+        source.stops,
+        source.indent,
+    );
+    let text = source.expanded.text();
+    let shaped = if cuts.is_empty() {
+        Shaped::Whole(Arc::new(shaper.shape(&ShapeInput {
+            text: text.to_owned(),
+            runs: runs.clone(),
+        })))
+    } else {
+        let cells: Vec<Option<S::Shaped>> = cuts
+            .iter()
+            .map(|cut| {
+                (!cut.columns.is_empty()).then(|| {
+                    shaper.shape(&ShapeInput {
+                        text: text[cut.columns.clone()].to_owned(),
+                        runs: cell_runs(&runs, &cut.columns),
+                    })
+                })
+            })
+            .collect();
+        Shaped::Cells(cells.into())
+    };
+    let lines = visual_lines(
+        &shaped,
+        &cuts,
+        source.indent,
+        &source.expanded,
+        width,
+        source.last,
+    );
     LineEntry {
         bytes: source.bytes,
         runs,
+        cuts,
+        indent: source.indent,
         generation: shaper.generation(),
         cells: cells_of(&lines, &source.expanded),
         lines,
@@ -350,13 +562,44 @@ impl<L: ShapedLine> LineEntry<L> {
     /// This entry broken again at `width`, sharing its shaped line.
     #[must_use]
     pub fn rebreak(&self, width: Option<f32>) -> Self {
-        let lines = visual_lines(&*self.shaped, &self.expanded, width, self.last);
+        self.rebroken(width, self.cuts.clone(), self.indent)
+    }
+
+    /// This entry broken again at `width`, its cells placed at `stops`
+    /// (as [`Source::stops`]) and its lines under `indent`, sharing what
+    /// it was shaped into. The caller gives stops and an indent that cut
+    /// it as it was cut ([`LineEntry::shaped_with`]): only the stops' xs
+    /// and the indent's pixels may differ.
+    #[must_use]
+    pub fn rebreak_with(
+        &self,
+        width: Option<f32>,
+        stops: &[(usize, f32)],
+        indent: Option<SegmentIndent>,
+    ) -> Self {
+        let cuts = cuts_of(&self.expanded, self.bytes.len(), stops, indent);
+        self.rebroken(width, cuts, indent)
+    }
+
+    /// This entry broken again at `width`, cut into `cuts`, under
+    /// `indent`.
+    fn rebroken(&self, width: Option<f32>, cuts: Vec<Cut>, indent: Option<SegmentIndent>) -> Self {
+        let lines = visual_lines(
+            &self.shaped,
+            &cuts,
+            indent,
+            &self.expanded,
+            width,
+            self.last,
+        );
         Self {
             bytes: self.bytes.clone(),
             expanded: self.expanded.clone(),
             runs: self.runs.clone(),
+            cuts,
+            indent,
             generation: self.generation,
-            shaped: Arc::clone(&self.shaped),
+            shaped: self.shaped.clone(),
             width,
             cells: cells_of(&lines, &self.expanded),
             lines,
@@ -377,12 +620,39 @@ impl<L> LineEntry<L> {
     }
 
     /// Whether the spans `fonts` (bytes relative to the segment's start)
-    /// over the base font `base` give the font runs it was shaped with.
-    pub fn shaped_with(&self, fonts: &[(Range<usize>, FontId)], base: FontId) -> bool {
+    /// over the base font `base` give the font runs it was shaped with,
+    /// and the align-to stops `stops` (as [`Source::stops`]) and the lead
+    /// of `indent` cut it into the cells it was shaped in, whatever the
+    /// stops' xs and the indent's pixels.
+    pub fn shaped_with(
+        &self,
+        fonts: &[(Range<usize>, FontId)],
+        base: FontId,
+        stops: &[(usize, f32)],
+        indent: Option<SegmentIndent>,
+    ) -> bool {
+        let cuts = cuts_of(&self.expanded, self.bytes.len(), stops, indent);
+        let same_cut = cuts.len() == self.cuts.len()
+            && cuts
+                .iter()
+                .zip(&self.cuts)
+                .all(|(cut, kept)| cut.columns == kept.columns);
+        if !same_cut {
+            return false;
+        }
         if fonts.is_empty() {
             return self.runs.iter().all(|run| run.font == base);
         }
         font_runs(&self.expanded, self.bytes.len(), fonts, base) == self.runs
+    }
+
+    /// Whether its cells are placed at the xs of `stops` (as
+    /// [`Source::stops`]) and its lines under `indent`: whether they cut it
+    /// as it is cut, each stop at the x it is placed at, and the indent
+    /// puts its lines where they are.
+    pub fn placed_at(&self, stops: &[(usize, f32)], indent: Option<SegmentIndent>) -> bool {
+        cuts_of(&self.expanded, self.bytes.len(), stops, indent) == self.cuts
+            && placement(indent) == placement(self.indent)
     }
 
     /// The shaper's generation it was shaped under.
@@ -586,6 +856,8 @@ mod tests {
                 last: true,
                 fonts,
                 base,
+                stops: &[],
+                indent: None,
             },
             width,
         )
@@ -640,6 +912,8 @@ mod tests {
                 last: true,
                 fonts: &[],
                 base: FontId(0),
+                stops: &[],
+                indent: None,
             },
             None,
         )
@@ -878,18 +1152,18 @@ mod tests {
     #[test]
     fn a_kept_entry_was_shaped_with_the_same_spans_over_the_same_base_only() {
         let plain = row_in("abc", 0, &[], FontId(0), None);
-        assert!(plain.shaped_with(&[], FontId(0)));
-        assert!(!plain.shaped_with(&[], TALL));
+        assert!(plain.shaped_with(&[], FontId(0), &[], None));
+        assert!(!plain.shaped_with(&[], TALL, &[], None));
         // A span that names the base font changes nothing.
-        assert!(plain.shaped_with(&[(1..2, FontId(0))], FontId(0)));
+        assert!(plain.shaped_with(&[(1..2, FontId(0))], FontId(0), &[], None));
         let tall = row_in("abc", 0, &[], TALL, None);
-        assert!(tall.shaped_with(&[], TALL));
-        assert!(!tall.shaped_with(&[], FontId(0)));
+        assert!(tall.shaped_with(&[], TALL, &[], None));
+        assert!(!tall.shaped_with(&[], FontId(0), &[], None));
         // The same spans over another base are other runs.
         let spanned = row_in("abc", 0, &[(1..2, TALL)], FontId(0), None);
-        assert!(spanned.shaped_with(&[(1..2, TALL)], FontId(0)));
-        assert!(!spanned.shaped_with(&[(1..2, TALL)], TALL));
-        assert!(tall.shaped_with(&[(1..2, TALL)], TALL));
+        assert!(spanned.shaped_with(&[(1..2, TALL)], FontId(0), &[], None));
+        assert!(!spanned.shaped_with(&[(1..2, TALL)], TALL, &[], None));
+        assert!(tall.shaped_with(&[(1..2, TALL)], TALL, &[], None));
     }
 
     #[test]
@@ -951,6 +1225,8 @@ mod tests {
                 last: false,
                 fonts: &[],
                 base: FontId(0),
+                stops: &[],
+                indent: None,
             },
             Some(20.0),
         );

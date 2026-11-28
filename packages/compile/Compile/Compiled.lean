@@ -21,9 +21,11 @@ config (`Editor/Config/Packages.lean`).
   `compilation-output`, which no key runs: the run job posts its output to
   it (`Compile.outputCommand`); `next-error` and `previous-error`, which
   step through the focused buffer's scope's locations
-  (`Compile.stepCommand`); and `compile-goto-error`, which visits the
-  location on the cursor's line of a compilation buffer, the mode's
-  `activate` (`Compile.gotoCommand`).
+  (`Compile.stepCommand`); `compile-goto-error`, which follows the link of
+  the location at the cursor of a compilation buffer, the mode's `activate`
+  (`Compile.gotoCommand`); and `compile-visit`, which no key runs: a
+  location's link names it, and it visits that location
+  (`Compile.visitCommand`).
 - **The job**: `compile-run`, which runs the child, posts its output
   as it comes and finishes with how it ended (`Compile.runWork`). A host
   that is not handed it runs no compile, and says so when one is asked for.
@@ -79,6 +81,7 @@ def package : Package :=
       commandWith nextName (stepCommand nextName true)
       commandWith previousName (stepCommand previousName false)
       commandWith gotoName gotoCommand
+      commandWith visitName visitCommand
       workJob runJob runWork (reported := true)
       defineMode mode
       for contribution in shipped do

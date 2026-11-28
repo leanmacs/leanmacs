@@ -35,6 +35,9 @@ query when the last reference to its handle goes.
 - A face crosses as its name, and `none` as the empty string, which is no
   face's name: `some ⟨""⟩` crosses as `none` does. A kind crosses as its
   tag (`kindTag`).
+- **`parseOnce` is answered in the call**, on the asking thread: the
+  library parses the text handed in, which no snapshot is of, and keeps
+  nothing but the shipped queries it compiled, by their source.
 - **`captures` and `capturesOf` never wait for a parse.** Each is answered
   from the tree the library last delivered, and refused with `notParsed`
   when that tree is not of the snapshot's revision. A caller asks again
@@ -93,6 +96,8 @@ def kindTag : QueryKind → UInt8
   | .injections => 1
   | .textObjects => 2
   | .indents => 3
+  | .rendered => 4
+  | .renderedInjections => 5
 
 /-- The port's refusal of a question of a kept query, from the library's. -/
 def keptRefusal : Ffi.SyntaxKeptRefusal → SyntaxTreeError
@@ -200,6 +205,24 @@ def handle (real : RealSyntaxTree) : SyntaxTreeHandler
   | .refreshAfter milliseconds =>
     Ffi.syntaxRefreshAfter
       (if milliseconds < UInt64.size then milliseconds.toUInt64 else UInt64.ofNat (UInt64.size - 1))
+  | .parseOnce source grammar languages => do
+    return match
+        ←
+          Ffi.syntaxParseOnce source grammar
+              (languages.map fun language =>
+                (language.grammar, language.query, language.injections.getD "")) with
+      | .ok layers =>
+        .ok <|
+          layers.map fun layer =>
+            { language := layer.language, depth := layer.depth.toNat
+              ranges := layer.ranges.map fun (start, stop) => (start.toNat, stop.toNat)
+              names := layer.names
+              captures :=
+                layer.captures.map fun capture =>
+                  { pattern := capture.pattern.toNat, capture := capture.capture.toNat,
+                    start := capture.start.toNat, stop := capture.stop.toNat } }
+      | .error .unknownGrammar => .error .unknownGrammar
+      | .error .noHostQuery => .error .noQuery
   | .capturesOf snapshot kind start stop => do
     let some text ← real.snapshots.find? snapshot | return .error .noSuchSnapshot
     match ← Ffi.syntaxKeptCaptures text (kindTag kind) (offset start) (offset stop) with

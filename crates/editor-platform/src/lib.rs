@@ -9,7 +9,9 @@
 //! editor's event queue.
 //!
 //! The system clipboard is a port of its own beside it, [`clipboard`], with
-//! its own fake and contract: it needs no window.
+//! its own fake and contract: it needs no window. So is the system's URL
+//! opener, [`url_opener`], which hands a URL to the desktop's handler for it,
+//! with its fakes and its contract.
 //!
 //! # What a window reports
 //!
@@ -171,6 +173,7 @@ pub mod clipboard;
 pub mod contract;
 pub mod menu;
 pub mod scripted;
+pub mod url_opener;
 
 use std::error::Error;
 use std::ffi::{c_int, c_ulong, c_void};

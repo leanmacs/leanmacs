@@ -73,6 +73,68 @@ when they do not fit with it; and a spot below a block is lower by its
 rows. A block's faces are not looked at: a face that sets another height
 is `editor-layout`'s to pin.
 
+## What folds are held to
+
+Eight properties hold every binding to the rule of folds
+(`Editor/Display.lean`, "Folds") in cells, with texts that wrap with no
+space: the lines a fold covers (a line feed the line's it ends, an empty
+range its start's line) are one row of the rows answer, from the first
+covered line's start to the last one's stop, however many rows they wrap
+to; an anchor among them shows from that row; a move counts it as one row,
+lands on the fold's start and passes its goal back unchanged; a spot of any
+position it covers is that row's at the padding's x, and the spot query
+still agrees with the other two (`spotAgrees`, given the folds); and a
+block before the first covered line is shown above it while one before a
+later covered line is not. Of the folds a binding is handed, it shows them
+in order of start, the longer first of two with one start, and drops one
+whose first line an earlier shown one covers, so of nested folds the outer
+one shows and one that partly overlaps a shown fold leaves its later lines
+shown. The placeholder's text and faces are not looked
+at: how it is drawn is `editor-layout`'s to pin (`tests/folds.rs`).
+
+## What indents are held to
+
+A view's wrap indents (`View.indents`) ride on no query: every binding lays
+a query out under those of the last scene published to it, the last view
+of the query's snapshot in it, and under none when that scene shows no view
+of the snapshot or none has been published (`Editor/Display.lean`, "Wrap
+indents"). Eight properties hold every binding to the rule in cells, each
+publishing a scene of one view (`publishIndented`) and then asking, with
+texts that wrap with no space and indents of whole cells: an indented
+line's first row is at its first-line indent and its later rows at its
+continuation, each holding the cells its room holds, and an empty indented
+line is at its first-line indent; a move with a goal lands on the character
+at that x of an indented row, one left of the row's start on its first
+character, and a move with no goal passes back the drawn x; a hanging
+indent's later rows start where its lead's characters end on the first
+row; an indent at or past the width is not applied; of two over a line the
+later wins, and an indent covers the lines that hold a byte of its range;
+at a width no machine word holds an indented line is one row whose x
+counts its first-line indent; the spot query still agrees with the other
+two (`spotAgrees`); and with no scene published, or after one that shows
+no view of the snapshot, a query lays out with no indent.
+
+They leave open a leading span wider than the first row, a tab or a wide
+character in an indented line, and several views of one snapshot in one
+scene. Where a glyph is drawn under an indent at a scale, and with align-to
+stops, are `editor-layout`'s rules (`crates/editor-layout/src/align.rs`,
+`tests/indent.rs`).
+
+## What the measuring call is held to
+
+Three properties hold every binding's `Display.measure` in cells: an empty
+run measures nothing, a run of `n` one-cell characters measures `n`
+cells, and a view exactly as wide as a run's measure holds the run (a
+text with no space) on one row while one a cell narrower wraps it. So a
+width measured is one the rows query agrees with. What a face does to a
+width, and that the answer is in points at any scale, are
+`editor-layout`'s tests to pin (`tests/measure.rs`).
+
+A view's align-to stops (`View.stops`), like its faces, are not looked at
+by the queries' properties: where a cell goes and where a row breaks
+before a stop are `editor-layout`'s rules, pinned on its fake shaper
+(`crates/editor-layout/src/align.rs`, `tests/align.rs`).
+
 ## What a caller that wants a column of a line relies on
 
 Two properties are for a caller that asks about a line and not about a view
@@ -132,12 +194,12 @@ is `columns` cells by `rows` rows, padded `padding` around it, that shows
 from `anchor`, is where `rowsShown` and a move of no lines say it is (the
 module docs, "What the spot query is held to"). -/
 def spotAgrees (cells : Display.Cells) (snapshot : SnapshotId) (columns rows anchor : Nat)
-    (padding : Padding) (position : Nat) : DisplayM Bool := do
+    (padding : Padding) (position : Nat) (folds : Array Fold := #[]) : DisplayM Bool := do
   let width := columns * cells.advance + 2 * padding.across + padding.gutter
   let height := rows * cells.lineHeight + 2 * padding.down + padding.top
-  let shown ← Display.rowsShown { snapshot, width, height, anchor, padding }
-  let own ← Display.rowsShown { snapshot, width, height, anchor := position, padding }
-  let spot ← Display.spotOf { snapshot, width, height, anchor, padding, position }
+  let shown ← Display.rowsShown { snapshot, width, height, anchor, padding, folds }
+  let own ← Display.rowsShown { snapshot, width, height, anchor := position, padding, folds }
+  let spot ← Display.spotOf { snapshot, width, height, anchor, padding, position, folds }
   let heights ← Display.heights
   match own[0]?.bind fun held => shown.findIdx? (· == held) with
   | none =>
@@ -146,12 +208,29 @@ def spotAgrees (cells : Display.Cells) (snapshot : SnapshotId) (columns rows anc
     let moved ←
       Display.linesFrom
           { snapshot, width, across := padding.across, gutter := padding.gutter, position
-            lines := 0, goal := none }
+            lines := 0, goal := none, folds }
     return spot ==
         some
           { x := padding.across + padding.gutter + moved.goal
             y := padding.down + padding.top + k * heights.text
             height := heights.text }
+
+/-- Publishes a scene of one view of `snapshot`, `columns` cells wide and
+eight rows tall, from its start, under `indents`: what a property of indents
+asks under (the module docs, "What indents are held to"). Its scroll marker
+is a number no text gives out, so a binding shows it from its start. -/
+def publishIndented (cells : Display.Cells) (snapshot : SnapshotId) (columns : Nat)
+    (indents : Array WrapIndent) : DisplayM Unit :=
+  let width := columns * cells.advance
+  let height := 8 * cells.lineHeight
+  Display.publish
+    { size := { width, height }
+      views :=
+        #[{ id := ⟨1⟩, rect := { x := 0, y := 0, width, height }, snapshot
+            scroll := ⟨⟨0⟩, 2 ^ 32⟩, selections := #[]
+            cursor := { shape := .block, face := ⟨"cursor"⟩ }, decorations := #[], status := #[]
+            indents }]
+      focused := none, echo := "", pending := "", preedit := none }
 
 /-- The properties of the queries at the cell size `cells`. -/
 def properties (cells : Display.Cells) : List Property :=
@@ -169,6 +248,20 @@ def properties (cells : Display.Cells) : List Property :=
       { snapshot, width := columns * cells.advance, height := rows * cells.lineHeight, anchor
         position, blocks }
   let block (before : Nat) (text : String) : Block := { before, text }
+  let fold (start stop : Nat) : Fold := { start, stop, text := "…" }
+  let folded (snapshot : SnapshotId) (columns rows anchor : Nat) (folds : Array Fold)
+    (blocks : Array Block := #[]) : DisplayM (Array Display.Row) :=
+    Display.rowsShown
+      { snapshot, width := columns * cells.advance, height := rows * cells.lineHeight, anchor
+        blocks, folds }
+  let foldedMove (snapshot : SnapshotId) (columns position : Nat) (lines : Int) (goal : Option Nat)
+    (folds : Array Fold) : DisplayM Display.Moved :=
+    Display.linesFrom { snapshot, width := columns * cells.advance, position, lines, goal, folds }
+  let foldedSpot (snapshot : SnapshotId) (columns rows anchor position : Nat) (folds : Array Fold)
+    (blocks : Array Block := #[]) : DisplayM (Option Display.Spot) :=
+    Display.spotOf
+      { snapshot, width := columns * cells.advance, height := rows * cells.lineHeight, anchor
+        position, blocks, folds }
   [{  name :=
         "a view r rows tall over lines no longer than its width shows r lines from its anchor",
       texts := #["ab\ncd\nef\ngh"]
@@ -412,6 +505,267 @@ qr"]
             (← blocked snapshot 4 3 0 two) == #[⟨0, 1⟩] &&
             (← spotBlocked snapshot 4 4 0 2 two) ==
               some { x := 0, y := 3 * cells.lineHeight, height := cells.lineHeight } },
+    { name :=
+        "a fold over two lines is one row of the rows a view shows, from the first line's start to the last one's stop"
+      texts := #["ab\ncd\nef\ngh"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        return (← folded snapshot 4 3 0 #[fold 3 8]) == #[⟨0, 2⟩, ⟨3, 8⟩, ⟨9, 11⟩] &&
+            (← folded snapshot 4 4 0 #[]) == #[⟨0, 2⟩, ⟨3, 5⟩, ⟨6, 8⟩, ⟨9, 11⟩] },
+    { name :=
+        "a fold covers the lines that hold a byte of its range: a line feed is the line's it ends, and an empty range covers its start's line"
+      texts := #["ab\ncdefgh\nij"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let lineOne := #[⟨0, 2⟩, ⟨3, 9⟩, ⟨10, 12⟩]
+        return (← folded snapshot 4 4 0 #[fold 3 10]) == lineOne &&
+            (← folded snapshot 4 4 0 #[fold 5 5]) == lineOne &&
+            (← folded snapshot 4 4 0 #[fold 3 11]) == #[⟨0, 2⟩, ⟨3, 12⟩] &&
+            (← folded snapshot 4 4 0 #[]) == #[⟨0, 2⟩, ⟨3, 7⟩, ⟨7, 9⟩, ⟨10, 12⟩] },
+    { name := "an anchor inside a fold shows from its placeholder row"
+      texts := #["ab\ncd\nef\ngh"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        return (← folded snapshot 4 2 7 #[fold 3 8]) == #[⟨3, 8⟩, ⟨9, 11⟩] &&
+            (← folded snapshot 4 2 3 #[fold 3 8]) == #[⟨3, 8⟩, ⟨9, 11⟩] },
+    { name :=
+        "a move counts a fold as one row: down from the row above it lands on its start, once more on the row after it, and up mirrors this, the goal passed back unchanged"
+      texts := #["abc\ndef\nghi\njkl"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let folds := #[fold 4 11]
+        let onto ← foldedMove snapshot 10 2 1 none folds
+        let past ← foldedMove snapshot 10 onto.position 1 (some onto.goal) folds
+        let back ← foldedMove snapshot 10 past.position (-1) (some past.goal) folds
+        let above ← foldedMove snapshot 10 back.position (-1) (some back.goal) folds
+        let twice ← foldedMove snapshot 10 2 2 none folds
+        return onto == { position := 4, goal := 2 * cells.advance } &&
+            past == { position := 14, goal := 2 * cells.advance } &&
+            back == { position := 4, goal := 2 * cells.advance } &&
+            above == { position := 2, goal := 2 * cells.advance } &&
+            twice.position == 14 },
+    { name :=
+        "a wrapped line inside a fold takes no row of its own, to the rows a view shows or to a move"
+      texts := #["ab\ncdefgh\nij"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let folds := #[fold 3 9]
+        return (← folded snapshot 4 2 0 folds) == #[⟨0, 2⟩, ⟨3, 9⟩] &&
+            (← foldedMove snapshot 4 0 2 none folds).position == 10 &&
+            (← foldedMove snapshot 4 10 (-1) none folds).position == 3 },
+    { name :=
+        "a spot of any position a fold covers is its placeholder's row at the padding's x, a spot below a fold is higher by the rows it hides, and the spot agrees with the rows and a move at every position"
+      texts := #["ab\ncdefgh\nij\nkl"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let folds := #[fold 3 9]
+        let onFold : List Nat := [3, 4, 7, 9]
+        let mut holds := true
+        for position in onFold do
+          holds :=
+            holds &&
+              (← foldedSpot snapshot 4 4 0 position folds) ==
+                some { x := 0, y := cells.lineHeight, height := cells.lineHeight }
+        holds :=
+          holds &&
+            (← foldedSpot snapshot 4 4 0 11 folds) ==
+              some { x := cells.advance, y := 2 * cells.lineHeight, height := cells.lineHeight } &&
+            (← foldedSpot snapshot 4 4 0 11 #[]) ==
+              some { x := cells.advance, y := 3 * cells.lineHeight, height := cells.lineHeight }
+        let paddings : List Padding :=
+          [{}, { across := cells.advance, down := cells.lineHeight, top := cells.lineHeight }]
+        for padding in paddings do
+          for anchor in [0, 5, 10] do
+            for position in List.range 16 do
+              holds := holds && (← spotAgrees cells snapshot 4 2 anchor padding position folds)
+        return holds },
+    { name :=
+        "a block before a fold's first covered line is shown above its placeholder, and one before a later covered line is not"
+      texts := #["a\nb\nc\nd"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let folds := #[fold 2 5]
+        return (← folded snapshot 4 3 0 folds #[block 2 "H"]) == #[⟨0, 1⟩, ⟨2, 5⟩] &&
+            (← folded snapshot 4 3 0 folds #[block 4 "H"]) == #[⟨0, 1⟩, ⟨2, 5⟩, ⟨6, 7⟩] &&
+            (← foldedSpot snapshot 4 4 0 6 folds #[block 2 "H"]) ==
+              some { x := 0, y := 3 * cells.lineHeight, height := cells.lineHeight } &&
+            (← foldedSpot snapshot 4 4 0 6 folds #[block 4 "H"]) ==
+              some { x := 0, y := 2 * cells.lineHeight, height := cells.lineHeight } },
+    { name :=
+        "of nested folds the outer one shows, whatever their order, and a fold whose first line a shown one covers is dropped, its later lines shown"
+      texts := #["a\nb\nc\nd\ne"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let outer := #[⟨0, 1⟩, ⟨2, 7⟩, ⟨8, 9⟩]
+        return (← folded snapshot 4 5 0 #[fold 4 5, fold 2 7]) == outer &&
+            (← folded snapshot 4 5 0 #[fold 2 3, fold 2 7]) == outer &&
+            (← folded snapshot 4 5 0 #[fold 2 5, fold 4 7]) == #[⟨0, 1⟩, ⟨2, 5⟩, ⟨6, 7⟩, ⟨8, 9⟩] },
+    { name :=
+        "an indented line's first row is at its first-line indent and its later rows at its continuation, each holding the cells its room holds, and an empty indented line is at its first-line indent"
+      texts := #["abcdefghijklmnopqrst\n\nxy"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let c := cells.advance
+        -- The first two lines, 2 cells in and continued a cell in: 6 cells
+        -- on the first row of 8 and 7 on each later one.
+        publishIndented cells snapshot 8
+            #[{ start := 0, stop := 22, first := 2 * c, rest := .points c }]
+        let spot (position : Nat) : DisplayM (Option (Nat × Nat)) := do
+          let spot ←
+            Display.spotOf
+                { snapshot, width := 8 * c, height := 6 * cells.lineHeight, anchor := 0, position }
+          return spot.map fun spot => (spot.x, spot.y)
+        let h := cells.lineHeight
+        return (← rows snapshot 8 6 0) == #[⟨0, 6⟩, ⟨6, 13⟩, ⟨13, 20⟩, ⟨21, 21⟩, ⟨22, 24⟩] &&
+            (← spot 0) == some (2 * c, 0) &&
+            (← spot 6) == some (c, h) &&
+            (← spot 14) == some (2 * c, 2 * h) &&
+            (← spot 21) == some (2 * c, 3 * h) &&
+            (← spot 22) == some (0, 4 * h) },
+    { name :=
+        "a move with a goal lands on the character at that x of an indented row, a goal left of the row's start on its first character, and a move with no goal passes back the drawn x"
+      texts := #["abcdefghijklmnopqrst\n\nxy"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let c := cells.advance
+        publishIndented cells snapshot 8
+            #[{ start := 0, stop := 22, first := 2 * c, rest := .points c }]
+        let move (position : Nat) (lines : Int) (goal : Option Nat) : DisplayM Display.Moved :=
+          Display.linesFrom { snapshot, width := 8 * c, position, lines, goal }
+        -- `c` is at 4 cells; the second row starts a cell in, so 4 cells is
+        -- its fourth character, `j`.
+        let down ← move 2 1 none
+        let up ← move 9 (-1) (some (5 * c))
+        return down == { position := 9, goal := 4 * c } && up.position == 3 &&
+            (← move 0 1 (some 0)).position == 6 &&
+            (← move 21 0 none).goal == 2 * c },
+    { name :=
+        "a hanging indent's later rows start where its lead's characters end on the first row, for leads of different widths"
+      texts := #["- abcdefghijk\n10. abcdefghij"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let c := cells.advance
+        publishIndented cells snapshot 8
+            #[{ start := 0, stop := 0, first := c, rest := .lead 2 },
+              { start := 14, stop := 14, first := c, rest := .lead 4 }]
+        let x (position : Nat) : DisplayM (Option Nat) := do
+          let spot ←
+            Display.spotOf
+                { snapshot, width := 8 * c, height := 8 * cells.lineHeight, anchor := 0, position }
+          return spot.map (·.x)
+        -- The text after `- ` starts 3 cells in, and after `10. ` 5.
+        return (← rows snapshot 8 8 0) ==
+              #[⟨0, 7⟩, ⟨7, 12⟩, ⟨12, 13⟩, ⟨14, 21⟩, ⟨21, 24⟩, ⟨24, 27⟩, ⟨27, 28⟩] &&
+            (← x 2) == some (3 * c) &&
+            (← x 7) == some (3 * c) &&
+            (← x 12) == some (3 * c) &&
+            (← x 18) == some (5 * c) &&
+            (← x 21) == some (5 * c) &&
+            (← x 27) == some (5 * c) },
+    { name :=
+        "an indent at or past the width is not applied: that row starts at 0 and holds the whole width"
+      texts := #["abcdefghij"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let c := cells.advance
+        publishIndented cells snapshot 8
+            #[{ start := 0, stop := 1, first := 8 * c, rest := .points (9 * c) }]
+        let both ← rows snapshot 8 3 0
+        let spot ←
+          Display.spotOf
+              { snapshot, width := 8 * c, height := 3 * cells.lineHeight, anchor := 0
+                position := 8 }
+        publishIndented cells snapshot 8
+            #[{ start := 0, stop := 1, first := 2 * c, rest := .points (8 * c) }]
+        let later ← rows snapshot 8 3 0
+        return both == #[⟨0, 8⟩, ⟨8, 10⟩] && spot.map (·.x) == some 0 &&
+            later == #[⟨0, 6⟩, ⟨6, 10⟩] },
+    { name :=
+        "of two indents over a line the later listed wins, and an indent covers the lines that hold a byte of its range"
+      texts := #["ab\ncd\nef"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let c := cells.advance
+        let x (position : Nat) : DisplayM (Option Nat) := do
+          let spot ←
+            Display.spotOf
+                { snapshot, width := 8 * c, height := 3 * cells.lineHeight, anchor := 0, position }
+          return spot.map (·.x)
+        publishIndented cells snapshot 8
+            #[{ start := 0, stop := 8, first := 2 * c }, { start := 3, stop := 4, first := 4 * c }]
+        let twice := [← x 0, ← x 3, ← x 6]
+        -- From `b` to the line feed that ends the first line: that line only.
+        publishIndented cells snapshot 8 #[{ start := 1, stop := 3, first := 2 * c }]
+        let first := [← x 0, ← x 3]
+        return twice == [some (2 * c), some (4 * c), some (2 * c)] &&
+            first == [some (2 * c), some 0] },
+    { name :=
+        "at a width no machine word holds, an indented line is one row, and an x counts its first-line indent"
+      texts := #["abcdefghijkl"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let c := cells.advance
+        publishIndented cells snapshot 4
+            #[{ start := 0, stop := 1, first := 2 * c, rest := .points (3 * c) }]
+        let shown ←
+          Display.rowsShown
+              { snapshot, width := 2 ^ 64, height := 2 * cells.lineHeight, anchor := 0 }
+        let own ←
+          Display.linesFrom { snapshot, width := 2 ^ 64, position := 3, lines := 0, goal := none }
+        let aimed ←
+          Display.linesFrom
+              { snapshot, width := 2 ^ 64, position := 0, lines := 0, goal := some (4 * c) }
+        return shown == #[⟨0, 12⟩] && own.goal == 5 * c && aimed.position == 2 },
+    { name :=
+        "under indents the spot is where the rows and a move say, at every position, padded or not"
+      texts := #["abcdefghijkl\n- abcdefghij\n\nxy"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let c := cells.advance
+        publishIndented cells snapshot 6
+            #[{ start := 0, stop := 1, first := c, rest := .points (2 * c) },
+              { start := 13, stop := 27, first := c, rest := .lead 2 }]
+        let paddings : List Padding :=
+          [{}, { across := cells.advance, down := cells.lineHeight, top := cells.lineHeight },
+            { across := cells.advance, gutter := 2 * cells.advance }]
+        let mut holds := true
+        for padding in paddings do
+          for anchor in [0, 13] do
+            for position in List.range 30 do
+              holds := holds && (← spotAgrees cells snapshot 6 4 anchor padding position)
+        return holds },
+    { name :=
+        "with no scene published, or after a scene that shows no view of the snapshot, a query lays out with no indent"
+      texts := #["abcdefghij", "xy"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let c := cells.advance
+        let before ← rows snapshot 8 3 0
+        publishIndented cells snapshot 8 #[{ start := 0, stop := 1, first := 2 * c }]
+        let under ← rows snapshot 8 3 0
+        publishIndented cells (nth snapshots 1) 8 #[{ start := 0, stop := 1, first := 2 * c }]
+        let after ← rows snapshot 8 3 0
+        return before == #[⟨0, 8⟩, ⟨8, 10⟩] && under == #[⟨0, 6⟩, ⟨6, 10⟩] && after == before },
+    { name := "an empty run measures nothing"
+      texts := #[]
+      holds := fun _ => do
+        return (← Display.measure { text := "" }) == 0 },
+    { name := "a run of n one-cell characters measures n cells"
+      texts := #[]
+      holds := fun _ => do
+        return (← Display.measure { text := "abcd" }) == 4 * cells.advance &&
+            (← Display.measure { text := "é😀ab" }) == 4 * cells.advance },
+    { name :=
+        "a view exactly as wide as a run's measure holds it on one row, and one a cell narrower wraps it"
+      texts := #["abcdef"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let width ← Display.measure { text := "abcdef" }
+        let height := 2 * cells.lineHeight
+        let exact ← Display.rowsShown { snapshot, width, height, anchor := 0 }
+        let narrower ←
+          Display.rowsShown { snapshot, width := width - cells.advance, height, anchor := 0 }
+        return exact == #[⟨0, 6⟩] && narrower == #[⟨0, 5⟩, ⟨5, 6⟩] },
     { name := "each height of a row the display answers is at least one pixel"
       texts := #[]
       holds := fun _ => do

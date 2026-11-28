@@ -62,6 +62,24 @@ registered (`SyntaxTreeModel.withTestGrammars`).
 A runner waits for a snapshot's tree before it forwards a `captures` or a
 `capturesOf`.
 
+## What a text parsed once answers
+
+`parseOnce` is asked of `json` alone, handed in with a query the contract
+writes (`onceQuery`) and no injections, so its answer is its host layer:
+
+- (O1) a text parsed once with `json` and `onceQuery` answers one layer, at
+  depth 0 over the whole text, whose names and captures are what
+  `captureNames` and the whole text's `captures` answer for the same source
+  compiled and asked of an attached snapshot of the text;
+- (O2) a host grammar that is not listed is refused `unknownGrammar`;
+- (O3) languages that do not name the host, or give it a query that does
+  not compile, are refused `noQuery`;
+- (O4) a language of a grammar that is not listed changes nothing of O1's
+  answer.
+
+What a Markdown text parsed once answers is the library's, held to the
+checked-in fixtures by `ContractTest.markdownCaseChecks`.
+
 The cases are the library's own answers, read from the library when the
 cases were written; the model is written to the rule, and the contract
 holds the two together.
@@ -150,6 +168,15 @@ def cases : List (String × String × String × Array (Nat × Nat × Nat × Nat)
     ("a node captured by itself and as a child, outer first", "{\"a\": {\"b\": 2}}",
       "(object (pair) @p) @o", #[(0, 1, 0, 15), (0, 0, 1, 14), (0, 1, 6, 14), (0, 0, 7, 13)])]
 
+/-- The text the properties of a text parsed once parse. -/
+def onceText : String :=
+  "{\"a\": [1, true, null], \"b\": \"s\"}"
+
+/-- The query the properties of a text parsed once hand `json` in with: one
+both the model's subset and the library compile. -/
+def onceQuery : String :=
+  "(number) @n\n(string) @s\n"
+
 /-- The ranges of a text `length` bytes long that the range rule is asked
 of: empty at each end and in the middle, the whole text, its first and last
 byte, and each third. -/
@@ -230,7 +257,8 @@ def properties : List Property :=
         texts := #[]
         holds := fun _ => do
           let shipsNone ←
-            [QueryKind.highlights, .injections, .textObjects, .indents].allM fun kind =>
+            [QueryKind.highlights, .injections, .textObjects, .indents, .rendered,
+                  .renderedInjections].allM fun kind =>
                 refusedWith .noShippedQuery (SyntaxTree.shippedQuery json kind)
           return shipsNone &&
               (← refusedWith .unknownGrammar (SyntaxTree.shippedQuery "no-such" .highlights)) },
@@ -316,6 +344,43 @@ def properties : List Property :=
           SyntaxTree.refreshAfter 500
           return before == #[(0, 0, 1, 2), (0, 0, 4, 5)] &&
               (← rows snapshot "(number) @n" 0 6) == before },
+      { name :=
+          "(O1) a text parsed once with json and a query handed in answers its host layer alone, over the whole text, with the names and the captures the same source answers of an attached snapshot of it"
+        texts := #[onceText]
+        holds := fun snapshots => do
+          let snapshot := nth snapshots 0
+          let layers ← SyntaxTree.parseOnce onceText json #[{ grammar := json, query := onceQuery }]
+          SyntaxTree.attach snapshot json
+          let compiled ← SyntaxTree.compile json onceQuery
+          let names ← SyntaxTree.captureNames compiled
+          let captures ← SyntaxTree.captures snapshot compiled 0 onceText.utf8ByteSize
+          SyntaxTree.release compiled
+          return layers ==
+                #[{ language := json, depth := 0, ranges := #[(0, onceText.utf8ByteSize)], names
+                    captures }] &&
+              !captures.isEmpty },
+      { name := "(O2) a text parsed once with a host grammar that is not listed is refused"
+        texts := #[]
+        holds := fun _ =>
+          refusedWith .unknownGrammar
+            (SyntaxTree.parseOnce onceText "no-such" #[{ grammar := json, query := onceQuery }]) },
+      { name :=
+          "(O3) a text parsed once with languages that do not name the host, or give it a query that does not compile, is refused"
+        texts := #[]
+        holds := fun _ => do
+          return (← refusedWith .noQuery (SyntaxTree.parseOnce onceText json #[])) &&
+              (←
+                refusedWith .noQuery
+                    (SyntaxTree.parseOnce onceText json #[{ grammar := json, query := "((" }])) },
+      { name :=
+          "(O4) a language of a grammar that is not listed changes nothing a text parsed once answers"
+        texts := #[]
+        holds := fun _ => do
+          return (← SyntaxTree.parseOnce onceText json #[{ grammar := json, query := onceQuery }]) ==
+              (←
+                SyntaxTree.parseOnce onceText json
+                    #[{ grammar := "no-such", query := onceQuery },
+                      { grammar := json, query := onceQuery }]) },
       { name := "a highlight with a released query is refused"
         texts := #["[1]"]
         holds := fun snapshots => do

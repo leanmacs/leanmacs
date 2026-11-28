@@ -39,6 +39,14 @@ were.
 - `compileLocationChecks`: the locations the compile mode finds in its
   output and the steps over them (`Compile.lean`, "Locations"), on that
   driver;
+- `compileLinkChecks`: the compilation buffer built from a rich-text
+  description whose locations are links (`Compile.lean`, "Faces and
+  links"), on that driver: a site's link and the tail of appended lines,
+  pure; the buffer's links over its locations' text naming `compile-visit`
+  and drawn, found as lines arrive; `compile-goto-error` following the
+  link at the cursor, recording a jump, following its target and not the
+  row, and saying so off a link; `RET` through the links mode; and
+  `compile-visit` naming no location;
 - `compileHookChecks`: the compile hook (`Compile.lean`, "The hook"), on
   that driver, with contributions
   registered as config registers them; and what the hook makes of a
@@ -66,6 +74,7 @@ were.
 def CompileTest.checks : List CompileTest.Check :=
   CompileTest.compileChecks ++ CompileTest.compileErrorChecks ++
     CompileTest.compileLocationChecks ++
+    CompileTest.compileLinkChecks ++
     CompileTest.compileHookChecks ++
     CompileTest.compileOfferChecks ++
     CompileTest.compileListedChecks ++

@@ -3,7 +3,9 @@ import Editor.DisplayRules
 import Editor.Ex.Line
 import Editor.InputScheme
 import Editor.Language.IndentUnit
+import Editor.Mode.SyntaxTree
 import Editor.Process.Environment
+import Editor.Role
 import Editor.Store.Codec
 import Editor.Workspace
 
@@ -70,12 +72,29 @@ request of the editor's port (`EditorRequest.registry`,
 - `languageOf` is answered the name of the language the table chooses for
   a path (`Language.forPath`), and `indentUnitOf` the unit of the table's
   first entry of a name.
+- `languageTrees` is answered the tree of each grammar the table's
+  entries name, config's entries over the shipped ones, then of each
+  grammar config declares, once each, resolved as an injected language's
+  is (`Language.Grammar.injectedTreeOf`): its queries, read from a declared
+  grammar's files, and its captures' face overrides. A grammar whose tree
+  is none (a declared one with no answer yet) is left out. It is what a
+  rendered Markdown view parses with and draws a layer's captures with
+  (`Editor/Markdown/View.lean`). `Mode.SyntaxTree` is plain data in a
+  module of its own (`Editor/Mode/SyntaxTree.lean`), since this module
+  sits below `Editor.Mode`; `none` where no loop runs the command, which a
+  caller reads as the shipped table's trees.
 - `hasJob` is answered whether a job is registered under a name, as a
   start is checked.
 - `categorySources` is answered the names of the completion sources
   registered in a category, and `atPointSources` the names of the
   at-point sources of the chain of a buffer with the modes it is handed,
   that ask on an occasion.
+- `roleCommand` is answered the command a buffer's own modes fill a role
+  with, handed the buffer's major and minor modes: the first over the
+  minor modes' lineages, the one added last first, then the major mode's,
+  never the links mode's. The links mode's `link-follow` asks for
+  `activate`, to run the buffer's own handler off a link
+  (`Editor/Links.lean`).
 - `storeCodec` is answered the codec a store of a name is kept across a
   restart with, and its owner's name (`Editor/Store/Codec.lean`): what the
   session restore meets a kept cell with before it hands the cell to the
@@ -139,6 +158,9 @@ inductive RegistryRequest where
   /-- The indent unit of the language called `language`, from the
   registry's table. -/
   | indentUnitOf (language : String)
+  /-- The tree of each grammar the registry's table names, then of each
+  grammar config declares, once each, resolved as an injected language's. -/
+  | languageTrees
   /-- Whether a job is registered under `name`. -/
   | hasJob (name : String)
   /-- Which completion sources are registered in `category`, by name, in
@@ -163,6 +185,12 @@ inductive RegistryRequest where
   config's choice, else the latest package's default, else `inherited`
   (`Config.Registry.baseName`). -/
   | environmentBase
+  /-- The command the modes of a buffer whose major mode is `major` and whose
+  minor modes are `minors`, the one added last first, fill `role` with: the
+  first over each minor mode's lineage, then the major mode's, nearest
+  first, as the keymaps resolve; never the links mode's
+  (`Config.Registry.roleCommand`). -/
+  | roleCommand (major : Option String) (minors : Array String) (role : Role)
 
 /-- The type of the reply to each question. -/
 abbrev RegistryRequest.Reply : RegistryRequest → Type
@@ -178,6 +206,7 @@ abbrev RegistryRequest.Reply : RegistryRequest → Type
   | .syntaxRefreshDelay => Option Nat
   | .languageOf _ => Option String
   | .indentUnitOf _ => Option Language.IndentUnit
+  | .languageTrees => Option (List Mode.SyntaxTree)
   | .hasJob _ => Bool
   | .categorySources _ => Array String
   | .atPointSources .. => Array String
@@ -185,6 +214,7 @@ abbrev RegistryRequest.Reply : RegistryRequest → Type
   | .extensions _ => Array Dynamic
   | .configExtensions _ => Array Dynamic
   | .environmentBase => String
+  | .roleCommand .. => Option String
 
 /-- The answer to `request` where no loop dispatched the command: as with
 nothing registered and config's defaults, except that any job name is
@@ -202,6 +232,7 @@ def RegistryRequest.bare : (request : RegistryRequest) → request.Reply
   | .syntaxRefreshDelay => none
   | .languageOf _ => none
   | .indentUnitOf _ => none
+  | .languageTrees => none
   | .hasJob _ => true
   | .categorySources _ => #[]
   | .atPointSources .. => #[]
@@ -209,5 +240,6 @@ def RegistryRequest.bare : (request : RegistryRequest) → request.Reply
   | .extensions _ => #[]
   | .configExtensions _ => #[]
   | .environmentBase => Process.inheritedName
+  | .roleCommand .. => none
 
 end Editor

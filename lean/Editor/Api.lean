@@ -74,6 +74,28 @@ operation, such as `exBinding`, `runCommand` or `giveUp`, not the request.
   (`Buffer.unsavedAt`), by a copy of its undo tree told the revision its
   text is at, so an edit made earlier in the same command counts. `quit`,
   `list-buffers` and `close-buffer` all ask it (`packages/buffers/Buffers.lean`).
+- `BufferId.setFolds id declared` declares a buffer's foldable ranges,
+  keeping the state of each whose key survives, and `BufferId.setFolded id
+  key folded` toggles one, leaving the text and its revision as they were
+  (`Editor/Fold.lean`). `BufferId.shownFolds id` is the folded ranges a
+  view draws, with their rows, and `BufferId.reveal id offset` unfolds
+  every folded range whose rows hold the offset's row: the one call a jump,
+  an accepted search and a landing through the jump list make.
+- `BufferId.setRichText id rich start` writes a generated buffer from one
+  rich-text description (`RichText`, `Editor/RichText.lean`), inside
+  `writing`, so its owner writes a read-only buffer: the text from `start`
+  on, as one edit and none when nothing would change, then its spans,
+  stops, links, foldable ranges and wrap indents by the prefix rule, each
+  part that lies before `start` kept as the buffer has it. With `start` 0,
+  the default, it sets the whole buffer. A producer that sets one part
+  alone keeps the call for that part (`setSpans` and the rest).
+- `BufferId.appendRichText id tail` extends a generated buffer's
+  description at its end: `tail`'s text inserted at the text's end, and its
+  parts moved past it and listed after the buffer's own, so nothing before
+  the end is edited. Both keep each fold's state by its key, drop a
+  rendered document (`Editor/State.lean`, "Buffers") and refuse
+  `noSuchBuffer` with the buffer unchanged. Pinned by
+  `ModelTest.richTextCallChecks` and `ModelTest.richTextAppendChecks`.
 - `BufferId.text` is the buffer's text. Reading a buffer is the text
   port's reads on it (`TextId.read`, `rowContent`, `slice`, `byteLength`
   and the rest of `Editor/Text.lean`): there is no read request of the
@@ -1096,6 +1118,72 @@ def BufferId.setSpans (id : BufferId) (spans : Array Decoration) :
     EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.setSpans id spans)
 
+/-- Sets the align-to stops of the buffer `id`, byte offsets of its text each
+with an x in whole points, where every view of it starts a cell of a row
+(`Editor/State.lean`, "Buffers"; `Editor/Columns.lean` computes them).
+Refused with `noSuchBuffer` for a buffer there is none of. -/
+def BufferId.setStops (id : BufferId) (stops : Array AlignStop) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setStops id stops)
+
+/-- Sets the wrap indents of the buffer `id`, byte ranges of its text each
+with where the visual lines of the rows it covers start (`WrapIndent`,
+`Editor/Scene.lean`), which every view of it lays those rows out under
+(`Editor/State.lean`, "Buffers"). Refused with `noSuchBuffer` for a buffer
+there is none of. -/
+def BufferId.setIndents (id : BufferId) (indents : Array WrapIndent) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setIndents id indents)
+
+/-- Sets the links of the buffer `id`, byte ranges of its text each naming a
+target to follow (`Link`, `Editor/Link.lean`), which every view of it draws
+in the link face under its spans and the links mode follows
+(`Editor/State.lean`, "Buffers"; `Editor/Links.lean`). Refused with
+`noSuchBuffer` for a buffer there is none of. -/
+def BufferId.setLinks (id : BufferId) (links : Array Link) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setLinks id links)
+
+/-- Declares the foldable ranges of the buffer `id` (`Foldable`,
+`Editor/Fold.lean`): a range whose key the buffer already has keeps its
+state, and any other range takes its declared one (`Fold.merge`). Every view
+of the buffer shows its folded ranges as placeholder rows. Refused with
+`noSuchBuffer` for a buffer there is none of. -/
+def BufferId.setFolds (id : BufferId) (declared : Array Foldable) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setFolds id declared)
+
+/-- Folds (`folded`) or unfolds the foldable range of the buffer `id` keyed
+`key`, leaving its text as it is; a key no range has changes nothing.
+Refused with `noSuchBuffer` for a buffer there is none of. -/
+def BufferId.setFolded (id : BufferId) (key : String) (folded : Bool) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setFolded id key folded)
+
+/-- Each foldable range of the buffer `id` with the first and the last row
+of its text it covers (`Fold.coveredOf`); none for a buffer there is none
+of. -/
+def BufferId.foldsCovered (id : BufferId) : EditorM (Array Fold.Covered) := do
+  let some buffer := (← editorState).buffer? id | return #[]
+  Fold.coveredOf buffer.text buffer.folds
+
+/-- The shown folds of the buffer `id` with their rows (`Fold.shown`): its
+folded ranges a view draws as placeholders, outermost first. -/
+def BufferId.shownFolds (id : BufferId) : EditorM (Array Fold.Covered) := do
+  return Fold.shown (← id.foldsCovered)
+
+/-- Unfolds every folded range of the buffer `id` whose rows hold the row of
+the byte `offset`: what a jump, an accepted search and a landing through the
+jump list or a mark do where they land (`docs/design/text-and-display.md`,
+"Folds, as built"). A buffer with no folded range there is left as it is. -/
+def BufferId.reveal (id : BufferId) (offset : Nat) : EditorM Unit := do
+  let some buffer := (← editorState).buffer? id | return
+  unless buffer.folds.any (·.folded) do
+    return
+  let row ← Fold.rowOf buffer.text (← buffer.text.byteLength) offset
+  for (range, _) in Fold.covering (← id.foldsCovered) row do
+    if range.folded then
+      discard <| id.setFolded range.key false
+
 /-- Sets the gutter of the buffer `id`, marks at a revision of its text that
 every window of it draws in a column before its text, carried through the
 edits made since; or takes it away, and the column with it, with `none`
@@ -1480,6 +1568,46 @@ def text (id : BufferId) : EditorM (Except BufferRefusal TextId) := do
     return .ok buffer.text
   | none =>
     return .error (.noSuchBuffer id)
+
+/-- Writes the buffer `id` from the rich-text description `rich` from the
+byte `start` on, inside `writing` (`Editor/RichText.lean`): the text from
+`start`, or from its end or the description's when either is shorter, is
+replaced with the description's (`RichText.textCut`), as one edit, with
+none when nothing would change; then each part that lies before `start` is kept and the rest are
+the description's (the prefix rule), each fold whose key survives keeping
+its state, and the rendered document is dropped (`Editor/State.lean`,
+"Buffers"). With `start` 0 it sets the whole buffer. Refused, with the
+buffer unchanged, with `noSuchBuffer` for a buffer there is none of. -/
+def setRichText (id : BufferId) (rich : RichText) (start : Nat := 0) :
+    EditorM (Except BufferRefusal Unit) :=
+  id.writing do
+    match ← id.text with
+    | .error refusal =>
+      return .error refusal
+    | .ok text =>
+      let length ← text.byteLength
+      let cut := rich.textCut length start
+      unless (← text.slice cut.offset length) == cut.fresh do
+        text.replaceRange cut.offset length cut.fresh
+      EditorState.ask (.setRichText id rich start)
+
+/-- Extends the buffer `id` with the rich-text description `tail`, inside
+`writing` (`Editor/RichText.lean`): its text is inserted at the end of the
+buffer's, and its parts, moved past the buffer's text, are listed after the
+buffer's own, each fold whose key survives keeping its state; the rendered
+document is dropped (`Editor/State.lean`, "Buffers"). Nothing of the text
+before its end is edited. Refused, with the buffer unchanged, with
+`noSuchBuffer` for a buffer there is none of. -/
+def appendRichText (id : BufferId) (tail : RichText) : EditorM (Except BufferRefusal Unit) :=
+  id.writing do
+    match ← id.text with
+    | .error refusal =>
+      return .error refusal
+    | .ok text =>
+      let length ← text.byteLength
+      unless tail.text.isEmpty do
+        text.insert length tail.text
+      EditorState.ask (.appendRichText id tail length)
 
 /-- Removes the buffer `id`. Refused with `noSuchBuffer` for a buffer there
 is none of, and with `shown` while a window shows it. -/
@@ -1999,11 +2127,12 @@ def scrollTo (target : Target) (offset : Nat) : TextM Unit :=
 
 /-- Runs `run` with what the display is asked about `target`'s view with
 (`Scroll.Area`): a snapshot of its buffer's text, taken here, the view's
-rectangle in the frame, and its blocks, read of that snapshot, so a scroll
-command asks the rows the view shows with its blocks counted. The snapshot is released when `run` has
-ended, also when it was refused, and its refusal is then thrown: that is
-`TextId.withSnapshot` (`Editor/Command.lean`), and this is the rectangle's
-lookup and it. `none`, with nothing taken and nothing run, for a view that
+rectangle in the frame, its blocks, read of that snapshot, and its folds as
+the scene has them (`EditorState.viewFolds`), so a scroll command asks the
+rows the view shows with its blocks and folds counted. The snapshot is
+released when `run` has ended, also when it was refused, and its refusal
+is then thrown: that is `TextId.withSnapshot` (`Editor/Command.lean`), and
+this is the rectangle's lookup and it. `none`, with nothing taken and nothing run, for a view that
 is not laid out (`EditorState.rect?`). -/
 def onArea {α : Type} (target : Target) (run : Scroll.Area → EditorM α) : EditorM (Option α) := do
   let state ← editorState
@@ -2018,7 +2147,7 @@ def onArea {α : Type} (target : Target) (run : Scroll.Area → EditorM α) : Ed
   some <$>
       target.buffer.text.withSnapshot fun snapshot => do
         let blocks ← ExcerptView.blocksOf target.buffer snapshot
-        run (.ofRect snapshot rect bottom padding blocks)
+        run (.ofRect snapshot rect bottom padding blocks (← state.viewFolds target.window.id))
 
 end Target
 

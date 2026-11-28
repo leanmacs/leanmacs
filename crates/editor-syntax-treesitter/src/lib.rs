@@ -136,11 +136,17 @@
 //! registered before from the fixture grammars, with one source for each
 //! refusal, and pins that a loaded grammar outlives the syntax it was
 //! registered on. `native`'s unit tests pin the ABI range with version
-//! numbers and the refusal of a relative path. The unit tests here pin what
-//! the contracts do not ask: that a fresh adapter lists no grammar, a Rust
-//! function's name captured by a field and a predicate that reads text
-//! across two of the rope's chunks (each over the fixture's rust), and a
-//! query of a grammar the adapter has not.
+//! numbers and the refusal of a relative path. `tests/highlights.rs` and
+//! `tests/rendered.rs` register `markdown`, `markdown_inline` and `rust`
+//! from the fixture crate: they hold the package's Markdown highlights and
+//! rendered queries, and `editor_syntax::once::parse`, on those grammars.
+//! The unit tests here pin what the contracts do not ask: that a fresh
+//! adapter lists no grammar, a Rust function's name captured by a field and
+//! a predicate that reads text across two of the rope's chunks (each over
+//! the fixture's rust), a query of a grammar the adapter has not, and the
+//! source a registered grammar answers, which a compile answers beside its
+//! query ([`TreeSitter::registered_source`],
+//! [`TreeSitter::compile_registered`]).
 
 #![deny(unsafe_code)]
 #![deny(clippy::undocumented_unsafe_blocks)]
@@ -198,6 +204,44 @@ impl TreeSitter {
     fn language(&self, name: &GrammarName) -> Option<Language> {
         self.registry().get(name).map(|entry| entry.grammar.clone())
     }
+
+    /// Where the grammar `name` was registered from, the registered
+    /// entry's source; `None` for a grammar not registered. What a cache
+    /// of compiled queries keys by, so a grammar registered again from
+    /// another library never meets a query compiled for the old one.
+    pub fn registered_source(&self, name: &GrammarName) -> Option<GrammarSource> {
+        self.registry().get(name).map(|entry| entry.source.clone())
+    }
+
+    /// The query `source` compiled for the grammar `name`, or the
+    /// library's refusal, with where the grammar was registered from: the
+    /// source and the language read together under one lock, so the
+    /// source is the one of the language the query was compiled for, even
+    /// when a registration lands beside the call. `None` for a grammar not
+    /// registered.
+    pub fn compile_registered(
+        &self,
+        name: &GrammarName,
+        source: &str,
+    ) -> Option<(GrammarSource, Result<TreeSitterQuery, QueryError>)> {
+        let (language, registered) = {
+            let registry = self.registry();
+            let entry = registry.get(name)?;
+            (entry.grammar.clone(), entry.source.clone())
+        };
+        Some((registered, compiled(&language, source)))
+    }
+}
+
+/// `source` compiled for `language`, or the library's refusal as the port
+/// says it.
+fn compiled(language: &Language, source: &str) -> Result<TreeSitterQuery, QueryError> {
+    Query::new(language, source)
+        .map(TreeSitterQuery)
+        .map_err(|error| QueryError {
+            kind: kind_of(&error.kind),
+            offset: error.offset,
+        })
 }
 
 /// A parser of one grammar.
@@ -307,12 +351,7 @@ impl Syntax for TreeSitter {
                 offset: 0,
             });
         };
-        Query::new(&language, source)
-            .map(TreeSitterQuery)
-            .map_err(|error| QueryError {
-                kind: kind_of(&error.kind),
-                offset: error.offset,
-            })
+        compiled(&language, source)
     }
 
     fn shipped_query(&self, _name: &GrammarName, _kind: QueryKind) -> Option<String> {
@@ -614,15 +653,65 @@ mod tests {
                 "{name}"
             );
             assert_eq!(syntax.reparse_policy(&grammar), None, "{name}");
-            for kind in [
-                QueryKind::Highlights,
-                QueryKind::Injections,
-                QueryKind::TextObjects,
-                QueryKind::Indents,
-            ] {
+            for kind in QueryKind::ALL {
                 assert_eq!(syntax.shipped_query(&grammar, kind), None, "{name}");
             }
+            assert_eq!(syntax.registered_source(&grammar), None, "{name}");
+            assert!(syntax.compile_registered(&grammar, "(_) @x").is_none());
         }
+    }
+
+    /// Where the fixture `grammar` is registered from, with its policy.
+    fn source_of(grammar: &fixture::Grammar) -> GrammarSource {
+        GrammarSource {
+            library: grammar.library.into(),
+            symbol: grammar.symbol.to_owned(),
+            policy: Some(if grammar.incremental {
+                ReparsePolicy::Incremental
+            } else {
+                ReparsePolicy::Whole
+            }),
+        }
+    }
+
+    #[test]
+    fn a_registered_grammar_answers_the_source_it_was_registered_from_and_compiles_with_it() {
+        let syntax = with_registered(&fixture::JSON);
+        let json = GrammarName::new("json");
+        assert_eq!(
+            syntax.registered_source(&json),
+            Some(source_of(&fixture::JSON))
+        );
+        let (source, compiled) = syntax
+            .compile_registered(&json, "(object) @o")
+            .expect("json is registered");
+        assert_eq!(source, source_of(&fixture::JSON));
+        assert!(compiled.is_ok());
+        let (_, refused) = syntax
+            .compile_registered(&json, "((")
+            .expect("json is registered");
+        assert_eq!(
+            refused.map(|_| ()).unwrap_err().kind,
+            QueryErrorKind::Syntax
+        );
+
+        // Registered again from another library, `json` answers the new
+        // source, and a query is compiled for the new language.
+        let ini = GrammarSource {
+            library: editor_syntax_fixture_ini::LIBRARY.into(),
+            symbol: editor_syntax_fixture_ini::OVERRIDING_SYMBOL.to_owned(),
+            policy: None,
+        };
+        assert_eq!(syntax.register(&ini), Ok(json.clone()));
+        assert_eq!(syntax.registered_source(&json), Some(ini.clone()));
+        let (source, compiled) = syntax
+            .compile_registered(&json, "(object) @o")
+            .expect("json is registered");
+        assert_eq!(source, ini);
+        assert_eq!(
+            compiled.map(|_| ()).unwrap_err().kind,
+            QueryErrorKind::NodeType
+        );
     }
 
     #[test]

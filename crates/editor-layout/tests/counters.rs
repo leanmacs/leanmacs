@@ -13,9 +13,10 @@ use editor_layout::Layout;
 use editor_layout::cache::Counters;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::frame::Frame;
+use editor_layout::query::Around;
 use editor_layout::scene::{
-    Block, Changes, Cursor, Decoration, Padding, Rect, Scene, StatusField, TextKey, TextRef, View,
-    ViewId,
+    AlignStop, Block, Changes, Continuation, Cursor, Decoration, Fold, Padding, Rect, Scene,
+    StatusField, TextKey, TextRef, View, ViewId, WrapIndent,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -84,6 +85,9 @@ fn scene_rows(text: &TextRef, width: u32, cursor: usize, rows: u32) -> Scene {
             padding: Padding::default(),
             blocks: vec![],
             marks: vec![],
+            stops: vec![],
+            folds: vec![],
+            indents: vec![],
         }],
         ..Scene::default()
     }
@@ -133,6 +137,117 @@ fn a_width_change_breaks_every_row_again_and_shapes_none() {
         layout.frame(&scene(&text, 500, 0));
     });
     assert_eq!(wider, count(0, 20, 0));
+}
+
+/// [`scene`] of twenty words with a stop at the second character of
+/// every row, `x` points in, but row 7's at its `third`rd character when
+/// it is set.
+fn with_stops(text: &TextRef, x: u32, third: bool) -> Scene {
+    let mut scene = scene(text, 400, 0);
+    scene.views[0].stops = (0..20)
+        .map(|row| {
+            let start = text.snapshot.row_range(row).unwrap().start;
+            let at = if third && row == 7 { 2 } else { 1 };
+            AlignStop {
+                offset: start + at,
+                x,
+            }
+        })
+        .collect();
+    scene
+}
+
+#[test]
+fn a_frame_with_the_same_stops_again_shapes_nothing() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_stops(&text, 40, false));
+    let again = counted(&mut layout, |layout| {
+        layout.frame(&with_stops(&text, 40, false));
+    });
+    assert_eq!(again, count(0, 0, 20));
+}
+
+#[test]
+fn a_stops_x_changed_alone_breaks_the_rows_and_shapes_none() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_stops(&text, 40, false));
+    let moved = counted(&mut layout, |layout| {
+        layout.frame(&with_stops(&text, 60, false));
+    });
+    assert_eq!(moved, count(0, 20, 0));
+}
+
+#[test]
+fn a_stop_moved_to_another_offset_shapes_that_row_only() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_stops(&text, 40, false));
+    let moved = counted(&mut layout, |layout| {
+        layout.frame(&with_stops(&text, 40, true));
+    });
+    assert_eq!(moved, count(1, 1, 19));
+}
+
+/// [`scene`] of twenty words, rows 0 to 9 under a wrap indent of `first`
+/// points continued at the lead `lead` bytes into each row, but row 4's
+/// `lead` one byte further when `further` is set; and rows 10 to 19 under
+/// one of `first` points continued at 30.
+fn with_indents(text: &TextRef, first: u32, lead: usize, further: bool) -> Scene {
+    let mut scene = scene(text, 400, 0);
+    let start = |row: usize| text.snapshot.row_range(row).unwrap().start;
+    let hanging = |start, stop, lead| WrapIndent {
+        start,
+        stop,
+        first,
+        rest: Continuation::Lead(lead),
+    };
+    let mut indents = vec![hanging(start(0), start(10), lead)];
+    if further {
+        indents.push(hanging(start(4), start(5), lead + 1));
+    }
+    indents.push(WrapIndent {
+        start: start(10),
+        stop: text.snapshot.len(),
+        first,
+        rest: Continuation::Points(30),
+    });
+    scene.views[0].indents = indents;
+    scene
+}
+
+#[test]
+fn a_frame_with_the_same_indents_again_shapes_nothing() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_indents(&text, 20, 2, false));
+    let again = counted(&mut layout, |layout| {
+        layout.frame(&with_indents(&text, 20, 2, false));
+    });
+    assert_eq!(again, count(0, 0, 20));
+}
+
+#[test]
+fn a_pixel_indent_changed_alone_breaks_the_rows_it_covers_and_shapes_none() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_indents(&text, 20, 2, false));
+    let moved = counted(&mut layout, |layout| {
+        layout.frame(&with_indents(&text, 30, 2, false));
+    });
+    assert_eq!(moved, count(0, 20, 0));
+}
+
+#[test]
+fn a_lead_changed_shapes_that_row_only() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_indents(&text, 20, 2, false));
+    let moved = counted(&mut layout, |layout| {
+        layout.frame(&with_indents(&text, 20, 2, true));
+    });
+    assert_eq!(moved, count(1, 1, 19));
 }
 
 #[test]
@@ -826,10 +941,79 @@ fn a_frame_that_shows_the_same_blocks_again_shapes_none_of_them() {
     let asked = counted(&mut layout, |layout| {
         let blocks = scene_with_blocks(&text, &headers).views.remove(0).blocks;
         layout
-            .rows_shown_with_blocks(&text, 400.0, 640.0, Padding::default(), 0, &blocks)
+            .rows_shown_with_blocks(
+                &text,
+                400.0,
+                640.0,
+                Padding::default(),
+                0,
+                Around {
+                    blocks: &blocks,
+                    folds: &[],
+                },
+            )
             .unwrap();
     });
     assert_eq!(asked.shaped, 0);
+}
+
+/// [`scene`], with rows 5 to 9 folded under one placeholder when
+/// `folded`.
+fn scene_with_fold(text: &TextRef, folded: bool) -> Scene {
+    let mut scene = scene(text, 400, 0);
+    if folded {
+        scene.views[0].folds = vec![Fold {
+            start: text.snapshot.row_range(5).unwrap().start,
+            stop: text.snapshot.row_range(9).unwrap().end,
+            text: "… 5 rows".to_owned(),
+            decorations: vec![],
+        }];
+    }
+    scene
+}
+
+#[test]
+fn folding_shapes_the_placeholder_alone_and_showing_it_again_shapes_nothing() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    let unfolded = counted(&mut layout, |layout| {
+        layout.frame(&scene_with_fold(&text, false));
+    });
+    assert_eq!(unfolded, count(20, 20, 0));
+    // Folding shapes the placeholder and no row of the text: the fifteen
+    // rows it leaves are reused.
+    let folded = counted(&mut layout, |layout| {
+        layout.frame(&scene_with_fold(&text, true));
+    });
+    assert_eq!(folded, count(1, 1, 15));
+    // Shown again, the placeholder is kept.
+    let again = counted(&mut layout, |layout| {
+        layout.frame(&scene_with_fold(&text, true));
+    });
+    assert_eq!(again, count(0, 0, 16));
+    // And a query with the fold lays out nothing either.
+    let asked = counted(&mut layout, |layout| {
+        let folds = scene_with_fold(&text, true).views.remove(0).folds;
+        layout
+            .rows_shown_with_blocks(
+                &text,
+                400.0,
+                640.0,
+                Padding::default(),
+                0,
+                Around {
+                    blocks: &[],
+                    folds: &folds,
+                },
+            )
+            .unwrap();
+    });
+    assert_eq!(asked.shaped, 0);
+    // Unfolding shapes no row: the hidden ones were kept.
+    let back = counted(&mut layout, |layout| {
+        layout.frame(&scene_with_fold(&text, false));
+    });
+    assert_eq!(back, count(0, 0, 20));
 }
 
 #[test]

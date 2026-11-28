@@ -30,9 +30,10 @@ input (`Loop.candidateListView`, the core's `lean/Editor/Loop.lean`;
   the rows shown reaches plus `gap` (2), counted in characters, then the
   annotation in `annotationFace` (`minibuffer.annotation`). A row with none
   has no trailing spaces. The column is counted in characters, which is
-  exact under the shipped monospace default face; align-to stops in pixels
-  are not built (`docs/design/text-and-display.md`, "Text is the only
-  layout engine").
+  exact under the shipped monospace default face; moving it onto the
+  align-to stops layout now has is rdm task
+  `move-tabs-and-annotations-to-align-stops`
+  (`docs/design/text-and-display.md`, "Text is the only layout engine").
 - **Group headers.** Only when the listing holds two groups or more
   (`Showing.grouped`) and `rows` is 2 or more: a header row, the group's
   name in `groupFace` (`minibuffer.group`), before the first candidate shown

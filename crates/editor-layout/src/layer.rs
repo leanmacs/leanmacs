@@ -7,7 +7,7 @@
 //! point between its coordinates and those below, with a bias for a point
 //! the layer below has no counterpart of.
 //!
-//! The layers built are, from the buffer up:
+//! The layers built are three. Two are stacked, from the buffer up:
 //!
 //! 1. [`tabs::TabLayer`](crate::tabs::TabLayer): each tab expanded into
 //!    spaces up to the next tab stop, each row cut into segments of at most
@@ -18,16 +18,30 @@
 //!    per-text line store; points are
 //!    [`wrap::WrapPoint`](crate::wrap::WrapPoint).
 //!
+//! The third, [`folds::FoldLayer`](crate::folds::FoldLayer), sits beside
+//! them: it maps a buffer offset to a
+//! [`folds::FoldPoint`](crate::folds::FoldPoint), a row of the rows a
+//! view's folds leave with each fold's rows as one placeholder row, and
+//! back. A fold never changes the text of a row it leaves shown, so the
+//! tab layer's `Below` stays the buffer's snapshot and the tab and wrap
+//! entries stay keyed by buffer row: folding shapes only the placeholder,
+//! and the rows it hides are not laid out. Layout keeps no fold layer
+//! between calls; the frame and the queries read each walk's folds
+//! through a [`folds::FoldSnapshot`](crate::folds::FoldSnapshot)
+//! ([`folds`](crate::folds), "Where it sits").
+//!
 //! # Adding a layer
 //!
 //! A new layer is a new type that implements [`Layer`], placed in the
 //! stack where its points make sense, and none of the layers below it
 //! changes:
 //!
-//! - **Folds and inline text** (type hints, a pending-operator hint) go
-//!   between the buffer and the tab layer: they change what text a row
-//!   holds, so tab stops are counted after them. The tab layer then takes
-//!   their snapshot and edits in place of the buffer's.
+//! - **Inline text** (type hints, a pending-operator hint) goes between
+//!   the buffer and the tab layer: it changes what text a row holds, so
+//!   tab stops are counted after it. The tab layer then takes its
+//!   snapshot and edits in place of the buffer's. Folds were first meant
+//!   for this place too; as built they change no shown row's text, and sit
+//!   beside the stack instead (above).
 //! - **Blocks between lines** (a review thread, a prompt) go after the wrap
 //!   layer: they add rows of their own between visual lines and change no
 //!   line's breaks.

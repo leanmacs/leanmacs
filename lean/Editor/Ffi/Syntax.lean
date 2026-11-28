@@ -569,6 +569,103 @@ def syntaxKeptCaptures (snapshot : Snapshot) (kind : UInt8) (start stop : USize)
   | none =>
     throw (IO.userError s!"the library answered kept captures with the status {raw.status}")
 
+/-- Why the library did not parse a text once. -/
+inductive SyntaxOnceRefusal where
+  /-- No grammar of the host's name. -/
+  | unknownGrammar
+  /-- The languages do not name the host, or the host's query or
+  injections do not compile. -/
+  | noHostQuery
+  deriving DecidableEq, Repr
+
+/-- A layer of a text parsed once, as it crosses: its language, its depth,
+its ranges, its capture names and its captures. -/
+structure SyntaxOnceLayer where
+  /-- The language's name. -/
+  language : String
+  /-- How deep it is: 0 for the host. -/
+  depth : UInt64
+  /-- Its ranges, each a start and an end. -/
+  ranges : Array (UInt64 × UInt64)
+  /-- Its query's capture names. -/
+  names : Array String
+  /-- Its captures. -/
+  captures : Array SyntaxCapture
+  deriving DecidableEq, Repr
+
+/-- A text's layers parsed once as the glue builds them in one call: the
+words, the strings, then the status. -/
+private structure RawOnce where
+  /-- The words of the layers, copied from the library's buffer. -/
+  words : ByteArray
+  /-- Each layer's language and then its capture names. -/
+  strings : RawStrings
+  /-- 0 parsed, 1 unknown grammar, 2 no host query, 3 bad languages. -/
+  status : UInt64
+
+/-- The layers `words` and `strings` spell (`crates/editor-ffi`,
+`src/syntax.rs`, "A text parsed once"): the count of layers, then each
+layer's depth, its ranges' count and ends, its names' count and its
+captures' count and four words each; and each layer's language and names
+in order. `none` unless every count is what is there. -/
+private def onceLayersOf? (words : Array UInt64) (strings : Array String) :
+    Option (Array SyntaxOnceLayer) := do
+  let count := (← words[0]?).toNat
+  let (layers, here, used) ←
+    (List.range count).foldlM
+        (fun ((layers : Array SyntaxOnceLayer), here, used) _ => do
+          let depth ← words[here]?
+          let rangeCount := (← words[here + 1]?).toNat
+          let ranges ←
+            (List.range rangeCount).toArray.mapM fun index => do
+                return (← words[here + 2 + 2 * index]?, ← words[here + 3 + 2 * index]?)
+          let here := here + 2 + 2 * rangeCount
+          let nameCount := (← words[here]?).toNat
+          let captureCount := (← words[here + 1]?).toNat
+          let captures ←
+            capturesOf?
+                (#[captureCount.toUInt64] ++ words.extract (here + 2) (here + 2 + 4 * captureCount))
+          let language ← strings[used]?
+          guard (used + 1 + nameCount ≤ strings.size)
+          let names := strings.extract (used + 1) (used + 1 + nameCount)
+          return (layers.push { language, depth, ranges, names, captures },
+              here + 2 + 4 * captureCount, used + 1 + nameCount))
+        (#[], 1, 0)
+  guard (here == words.size && used == strings.size)
+  return layers
+
+/-- `syntaxParseOnce` as it crosses: the source and the host's name, and the
+languages as a list of strings, words and one string, three strings to a
+language. -/
+@[extern "editor_glue_syntax_parse_once"]
+private opaque syntaxParseOnceRaw (source host : @& String) (words : @& ByteArray)
+    (strings : @& String) : IO RawOnce
+
+/-- `source` parsed once with the grammar `host`, and its layers, each of
+`languages` a grammar's name, the source of the query its layers answer and
+the source of its injections, `""` for none; or why not. Answered on the
+calling thread. A status or words the decoder here cannot read are an `IO`
+error. -/
+def syntaxParseOnce (source host : String) (languages : Array (String × String × String)) :
+    IO (Except SyntaxOnceRefusal (Array SyntaxOnceLayer)) := do
+  let strings := languages.foldl (fun spelled (grammar, query, injections) =>
+      spelled.push grammar |>.push query |>.push injections) #[]
+  let raw ← syntaxParseOnceRaw source host (lengthWords strings) (strings.foldl (· ++ ·) "")
+  match raw.status with
+  | 0 =>
+    match
+      (wordsOf? raw.words).bind fun words => raw.strings.strings?.bind (onceLayersOf? words) with
+    | some layers =>
+      return .ok layers
+    | none =>
+      throw (IO.userError "the library's words do not spell a text's layers")
+  | 1 =>
+    return .error .unknownGrammar
+  | 2 =>
+    return .error .noHostQuery
+  | status =>
+    throw (IO.userError s!"the library answered a text parsed once with the status {status}")
+
 /-- The guard of a snapshot's tree's delivery, for a test kit that waits on
 it (`syntaxSettle`) before it forwards a question; only a hang reaches it,
 and the question is then forwarded with the tree not yet delivered. -/
