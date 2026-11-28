@@ -68,6 +68,32 @@ binding answers by one rule:
 - **A block holds no position.** A move goes over it as if it were not
   there, and a position converts to a row and back as without blocks.
 
+## Folds
+
+A view's folds (`Fold`, `View.folds`) are ranges of its text each drawn as
+one placeholder row. Unlike a block, a fold changes which rows exist, so the
+folds ride on all three questions (`RowsQuery.folds`, `MoveQuery.folds`,
+`SpotQuery.folds`) as well as on the scene. Every binding answers by one
+rule:
+
+- A fold covers the lines that hold a byte of its range `[start, stop)`, a
+  line break being the line's it ends, or the line of `start` when the range
+  is empty; an offset past the end is the end, and a byte inside a
+  character is on that character's line. The folds are taken in order of
+  start, the longer first of two with one start, and one whose first line an
+  earlier one covers is dropped, so a binding handed nested folds shows the
+  outer one.
+- The covered lines are one row, whatever they wrap to: the placeholder,
+  one row tall. The rows answer gives it as the first covered line's start
+  through the end of the last covered line's characters.
+- The placeholder holds every position of the lines it covers, each at x 0:
+  an anchor in them shows from the placeholder, a spot of any of them is the
+  placeholder's row at the padding's x, and a move counts the placeholder as
+  one row and, landing on it, goes to the fold's start, passing its goal
+  back unchanged.
+- A block before the first covered line is drawn above the placeholder, and
+  one before a later covered line is not drawn.
+
 Lean keeps no layout of its own: what wraps where, and how tall a row is, is
 asked here every time. Xi's experience is the reason
 (`docs/design/text-and-display.md`, "The scene").
@@ -194,6 +220,9 @@ structure RowsQuery where
   rule its frame draws them by (the module docs, "Blocks"). None by
   default. -/
   blocks : Array Block := #[]
+  /-- The view's folds: each shows its covered lines as one row (the module
+  docs, "Folds"). None by default. -/
+  folds : Array Fold := #[]
   deriving DecidableEq, Repr
 
 /-- Where a position goes when it moves some visual lines. -/
@@ -216,6 +245,9 @@ structure MoveQuery where
   /-- The x, in pixels from the row's start, that the move aims for: what
   the last move passed back, or `none` to aim for the position's own. -/
   goal : Option Nat
+  /-- The view's folds, as `RowsQuery.folds`: a fold is one row to a move,
+  and a move that lands on it goes to its start. -/
+  folds : Array Fold := #[]
   deriving DecidableEq, Repr
 
 /-- Where a move went. -/
@@ -244,6 +276,10 @@ structure SpotQuery where
   /-- The view's blocks, as `RowsQuery.blocks`: a position below a block
   is lower by the block's rows. -/
   blocks : Array Block := #[]
+  /-- The view's folds, as `RowsQuery.folds`: a position a fold covers is
+  drawn at its placeholder's x 0, and one below a fold is higher by the rows
+  it hides. -/
+  folds : Array Fold := #[]
   deriving DecidableEq, Repr
 
 /-- Where a position is drawn in a view, in whole pixels from the view's

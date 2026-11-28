@@ -168,15 +168,40 @@ def stopWords (stops : Array AlignStop) : Array UInt64 :=
       words.push (RealTexts.word aligned.offset) |>.push (paddingWord aligned.x))
     #[stops.size.toUInt64]
 
+/-- `folds` as they cross to the library (the layout is
+`crates/editor-ffi/src/display/wire.rs`'s, a view's folds after its stops):
+words, their count, then for each its start, its stop, its placeholder's
+length and its count of decorations, then each decoration's start, stop and
+face's length; and one string, each fold's placeholder and then its
+decorations' faces. A view's folds are written so into a scene
+(`encodeView`), and by themselves for every query. -/
+def foldWords (folds : Array Fold) : Array UInt64 × String :=
+  folds.foldl
+    (fun (words, strings) fold =>
+      let words :=
+        words.push (RealTexts.word fold.start) |>.push (RealTexts.word fold.stop) |>.push
+            fold.text.utf8ByteSize.toUInt64 |>.push
+          fold.decorations.size.toUInt64
+      fold.decorations.foldl
+        (fun (words, strings) decoration =>
+          (words.push (RealTexts.word decoration.start) |>.push
+                (RealTexts.word decoration.stop) |>.push
+              decoration.face.name.utf8ByteSize.toUInt64,
+            strings ++ decoration.face.name))
+        (words, strings ++ fold.text))
+    (#[folds.size.toUInt64], "")
+
 /-- The rows a view shows: `Display.rowsShown`'s answer. -/
 def rows (real : RealDisplay) (query : Display.RowsQuery) :
     IO (Except DisplayError (Array Display.Row)) := do
   let some snapshot ← real.snapshots.find? query.snapshot | return .error .noSuchSnapshot
   let (words, strings) := blockWords query.blocks
+  let (folded, foldText) := foldWords query.folds
   let answer ←
     real.display.rows snapshot (RealTexts.word query.width) (RealTexts.word query.height)
         (offset query.anchor) (paddingWord query.padding.across) (paddingWord query.padding.down)
-        (paddingWord query.padding.top) words strings (paddingWord query.padding.gutter)
+        (paddingWord query.padding.top) words strings (paddingWord query.padding.gutter) folded
+        foldText
   match answer with
   | some rows =>
     return .ok (rows.map fun row => { start := row.start.toNat, stop := row.stop.toNat })
@@ -187,9 +212,11 @@ def rows (real : RealDisplay) (query : Display.RowsQuery) :
 def move (real : RealDisplay) (query : Display.MoveQuery) :
     IO (Except DisplayError Display.Moved) := do
   let some snapshot ← real.snapshots.find? query.snapshot | return .error .noSuchSnapshot
+  let (folded, foldText) := foldWords query.folds
   let answer ←
     real.display.move snapshot (RealTexts.word query.width) (offset query.position) query.lines
-        (query.goal.map RealTexts.word) (paddingWord query.across) (paddingWord query.gutter)
+        (query.goal.map RealTexts.word) (paddingWord query.across) (paddingWord query.gutter) folded
+        foldText
   match answer with
   | some moved =>
     return .ok { position := moved.position.toNat, goal := moved.goal.toNat }
@@ -201,11 +228,12 @@ def spot (real : RealDisplay) (query : Display.SpotQuery) :
     IO (Except DisplayError (Option Display.Spot)) := do
   let some snapshot ← real.snapshots.find? query.snapshot | return .error .noSuchSnapshot
   let (words, strings) := blockWords query.blocks
+  let (folded, foldText) := foldWords query.folds
   let answer ←
     real.display.spot snapshot (RealTexts.word query.width) (RealTexts.word query.height)
         (offset query.anchor) (offset query.position) (paddingWord query.padding.across)
         (paddingWord query.padding.down) (paddingWord query.padding.top) words strings
-        (paddingWord query.padding.gutter)
+        (paddingWord query.padding.gutter) folded foldText
   match answer with
   | some spot =>
     return .ok
@@ -308,10 +336,11 @@ def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encod
       paddingWord view.padding.gutter]
   let (blocks, blockText) := blockWords view.blocks
   let (marks, markText) := markWords view.marks
+  let (folds, foldText) := foldWords view.folds
   return {
       encoded with
-      words := encoded.words ++ padding ++ blocks ++ marks ++ stopWords view.stops
-      strings := encoded.strings ++ blockText ++ markText }
+      words := encoded.words ++ padding ++ blocks ++ marks ++ stopWords view.stops ++ folds
+      strings := encoded.strings ++ blockText ++ markText ++ foldText }
 
 /-- The library's tag of a slant. -/
 def slantTag : Slant → UInt64

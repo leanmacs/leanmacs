@@ -39,6 +39,16 @@ command loop fills from the text model when it runs both ports together.
   rows a view shows: a line's blocks are shown with its first row or not at
   all, and the first row shown has its blocks only when they fit with it.
   A spot's `k` counts the block rows shown above its row.
+- A fold (`Editor/Display.lean`, "Folds") covers the lines that hold a byte
+  of its range, or the line of its start when the range is empty
+  (`lineOf`); the folds are taken in order of start (and, of two with one
+  start, the longer first), and one whose first line an earlier one covers
+  is dropped (`foldLines`). The rows of a fold's covered lines are one
+  placeholder row (`collapse`): no characters, its range the first covered
+  line's start through the last one's stop, holding the positions up to the
+  last covered row's `upTo`. A move that lands on it goes to its start, and
+  a position on it is at cell 0. Its blocks are those before its first
+  covered line.
 - A query's padding is in points, and the model lays out at scale 1, where
   a point is a pixel: a view `width` wide with the padding `across` and a
   gutter `gutter` wide lays out as one `width - 2 * across - gutter` wide,
@@ -143,6 +153,9 @@ structure Laid where
   /-- Whether it is the first row of its line, the one row of a line that
   the line's blocks are drawn above. -/
   firstOfLine : Bool := true
+  /-- Whether it is a fold's placeholder row, which stands for the rows of
+  the lines the fold covers (`collapse`). -/
+  placeholder : Bool := false
   deriving Inhabited
 
 /-- The lines of a text whose characters, from the byte offset `offset`, are
@@ -215,6 +228,55 @@ def layout (text : String) (columns : Nat) : Array Laid :=
               line := index, firstOfLine := place == first })
     return laid
 
+/-- The line of `text` that holds the byte offset `offset`: the line feeds
+before it, an offset past the end being the end. An offset inside a
+character is on that character's line, as the boundary before it is. -/
+def lineOf (text : String) (offset : Nat) : Nat :=
+  (text.toUTF8.extract 0 (min offset text.utf8ByteSize)).foldl
+    (fun lines byte => if byte == 10 then lines + 1 else lines) 0
+
+/-- The lines of `text` each fold of `folds` covers, as its first and its
+last, for the folds a view shows: taken in order of start, the longer first
+of two with one start, a fold whose first line an earlier shown one covers
+dropped. A fold covers the lines that hold a byte of `[start, stop)`, a
+line feed being the line's it ends, or the line of `start` when the range
+is empty. -/
+def foldLines (text : String) (folds : Array Fold) : Array (Nat × Nat) :=
+  let size := text.utf8ByteSize
+  let ordered :=
+    folds.insertionSort fun a b => a.start < b.start || (a.start == b.start && a.stop > b.stop)
+  ordered.foldl
+    (fun shown fold =>
+      let start := min fold.start size
+      let stop := max start (min fold.stop size)
+      let first := lineOf text start
+      let last := lineOf text (if start < stop then stop - 1 else start)
+      match shown.back? with
+      | some (_, covered) => if first ≤ covered then shown else shown.push (first, last)
+      | none => shown.push (first, last))
+    #[]
+
+/-- `laid` with the rows of each fold's covered lines (`foldLines`) made one
+placeholder row: no characters, from the first covered line's start to the
+last covered line's stop, holding the positions up to the last covered
+row's `upTo`, as the first row of the fold's first line. -/
+def collapse (laid : Array Laid) (folded : Array (Nat × Nat)) : Array Laid :=
+  if folded.isEmpty then laid
+  else
+    laid.foldl
+      (fun out row =>
+        match folded.find? fun (first, last) => first ≤ row.line && row.line ≤ last with
+        | none => out.push row
+        | some (first, last) =>
+          if row.line == first && row.firstOfLine then
+            let final := (laid.filter (·.line == last)).back?.getD row
+            out.push
+              { row := ⟨row.row.start, final.row.stop⟩, chars := #[], firsts := #[], reach := 0
+                upTo := final.upTo, lastOfLine := true, line := first, firstOfLine := true
+                placeholder := true }
+          else out)
+      #[]
+
 /-- Whether `offset` is a position of `text`: a character boundary within
 it, its end included. -/
 def isPosition (text : String) (offset : Nat) : Bool :=
@@ -226,21 +288,15 @@ def isPosition (text : String) (offset : Nat) : Bool :=
 def rowOf (laid : Array Laid) (offset : Nat) : Nat :=
   (laid.findIdx? fun row => row.row.start <= offset && offset < row.upTo).getD 0
 
-/-- The text of `snapshot`, laid out for a view `width` pixels wide, with the
-position `offset` checked: refused with `noSuchSnapshot` or `badPosition`. -/
-def laidOut (model : DisplayModel) (snapshot : SnapshotId) (width offset : Nat) :
-    Except DisplayError (Array Laid) := do
+/-- The text of `snapshot`, laid out for a view `width` pixels wide with
+`folds` collapsed, with the position `offset` checked: refused with
+`noSuchSnapshot` or `badPosition`. -/
+def laidOut (model : DisplayModel) (snapshot : SnapshotId) (width offset : Nat)
+    (folds : Array Fold := #[]) : Except DisplayError (Array Laid) := do
   let some text := model.text? snapshot | throw .noSuchSnapshot
   unless isPosition text offset do
     throw .badPosition
-  return layout text (columns model.cells width)
-
-/-- The line of `text` that holds the byte offset `offset`: the line feeds
-before it, an offset past the end being the end. An offset inside a
-character is on that character's line, as the boundary before it is. -/
-def lineOf (text : String) (offset : Nat) : Nat :=
-  (text.toUTF8.extract 0 (min offset text.utf8ByteSize)).foldl
-    (fun lines byte => if byte == 10 then lines + 1 else lines) 0
+  return collapse (layout text (columns model.cells width)) (foldLines text folds)
 
 /-- How many rows of a view `columns` cells wide the blocks of `blocks`
 before the row `row` of a text laid out as `text` take: none unless it is
@@ -280,8 +336,9 @@ def shownFrom (laid : Array Laid) (first capacity : Nat) (above : Laid → Nat) 
 that holds the anchor, as many as fit its height with its blocks, fewer at
 the end of the text; the view less its padding, as points at scale 1. -/
 def shownRows (model : DisplayModel) (snapshot : SnapshotId) (width height anchor : Nat)
-    (blocks : Array Block) : Except DisplayError (Array Laid × Array (Nat × Nat)) := do
-  let laid ← model.laidOut snapshot width anchor
+    (blocks : Array Block) (folds : Array Fold := #[]) :
+    Except DisplayError (Array Laid × Array (Nat × Nat)) := do
+  let laid ← model.laidOut snapshot width anchor folds
   let text := (model.text? snapshot).getD ""
   let columns := columns model.cells width
   let shown :=
@@ -296,7 +353,8 @@ def rows (model : DisplayModel) (query : Display.RowsQuery) :
     Except DisplayError (Array Display.Row) := do
   let width := query.width - 2 * query.padding.across - query.padding.gutter
   let height := query.height - 2 * query.padding.down - query.padding.top
-  let (laid, shown) ← model.shownRows query.snapshot width height query.anchor query.blocks
+  let (laid, shown) ←
+    model.shownRows query.snapshot width height query.anchor query.blocks query.folds
   return shown.map fun (index, _) => laid[index]!.row
 
 /-- Where a position goes: to the row `query.lines` from the one that holds
@@ -304,11 +362,13 @@ it, kept within the first and the last row, at the cell the goal aims for
 (`goal / advance`, or the position's own first cell when there is no goal):
 the character that cell is in. Past the row's last character it is the
 row's end on a line's last row and the row's last character on any other.
-The goal passed back is the one aimed for. -/
+On a fold's placeholder it is the fold's start. The goal passed back is the
+one aimed for. -/
 def move (model : DisplayModel) (query : Display.MoveQuery) : Except DisplayError Display.Moved :=
   do
   let laid ←
     model.laidOut query.snapshot (query.width - 2 * query.across - query.gutter) query.position
+        query.folds
   let here := rowOf laid query.position
   let held := laid[here]!
   let own := held.firsts[(held.chars.filter (· < query.position)).size]?.getD held.reach
@@ -317,8 +377,11 @@ def move (model : DisplayModel) (query : Display.MoveQuery) : Except DisplayErro
   let row := laid[target]!
   let aimed := goal / model.cells.advance
   let position :=
-    if aimed < row.reach then row.chars[(row.firsts.filter (· ≤ aimed)).size - 1]?.getD row.row.stop
-    else if row.lastOfLine then row.row.stop else row.chars.back?.getD row.row.stop
+    if row.placeholder then row.row.start
+    else
+      if aimed < row.reach then
+        row.chars[(row.firsts.filter (· ≤ aimed)).size - 1]?.getD row.row.stop
+      else if row.lastOfLine then row.row.stop else row.chars.back?.getD row.row.stop
   return { position, goal }
 
 /-- Where a position is drawn in a view: on its row, when that is among the
@@ -330,7 +393,8 @@ def spot (model : DisplayModel) (query : Display.SpotQuery) :
     Except DisplayError (Option Display.Spot) := do
   let width := query.width - 2 * query.padding.across - query.padding.gutter
   let height := query.height - 2 * query.padding.down - query.padding.top
-  let (laid, shown) ← model.shownRows query.snapshot width height query.anchor query.blocks
+  let (laid, shown) ←
+    model.shownRows query.snapshot width height query.anchor query.blocks query.folds
   discard <| model.laidOut query.snapshot width query.position
   let here := rowOf laid query.position
   let some place := shown.findIdx? (·.1 == here) | return none

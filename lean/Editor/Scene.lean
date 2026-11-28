@@ -73,6 +73,16 @@ the last scene published, on its own thread, so painting never waits on Lean
   (`Buffer.stops`, set by `BufferId.setStops`), computed from widths the
   display measures (`Display.measure`, `Editor/Columns.lean`); the command
   loop copies them to every view of the buffer (`Loop.stopsOf`).
+- **A fold is rows shown as one.** A view's folds (`View.folds`) are the
+  ranges of its text drawn as one placeholder row each: the rows that hold a
+  byte of the range (a line break is the row's it ends), or the row of its
+  start when the range is empty, are one row of the placeholder's text in
+  its own faces, unbroken and clipped at the view's edge. That row holds
+  every position of the rows it covers, each at its x 0. Which ranges are
+  folded is the buffer's owner's (`Buffer.folds`, `Editor/Fold.lean`) and
+  its toggles'; the command loop gives every view of the buffer its shown
+  folds (`Loop.views`). The display's queries take the same folds
+  (`Editor/Display.lean`, "Folds").
 - Sizes and rectangles are in the frame's physical pixels. Paddings (a
   view's `padding`, the scene's `echoPadding`, a status field's `padding`)
   are in whole points, as a face's lengths are: layout multiplies them by
@@ -178,6 +188,25 @@ structure AlignStop where
   and gutter) the cell starts, in whole points: layout multiplies it by the
   window's scale, as it does a padding. -/
   x : Nat
+  deriving DecidableEq, Repr
+
+/-- A fold: a range of a view's text drawn as one placeholder row
+(`Editor/Display.lean`, "Folds"). It covers the rows that hold a byte of
+`[start, stop)`, a line break being the row's it ends, or the row of
+`start` when the range is empty. Those rows are drawn as one row of `text`
+in its `decorations`' faces over the default face, laid out unbroken and
+clipped at the view's right edge, and that row holds every position from
+the first covered row's start up to the next row's start, each at its x 0.
+A fold never changes the text of a row it leaves shown. -/
+structure Fold where
+  /-- A byte offset of the view's snapshot where the range starts. -/
+  start : Nat
+  /-- Where it stops, not included. -/
+  stop : Nat
+  /-- What the placeholder row says. -/
+  text : String
+  /-- Spans of `text` drawn in a face, its offsets bytes of `text`. -/
+  decorations : Array Decoration := #[]
   deriving DecidableEq, Repr
 
 /-- Which end of a view's status row a field is drawn from: the left fields
@@ -289,6 +318,10 @@ structure View where
   /-- Its align-to stops, its buffer's (`Buffer.stops`) in the range its
   decorations are read over (`Loop.stopsOf`). None by default. -/
   stops : Array AlignStop := #[]
+  /-- Its folds, the shown folds of its buffer (`Fold.shown`,
+  `Editor/Fold.lean`): outermost first, in order of start, none covering
+  another's first row. None by default. -/
+  folds : Array Fold := #[]
   deriving DecidableEq, Repr
 
 /-- A divider: a strip of the frame between two tiled views, filled in the

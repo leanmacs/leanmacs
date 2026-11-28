@@ -2159,12 +2159,16 @@ void editor_ffi_display_rows(const editor_ffi_display *display,
                              uint64_t down, uint64_t top, uint64_t gutter,
                              size_t anchor, const uint8_t *block_words,
                              size_t block_words_len, const uint8_t *block_text,
-                             size_t block_text_len, editor_ffi_raw_words *out);
+                             size_t block_text_len, const uint8_t *fold_words,
+                             size_t fold_words_len, const uint8_t *fold_text,
+                             size_t fold_text_len, editor_ffi_raw_words *out);
 void editor_ffi_display_move(const editor_ffi_display *display,
                              const editor_ffi_snapshot *snapshot,
                              uint64_t width, uint64_t across, uint64_t gutter,
                              size_t position, int64_t lines, bool goal_present,
-                             uint64_t goal, editor_ffi_raw_words *out);
+                             uint64_t goal, const uint8_t *fold_words,
+                             size_t fold_words_len, const uint8_t *fold_text,
+                             size_t fold_text_len, editor_ffi_raw_words *out);
 void editor_ffi_display_spot(const editor_ffi_display *display,
                              const editor_ffi_snapshot *snapshot,
                              uint64_t width, uint64_t height, uint64_t across,
@@ -2172,6 +2176,8 @@ void editor_ffi_display_spot(const editor_ffi_display *display,
                              size_t anchor, size_t position,
                              const uint8_t *block_words, size_t block_words_len,
                              const uint8_t *block_text, size_t block_text_len,
+                             const uint8_t *fold_words, size_t fold_words_len,
+                             const uint8_t *fold_text, size_t fold_text_len,
                              editor_ffi_raw_words *out);
 void editor_ffi_display_measure(const editor_ffi_display *display,
                                 const uint8_t *run_words, size_t run_words_len,
@@ -2229,54 +2235,66 @@ lean_obj_res editor_glue_display_live(void) {
 }
 
 // `Editor.Ffi.Display.rowsRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
-// UInt64 → UInt64 → UInt64 → UInt64 → USize → @& ByteArray → @& String → IO
-// RawWords`. The last two are the view's blocks, borrowed for the call.
-lean_obj_res editor_glue_display_rows(b_lean_obj_arg display,
-                                      b_lean_obj_arg snapshot, uint64_t width,
-                                      uint64_t height, uint64_t across,
-                                      uint64_t down, uint64_t top,
-                                      uint64_t gutter, size_t anchor,
-                                      b_lean_obj_arg block_words,
-                                      b_lean_obj_arg block_text) {
+// UInt64 → UInt64 → UInt64 → UInt64 → USize → @& ByteArray → @& String → @&
+// ByteArray → @& String → IO RawWords`. The last four are the view's blocks
+// and its folds, borrowed for the call.
+lean_obj_res
+editor_glue_display_rows(b_lean_obj_arg display, b_lean_obj_arg snapshot,
+                         uint64_t width, uint64_t height, uint64_t across,
+                         uint64_t down, uint64_t top, uint64_t gutter,
+                         size_t anchor, b_lean_obj_arg block_words,
+                         b_lean_obj_arg block_text, b_lean_obj_arg fold_words,
+                         b_lean_obj_arg fold_text) {
   editor_ffi_raw_words raw;
   editor_ffi_display_rows(
       lean_get_external_data(display), lean_get_external_data(snapshot), width,
       height, across, down, top, gutter, anchor, byte_array_bytes(block_words),
       byte_array_len(block_words), string_bytes(block_text),
-      string_len(block_text), &raw);
+      string_len(block_text), byte_array_bytes(fold_words),
+      byte_array_len(fold_words), string_bytes(fold_text),
+      string_len(fold_text), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
 // `Editor.Ffi.Display.moveRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
-// UInt64 → USize → UInt64 → Bool → UInt64 → IO RawWords`. The lines are a
-// two's complement number in a `UInt64`.
+// UInt64 → USize → UInt64 → Bool → UInt64 → @& ByteArray → @& String → IO
+// RawWords`. The lines are a two's complement number in a `UInt64`, and the
+// last two are the view's folds, borrowed for the call.
 lean_obj_res editor_glue_display_move(b_lean_obj_arg display,
                                       b_lean_obj_arg snapshot, uint64_t width,
                                       uint64_t across, uint64_t gutter,
                                       size_t position, uint64_t lines,
-                                      uint8_t goal_present, uint64_t goal) {
+                                      uint8_t goal_present, uint64_t goal,
+                                      b_lean_obj_arg fold_words,
+                                      b_lean_obj_arg fold_text) {
   editor_ffi_raw_words raw;
   editor_ffi_display_move(
       lean_get_external_data(display), lean_get_external_data(snapshot), width,
-      across, gutter, position, (int64_t)lines, goal_present, goal, &raw);
+      across, gutter, position, (int64_t)lines, goal_present, goal,
+      byte_array_bytes(fold_words), byte_array_len(fold_words),
+      string_bytes(fold_text), string_len(fold_text), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
 // `Editor.Ffi.Display.spotRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
 // UInt64 → UInt64 → UInt64 → UInt64 → USize → USize → @& ByteArray → @&
-// String → IO RawWords`. The last two are the view's blocks, borrowed for the
-// call.
-lean_obj_res editor_glue_display_spot(
-    b_lean_obj_arg display, b_lean_obj_arg snapshot, uint64_t width,
-    uint64_t height, uint64_t across, uint64_t down, uint64_t top,
-    uint64_t gutter, size_t anchor, size_t position, b_lean_obj_arg block_words,
-    b_lean_obj_arg block_text) {
+// String → @& ByteArray → @& String → IO RawWords`. The last four are the
+// view's blocks and its folds, borrowed for the call.
+lean_obj_res
+editor_glue_display_spot(b_lean_obj_arg display, b_lean_obj_arg snapshot,
+                         uint64_t width, uint64_t height, uint64_t across,
+                         uint64_t down, uint64_t top, uint64_t gutter,
+                         size_t anchor, size_t position,
+                         b_lean_obj_arg block_words, b_lean_obj_arg block_text,
+                         b_lean_obj_arg fold_words, b_lean_obj_arg fold_text) {
   editor_ffi_raw_words raw;
   editor_ffi_display_spot(
       lean_get_external_data(display), lean_get_external_data(snapshot), width,
       height, across, down, top, gutter, anchor, position,
       byte_array_bytes(block_words), byte_array_len(block_words),
-      string_bytes(block_text), string_len(block_text), &raw);
+      string_bytes(block_text), string_len(block_text),
+      byte_array_bytes(fold_words), byte_array_len(fold_words),
+      string_bytes(fold_text), string_len(fold_text), &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 

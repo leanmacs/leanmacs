@@ -73,6 +73,25 @@ when they do not fit with it; and a spot below a block is lower by its
 rows. A block's faces are not looked at: a face that sets another height
 is `editor-layout`'s to pin.
 
+## What folds are held to
+
+Eight properties hold every binding to the rule of folds
+(`Editor/Display.lean`, "Folds") in cells, with texts that wrap with no
+space: the lines a fold covers (a line feed the line's it ends, an empty
+range its start's line) are one row of the rows answer, from the first
+covered line's start to the last one's stop, however many rows they wrap
+to; an anchor among them shows from that row; a move counts it as one row,
+lands on the fold's start and passes its goal back unchanged; a spot of any
+position it covers is that row's at the padding's x, and the spot query
+still agrees with the other two (`spotAgrees`, given the folds); and a
+block before the first covered line is shown above it while one before a
+later covered line is not. Of the folds a binding is handed, it shows them
+in order of start, the longer first of two with one start, and drops one
+whose first line an earlier shown one covers, so of nested folds the outer
+one shows and one that partly overlaps a shown fold leaves its later lines
+shown. The placeholder's text and faces are not looked
+at: how it is drawn is `editor-layout`'s to pin (`tests/folds.rs`).
+
 ## What the measuring call is held to
 
 Three properties hold every binding's `Display.measure` in cells: an empty
@@ -147,12 +166,12 @@ is `columns` cells by `rows` rows, padded `padding` around it, that shows
 from `anchor`, is where `rowsShown` and a move of no lines say it is (the
 module docs, "What the spot query is held to"). -/
 def spotAgrees (cells : Display.Cells) (snapshot : SnapshotId) (columns rows anchor : Nat)
-    (padding : Padding) (position : Nat) : DisplayM Bool := do
+    (padding : Padding) (position : Nat) (folds : Array Fold := #[]) : DisplayM Bool := do
   let width := columns * cells.advance + 2 * padding.across + padding.gutter
   let height := rows * cells.lineHeight + 2 * padding.down + padding.top
-  let shown ← Display.rowsShown { snapshot, width, height, anchor, padding }
-  let own ← Display.rowsShown { snapshot, width, height, anchor := position, padding }
-  let spot ← Display.spotOf { snapshot, width, height, anchor, padding, position }
+  let shown ← Display.rowsShown { snapshot, width, height, anchor, padding, folds }
+  let own ← Display.rowsShown { snapshot, width, height, anchor := position, padding, folds }
+  let spot ← Display.spotOf { snapshot, width, height, anchor, padding, position, folds }
   let heights ← Display.heights
   match own[0]?.bind fun held => shown.findIdx? (· == held) with
   | none =>
@@ -161,7 +180,7 @@ def spotAgrees (cells : Display.Cells) (snapshot : SnapshotId) (columns rows anc
     let moved ←
       Display.linesFrom
           { snapshot, width, across := padding.across, gutter := padding.gutter, position
-            lines := 0, goal := none }
+            lines := 0, goal := none, folds }
     return spot ==
         some
           { x := padding.across + padding.gutter + moved.goal
@@ -184,6 +203,20 @@ def properties (cells : Display.Cells) : List Property :=
       { snapshot, width := columns * cells.advance, height := rows * cells.lineHeight, anchor
         position, blocks }
   let block (before : Nat) (text : String) : Block := { before, text }
+  let fold (start stop : Nat) : Fold := { start, stop, text := "…" }
+  let folded (snapshot : SnapshotId) (columns rows anchor : Nat) (folds : Array Fold)
+    (blocks : Array Block := #[]) : DisplayM (Array Display.Row) :=
+    Display.rowsShown
+      { snapshot, width := columns * cells.advance, height := rows * cells.lineHeight, anchor
+        blocks, folds }
+  let foldedMove (snapshot : SnapshotId) (columns position : Nat) (lines : Int) (goal : Option Nat)
+    (folds : Array Fold) : DisplayM Display.Moved :=
+    Display.linesFrom { snapshot, width := columns * cells.advance, position, lines, goal, folds }
+  let foldedSpot (snapshot : SnapshotId) (columns rows anchor position : Nat) (folds : Array Fold)
+    (blocks : Array Block := #[]) : DisplayM (Option Display.Spot) :=
+    Display.spotOf
+      { snapshot, width := columns * cells.advance, height := rows * cells.lineHeight, anchor
+        position, blocks, folds }
   [{  name :=
         "a view r rows tall over lines no longer than its width shows r lines from its anchor",
       texts := #["ab\ncd\nef\ngh"]
@@ -427,6 +460,101 @@ qr"]
             (← blocked snapshot 4 3 0 two) == #[⟨0, 1⟩] &&
             (← spotBlocked snapshot 4 4 0 2 two) ==
               some { x := 0, y := 3 * cells.lineHeight, height := cells.lineHeight } },
+    { name :=
+        "a fold over two lines is one row of the rows a view shows, from the first line's start to the last one's stop"
+      texts := #["ab\ncd\nef\ngh"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        return (← folded snapshot 4 3 0 #[fold 3 8]) == #[⟨0, 2⟩, ⟨3, 8⟩, ⟨9, 11⟩] &&
+            (← folded snapshot 4 4 0 #[]) == #[⟨0, 2⟩, ⟨3, 5⟩, ⟨6, 8⟩, ⟨9, 11⟩] },
+    { name :=
+        "a fold covers the lines that hold a byte of its range: a line feed is the line's it ends, and an empty range covers its start's line"
+      texts := #["ab\ncdefgh\nij"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let lineOne := #[⟨0, 2⟩, ⟨3, 9⟩, ⟨10, 12⟩]
+        return (← folded snapshot 4 4 0 #[fold 3 10]) == lineOne &&
+            (← folded snapshot 4 4 0 #[fold 5 5]) == lineOne &&
+            (← folded snapshot 4 4 0 #[fold 3 11]) == #[⟨0, 2⟩, ⟨3, 12⟩] &&
+            (← folded snapshot 4 4 0 #[]) == #[⟨0, 2⟩, ⟨3, 7⟩, ⟨7, 9⟩, ⟨10, 12⟩] },
+    { name := "an anchor inside a fold shows from its placeholder row"
+      texts := #["ab\ncd\nef\ngh"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        return (← folded snapshot 4 2 7 #[fold 3 8]) == #[⟨3, 8⟩, ⟨9, 11⟩] &&
+            (← folded snapshot 4 2 3 #[fold 3 8]) == #[⟨3, 8⟩, ⟨9, 11⟩] },
+    { name :=
+        "a move counts a fold as one row: down from the row above it lands on its start, once more on the row after it, and up mirrors this, the goal passed back unchanged"
+      texts := #["abc\ndef\nghi\njkl"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let folds := #[fold 4 11]
+        let onto ← foldedMove snapshot 10 2 1 none folds
+        let past ← foldedMove snapshot 10 onto.position 1 (some onto.goal) folds
+        let back ← foldedMove snapshot 10 past.position (-1) (some past.goal) folds
+        let above ← foldedMove snapshot 10 back.position (-1) (some back.goal) folds
+        let twice ← foldedMove snapshot 10 2 2 none folds
+        return onto == { position := 4, goal := 2 * cells.advance } &&
+            past == { position := 14, goal := 2 * cells.advance } &&
+            back == { position := 4, goal := 2 * cells.advance } &&
+            above == { position := 2, goal := 2 * cells.advance } &&
+            twice.position == 14 },
+    { name :=
+        "a wrapped line inside a fold takes no row of its own, to the rows a view shows or to a move"
+      texts := #["ab\ncdefgh\nij"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let folds := #[fold 3 9]
+        return (← folded snapshot 4 2 0 folds) == #[⟨0, 2⟩, ⟨3, 9⟩] &&
+            (← foldedMove snapshot 4 0 2 none folds).position == 10 &&
+            (← foldedMove snapshot 4 10 (-1) none folds).position == 3 },
+    { name :=
+        "a spot of any position a fold covers is its placeholder's row at the padding's x, a spot below a fold is higher by the rows it hides, and the spot agrees with the rows and a move at every position"
+      texts := #["ab\ncdefgh\nij\nkl"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let folds := #[fold 3 9]
+        let onFold : List Nat := [3, 4, 7, 9]
+        let mut holds := true
+        for position in onFold do
+          holds :=
+            holds &&
+              (← foldedSpot snapshot 4 4 0 position folds) ==
+                some { x := 0, y := cells.lineHeight, height := cells.lineHeight }
+        holds :=
+          holds &&
+            (← foldedSpot snapshot 4 4 0 11 folds) ==
+              some { x := cells.advance, y := 2 * cells.lineHeight, height := cells.lineHeight } &&
+            (← foldedSpot snapshot 4 4 0 11 #[]) ==
+              some { x := cells.advance, y := 3 * cells.lineHeight, height := cells.lineHeight }
+        let paddings : List Padding :=
+          [{}, { across := cells.advance, down := cells.lineHeight, top := cells.lineHeight }]
+        for padding in paddings do
+          for anchor in [0, 5, 10] do
+            for position in List.range 16 do
+              holds := holds && (← spotAgrees cells snapshot 4 2 anchor padding position folds)
+        return holds },
+    { name :=
+        "a block before a fold's first covered line is shown above its placeholder, and one before a later covered line is not"
+      texts := #["a\nb\nc\nd"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let folds := #[fold 2 5]
+        return (← folded snapshot 4 3 0 folds #[block 2 "H"]) == #[⟨0, 1⟩, ⟨2, 5⟩] &&
+            (← folded snapshot 4 3 0 folds #[block 4 "H"]) == #[⟨0, 1⟩, ⟨2, 5⟩, ⟨6, 7⟩] &&
+            (← foldedSpot snapshot 4 4 0 6 folds #[block 2 "H"]) ==
+              some { x := 0, y := 3 * cells.lineHeight, height := cells.lineHeight } &&
+            (← foldedSpot snapshot 4 4 0 6 folds #[block 4 "H"]) ==
+              some { x := 0, y := 2 * cells.lineHeight, height := cells.lineHeight } },
+    { name :=
+        "of nested folds the outer one shows, whatever their order, and a fold whose first line a shown one covers is dropped, its later lines shown"
+      texts := #["a\nb\nc\nd\ne"]
+      holds := fun snapshots => do
+        let snapshot := nth snapshots 0
+        let outer := #[⟨0, 1⟩, ⟨2, 7⟩, ⟨8, 9⟩]
+        return (← folded snapshot 4 5 0 #[fold 4 5, fold 2 7]) == outer &&
+            (← folded snapshot 4 5 0 #[fold 2 3, fold 2 7]) == outer &&
+            (← folded snapshot 4 5 0 #[fold 2 5, fold 4 7]) == #[⟨0, 1⟩, ⟨2, 5⟩, ⟨6, 7⟩, ⟨8, 9⟩] },
     { name := "an empty run measures nothing"
       texts := #[]
       holds := fun _ => do

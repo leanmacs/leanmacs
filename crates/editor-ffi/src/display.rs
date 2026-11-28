@@ -111,7 +111,7 @@ use editor_layout::face::FaceDef;
 use editor_layout::frame::{Frame, Heights};
 use editor_layout::query::{Around, Moved, QueryError, RowRange, Spot};
 use editor_layout::scene::{
-    Block, Changes, Decoration, Padding, Scene, TextKey, TextRef, TextSpans,
+    Block, Changes, Decoration, Fold, Padding, Scene, TextKey, TextRef, TextSpans,
 };
 use editor_layout::shaper::Shaper;
 use editor_layout::shaper::fake::CellShaper;
@@ -133,8 +133,8 @@ use crate::words::Writer;
 mod wire;
 
 pub use wire::{
-    WireBlock, WireFace, WireField, WireMark, WireScene, WireView, decode_blocks,
-    decode_definitions, encode_blocks, encode_definitions,
+    WireBlock, WireFace, WireField, WireFold, WireMark, WireScene, WireView, decode_blocks,
+    decode_definitions, decode_folds, encode_blocks, encode_definitions, encode_folds,
 };
 
 /// How a display call ended, as it crosses the boundary.
@@ -227,9 +227,13 @@ trait Lays: Send {
         height: f32,
         padding: Padding,
         anchor: usize,
-        blocks: &[Block],
+        around: Around<'_>,
     ) -> Result<Vec<RowRange>, QueryError>;
     /// [`Layout::lines_from_padded`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "it stands for `Layout::lines_from_padded`, whose arguments it takes one for one"
+    )]
     fn lines_from(
         &mut self,
         text: &TextRef,
@@ -238,6 +242,7 @@ trait Lays: Send {
         position: usize,
         lines: i64,
         goal: Option<f32>,
+        around: Around<'_>,
     ) -> Result<Moved, QueryError>;
     /// [`Layout::spot_with_blocks`].
     #[expect(
@@ -252,7 +257,7 @@ trait Lays: Send {
         padding: Padding,
         anchor: usize,
         position: usize,
-        blocks: &[Block],
+        around: Around<'_>,
     ) -> Result<Option<Spot>, QueryError>;
     /// [`Layout::heights`].
     fn heights(&mut self) -> Heights;
@@ -281,9 +286,8 @@ where
         height: f32,
         padding: Padding,
         anchor: usize,
-        blocks: &[Block],
+        around: Around<'_>,
     ) -> Result<Vec<RowRange>, QueryError> {
-        let around = Around { blocks, folds: &[] };
         Layout::rows_shown_with_blocks(self, text, width, height, padding, anchor, around)
     }
 
@@ -295,17 +299,9 @@ where
         position: usize,
         lines: i64,
         goal: Option<f32>,
+        around: Around<'_>,
     ) -> Result<Moved, QueryError> {
-        Layout::lines_from_padded(
-            self,
-            text,
-            width,
-            padding,
-            position,
-            lines,
-            goal,
-            Around::default(),
-        )
+        Layout::lines_from_padded(self, text, width, padding, position, lines, goal, around)
     }
 
     fn spot(
@@ -316,9 +312,8 @@ where
         padding: Padding,
         anchor: usize,
         position: usize,
-        blocks: &[Block],
+        around: Around<'_>,
     ) -> Result<Option<Spot>, QueryError> {
-        let around = Around { blocks, folds: &[] };
         Layout::spot_with_blocks(self, text, width, height, padding, anchor, position, around)
     }
 
@@ -524,9 +519,10 @@ impl Display {
     }
 
     /// The rows of `snapshot` a view `width` pixels wide and `height` tall,
-    /// padded `padding` points, with `blocks` between its rows, shows from
-    /// `anchor` ([`Layout::rows_shown_with_blocks`]): the padding is taken
-    /// off at the scale the display lays out at, as its frames take it off.
+    /// padded `padding` points, with `around`'s blocks between its rows and
+    /// its folds each one row, shows from `anchor`
+    /// ([`Layout::rows_shown_with_blocks`]): the padding is taken off at
+    /// the scale the display lays out at, as its frames take it off.
     pub fn rows(
         &self,
         snapshot: &Snapshot,
@@ -534,7 +530,7 @@ impl Display {
         height: u64,
         padding: Padding,
         anchor: usize,
-        blocks: &[Block],
+        around: Around<'_>,
     ) -> Result<Vec<RowRange>, QueryError> {
         self.layout().rows_shown(
             &text_ref(snapshot),
@@ -542,14 +538,18 @@ impl Display {
             height as f32,
             padding,
             anchor,
-            blocks,
+            around,
         )
     }
 
     /// Where `position` of `snapshot` goes `lines` visual lines away in a
     /// view `width` pixels wide padded `across` points each side and with a
-    /// gutter `gutter` points wide, aiming for `goal`
-    /// ([`Layout::lines_from_padded`]).
+    /// gutter `gutter` points wide, aiming for `goal`, each of `folds` one
+    /// line ([`Layout::lines_from_padded`]).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the view's geometry, its folds and the move, each as the C function is handed it"
+    )]
     pub fn lines_from(
         &self,
         snapshot: &Snapshot,
@@ -558,6 +558,7 @@ impl Display {
         position: usize,
         lines: i64,
         goal: Option<u64>,
+        folds: &[Fold],
     ) -> Result<Moved, QueryError> {
         self.layout().lines_from(
             &text_ref(snapshot),
@@ -566,13 +567,15 @@ impl Display {
             position,
             lines,
             goal.map(|goal| goal as f32),
+            Around { blocks: &[], folds },
         )
     }
 
     /// Where `position` of `snapshot` is drawn in a view `width` pixels
-    /// wide and `height` tall, padded `padding` points, with `blocks`
-    /// between its rows, that shows from `anchor`
-    /// ([`Layout::spot_with_blocks`]): none when it does not show it.
+    /// wide and `height` tall, padded `padding` points, with `around`'s
+    /// blocks between its rows and its folds each one row, that shows from
+    /// `anchor` ([`Layout::spot_with_blocks`]): none when it does not show
+    /// it.
     #[expect(
         clippy::too_many_arguments,
         reason = "the view's geometry and the position, each as the C function is handed it"
@@ -585,7 +588,7 @@ impl Display {
         padding: Padding,
         anchor: usize,
         position: usize,
-        blocks: &[Block],
+        around: Around<'_>,
     ) -> Result<Option<Spot>, QueryError> {
         self.layout().spot(
             &text_ref(snapshot),
@@ -594,7 +597,7 @@ impl Display {
             padding,
             anchor,
             position,
-            blocks,
+            around,
         )
     }
 
@@ -634,6 +637,29 @@ unsafe fn blocks_of(
         )
     };
     decode_blocks(words, &text).ok_or(QueryError::BadPosition)
+}
+
+/// The folds the `words_len` bytes at `words` and the `text_len` bytes at
+/// `text` spell ([`decode_folds`]); words that spell none are refused as
+/// [`QueryError::BadPosition`], as a bad anchor is, with nothing laid out.
+///
+/// # Safety
+///
+/// As [`blocks_of`].
+unsafe fn folds_of(
+    words: *const u8,
+    words_len: usize,
+    text: *const u8,
+    text_len: usize,
+) -> Result<Vec<Fold>, QueryError> {
+    // SAFETY: the caller guarantees both buffers.
+    let (words, text) = unsafe {
+        (
+            crate::words::borrow(words, words_len),
+            text::borrow(text, text_len),
+        )
+    };
+    decode_folds(words, &text).ok_or(QueryError::BadPosition)
 }
 
 /// The record for `answer`: its words, or the status of its refusal.
@@ -926,17 +952,20 @@ pub unsafe extern "C" fn editor_ffi_display_define(
 /// points from its left (taken off at the display's scale;
 /// [`Display::rows`]), shows from `anchor`, with the blocks that
 /// `block_words` and `block_text` spell ([`decode_blocks`]) drawn between
-/// its rows: their count, then a start and a stop for each; or with
-/// [`DisplayStatus::BadPosition`], which also refuses block words that
-/// spell no blocks. A padding no `u32` holds is the largest.
+/// its rows and the folds that `fold_words` and `fold_text` spell
+/// ([`decode_folds`]) each one row: their count, then a start and a stop
+/// for each; or with [`DisplayStatus::BadPosition`], which also refuses
+/// block or fold words that spell none. A padding no `u32` holds is the
+/// largest.
 ///
 /// # Safety
 ///
 /// `display` is a display handle this library handed out and has not taken
 /// back, `snapshot` a snapshot handle likewise ([`crate::snapshot`]),
-/// `block_words` points to `block_words_len` readable bytes and
-/// `block_text` to `block_text_len`, each alive for the call, and `out`
-/// points to a writable [`RawWords`].
+/// `block_words` points to `block_words_len` readable bytes, `block_text`
+/// to `block_text_len`, `fold_words` to `fold_words_len` and `fold_text`
+/// to `fold_text_len`, each alive for the call, and `out` points to a
+/// writable [`RawWords`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_display_rows(
     display: *const Display,
@@ -952,6 +981,10 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
     block_words_len: usize,
     block_text: *const u8,
     block_text_len: usize,
+    fold_words: *const u8,
+    fold_words_len: usize,
+    fold_text: *const u8,
+    fold_text_len: usize,
     out: *mut RawWords,
 ) {
     // SAFETY: the caller guarantees both handles are live.
@@ -960,10 +993,18 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
         gutter: points(gutter),
         ..Padding::new(points(across), points(down), points(top))
     };
-    // SAFETY: the caller guarantees the blocks' buffers.
+    // SAFETY: the caller guarantees the blocks' and the folds' buffers.
     let blocks = unsafe { blocks_of(block_words, block_words_len, block_text, block_text_len) };
+    let folds = unsafe { folds_of(fold_words, fold_words_len, fold_text, fold_text_len) };
     let raw = answered(
-        blocks.and_then(|blocks| display.rows(snapshot, width, height, padding, anchor, &blocks)),
+        blocks.and_then(|blocks| {
+            let folds = folds?;
+            let around = Around {
+                blocks: &blocks,
+                folds: &folds,
+            };
+            display.rows(snapshot, width, height, padding, anchor, around)
+        }),
         |rows, writer| {
             writer.size(rows.len());
             for row in rows {
@@ -979,9 +1020,11 @@ pub unsafe extern "C" fn editor_ffi_display_rows(
 /// Fills `out` with where `position` of `snapshot` goes `lines` visual
 /// lines down (up when negative) in a view `width` pixels wide whose text
 /// is inset `across` points each side and a further `gutter` points from
-/// its left, aiming for `goal` when `goal_present`: the position reached
-/// and the goal to pass on; or with [`DisplayStatus::BadPosition`]. A move
-/// only wraps, so it takes no padding down.
+/// its left, aiming for `goal` when `goal_present`, with the folds that
+/// `fold_words` and `fold_text` spell ([`decode_folds`]) each one line:
+/// the position reached and the goal to pass on; or with
+/// [`DisplayStatus::BadPosition`], which also refuses fold words that
+/// spell none. A move only wraps, so it takes no padding down.
 ///
 /// # Safety
 ///
@@ -997,6 +1040,10 @@ pub unsafe extern "C" fn editor_ffi_display_move(
     lines: i64,
     goal_present: bool,
     goal: u64,
+    fold_words: *const u8,
+    fold_words_len: usize,
+    fold_text: *const u8,
+    fold_text_len: usize,
     out: *mut RawWords,
 ) {
     // SAFETY: the caller guarantees both handles are live.
@@ -1006,8 +1053,12 @@ pub unsafe extern "C" fn editor_ffi_display_move(
         gutter: points(gutter),
         ..Padding::new(points(across), 0, 0)
     };
+    // SAFETY: the caller guarantees the folds' buffers.
+    let folds = unsafe { folds_of(fold_words, fold_words_len, fold_text, fold_text_len) };
     let raw = answered(
-        display.lines_from(snapshot, width, padding, position, lines, goal),
+        folds.and_then(|folds| {
+            display.lines_from(snapshot, width, padding, position, lines, goal, &folds)
+        }),
         |moved, writer| {
             writer.size(moved.position);
             writer.word(moved.goal.max(0.0) as u64);
@@ -1021,19 +1072,16 @@ pub unsafe extern "C" fn editor_ffi_display_move(
 /// `width` pixels wide and `height` tall, padded as for
 /// [`editor_ffi_display_rows`], that shows from `anchor`, with the blocks
 /// that `block_words` and `block_text` spell ([`decode_blocks`]) drawn
-/// between its rows ([`Display::spot`]): four words, whether the view
-/// shows it (1 or 0), then the x and the y of it from the view's top left,
-/// rounded down, and its row's height, rounded up (all 0 when it is not
-/// shown); or with [`DisplayStatus::BadPosition`], which also refuses
-/// block words that spell no blocks.
+/// between its rows and the folds that `fold_words` and `fold_text` spell
+/// ([`decode_folds`]) each one row ([`Display::spot`]): four words,
+/// whether the view shows it (1 or 0), then the x and the y of it from the
+/// view's top left, rounded down, and its row's height, rounded up (all 0
+/// when it is not shown); or with [`DisplayStatus::BadPosition`], which
+/// also refuses block or fold words that spell none.
 ///
 /// # Safety
 ///
-/// `display` is a display handle this library handed out and has not taken
-/// back, `snapshot` a snapshot handle likewise ([`crate::snapshot`]),
-/// `block_words` points to `block_words_len` readable bytes and
-/// `block_text` to `block_text_len`, each alive for the call, and `out`
-/// points to a writable [`RawWords`].
+/// As [`editor_ffi_display_rows`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_display_spot(
     display: *const Display,
@@ -1050,6 +1098,10 @@ pub unsafe extern "C" fn editor_ffi_display_spot(
     block_words_len: usize,
     block_text: *const u8,
     block_text_len: usize,
+    fold_words: *const u8,
+    fold_words_len: usize,
+    fold_text: *const u8,
+    fold_text_len: usize,
     out: *mut RawWords,
 ) {
     // SAFETY: the caller guarantees both handles are live.
@@ -1058,11 +1110,17 @@ pub unsafe extern "C" fn editor_ffi_display_spot(
         gutter: points(gutter),
         ..Padding::new(points(across), points(down), points(top))
     };
-    // SAFETY: the caller guarantees the blocks' buffers.
+    // SAFETY: the caller guarantees the blocks' and the folds' buffers.
     let blocks = unsafe { blocks_of(block_words, block_words_len, block_text, block_text_len) };
+    let folds = unsafe { folds_of(fold_words, fold_words_len, fold_text, fold_text_len) };
     let raw = answered(
         blocks.and_then(|blocks| {
-            display.spot(snapshot, width, height, padding, anchor, position, &blocks)
+            let folds = folds?;
+            let around = Around {
+                blocks: &blocks,
+                folds: &folds,
+            };
+            display.spot(snapshot, width, height, padding, anchor, position, around)
         }),
         |spot, writer| match spot {
             Some(spot) => {

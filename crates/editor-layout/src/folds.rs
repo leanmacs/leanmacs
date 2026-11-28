@@ -8,8 +8,8 @@
 //! - **A fold is whole rows.** It covers each buffer row its range
 //!   `[start, stop)` has a byte in, a line break being the row's it ends,
 //!   or the row that holds `start` when the range is empty. Its offsets
-//!   are moved back to a character boundary, and past the text's end to
-//!   the end.
+//!   past the text's end are the end, and a byte inside a character is
+//!   on that character's row.
 //! - **The shown folds** are the folds in order of start, of two with one
 //!   start the longer first; one whose first row an earlier shown fold
 //!   covers is dropped. So of two nested folds the outer one shows, and a
@@ -95,8 +95,12 @@ impl FoldSnapshot {
             .iter()
             .enumerate()
             .map(|(index, fold)| {
-                let start = boundary_at_or_before(buffer, fold.start);
-                let stop = boundary_at_or_before(buffer, fold.stop).max(start);
+                // Clamped but not moved back: a range covers the row of
+                // each of its bytes, the last one included, even where
+                // that byte is inside a character (Lean's model reads the
+                // range the same way).
+                let start = fold.start.min(buffer.len());
+                let stop = fold.stop.min(buffer.len()).max(start);
                 (index, start, stop)
             })
             .collect();
@@ -404,12 +408,12 @@ mod tests {
     #[test]
     fn a_fold_past_the_end_is_clamped_and_one_off_a_boundary_is_moved_back() {
         assert_eq!(rows(TEXT, &[fold(6, 99)]), vec![(0, 2, 3)]);
-        // `é` is bytes 3 and 4 of `ab\néx\nz`: a start at 4 is moved back
-        // to 3, on `é`'s row, and so is a stop at 4, which then covers no
-        // byte of that row.
+        // `é` is bytes 3 and 4 of `ab\néx\nz`: a start at 4 is on `é`'s
+        // row, and a stop at 4 holds `é`'s first byte, so covers its row;
+        // a stop at 3 holds only the line break of row 0.
         assert_eq!(rows("ab\néx\nz", &[fold(4, 4)]), vec![(0, 1, 1)]);
-        assert_eq!(rows("ab\néx\nz", &[fold(0, 4)]), vec![(0, 0, 0)]);
-        assert_eq!(rows("ab\néx\nz", &[fold(0, 5)]), vec![(0, 0, 1)]);
+        assert_eq!(rows("ab\néx\nz", &[fold(0, 4)]), vec![(0, 0, 1)]);
+        assert_eq!(rows("ab\néx\nz", &[fold(0, 3)]), vec![(0, 0, 0)]);
     }
 
     #[test]
