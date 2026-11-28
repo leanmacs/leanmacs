@@ -7,7 +7,10 @@ import Editor.Api
 import Editor.Command.Call
 import Editor.File
 import Editor.Jumps
+import Editor.Link
+import Editor.Links
 import Editor.Mode
+import Editor.RichText
 import Editor.Workspace
 import FilesApi
 import ShellApi
@@ -104,6 +107,9 @@ starts.
   job is cancelled by its key, which kills the child with its process
   group, the run is cleared, and `Compilation killed after <elapsed>` is
   appended and said with the label; with none, it says so.
+- **`compile-visit`** (`visitName`), which no key runs: a location's link
+  names it, with the scope's place and the location's index, and it visits
+  that location, focusing the visiting view ("Stepping").
 
 ## The run
 
@@ -151,8 +157,10 @@ on the header line, so all follow.
 
 `compilation-output` and `finished` act only while the scope's run in
 flight is theirs, so a killed or replaced run's late output is dropped.
-Each appends its lines to the kept buffer inside `BufferId.writing`, each
-ended with a line feed, and finds the locations in them ("Locations").
+Each finds the locations in its lines ("Locations"), then appends the
+lines' rich text to the kept buffer (`BufferId.appendRichText`, which
+writes inside `BufferId.writing`): the lines, each ended with a line feed,
+with a span and a link per location ("Faces and links").
 `finished` then appends the last line, `Compilation <how> after <elapsed>`
 (`lastLine`), clears the run and says `<label>: <last line>` in the echo
 area. A compilation buffer closed while its run ran gets no output; the end
@@ -163,11 +171,13 @@ is still said.
 The error formats (`packages/compile-api/CompileApi/Format.lean`), read by the matcher
 (`Compile/Errors.lean`), find the locations of a
 run's output as its lines arrive, not at its end: `compilation-output` and
-`finished` scan the lines they have just appended (`noteSites`, `scan`),
-from the row and byte offset where they start (`append`'s answer), with the
-text of the row before them when it is output, so a lead line that came in
-an earlier post is seen, and keep the locations in the scope's record. The header line and the last line are
-never scanned, and a run whose compilation buffer was closed finds none.
+`finished` scan the lines they are about to append (`noteSites`, `scan`),
+from the row and byte offset where they will start, the buffer's line
+count and length before the append (`endOf`), with the text of the row
+before them when it is output, so a lead line that came in an earlier post
+is seen, and keep the locations in the scope's record. The header line and
+the last line are never scanned, and a run whose compilation buffer was
+closed finds none.
 
 - **The formats** a run's output is read with are its on-modes'
   contributions' formats, in on-mode order, then the general format
@@ -176,21 +186,32 @@ never scanned, and a run whose compilation buffer was closed finds none.
 - **A relative file** resolves against the directory the run ran in (the
   record's last directory, which `start` set for this run), lexically
   (`resolve`). Make's `Entering directory` lines are not tracked.
-- **Faces.** Each new location's text, from its file through its line or
-  column, is a span of the compilation buffer (`Buffer.spans`) in its
-  severity's face (`Severity.face`): `compilation.error`,
-  `compilation.warning` or `compilation.note`. A joined continuation line
-  gets none. The loop draws the spans under the last search's matches
-  (`Editor/Loop.lean`, "Decorations").
+- **Faces and links.** The compilation buffer is built from rich-text
+  descriptions (`Editor/RichText.lean`): `prepare` writes the header line
+  alone, and each append adds its lines' tail (`tailOf`). Each new
+  location's text, from its file through its line or column, is a span
+  (`Site.span`) in its severity's face (`Severity.face`):
+  `compilation.error`, `compilation.warning` or `compilation.note`; and a
+  link over the same bytes (`Site.link`), whose target is the command
+  `compile-visit` with the scope's place and the location's index. A joined
+  continuation line gets neither. The loop draws the spans under the last
+  search's matches, and the links in `text.link` under the spans
+  (`Editor/Loop.lean`, "Decorations"). The target is a command, not a
+  file location: the links mode's keymaps go first in a buffer with links
+  (`Config.Registry.activeMaps`), and a location target would be visited in
+  the compilation buffer's own window and never made current. Its stops,
+  wrap indents and foldable ranges stay empty.
 - **A rerun resets them.** `start` writes the scope's record with no
-  locations and no current one, and `prepare` empties the kept buffer's
-  spans with its text. Only that scope's record is written, so a rerun in
-  one workspace leaves every other workspace's list as it was.
+  locations and no current one, and `prepare` writes the kept buffer from
+  the header line alone, which empties its spans and links with its text.
+  Only that scope's record is written, so a rerun in one workspace leaves
+  every other workspace's list as it was.
 
 ## Stepping
 
 Each scope's list has a current location (`Record.current`), none at
-first. Three commands visit a location and make it the current one:
+first. Three commands visit a location and make it the current one,
+`compile-goto-error` through the `compile-visit` a location's link names:
 
 - **The list** is the focused buffer's scope's (`Scope.of`), so in a buffer
   of another worktree, project or directory it is that one's list, and in
@@ -202,14 +223,20 @@ first. Three commands visit a location and make it the current one:
   <label>` or `previous-error: no earlier locations in <label>`; an empty
   list says `<name>: no locations in <label>` (`stepCommand`).
 - **`compile-goto-error`** (`gotoName`), in the scope's kept compilation
-  buffer, visits the location whose rows hold the row of the window's
-  cursor; on a row no location covers it says `compile-goto-error: no
-  location on this line`, and in a buffer that is not its scope's
-  compilation buffer `compile-goto-error: <name> is not a compilation
-  buffer` (`gotoCommand`).
+  buffer, follows the link at the window's cursor (`Links.shownLinks`,
+  `Link.at?`, `Links.followTarget`): a location's link runs
+  `compile-visit` (`visitName`, `visitCommand`), which visits the location
+  its arguments name. So it follows the link's target, not the cursor's
+  row, and the links mode's `RET` (`link-follow`) takes the same path. Off
+  a link, a joined continuation row or a location's message among it, it
+  says `compile-goto-error: no location at the cursor`; in a buffer that is
+  not its scope's compilation buffer, `compile-goto-error: <name> is not a
+  compilation buffer` (`gotoCommand`). `compile-visit` with arguments that
+  name no location says `compile-visit: no such location`.
 - **A visit** (`visitLocation`) makes the location current, puts the
-  cursor of every view of the kept compilation buffer at the start of the
-  location's first row, and visits its file through the files
+  cursor of every view of the kept compilation buffer on the location's
+  first byte, its link's start, so the mode's `activate` after a step is
+  on the link, and visits its file through the files
   implementation's `visit` (`files-api`, `FilesApi.files?`), recording a
   jump, at its line
   and column, both as printed: row `line - 1` and the column less the
@@ -221,12 +248,12 @@ first. Three commands visit a location and make it the current one:
   implementation the location is made current all the same, and the
   command says `FilesApi.noImplementation` under its name and visits
   nothing.
-- **Focus.** `compile-goto-error` focuses the visiting view, as Emacs's
-  `RET`; `next-error` and `previous-error` asked from a compilation buffer
+- **Focus.** `compile-goto-error` and `compile-visit` focus the visiting
+  view, as Emacs's `RET`; `next-error` and `previous-error` asked from a compilation buffer
   (by the ex line) keep the focus there, as Emacs's
   `next-error-no-select`; asked from any other view, the visiting view is
   that view.
-- **Only these three change the current location.** Moving the
+- **Only these change the current location.** Moving the
   compilation buffer's cursor by hand changes nothing; a visit moves that
   cursor, so a view of it that followed stops following.
 - **A file that is not there** is said by Files (`Files.notOpened`): the
@@ -284,10 +311,16 @@ so a reload's change holds from the next command.
 leaves `next-item` and `previous-item` unfilled: under the Vim scheme those
 are `j` and `k`, which stay motions in a compilation buffer, so
 `next-error` and `previous-error` are commands and ex names only, and no
-global key binds them.
+global key binds them. Where the links mode is registered (the package
+`link-commands`), its keymaps go first in a compilation buffer, which has
+links: `activate` is its `link-follow`, which on a location follows the
+link to `compile-visit`, the path `compile-goto-error` takes, and off one
+runs the mode's own `activate`; `next-link` and `previous-link` move
+between the locations.
 
 Pinned by `CompileTest.compileChecks`, `CompileTest.compileErrorChecks`,
-`CompileTest.compileLocationChecks` and `CompileTest.compileHookChecks`, on the
+`CompileTest.compileLocationChecks`, `CompileTest.compileLinkChecks` and
+`CompileTest.compileHookChecks`, on the
 loop's driver over the editor's models, the job model and the process
 model, and over the real process service by `CompileTest.compileRunChecks`,
 in the package's linked test, which also runs a compile in a headless host
@@ -334,6 +367,11 @@ def previousName : String :=
 compilation buffer is registered under. -/
 def gotoName : String :=
   "compile-goto-error"
+
+/-- The name the command a location's link names is registered under: it
+visits the location ("Stepping", in the module docs). -/
+def visitName : String :=
+  "compile-visit"
 
 /-- The name the command a compile's job posts its output to is registered
 under. -/
@@ -671,10 +709,13 @@ locations. -/
 def noLocations (name : String) (label : String) : String :=
   s!"{name}: no locations in {label}"
 
-/-- What `compile-goto-error` says on a line of a compilation buffer that no
-location covers. -/
+/-- What `compile-goto-error` says with the cursor on no location's link. -/
 def noLocationHere : String :=
-  s!"{gotoName}: no location on this line"
+  s!"{gotoName}: no location at the cursor"
+
+/-- What `compile-visit` says of arguments that name no location. -/
+def noSuchLocation : String :=
+  s!"{visitName}: no such location"
 
 /-- What `compile-goto-error` says in the buffer called `name`, which is not
 its scope's compilation buffer. -/
@@ -806,31 +847,27 @@ the scope's kept compilation buffer, else the buffer's own. -/
 def modesOf (state : EditorState) (record : Record) (buffer : BufferId) : Array Workspace.OnMode :=
   if kept state record == some buffer then record.modes else Workspace.onModesOf state buffer
 
-/-- Appends `lines`, each ended with a line feed, to the buffer `id`, inside
-`writing`, and answers the row and the byte offset where the first of them
-starts. Each view showing it whose cursor is on the last line, or the empty
-row after it, follows: its cursor is put at the start of the new last line
+/-- Appends `tail`, the rich text of lines each ended with a line feed, to
+the buffer `id` (`BufferId.appendRichText`, which writes inside `writing`):
+its text at the end, and its spans and links moved past the buffer's text.
+Each view showing it whose cursor is on the last line, or the empty row
+after it, follows: its cursor is put at the start of the new last line
 ("Following", in the module docs). Others are left where they are. -/
-def append (id : BufferId) (lines : Array String) : EditorM (Option (Nat × Nat)) := do
-  if lines.isEmpty then
-    return none
-  let .ok text ← id.text | return none
+def append (id : BufferId) (tail : RichText) : EditorM Unit := do
+  if tail.text.isEmpty then
+    return
+  let .ok text ← id.text | return
   let count ← text.lineCount
-  let length ← text.byteLength
   let mut followers := #[]
   for view in viewsOf (← editorState) id do
     if let .ok selection← view.selection then
       let head := (selection.ranges[selection.primary]?.map (·.head)).getD 0
       if (← text.pointOf head).row + 1 ≥ count then
         followers := followers.push view
-  id.writing do
-      text.insert length (String.join (lines.map (· ++ "\n")).toList)
+  discard <| id.appendRichText tail
   let last ← text.offsetOf { row := (← text.lineCount) - 1, column := 0 }
   for view in followers do
     Jumps.placeCursor view last
-  -- The text always ends in a line feed, so its lines before the insert are
-  -- the row the first appended line starts.
-  return some (count, length)
 
 /-- Shows the buffer `id` for a run the command `name` asked from `view`
 ("The run", in the module docs): a made buffer is given the `compilation`
@@ -850,16 +887,16 @@ def prepare (scope : Scope) (record : Record) (content : String) :
   let state ← editorState
   match kept state record with
   | some id =>
-    let .ok text ← id.text | return none
-    id.writing do
-        text.replaceRange 0 (← text.byteLength) content
-    discard <| id.setSpans #[]
+    -- The header line alone, and no part: the last run's spans and links
+    -- go with its text.
+    let .ok () ← id.setRichText { text := content } | return none
     -- Every view of it starts the new run on the header line, so it follows.
     for view in viewsOf state id do
       Jumps.placeCursor view 0
     return some (id, false)
   | none =>
-    let .ok id ← createBuffer (freeBufferName state scope) content | return none
+    let .ok id ← createBuffer (freeBufferName state scope) "" | return none
+    discard <| id.setRichText { text := content }
     discard <| id.setReadOnly true
     match scope with
     | .workspace workspace _ =>
@@ -1039,7 +1076,7 @@ def killCommand (call : Call) : EditorM Unit := do
     let text := lastLine .killed ((← Watch.now) - running.started)
     setRecord scope.place { record with running := none }
     if let some id := kept state record then
-      discard <| append id #[text]
+      append id { text := text ++ "\n" }
     message s!"{scope.label}: {text}"
 
 /-- The record of `place` and its kept buffer, while `run` is its run in
@@ -1064,13 +1101,40 @@ compilation buffer, in its severity's face. -/
 def Site.span (site : Site) : Decoration :=
   { start := site.start, stop := site.stop, face := site.severity.face }
 
-/-- `record` with the locations `lines` give, appended to the buffer `id` at
-`start`, its row and byte offset ("Locations", in the module docs); each new
-location's span is added to the buffer's, and a joined continuation adds
-none. Relative files resolve against the run's directory, and the lines are
-read with the run's modes' formats, then the general one (`formatsOf`). -/
+/-- The link a site's location text is: its byte range in the compilation
+buffer, naming `compile-visit` with `place`'s arguments and the location's
+index in its record, `index` ("Faces and links", in the module docs). -/
+def Site.link (place : Place) (index : Nat) (site : Site) : Link :=
+  { start := site.start, stop := site.stop
+    target := .command { command := visitName, arguments := place.arguments ++ [.nat index] } }
+
+/-- The rich text of the lines `written`, appended at the byte `offset` of
+the compilation buffer of `place`: each line ended with a line feed, and a
+span and a link per site of `sites`, each with its index, at offsets of the
+lines, so moved back by `offset` ("Faces and links", in the module docs). -/
+def tailOf (place : Place) (sites : Array (Nat × Site)) (offset : Nat) (written : Array String) :
+    RichText :=
+  let back (start stop : Nat) : Nat × Nat := (start - offset, stop - offset)
+  { text := String.join (written.map (· ++ "\n")).toList
+    spans :=
+      sites.map fun (_, site) =>
+        let (start, stop) := back site.start site.stop
+        { site.span with
+          start, stop }
+    links :=
+      sites.map fun (index, site) =>
+        let (start, stop) := back site.start site.stop
+        { site.link place index with
+          start, stop } }
+
+/-- `record` with the locations `lines` give, to be appended to the buffer
+`id` at `start`, its row and byte offset, which are its line count and its
+length before they are ("Locations", in the module docs); and the new
+locations, each with its index, which a joined continuation adds none to.
+Relative files resolve against the run's directory, and the lines are read
+with the run's modes' formats, then the general one (`formatsOf`). -/
 def noteSites (record : Record) (id : BufferId) (start : Nat × Nat) (lines : Array String) :
-    EditorM Record := do
+    EditorM (Record × Array (Nat × Site)) := do
   let state ← editorState
   let hook ← Compile.hook
   let directory : System.FilePath := (record.last.map (·.2)).getD state.workingDirectory
@@ -1089,15 +1153,22 @@ def noteSites (record : Record) (id : BufferId) (start : Nat × Nat) (lines : Ar
   let locations :=
     scan (formatsOf hook.contributions record.modes) directory record.locations start.1 start.2
       lines previous
-  let added := (locations.extract record.locations.size locations.size).map Site.span
-  unless added.isEmpty do
-    let old := ((state.buffer? id).map (·.spans)).getD #[]
-    discard <| id.setSpans (old ++ added)
-  return { record with locations }
+  let added :=
+    (locations.extract record.locations.size locations.size).zipIdx.map fun (site, index) =>
+      (record.locations.size + index, site)
+  return ({ record with locations }, added)
+
+/-- Where lines appended to the buffer `id` start: its line count, the row
+the first starts, since the text always ends in a line feed, and its
+length. -/
+def endOf (id : BufferId) : EditorM (Option (Nat × Nat)) := do
+  let .ok text ← id.text | return none
+  return some (← text.lineCount, ← text.byteLength)
 
 /-- `compilation-output`: appends the lines its arguments carry after the
-place and the run to the scope's kept buffer, while that run is in flight
-("The run", in the module docs). -/
+place and the run to the scope's kept buffer, with a span and a link per
+location they give, while that run is in flight ("The run", in the module
+docs). -/
 def outputCommand (call : Call) : EditorM Unit := do
   let some (place, .nat run :: lines) := Place.of? call.arguments | return
   let some (record, _) ← current place run | return
@@ -1106,8 +1177,12 @@ def outputCommand (call : Call) : EditorM Unit := do
     lines.toArray.filterMap fun
       | .str line => some line
       | _ => none
-  let some start ← append id lines | return
-  setRecord place (← noteSites record id start lines)
+  if lines.isEmpty then
+    return
+  let some start ← endOf id | return
+  let (record, added) ← noteSites record id start lines
+  append id (tailOf place added start.2 lines)
+  setRecord place record
 
 /-- The command a finished run hands the loop ("The run", in the module
 docs): while the run is in flight, its last lines and its last line are
@@ -1118,9 +1193,11 @@ def finished (order : Order) (lines : Array String) (how : How) : EditorM Unit :
   let text := lastLine how ((← Watch.now) - running.started)
   let mut record := { record with running := none }
   if let some id := kept state record then
-    -- The last line is no output of the child's, and is never scanned.
-    if let some start← append id (lines.push text) then
-      record ← noteSites record id start lines
+    if let some start← endOf id then
+      let (noted, added) ← noteSites record id start lines
+      record := noted
+      -- The last line is no output of the child's, and is never scanned.
+      append id ((tailOf order.place added start.2 lines).append { text := text ++ "\n" })
   setRecord order.place record
   let label :=
     match order.place with
@@ -1155,8 +1232,9 @@ def visitingView (asking : ViewId) (compilation : Option BufferId) : EditorM Vie
 
 /-- Visits the location `index` of `place`'s record `record`, asked from
 `asking` ("Stepping", in the module docs): it becomes the current location,
-every view of the kept compilation buffer has its cursor put at the start of
-the location's first row, and its file is visited at its line and column in
+every view of the kept compilation buffer has its cursor put on the
+location's first byte, its link's start, and its file is visited at its line
+and column in
 the visiting view (`visitingView`), which is focused with `focus`. With no
 files implementation it says so under `name`, the command's. -/
 def visitLocation (name : String) (asking : ViewId) (place : Place) (record : Record) (index : Nat)
@@ -1166,10 +1244,8 @@ def visitLocation (name : String) (asking : ViewId) (place : Place) (record : Re
   let state ← editorState
   let compilation := kept state record
   if let some id := compilation then
-    if let .ok text← id.text then
-      let offset ← text.offsetOf ⟨site.first, 0⟩
-      for view in viewsOf state id do
-        Jumps.placeCursor view offset
+    for view in viewsOf state id do
+      Jumps.placeCursor view site.start
   let some files ← FilesApi.files? | message (FilesApi.noImplementation name)
   let visiting ← visitingView asking compilation
   files.visit visiting site.file
@@ -1202,24 +1278,33 @@ def stepCommand (name : String) (forward : Bool) (call : Call) : EditorM Unit :=
     message (if forward then noMore scope.label else noEarlier scope.label)
 
 /-- `compile-goto-error` ("Stepping", in the module docs): in its scope's
-kept compilation buffer, visits the location whose rows hold the row of the
-window's cursor, focusing the visiting view. -/
+kept compilation buffer, follows the link at the window's cursor
+(`Links.followTarget`), a location's `compile-visit`, which visits it and
+focuses the visiting view; off a link it says so. -/
 def gotoCommand (call : Call) : EditorM Unit := do
   let state ← editorState
   let buffer := call.target.window.buffer
-  let scope := Scope.of state buffer
-  let record := recordOf state scope.place
+  let record := recordOf state (Scope.of state buffer).place
   if kept state record != some buffer then
     message (notCompilation call.target.buffer.name)
     return
-  let selection ← call.target.selection
-  let head := (selection.ranges[selection.primary]?.map (·.head)).getD 0
-  let row := (← call.target.buffer.text.pointOf head).row
-  match record.locations.findIdx? fun site => site.first ≤ row && row ≤ site.last with
-  | some index =>
-    visitLocation gotoName call.target.window.id scope.place record index true
+  match (← Links.headOf call).bind (Link.at? (← Links.shownLinks call)) with
+  | some link =>
+    Links.followTarget call link.target
   | none =>
     message noLocationHere
+
+/-- `compile-visit`, which a location's link names ("Stepping", in the module
+docs): its arguments are the place, then the location's index in that
+place's record, which it visits from the call's window, focusing the
+visiting view. Arguments that name no location say so. -/
+def visitCommand (call : Call) : EditorM Unit := do
+  let some (place, [.nat index]) := Place.of? call.arguments | message noSuchLocation
+  let record := recordOf (← editorState) place
+  if record.locations[index]?.isNone then
+    message noSuchLocation
+    return
+  visitLocation visitName call.target.window.id place record index true
 
 /-- The lines of `frames` as text: each decoded by the store's escape rule,
 one trailing carriage return dropped. -/

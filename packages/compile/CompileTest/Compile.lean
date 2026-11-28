@@ -27,12 +27,16 @@ import Editor.Job
 import Editor.Job.Model
 import Editor.Language
 import Editor.Layout
+import Editor.Link
+import Editor.Links
 import Editor.Loop.Driver
 import Editor.Mode
+import Editor.Package
 import Editor.Process
 import Editor.Process.Environment
 import Editor.Process.Model
 import Editor.Program
+import Editor.RichText
 import Editor.Role
 import Editor.Scene
 import Editor.Setup
@@ -42,6 +46,7 @@ import Editor.Store
 import Editor.SyntaxTree
 import Editor.Test.Driver
 import Editor.Test.Files
+import Editor.Test.Hosted
 import Editor.Test.Keys
 import Editor.Test.Models
 import Editor.Test.Prompts
@@ -61,7 +66,7 @@ import FilesApiTest.Fake
 # Model tests: `Compile.lean`
 
 The model tests of `Compile.lean`: `compileChecks`,
-`compileLocationChecks` and `compileHookChecks`. `compileHookChecks` are of the
+`compileLocationChecks`, `compileLinkChecks` and `compileHookChecks`. `compileHookChecks` are of the
 compile hook, which `packages/workspace/Workspace/Modes.lean` and `Compile.lean`
 share; they are here with the other compile checks. The test driver's root,
 `CompileTest/Model.lean`, runs them; its module doc says what each shows.
@@ -773,7 +778,8 @@ def compileLocationChecks : List Check :=
             (compileBuffer ran "*compilation: r@main*").map (·.spans) == some expected &&
               expected[0]?.map (fun span => (span.start, span.stop)) == some (20, 36) &&
               (showing ran ⟨1⟩).map (·.buffer.name) == some "*compilation: r@main*" &&
-              sceneDecorations ran ⟨1⟩ == some expected },
+              (sceneDecorations ran ⟨1⟩).map (fun drawn => expected.all drawn.contains) ==
+                some true },
     { name :=
         "locations criterion 4: next-error from no location visits the first, opening its file with the cursor on its line and column; next-error and previous-error move one location each, and stop with a message at either end; with nothing compiled it says so"
       run :=
@@ -846,7 +852,7 @@ def compileLocationChecks : List Check :=
               currentOf inRAfter placeW == some 0 &&
               echoOf again == some "next-error: no more locations in r@feature" },
     { name :=
-        "locations criterion 8: activate in a compilation buffer on a location's line visits that location and focuses its view; on a line with no location it says so and changes nothing"
+        "locations criterion 8: activate in a compilation buffer on a location visits that location and focuses its view; on a line with no location it says so and changes nothing"
       run :=
         pure <|
           match compileDriver with
@@ -862,7 +868,7 @@ def compileLocationChecks : List Check :=
               activated.loop.state.frame.focused == ⟨0⟩ &&
               currentOf activated placeR == some 2 &&
               headsOf activated ⟨1⟩ == some #[rowAt 4] &&
-              echoOf nothing == some "compile-goto-error: no location on this line" &&
+              echoOf nothing == some "compile-goto-error: no location at the cursor" &&
               currentOf nothing placeR == some 2 &&
               fileOf nothing ⟨0⟩ == fileOf activated ⟨0⟩ &&
               headsOf nothing ⟨0⟩ == headsOf activated ⟨0⟩ },
@@ -926,6 +932,13 @@ def compileLocationChecks : List Check :=
               record.current == none &&
               (compileBuffer rerun "*compilation: r@main*").map (·.spans) ==
                 some #[{ start := 20, stop := 34, face := ⟨"compilation.error"⟩ }] &&
+              (compileBuffer rerun "*compilation: r@main*").map (·.links) ==
+                some
+                  #[{ start := 20, stop := 34
+                      target :=
+                        .command
+                          { command := Compile.visitName
+                            arguments := placeR.arguments ++ [.nat 0] } }] &&
               Compile.recordOf rerun.loop.state placeW == wBefore &&
               fileOf after ⟨0⟩ == some "/r/src/b.lean" &&
               headsOf after ⟨0⟩ == some #[1] &&
@@ -1049,6 +1062,171 @@ def compileLocationChecks : List Check :=
               fileOf back ⟨0⟩ == some "/r/src/a.lean" &&
               headsOf back ⟨0⟩ == headsOf ran ⟨0⟩ &&
               headsOf back ⟨1⟩ == headsOf ran ⟨1⟩ }]
+
+/-- The links mode as a package, its `setup` the core's `Links.setup`, as
+the package `link-commands` registers it. -/
+def linksPackage : Package :=
+  { name := "test-links", setup := Links.setup }
+
+/-- A driver of the compile checks (`compileDriver`) whose registry also has
+the links mode and its commands (`linksPackage`), so the links mode's
+keymaps go first in a buffer with links, as in a host that has the package
+`link-commands`; `none` if making the state was refused. -/
+def compileLinksDriver : Option TestDriver :=
+  (compileDriver).map fun driver =>
+    { driver with keys := compileKeysOf compileBindings (extra := #[linksPackage]) }
+
+/-- The target of the link over `/r`'s location `index`. -/
+def visitTarget (index : Nat) : LinkTarget :=
+  .command { command := Compile.visitName, arguments := placeR.arguments ++ [.nat index] }
+
+/-- The checks that the compilation buffer is built from a rich-text
+description whose locations are links, and that `compile-goto-error`
+follows the link at the cursor (`Compile.lean`, "Faces and links" and
+"Stepping"; **criterion 4** of the rich-text roadmap's phase 7), on the
+loop's driver over the editor's models, the job model and the process
+model. -/
+def compileLinkChecks : List Check :=
+  let header := "r@main in /r: check"
+  let rowAt := rowStart header checkLines
+  let fileOf (driver : TestDriver) (view : ViewId) : Option String :=
+    (showing driver view).bind fun shown => shown.buffer.file.map (·.path.toString)
+  let headsOf (driver : TestDriver) (view : ViewId) : Option (Array Nat) :=
+    ((showing driver view).bind (·.cursors)).map (·.map (·.head))
+  let currentOf (driver : TestDriver) : Option Nat :=
+    (Compile.recordOf driver.loop.state placeR).current
+  let jumpsOf (driver : TestDriver) (view : ViewId) : Array Place :=
+    ((driver.loop.state.window? view).map (·.jumps.list.entries)).getD #[]
+  let ranIn (driver : TestDriver) : TestDriver :=
+    drained (pressedOn (settledAfter driver "C-o a") "C-k h")
+  let site : Compile.Site :=
+    { file := "/r/x.lean", line := 2, column := some 3, columnBase := 1, severity := .warning
+      format := "general", first := 5, last := 5, start := 104, stop := 112 }
+  [{  name :=
+        "Site.link is a link over the site's bytes naming compile-visit with the place's arguments and the location's index"
+      run :=
+        pure <|
+          Compile.Site.link placeR 2 site ==
+            { start := 104, stop := 112, target := visitTarget 2 } },
+    { name :=
+        "tailOf is the written lines each ended with a line feed, with a span and a link per new site, moved back by the offset they are written at"
+      run :=
+        pure <|
+          Compile.tailOf placeR #[(3, site)] 100 #["ab", "cdx.lean:2:3: warning"] ==
+            { text := "ab\ncdx.lean:2:3: warning\n"
+              spans := #[{ start := 4, stop := 12, face := ⟨"compilation.warning"⟩ }]
+              links := #[{ start := 4, stop := 12, target := visitTarget 3 }] } },
+    { name :=
+        "after a check run the compilation buffer's links are four, one over each location's text naming compile-visit for its index, with no stops, indents or folds, and its view draws text.link over each"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := ranIn driver
+            let expected : Array Link :=
+              #[(1, 16), (3, 14), (4, 15), (5, 16)].zipIdx.map fun ((row, length), index) =>
+                { start := rowAt row, stop := rowAt row + length, target := visitTarget index }
+            match compileBuffer ran "*compilation: r@main*" with
+            | none => false
+            | some buffer =>
+              buffer.links == expected && buffer.stops.isEmpty && buffer.indents.isEmpty &&
+                buffer.folds.isEmpty &&
+                (buffer.spans.map fun span => (span.start, span.stop)) ==
+                  expected.map (fun link => (link.start, link.stop)) &&
+                (sceneDecorations ran ⟨1⟩).map
+                    (fun drawn =>
+                      expected.all fun link =>
+                        drawn.contains
+                          { start := link.start, stop := link.stop, face := Link.face }) ==
+                  some true },
+    { name :=
+        "links are found as lines arrive: after the first two posts of a stream run the buffer has the first link alone, and once it is drained the first is unchanged and the second is at the third row's offset"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let asked := compiledLine (settledAfter driver "C-o a") "stream"
+            let two := postedNext (postedNext asked)
+            let done := drained two
+            let streamHeader := "r@main in /r: stream"
+            let first : Link :=
+              { start := streamHeader.utf8ByteSize + 1, stop := streamHeader.utf8ByteSize + 17
+                target := visitTarget 0 }
+            let third := rowStart streamHeader streamLines 3
+            (compileBuffer two "*compilation: r@main*").map (·.links) == some #[first] &&
+              (compileBuffer done "*compilation: r@main*").map (·.links) ==
+                some #[first, { start := third, stop := third + 14, target := visitTarget 1 }] },
+    { name :=
+        "compile-goto-error with the cursor on the third location's text visits /r/src/main.rs at byte 23 in view 0, focuses view 0, makes location 2 current, and records in view 0's jump list the place it left"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := ranIn driver
+            let followed := drained (pressedOn ran "C-k o C-k g C-k e")
+            let aLean := ran.loop.state.findBuffer "a.lean"
+            fileOf followed ⟨0⟩ == some "/r/src/main.rs" && headsOf followed ⟨0⟩ == some #[23] &&
+              followed.loop.state.frame.focused == ⟨0⟩ &&
+              currentOf followed == some 2 &&
+              headsOf followed ⟨1⟩ == some #[rowAt 4] &&
+              aLean.isSome &&
+              (jumpsOf followed ⟨0⟩).size == (jumpsOf ran ⟨0⟩).size + 1 &&
+              (jumpsOf followed ⟨0⟩).any fun place =>
+                match place with
+                | .held buffer _ => some buffer == aLean
+                | .file .. => false },
+    { name :=
+        "compile-goto-error follows the link's target, not the row: with the help row's first byte relinked to location 3, it visits /r/src/b.lean and makes 3 current"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let relinked := pressedOn (ranIn driver) "C-k o C-k j C-k l"
+            let followed := drained (pressedOn relinked "C-k e")
+            fileOf followed ⟨0⟩ == some "/r/src/b.lean" && headsOf followed ⟨0⟩ == some #[2] &&
+              currentOf followed == some 3 },
+    { name :=
+        "off a link, on a location's row past its text and on the help row, compile-goto-error says there is no location at the cursor and changes nothing"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := ranIn driver
+            let past := drained (pressedOn ran "C-k o C-k w C-k e")
+            let help := drained (pressedOn ran "C-k o C-k j C-k e")
+            [past, help].all fun after =>
+              echoOf after == some "compile-goto-error: no location at the cursor" &&
+                currentOf after == none &&
+                fileOf after ⟨0⟩ == some "/r/src/a.lean" &&
+                headsOf after ⟨0⟩ == headsOf ran ⟨0⟩ },
+    { name :=
+        "with the links mode registered, RET on a location runs link-follow, which follows its link: the location is current, its file is visited in view 0 and view 0 is focused"
+      run :=
+        pure <|
+          match compileLinksDriver with
+          | none => false
+          | some driver =>
+            let followed := drained (pressedOn (ranIn driver) "C-k o C-k g RET")
+            fileOf followed ⟨0⟩ == some "/r/src/main.rs" && headsOf followed ⟨0⟩ == some #[23] &&
+              followed.loop.state.frame.focused == ⟨0⟩ &&
+              currentOf followed == some 2 },
+    { name := "compile-visit with arguments that name no location says so and visits nothing"
+      run :=
+        pure <|
+          match compileDriver with
+          | none => false
+          | some driver =>
+            let ran := ranIn driver
+            let visited :=
+              hostedRan ran
+                { command := Compile.visitName, arguments := placeR.arguments ++ [.nat 9] }
+            echoOf visited == some "compile-visit: no such location" && currentOf visited == none &&
+              fileOf visited ⟨0⟩ == some "/r/src/a.lean" }]
 
 /-- The files of the hook checks, besides the compile checks'. -/
 def hookFiles : List (String × String) :=
