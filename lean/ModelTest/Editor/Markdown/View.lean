@@ -87,7 +87,10 @@ def keepResult (buffer : BufferId) (result : Except Markdown.Refusal Unit) : Edi
   `chunk` of `reply`, appended to `reply`;
 - `reply-whole`: `reply.md`, whole, into a new buffer `reply-whole`, with
   the root;
-- `lists`: `lists.md` into a new buffer `lists`. -/
+- `lists`: `lists.md` into a new buffer `lists`;
+- `rich-over`: `doc` written from a rich-text description of its own
+  (`BufferId.setRichText`), then appended to, the append's answer kept as
+  `over`. -/
 def markdownViewCommands : List (String × Dispatched) :=
   [("render", fun call => do
       let some doc ← generated call "doc" | return none
@@ -168,6 +171,12 @@ def markdownViewCommands : List (String × Dispatched) :=
     ("lists", fun call => do
       let some lists ← generated call "lists" | return none
       keepResult lists (← lists.renderMarkdown Support.Markdown.lists.source)
+      return none),
+    ("rich-over", fun _ => do
+      let some doc ← findBuffer "doc" | return none
+      discard <| doc.setRichText { text := "plain\n" }
+      let result ← doc.appendMarkdown "more"
+      discard <| doc.setValue "over" (.str (refusalWords result))
       return none)]
 
 /-- A driver whose window shows an empty buffer, with each of
@@ -183,7 +192,8 @@ def markdownDriver : Option TestDriver :=
           ("C-c t", invoke "table"), ("C-c w", invoke "whole"), ("C-c s", invoke "stream"),
           ("C-c a", invoke "append"), ("C-c e", invoke "reply"), ("C-c n", invoke "reply-append"),
           ("C-c y", invoke "reply-whole"), ("C-c k", invoke "append-unknown"),
-          ("C-c b", invoke "append-absent"), ("C-c l", invoke "lists")]
+          ("C-c b", invoke "append-absent"), ("C-c l", invoke "lists"),
+          ("C-c o", invoke "rich-over")]
         markdownViewCommands with
       registered := { languages := Language.shipped.toList } }
   let model := { editorModel with syntaxTree := { once := Support.Markdown.canned } }
@@ -221,6 +231,23 @@ def holdsDescription (driver : TestDriver) (name : String) (doc : Doc) : Bool :=
       buffer.links == description.links &&
       buffer.folds == description.folds &&
       buffer.markdown == some doc
+
+/-- Whether the buffer called `name` holds the rich-text description of the
+document it keeps (`Doc.richText`) in all six parts, its stops and indents
+among them, the document's measured stops being those it keeps. -/
+def holdsRichText (driver : TestDriver) (name : String) : Bool :=
+  match markdownBuffer driver name with
+  | none => false
+  | some buffer =>
+    match buffer.markdown with
+    | none => false
+    | some doc =>
+      let rich := doc.richText
+      markdownText driver buffer == some rich.text && buffer.spans == rich.spans &&
+        buffer.stops == rich.stops &&
+        buffer.links == rich.links &&
+        buffer.folds == rich.folds &&
+        buffer.indents == rich.indents
 
 /-- The checks of the one core call that renders Markdown into a generated
 buffer (**criterion 1**), over `view.md`, which has a heading, emphasis, a
@@ -315,7 +342,26 @@ def markdownViewChecks : List Check :=
           match markdownDriver.map (markdownFed · "C-c s C-c b") with
           | none => false
           | some driver =>
-            markdownValue driver "stream" "absent" == some (.str "buffer noSuchBuffer") }]
+            markdownValue driver "stream" "absent" == some (.str "buffer noSuchBuffer") },
+    { name :=
+        "after renderMarkdown of view.md and of table.md each buffer holds its measured document's rich-text description in all six parts, table.md's stops among them"
+      run :=
+        pure <|
+          match markdownDriver.map (markdownFed · "C-c r C-c t") with
+          | none => false
+          | some driver =>
+            holdsRichText driver "doc" && holdsRichText driver "table" &&
+              ((markdownBuffer driver "table").map (!·.stops.isEmpty)) == some true },
+    { name :=
+        "a setRichText over a rendered buffer drops its document, so a following appendMarkdown is refused notRendered"
+      run :=
+        pure <|
+          match rendered.map (markdownFed · "C-c o") with
+          | none => false
+          | some driver =>
+            markdownValue driver "doc" "over" == some (.str "notRendered") &&
+              ((markdownBuffer driver "doc").bind (markdownText driver ·)) == some "plain\n" &&
+              ((markdownBuffer driver "doc").bind (·.markdown)).isNone }]
 
 /-- `stream.md` rendered whole, its text. -/
 def streamText : String :=

@@ -1,4 +1,5 @@
 import Editor.Markdown.Block
+import Editor.RichText
 
 /-!
 # A rendered Markdown document
@@ -7,6 +8,14 @@ A Markdown document rendered block by block (`Markdown.render`): its
 source, and each top-level block's source range with the piece it rendered
 to and the align-to stops its tables were measured into. Its description
 (`Doc.description`) is the pieces joined, with its foldable ranges. Pure.
+
+- **Lowered to the core's rich-text description** (`Doc.richText`,
+  `Editor/RichText.lean`): the description's text, spans, links, folds and
+  wrap indents as they are, and the stops its blocks' tables were measured
+  into, at offsets of the whole text (`Doc.stops`). The description stays
+  layout-free, its tables cell ranges, since this module cannot reach the
+  display; the rich-text description is layout-complete, which is why the
+  lowering is the document's, after the view has measured it.
 
 - **A block** is a top-level block: a child of a section that is not a
   section (`@block`). A list, a block quote and a table are each one.
@@ -47,7 +56,8 @@ cycle, so the build holds this.
 | Addition | Where |
 |---|---|
 | A part of a document kept across renders | A field of `Doc` |
-| A part measured when applied | A field of `Doc.Block`, filled by the view |
+| A part measured when applied | A field of `Doc.Block`, filled by the view, and its arm in `Doc.richText` |
+| A part the view writes into the buffer | A field of `RichText` (`Editor/RichText.lean`), filled by `Doc.richText` |
 
 Pinned by the rendered-markdown checks of `ModelTest/Editor/Markdown/Doc.lean`.
 -/
@@ -117,6 +127,15 @@ def stops (doc : Doc) : Array AlignStop :=
     (fun stops (block, offset) =>
       stops ++ block.stops.map fun stop => { stop with offset := stop.offset + offset })
     #[]
+
+/-- The core's rich-text description of `doc` (`Editor/RichText.lean`): its
+description's text, spans, links, folds and wrap indents as they are, and its
+blocks' stops at offsets of the whole text (`stops`), the tables measured
+onto the blocks being the one part the layout-free description lacks. -/
+def richText (doc : Doc) : RichText :=
+  let description := doc.description
+  { text := description.text, spans := description.spans, stops := doc.stops
+    links := description.links, folds := description.folds, indents := description.indents }
 
 /-- Where the document's tail starts: its last block's source start, or 0
 for a document of no block. -/

@@ -1473,7 +1473,10 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   and no byte before `Doc.firstChanged` changes; and `reply.md` streamed
   from an empty render through one unfinished paragraph, each append
   rendering only its tail's blocks from a first changed offset of 0, ending
-  with the whole render;
+  with the whole render; `markdownRichTextChecks`, `stream.md`'s document
+  lowered to the core's rich-text description (`Doc.richText`): its
+  description's text, spans, links, folds and indents unchanged, and its
+  blocks' stops at offsets of the whole text;
 - `markdownViewChecks`: the one core call that renders Markdown into a
   generated buffer (`Editor/Markdown/View.lean`), on the stepped loop over
   the models, the syntax tree model answering the fixtures' canned layers:
@@ -1482,7 +1485,10 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   draws them, the rendered heading's face resolves larger than the body's,
   and each refusal leaves the buffer as it was, `renderMarkdown`'s and
   `appendMarkdown`'s (a tail with no parse, an absent buffer, one never
-  rendered) alike; `markdownTableViewChecks`, a
+  rendered) alike, a rendered buffer holding its document's rich-text
+  description (`Doc.richText`) in all six parts, and a `setRichText` over a
+  rendered buffer dropping its document, so an append is refused
+  `notRendered`; `markdownTableViewChecks`, a
   rendered table's stops at its measured columns, on the buffer and its
   view, and a table after other blocks at its cells' offsets in the whole
   text; `markdownAppendChecks`, `appendMarkdown` rendering only the tail's
@@ -1878,6 +1884,7 @@ def checks : List Check :=
     markdownListChecks ++
     markdownIndentChecks ++
     markdownStreamChecks ++
+    markdownRichTextChecks ++
     markdownViewChecks ++
     markdownTableViewChecks ++
     markdownAppendChecks ++

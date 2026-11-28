@@ -14,15 +14,19 @@ The core call a package renders a Markdown document into a buffer with
 - **`BufferId.renderMarkdown id source options`** parses `source` once
   through the syntax tree port (`Markdown.parse`), renders every block
   (`Markdown.render`), measures each table into align-to stops, and writes
-  the buffer: its whole text, then its spans, stops, wrap indents, links and
-  foldable ranges, then the document itself (`Buffer.markdown`).
+  the buffer from the document's rich-text description (`Doc.richText`) in
+  one `BufferId.setRichText`: its whole text, spans, stops, wrap indents,
+  links and foldable ranges. Then it keeps the document itself
+  (`Buffer.markdown`), which that call dropped.
 - **`BufferId.appendMarkdown id more`** extends the document the buffer
   holds with `more`: it parses only the document's tail (`Doc.tail`),
   renders only the tail's blocks (`Doc.extend`), measures only their
-  tables, and rewrites only the text from where it first changes
-  (`Doc.firstChanged`) to its end. It renders with the root and gap the
-  document was first rendered with. Declaring the folds again keeps each
-  range's toggled state by its key (`Fold.merge`).
+  tables, and writes the buffer from where its text first changes
+  (`Doc.firstChanged`) with one `setRichText` from that start: no byte and
+  no part before it is rewritten, and every part that reaches it, a heading
+  fold that crosses it among them, is the new description's. It renders
+  with the root and gap the document was first rendered with. Declaring the
+  folds again keeps each range's toggled state by its key (`Fold.merge`).
 
 Both read the language table (`languageCaptures`, the registry's): each
 grammar's name is a pair the text is parsed with (`kindsOf`), so a fence of
@@ -47,7 +51,7 @@ re-measures a table only when its block is rendered again.
 
 | Addition | Where |
 |---|---|
-| A part the view writes into the buffer | `apply`, from the description or the document |
+| A part the view writes into the buffer | A field of `RichText` (`Editor/RichText.lean`), filled by `Doc.richText`; `apply` writes it with the rest |
 | A part measured at apply time | `measure`, onto `Doc.Block` |
 | A refusal | A constructor of `Refusal` |
 
@@ -122,26 +126,17 @@ def measureFrom (doc : Doc) (first : Nat) : DisplayM Doc := do
         if index < first then pure block else measure doc.gap block
   return { doc with blocks }
 
-/-- Writes `doc` into the buffer `id`: its text from `start` to its end
-replaced with the description's from `start`, then its spans, stops, wrap
-indents, links and foldable ranges, then the document. -/
+/-- Writes `doc` into the buffer `id` from the byte `start` on: one
+`setRichText` of its rich-text description (`Doc.richText`), which keeps
+every part before `start` and takes the rest, the heading folds that cross
+`start` among them, then the document. -/
 def apply (id : BufferId) (doc : Doc) (start : Nat) : EditorM (Except Refusal Unit) := do
-  let description := doc.description
-  id.writing do
-      match ← id.text with
-      | .error refusal =>
-        return .error (.buffer refusal)
-      | .ok text =>
-        let length ← text.byteLength
-        let start := min start length
-        text.replaceRange start length (slice description.text start description.text.utf8ByteSize)
-        discard <| id.setSpans description.spans
-        discard <| id.setStops doc.stops
-        discard <| id.setIndents description.indents
-        discard <| id.setLinks description.links
-        discard <| id.setFolds description.folds
-        discard <| EditorState.ask (.setMarkdown id (some doc))
-        return .ok ()
+  match ← id.setRichText doc.richText start with
+  | .error refusal =>
+    return .error (.buffer refusal)
+  | .ok () =>
+    discard <| EditorState.ask (.setMarkdown id (some doc))
+    return .ok ()
 
 end Editor.Markdown
 

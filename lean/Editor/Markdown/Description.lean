@@ -7,8 +7,10 @@ import Editor.Scene
 
 What rendering a Markdown document makes (`docs/design/text-and-display.md`,
 "Rendered markdown, as built"), as plain data: no Markdown is left in it,
-and it says nothing of layout. It is the shape phase 7 lifts into the
-core's rich-text description.
+and it says nothing of layout. The document lowers it to the core's
+rich-text description (`Doc.richText`, `Editor/Markdown/Doc.lean`), adding
+the stops its tables were measured into: the one part the description holds
+as cell ranges, since only the display can measure them.
 
 - **A piece** (`Piece`) is one top-level block rendered: its text, with the
   markup left out, and, at offsets of that text, its spans (each a face

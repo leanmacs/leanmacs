@@ -1,5 +1,6 @@
 import Editor.Display.Model
 import Editor.Markdown.Doc
+import Editor.RichText
 import ModelTest.Check
 import ModelTest.Support.Markdown
 
@@ -9,7 +10,8 @@ import ModelTest.Support.Markdown
 The model tests of the Markdown renderer (`Editor/Markdown/Doc.lean` and the
 modules it imports): `markdownProseChecks`, `markdownHeadingChecks`,
 `markdownTableChecks`, `markdownLinkChecks`, `markdownFoldChecks`,
-`markdownListChecks`, `markdownIndentChecks` and `markdownStreamChecks`. Each renders a fixture of `tests/markdown/` from its
+`markdownListChecks`, `markdownIndentChecks`, `markdownStreamChecks` and
+`markdownRichTextChecks`. Each renders a fixture of `tests/markdown/` from its
 canned layers (`ModelTest.Support.Markdown`) and asserts the exact rendered
 text and the span, link or fold over named substrings. The root module
 `ModelTest` runs them; its module doc says what each shows.
@@ -529,5 +531,38 @@ def markdownIndentChecks : List Check :=
             Markdown.render markdownOptions Support.Markdown.stream.source
               Support.Markdown.stream.layers
           streamed.1.back!.description.indents == whole.description.indents }]
+
+/-- The checks that a rendered document lowers to the core's rich-text
+description (`Doc.richText`), over `stream.md` rendered with stops set by
+hand on its table's block (**criterion 3** of the rich-text roadmap's phase
+7). -/
+def markdownRichTextChecks : List Check :=
+  let rendered :=
+    Markdown.render markdownOptions Support.Markdown.stream.source Support.Markdown.stream.layers
+  let table := (rendered.blocks.findIdx? (!·.piece.tables.isEmpty)).getD 0
+  let doc : Doc :=
+    { rendered with
+      blocks :=
+        rendered.blocks.modify table fun block =>
+          { block with stops := #[{ offset := 2, x := 17 }, { offset := 6, x := 17 }] } }
+  let description := doc.description
+  let rich := doc.richText
+  [{  name :=
+        "Doc.richText of stream.md carries its description's text, spans, links, folds and indents unchanged"
+      run :=
+        pure <|
+          rich.text == description.text && rich.spans == description.spans &&
+            rich.links == description.links &&
+            rich.folds == description.folds &&
+            rich.indents == description.indents &&
+            !rich.spans.isEmpty &&
+            !rich.folds.isEmpty },
+    { name :=
+        "Doc.richText's stops are its blocks' stops at offsets of the whole text, Doc.stops: the table's, past the blocks before it"
+      run :=
+        pure <|
+          let start := (over description.text "a b\n1 2\n3 4").1
+          start > 0 && rich.stops == doc.stops &&
+            rich.stops == #[{ offset := start + 2, x := 17 }, { offset := start + 6, x := 17 }] }]
 
 end ModelTest
