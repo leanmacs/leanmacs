@@ -4,7 +4,9 @@
 //! 0), and every glyph of a font has the same advance and line height.
 //! Lines break greedily at character boundaries:
 //! a visual line takes glyphs while the next one still fits the width, and
-//! always takes at least one.
+//! always takes at least one. Broken at two widths
+//! ([`ShapedLine::break_lines_in`]), the room is the first width until the
+//! first break and the rest width after it.
 //!
 //! What a font is, here ([`FontSpec`]):
 //!
@@ -43,7 +45,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use super::{
     BASE_SIZE, FontId, FontSpec, Glyph, LineHeight, Metrics, ResolvedFont, ResolvedFontId,
-    ShapeInput, ShapedLine, Shaper, VisualLine,
+    ShapeInput, ShapedLine, Shaper, VisualLine, Widths,
 };
 
 /// The fake shaper: fixed-size glyphs per font.
@@ -208,7 +210,7 @@ impl CellLine {
 }
 
 impl ShapedLine for CellLine {
-    fn break_lines(&self, width: Option<f32>) -> Vec<VisualLine> {
+    fn break_lines_in(&self, widths: Widths) -> Vec<VisualLine> {
         if self.cells.is_empty() {
             return vec![VisualLine {
                 bytes: 0..0,
@@ -221,6 +223,9 @@ impl ShapedLine for CellLine {
         let mut lines = Vec::new();
         let mut first = 0;
         let mut x = 0.0;
+        // The room is the first width until the first break, then the
+        // rest width.
+        let mut width = widths.first;
         for (index, cell) in self.cells.iter().enumerate() {
             let fits = width.is_none_or(|width| x + cell.advance <= width);
             if index > first && !fits {
@@ -228,6 +233,7 @@ impl ShapedLine for CellLine {
                 lines.push(Self::line(&self.cells[first..index], bytes));
                 first = index;
                 x = 0.0;
+                width = widths.rest;
             }
             x += cell.advance;
         }
@@ -320,7 +326,7 @@ mod tests {
     use super::CellShaper;
     use crate::shaper::{
         FontId, FontRun, FontSpec, Length, LineHeight, ResolvedFontId, ShapeInput, ShapedLine,
-        Shaper, Slant, VisualLine, Weight,
+        Shaper, Slant, VisualLine, Weight, Widths,
     };
 
     /// `text` in the default font.
@@ -383,6 +389,22 @@ mod tests {
         let xs: Vec<f32> = lines[1].glyphs.iter().map(|glyph| glyph.x).collect();
         assert_eq!(xs, vec![0.0, 10.0]);
         assert_eq!(lines[1].width, 20.0);
+    }
+
+    #[test]
+    fn the_first_line_breaks_at_the_first_width_and_the_rest_at_the_rest_width() {
+        let shaper = CellShaper::new(10.0, 16.0);
+        let lines = shaper.shape(&plain("abcdef")).break_lines_in(Widths {
+            first: Some(40.0),
+            rest: Some(20.0),
+        });
+        assert_eq!(ranges(&lines), vec![0..4, 4..6]);
+        // And the other way round: two at first, then four.
+        let lines = shaper.shape(&plain("abcdefgh")).break_lines_in(Widths {
+            first: Some(20.0),
+            rest: Some(40.0),
+        });
+        assert_eq!(ranges(&lines), vec![0..2, 2..6, 6..8]);
     }
 
     #[test]

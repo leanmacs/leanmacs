@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use editor_layout::shaper::{
     FontId, FontRun, FontSpec, Glyph, LineHeight, Metrics, ResolvedFont, ResolvedFontId,
-    ShapeInput, ShapedLine, Shaper, Slant, VisualLine,
+    ShapeInput, ShapedLine, Shaper, Slant, VisualLine, Widths,
 };
 use parley::fontique::{GenericFamily, SourceCache};
 use parley::{
@@ -482,9 +482,22 @@ impl ParleyLine {
 }
 
 impl ShapedLine for ParleyLine {
-    fn break_lines(&self, width: Option<f32>) -> Vec<VisualLine> {
+    /// Parley's breaker takes each line's maximum as it goes: the first
+    /// line is broken at the first width, under a layout maximum of the
+    /// larger of the two widths (Parley holds a line's maximum to at most
+    /// the layout's), and the rest by Parley's own `break_remaining` at
+    /// the rest width, which also places an inline box, though a shaped
+    /// line has none. A yield that is no line, which only an inline box
+    /// gives, is yielded again to `break_remaining`.
+    fn break_lines_in(&self, widths: Widths) -> Vec<VisualLine> {
+        let room = |width: Option<f32>| width.unwrap_or(f32::MAX);
         let mut layout = self.layout.lock().unwrap_or_else(PoisonError::into_inner);
-        layout.break_all_lines(width);
+        let mut breaker = layout.break_lines();
+        let state = breaker.state_mut();
+        state.set_layout_max_advance(room(widths.first).max(room(widths.rest)));
+        state.set_line_max_advance(room(widths.first));
+        breaker.break_next();
+        breaker.break_remaining(room(widths.rest));
         layout.lines().map(|line| self.visual_line(&line)).collect()
     }
 }
