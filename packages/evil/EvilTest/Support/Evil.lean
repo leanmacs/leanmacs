@@ -6,6 +6,7 @@ import Editor.Display.Model
 import Editor.DisplayRules
 import Editor.Event
 import Editor.File
+import Editor.Fold
 import Editor.Highlight
 import Editor.InputScheme
 import Editor.Invocation
@@ -38,7 +39,8 @@ import EvilTest.Support.Vim
 
 The fixtures of evil's checks: texts with the cursor written into them as a bar,
 the driver under the Vim scheme that ships (evil's kit, `EvilTest/Kit.lean`),
-and what a check reads of its state, scene, history and registers. Shared by several test modules under
+and what a check reads of its state, scene, history and registers, a
+buffer's folds among them (`foldedEvilDriver`). Shared by several test modules under
 `EvilTest/`; it holds no checks of its own.
 -/
 
@@ -368,5 +370,27 @@ so the window shows `ex` with its cursor at its start; `none` if making
 the state was refused. -/
 def evilExcerptDriver : Option EvilDriver :=
   (evilDriver "|" (evilHanded excerptRegistrations)).map (excerptInvoked · "make-ex")
+
+/-- A driver of the evil checks over `fixture` whose buffer's owner has
+declared the foldable ranges `folds`, by a command handed to the driver
+(`declare-folds`), run once before any key. -/
+def foldedEvilDriver (fixture : String) (folds : Array Foldable) : Option EvilDriver := do
+  let declare : Dispatched := fun call => do
+    discard <| call.target.window.buffer.setFolds folds
+    return none
+  let driver ← evilDriver fixture (evilHanded #[] [("declare-folds", declare)])
+  return (driver.stepped (driver.loop.invoke driver.handed { command := "declare-folds" })).1
+
+/-- Whether each foldable range of the buffer of view 0 of `driver` is
+folded, in order. -/
+def evilFolded (driver : EvilDriver) : Option (List Bool) := do
+  let target ← driver.loop.state.target? ⟨0⟩
+  return target.buffer.folds.toList.map (·.folded)
+
+/-- The placeholder texts of the folds of view 0 in the last scene `driver`
+published. -/
+def evilSceneFolds (driver : EvilDriver) : Option (List String) :=
+  driver.model.display.scenes.back?.bind fun scene =>
+    (scene.views.find? (·.id == ⟨0⟩)).map (·.folds.toList.map (·.text))
 
 end EvilTest

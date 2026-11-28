@@ -27,7 +27,7 @@ means, and what a motion does when it cannot go the whole way, is Vim's
 | Motion | Composed from | Count |
 |---|---|---|
 | `left`, `right` | `previousCell`, `nextCell`, stopped at the line's start and at where its content ends | Repeats. Goes as far as the line allows |
-| `down`, `up` | `rowsDown`, `rowsUp` to the line's start, then the display's position at the wanted column of that line | Rows. Stops at the last line and at the first |
+| `down`, `up` | `rowsDown`, `rowsUp` to the line's start, then the display's position at the wanted column of that line; in a buffer with shown folds a folded range is one line (`Fold.stepRows`), and a line that starts a fold is rested on at the fold's start | Rows, a folded range one row. Stops at the last line and at the first |
 | `word-forward`, `word-backward`, `word-end` and the three `bigword` names | `nextWordStart`, `previousWordStart`, `nextWordEnd` of a word or a WORD | Repeats. Stops when the position no longer changes |
 | `line-start` | `lineStart` | None is ever given: a `0` after a digit is part of the count. A count is ignored |
 | `line-first-non-blank` | `lineFirstNonBlank` | Ignored, as Vim documents |
@@ -46,7 +46,7 @@ What each says of itself for an operator (`Editor/Vocabulary.lean`,
 | Motion | Reach | Where it leads an operator, where that is not its target | Fails |
 |---|---|---|---|
 | `left`, `right` | exclusive | | Never |
-| `down`, `up` | lines | | On the last line, and on the first. A count past the text stops there and does not fail |
+| `down`, `up` | lines | | On the last line, and on the first, a fold that reaches either counting as that line. A count past the text stops there and does not fail |
 | `word-forward`, `bigword-forward` | exclusive | The last step stops where its line's content ends, and from an empty line goes to the next line's start. For an operator that replaces, on a cell that is neither a blank nor a line break: the end of the word, inclusive | Never |
 | `word-backward`, `bigword-backward` | exclusive | | When a step is asked of it at the text's start: where it starts, and where it has come to rest on an empty first line with steps left over, which is the one failure here that comes after the motion moved |
 | `word-end`, `bigword-end` | inclusive | | Never |
@@ -88,7 +88,10 @@ What each says of itself for an operator (`Editor/Vocabulary.lean`,
     line's end; one question when they are handed a goal, which is every
     `j` or `k` after the first, and none when they then cannot move; two
     when they are handed none, and one when they then cannot move. A count
-    asks no more: the text port goes to the line in one request.
+    asks no more: the text port goes to the line in one request. In a
+    buffer with shown folds they ask nothing for a line that starts a fold,
+    which is rested on at the fold's start with the column kept, and as
+    above for any other line; with no shown fold the requests are as here.
   - **A cursor on a tab counts at the tab's first column**, where Vim's
     counts at its last: the x the display answers for a position is where
     its character starts. A recorded departure.
@@ -323,6 +326,38 @@ last character. A move of no lines, so the line is the position's. -/
 def inLine (snapshot : SnapshotId) (position : Nat) (goal : Option Nat) : DisplayM Display.Moved :=
   Display.linesFrom { snapshot, width := unwrapped, position, lines := 0, goal }
 
+/-- `vertical`'s target in a buffer whose shown folds are `shown`, with their
+rows: `origin.count` lines down (up when not `down`), a shown fold one line
+(`Fold.stepRows`), no further than the last line or the first; at a fold's
+first line the fold's start, keeping the wanted column; on any other line
+the column the wanted column, or the cursor's own x, aims for, as
+`vertical` asks it. With no line to go to it stays and has failed. -/
+def foldedVertical (text : TextId) (origin : Vocabulary.From) (shown : Array Fold.Covered)
+    (down : Bool) : EditorM Vocabulary.To := do
+  let head := origin.head
+  let row := (← text.pointOf head .cells).row
+  let last ← lastLine text
+  let here := Fold.stepRows shown row 0 last down
+  let target := Fold.stepRows shown row (origin.count.getD 1) last down
+  -- The column to keep: the wanted one, or the cursor's own x, asked once.
+  let keep : EditorM WantedColumn := do
+    match origin.wanted with
+    | some wanted =>
+      return wanted
+    | none =>
+      return .goal (← text.withSnapshot fun snapshot => inLine snapshot head none).goal
+  if target == here then
+    return { head, wanted := some (← keep), failed := true }
+  if Fold.startsAt shown target |>.isSome then
+    return { head := ← text.offsetOf ⟨target, 0⟩, wanted := some (← keep) }
+  let line ← text.offsetOf ⟨target, 0⟩
+  match ← keep with
+  | .lineEnd =>
+    return { head := ← text.motion .lineEnd line, wanted := some .lineEnd }
+  | .goal x =>
+    let moved ← text.withSnapshot fun snapshot => inLine snapshot line (some x)
+    return { head := moved.position, wanted := some (.goal x) }
+
 /-- The motion called `name` by lines of the text, down when `down` and up
 otherwise: `count` lines, 1 with no count, and no further than the last
 line (`lastLine`) or the first. An operator takes the whole lines of both
@@ -340,11 +375,22 @@ display's ("The wanted column", in the module docs):
   for that.
 
 It keeps the column it aimed for: on a line that does not reach it the raw
-target is where the line's content ends. -/
+target is where the line's content ends.
+
+In a buffer with shown folds (`BufferId.shownFolds`) a folded range is one
+line (`Fold.stepRows`): from the line above it one line down is the fold's
+first line, and one more the line after it. A line that starts a fold is
+rested on at the fold's start, its placeholder, keeping the wanted column
+and asking the display nothing for that line; on any other the column is
+asked as above. A step that cannot leave the line it starts on, the fold it
+is in included, has failed. -/
 def vertical (name : String) (down : Bool) : Vocabulary.Motion :=
   { name
     reach := .lines
     target := fun text origin => do
+      let shown ← origin.buffer.shownFolds
+      if !shown.isEmpty then
+        return ← foldedVertical text origin shown down
       let head := origin.head
       let row := (← text.pointOf head .cells).row
       let last ← lastLine text

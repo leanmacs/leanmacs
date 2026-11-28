@@ -422,7 +422,9 @@ from the editor state. A motion that is a jump (`Vocabulary.Motion.jumps`)
 and did not fail records the place the cursor starts from in the window's
 jump list first (`Jumps.record`), and gives the window back the
 previous-context mark it had when the cursor ends on that place
-(`Jumps.checkPrevious`). A motion that leads out of its text
+(`Jumps.checkPrevious`), and unfolds every folded range whose rows hold
+the place the cursor lands on (`BufferId.reveal`), so a search accepted
+onto a match inside a fold shows it. A motion that leads out of its text
 (`Vocabulary.To.elsewhere`) is gone to as a jump (`Jumps.goTo`), which shows
 the other buffer or visits the file, and the cursor rests where it lands.
 The motion is told the call's window and its buffer (`Vocabulary.From.view`,
@@ -476,6 +478,8 @@ def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   call.target.select { ranges := #[⟨anchor, head⟩], shape := call.report.shape }
   if jumped then
     Jumps.checkPrevious view previous
+    -- A jump that lands inside a folded range unfolds it.
+    call.target.window.buffer.reveal head
   let keeps := if head == range.head then raw.unmoved else raw.wanted
   discard <| view.setWanted (keeps.map fun column => { column, head })
   if let some find := raw.find then

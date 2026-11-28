@@ -111,6 +111,22 @@ Vim scheme that ships with evil's commands: keys are pressed, and what the
 next scene shows of a view is asked of the driver's models (`viewSeen`). -/
 def evilScrollChecks : List Check :=
   [{  name :=
+        "in a view of six rows over forty lines whose rows 1 to 10 are folded, C-d moves the anchor and the cursor down three rows counting the fold as one"
+      run :=
+        pure <|
+          let forty := numbered 40
+          let folds : Array Foldable :=
+            #[{ start := 3, stop := 32, key := "f", text := "[1-10]", folded := true }]
+          let start : TextM EditorState := do
+            let state ←
+              viewState forty (frameAround ⟨10, 6⟩ editorModel.display.cells) 0 0 scrollShape
+            return { state with buffers := state.buffers.modify 0 (·.map ({ · with folds })) }
+          match (Loop.Driver.over evilHanded (fun _ => none) start editorModel).toOption with
+          | none => false
+          | some driver =>
+            (viewSeen (evilFed driver "C-d")).map (fun seen => (seen.anchor, seen.head)) ==
+              some (36, 36) },
+    { name :=
         "with the scroll margin set to two, after every motion of the vocabulary, with no count and with a count of 3, from a spread of cursors of forty short lines and of a text with wrapped lines, in a view of seven rows, the cursor's row is at least two rows from the first and from the last row the next scene's view shows, except where the first is the text's first row or the last its last"
       run := do
         let resting (contents : String) (every : Nat) : List Nat :=

@@ -904,6 +904,15 @@ def evilSelectionChecks : List Check :=
             cursor "foo |bar baz qux" "v w y w" 8 &&
             cursor "foo |bar baz qux" "v w c <Escape>" 3 },
     { name :=
+        "V j y from the row above a folded range yanks that row and every row the range covers, whole"
+      run :=
+        pure <|
+          let fold : Foldable :=
+            { start := 8, stop := 19, key := "f", text := "[2-4]", folded := true }
+          (foldedEvilDriver "ab0\n|ab1\nab2\nab3\nab4\nab5" #[fold]).map
+              (fun driver => (evilFed driver "V j y").loop.state.register? Evil.unnamed) ==
+            some (some { text := "ab1\nab2\nab3\nab4\n", linewise := true }) },
+    { name :=
         "a count typed before the operator of a visual selection changes nothing: the selection is what is acted on"
       run :=
         operatorRows

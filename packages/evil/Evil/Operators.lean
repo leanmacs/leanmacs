@@ -45,7 +45,10 @@ of one (`Evil.lean`), so the caller supplies the vocabulary.
   compiles to, what the selection covers. A selection of the line shape
   is the lines of its two ends. Any other is
   what the text port says its primary range covers by its shape
-  (`TextId.extents`), stopped where the last line's content ends; the two
+  (`TextId.extents`), stopped where the last line's content ends. An end
+  inside a shown fold (`BufferId.shownFolds`) takes the fold whole
+  (`Fold.cover`): for the line shape, the fold's first or last line; for
+  the others, the fold's start or where its last line's content ends; the two
   rules below for a stretch that stops at a line's start and for a
   deletion over lines are a motion's and are not applied, as Vim applies
   neither in Visual mode. A count is ignored. The window then keeps no
@@ -601,6 +604,10 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
              register, before },
             none)
     | "selection" =>
+      -- An end inside a shown fold takes the fold whole.
+      let shown ← call.target.window.buffer.shownFolds
+      let firstOf (row : Nat) : Nat := ((Fold.cover shown row).map (·.2.1)).getD row
+      let lastOf (row : Nat) : Nat := ((Fold.cover shown row).map (·.2.2)).getD row
       if before.shape == .line then
         -- The lines of the selection's two ends. A yank leaves the cursor
         -- at the start of the anchor's line, or on the head when the head
@@ -613,8 +620,8 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
         pure
             ({
                 stretch :=
-                  .lines (← rowOf text (min range.anchor head))
-                    (← rowOf text (max range.anchor head)),
+                  .lines (firstOf (← rowOf text (min range.anchor head)))
+                    (lastOf (← rowOf text (max range.anchor head))),
                 head, rest, register, before },
               none)
       else
@@ -626,8 +633,20 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
                 ranges := #[range], primary := 0 }
         let some extent := covered[0]? | throw .badSelection
         let limit ← text.motion .lineEnd (← text.offsetOf ⟨← lastLine text, 0⟩)
-        let stop := min extent.stop limit
-        let start := min extent.start stop
+        let startRow ← rowOf text extent.start
+        let stopRow ← rowOf text extent.stop
+        let widenedStart ←
+          if (Fold.cover shown startRow).isSome then
+            text.offsetOf ⟨firstOf startRow, 0⟩
+          else
+            pure extent.start
+        let widenedStop ←
+          if (Fold.cover shown stopRow).isSome then
+            text.motion .lineEnd (← text.offsetOf ⟨lastOf stopRow, 0⟩)
+          else
+            pure extent.stop
+        let stop := min widenedStop limit
+        let start := min widenedStart stop
         pure
             ({ stretch := .cells ⟨start, stop⟩ .exclusive, head, rest := start, register, before },
               none)
