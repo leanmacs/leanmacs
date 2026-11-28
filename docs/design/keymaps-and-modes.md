@@ -2004,7 +2004,7 @@ whole way, is Vim's:
 | Key | Motion | Composed from | Count |
 |---|---|---|---|
 | `h`, `l` | `left`, `right` | `previousCell`, `nextCell`, stopped at the line's start and at where its content ends | Repeats. Goes as far as the line allows |
-| `j`, `k` | `down`, `up` | `rowsDown`, `rowsUp` to the line's start, then the display's position at the wanted column of that line ("The wanted column") | Rows. Stops at the last line and at the first |
+| `j`, `k` | `down`, `up` | `rowsDown`, `rowsUp` to the line's start, then the display's position at the wanted column of that line ("The wanted column"); in a buffer with shown folds a folded range is one line, and a line that starts a fold is rested on at the fold's start, its placeholder ([text-and-display.md](text-and-display.md), "Folds, as built") | Rows, a folded range one row. Stops at the last line and at the first; a fold that reaches the last line stops `j` |
 | `w`, `b`, `e`, `W`, `B`, `E` | `word-forward`, `word-backward`, `word-end` and the three `bigword` names | `nextWordStart`, `previousWordStart`, `nextWordEnd` of a word or a WORD | Repeats. Stops when the position no longer changes |
 | `0` | `line-start` | `lineStart` | None is ever given: a `0` after a digit is part of the count. A count is ignored |
 | `^` | `line-first-non-blank` | `lineFirstNonBlank` | Ignored, as Vim documents |
@@ -2067,6 +2067,12 @@ options (`cpoptions` with `c`, `wrapscan`, `magic`, `noignorecase`):
 - **Under an operator every search is exclusive**, so the two rules for an
   exclusive motion that ends in column 1 apply: `d*` from a line's start to
   the next line's start deletes the line, line-wise.
+- **A search that lands inside a folded range unfolds it**, as every jump
+  motion that does not fail does (`BufferId.reveal`), and the cursor rests
+  on the match's first byte; one that fails unfolds nothing. Matches drawn
+  as the last search's never unfold, and an incremental search's preview,
+  once built, must not either ([text-and-display.md](text-and-display.md),
+  "Folds, as built").
 - **Every search is a jump** (`Vocabulary.Motion.jumps`): `/`, `?`, `n`,
   `N`, `*` and `#` record where they start from in the window's jump list
   when they find a match ("The jump list and marks").
@@ -3432,6 +3438,10 @@ evil-collection rebinds most). The last two, `next-link` and
 recur in every generated buffer with links, whatever its mode, filled by
 the links mode, whose keymaps go first where a buffer has links ("Active
 keymaps", "The links mode"). No other action has two unrelated users yet.
+`toggle` is also taken by the folds mode (`lean/Editor/Folds.lean`), whose
+keymaps go after the links mode's where a buffer has foldable ranges: there
+it folds or unfolds the section under the cursor, and off every range runs
+the buffer's own `toggle` ("Active keymaps", "The folds mode").
 
 **The rule for adding a role.** A role is a standard action that recurs,
 with one meaning, in modes that have nothing else in common. An action of
@@ -3479,7 +3489,8 @@ changes every mode that fills it.
   roles, which is the design's intent; `g r` merges with the `g g` prefix.
   The link roles are on `] l` and `[ l`, vim-unimpaired's keys for the
   location list; no default state binds `]` or `[`, and `TAB` stays
-  `toggle`'s, which folds take.
+  `toggle`'s, which folds take: the folds mode fills it with `fold-toggle`
+  in a buffer with foldable ranges.
 - **The Vim scheme's leader is `SPC` and its localleader `SPC m`**, Doom
   Emacs's. `SPC` begins no binding of any default state, so a sequence
   under it reaches nothing of the scheme's; neither leader holds where
@@ -3824,7 +3835,8 @@ One pure function resolves what is active for a view, in precedence order:
 def Config.Registry.activeMaps (registry : Registry) (scheme : InputScheme)
     (state : EditorState) (view : ViewId) : List (Keymap scheme.Binding)
 -- the open prompt's category, then the links mode where the buffer has links,
--- then minor modes, then the major mode, then global
+-- then the folds mode where it has foldable ranges, then minor modes, then the
+-- major mode, then global
 ```
 
 As built. The global keymap is every owner's key bindings
@@ -3857,6 +3869,18 @@ walked after the active ones ("Which keymaps a key is looked up in").
   registered, the package `link-commands` left out, it contributes
   nothing and every mode behaves as before. Built by the rich text
   display roadmap's phase 3.
+- **The folds mode** comes after the links mode and before the minor modes
+  in a view whose buffer has foldable ranges (`Buffer.folds`;
+  `text-and-display.md`, "Folds, as built"): the keymaps of the mode
+  registered as `Folds.modeName` (`folds`). It fills `toggle` with
+  `fold-toggle` (`lean/Editor/Folds.lean`), which folds or unfolds the
+  section under the cursor and, off every foldable range, runs the command
+  the buffer's own modes fill `toggle` with (`RegistryRequest.roleCommand`,
+  which never asks the folds mode either), guarded against calling itself.
+  A buffer with no foldable range, such as `version-control`'s status
+  buffer or acp's conversation, keeps its own `toggle`. With the package
+  `fold-commands` left out it contributes nothing. Built by the rich text
+  display roadmap's phase 4.
 - **A prompt category's keymap comes first** for the open prompt's
   minibuffer view, when the prompt has a category
   (`Prompt.candidates.category`): `Registry.categoryKeymap`, every owner's

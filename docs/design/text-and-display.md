@@ -1387,7 +1387,7 @@ highlighting after a reparse) never blocks a fast one (the selection).
 | Inline virtual text | Type hints, an evil pending-operator hint |
 | Block between lines | A review comment thread, a hunk's accept/reject controls, a permission prompt, an excerpt header |
 | Gutter mark | Diff marks, comment markers, "an agent wrote this" marks, breakpoints |
-| Replacement | Folded regions, ligature-like substitutions, inline images |
+| Replacement | Folded regions (built: "Folds, as built"), ligature-like substitutions, inline images |
 | Line attribute | Background for the current line, a dimmed unreviewed region |
 
 A **face** is a set of optional attributes (family, size, weight, slant,
@@ -1396,8 +1396,10 @@ order. Faces are named and defined in Lean.
 
 ### As built
 
-Of the kinds above, span faces, blocks between lines and gutter marks are
-built. Span faces come from three sources: the selections, the decorations
+Of the kinds above, span faces, blocks between lines, gutter marks and
+one replacement, folded regions ("Folds, as built", under "Display
+layers"), are built; ligature-like substitutions and inline images are
+not. Span faces come from three sources: the selections, the decorations
 a scene carries, and a text's own spans, a syntax's highlights, which the
 text carries through a port of layout's (`TextSpans`, on a `TextRef`; "The
 scene", as built). The rest are not.
@@ -1955,14 +1957,18 @@ the others are added as layers without changing the ones below.
 ### As built
 
 The display pipeline's phase 1 built the contract and two layers, in
-`crates/editor-layout` (`src/layer.rs`, `src/tabs.rs`, `src/wrap.rs`):
+`crates/editor-layout` (`src/layer.rs`, `src/tabs.rs`, `src/wrap.rs`), and
+the rich text display roadmap's phase 4 a third, the fold layer
+(`src/folds.rs`), which sits beside them ("Folds, as built", below):
 
 - **The contract** (`Layer`): `sync` takes the snapshot of the layer below
   and the edits that made it, and gives the layer's own snapshot and its
   edits, in its own point type; a point converts down and up, with a bias
   for a point the layer below has no counterpart of. Its module docs say
-  where a later layer goes: folds and inline text between the buffer and
-  the tab layer, blocks after the wrap layer; none changes a layer below.
+  where a later layer goes: inline text between the buffer and the tab
+  layer, blocks after the wrap layer; none changes a layer below. Folds,
+  first planned between the buffer and the tab layer, sit beside the tab
+  and wrap layers as built ("Folds, as built").
 - **The tab layer.** Tabs are expanded before shaping (decided in phase 1,
   2026-11-13): a tab becomes spaces up to the next multiple of the tab
   width (8 columns by default), columns counted in characters, so the
@@ -2053,6 +2059,112 @@ position through it for nothing. Layout's walk counts a block's lines as
 heights instead ("Decorations", as built), and blocks never enter a text's
 wrap layer: they are matched to rows afresh in each frame and query. The
 layer contract stays for folds and inline text.
+
+### Folds, as built
+
+The rich text display roadmap's phase 4 built folds: a range of a
+buffer's text shown as one placeholder row, the owner's summary line in
+its own faces (`crates/editor-layout/src/folds.rs`, `src/query.rs`,
+`src/frame.rs`; `lean/Editor/Fold.lean`, `lean/Editor/Folds.lean`).
+
+- **A fold is whole rows.** It covers the rows that hold a byte of its
+  range `[start, stop)`, a line break being the row's it ends, or the row
+  of `start` when the range is empty; an offset past the end is the end.
+  This is the gutter mark's rule.
+- **The placeholder.** Those rows are drawn as one row of the fold's text,
+  in its own decorations over the default face, laid out unbroken as one
+  visual line and clipped at the view's right edge. It holds every
+  position of the rows it covers, from the first row's start (the fold's
+  start) up to the next row's start, each at x 0. Its row in the rows
+  answer is the fold's start through the end of its last row's content.
+  It is shaped through the block store, so a fold shown again is not
+  shaped again. Decorations, spans, search matches, stops and links of the
+  folded rows are not laid out; a block before the first covered row is
+  drawn above the placeholder and one before a later covered row is not;
+  the placeholder has the gutter marks of its first covered row.
+- **Nested and overlapping ranges.** The shown folds are the folded ranges
+  in order of start (the longer first of two with one start); one whose
+  first row an earlier shown fold covers is dropped. So of two nested
+  folded ranges the outer one shows, and a range that only partly overlaps
+  a shown one leaves its later rows visible. Lean computes this
+  (`Fold.shown`) and hands a view only its shown folds, and layout applies
+  the same rule to whatever it is handed, so the two never disagree.
+- **The layer, and its departure.** A fold never changes the text of a row
+  it leaves shown, so the tab and wrap layers keep their per-row entries
+  keyed by buffer row, `TabLayer::Below` stays the buffer's snapshot, and
+  folding or unfolding shapes only the placeholder. The fold layer
+  (`FoldLayer`, implementing `Layer` over the buffer's snapshot, with
+  `FoldPoint`s of a fold row and a byte of it) therefore sits beside the
+  tab/wrap stack rather than between the buffer and the tab layer, as this
+  section first planned: it maps buffer offsets to fold points and back.
+  Layout keeps no fold layer between calls: the frame and each query build
+  a `FoldSnapshot` from the view's or the query's folds for the walk. The
+  round trip of a position through the fold layer, and through the tab and
+  wrap layers on the rows the folds leave shown, is a property test
+  (`tests/layers.rs`).
+- **The queries.** Folds ride on all three display queries
+  (`RowsQuery.folds`, `MoveQuery.folds`, `SpotQuery.folds`,
+  `lean/Editor/Display.lean`, "Folds") as well as on the scene
+  (`View.folds`), since a fold changes which rows exist. The rows answer
+  counts a placeholder as one row; a spot of a position a fold covers is
+  the placeholder's row at the padding's x; a move counts it as one row
+  and, landing on it, goes to the fold's start with its goal passed back
+  unchanged. The display contract holds the Lean model, the recorder and
+  the real layout to that rule (`lean/Editor/Display/Contract.lean`, "What
+  folds are held to"): the one contract between the pure model of the
+  position mapping and the real layer.
+- **A section's own data on the buffer.** A buffer's owner declares its
+  foldable ranges (`Foldable`: a byte range, an owner-given key, a
+  placeholder text with its faces, and whether it is folded) with
+  `BufferId.setFolds`. Declaring again merges by key (`Fold.merge`): a
+  range whose key survives keeps its current state, and only a new key
+  takes its declared one, so a regenerated buffer keeps the user's
+  toggles. Toggling (`BufferId.setFolded`) is a state request that never
+  touches the text, so its content and revision stay as they were. As with
+  spans and links, nothing moves a fold on an edit: generated buffers are
+  their owner's. Every view of the buffer carries its shown folds, and the
+  follow and the scroll commands ask the display with them.
+- **How motion, selection, jumps and search treat a fold:**
+  - *Vertical motion* steps over a folded range as one row: evil's `j` and
+    `k` (`Fold.stepRows`, `packages/evil/Evil/Motions.lean`) go from the
+    row above a fold to the fold's start in one step and to the row after
+    it in the next, keeping the wanted column across the placeholder, and
+    never unfold. A fold that reaches the last line stops `j` there.
+  - *Selection*: extending a selection across a folded range covers it
+    whole, since `j` and `k` step over it as one line and both ends lie
+    outside it. A selection end resting on a placeholder covers the range
+    whole too: layout fills the whole placeholder line when a selection
+    meets any byte the fold covers, and evil's operator over a visual
+    selection widens an end inside a shown fold to the fold's whole lines
+    (the line shape) or to its start or its last line's end (the others,
+    `Fold.cover`).
+  - *Jumps*: a motion that is a jump and does not fail (`/`, `?`, `n`, `N`,
+    `*`, `#`, `G`, `gg`) unfolds every folded range whose rows hold the
+    place it lands on, and so does a landing through the jump list (`C-o`,
+    `C-i`) or a mark (`Jumps.goHeld`); both go through one core call,
+    `BufferId.reveal`.
+  - *Search*: an accepted search lands on its match's first byte and
+    unfolds the range that holds it (it is a jump). Matches drawn as the
+    last search's (`search-match`) never unfold. Incremental search is not
+    built; its preview, once built, must not unfold either.
+  - *Horizontal motion* from a placeholder (`l`, `w`, …) leaves the range
+    folded, and the cursor is drawn at the placeholder's start: a recorded
+    limit, as Vim's `foldopen` `hor` is not built.
+  - *Links* inside a shown fold are hidden: `link-next` and `link-previous`
+    pass over them, and `link-follow` on a placeholder finds no link and
+    runs the buffer's own `activate`.
+- **Toggling from the keyboard.** The core's folds mode fills `toggle`
+  with `fold-toggle`, which the default package `fold-commands` registers:
+  on the ranges whose rows hold the cursor's row it unfolds the outermost
+  folded one, or with none folded folds the innermost and puts the cursor
+  at its start; off every range it runs the buffer's own `toggle`. Its
+  keymaps go after the links mode's in a buffer with foldable ranges
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "Active keymaps").
+- **Not built**: fold commands beyond the toggle (fold all, unfold all),
+  folds over a range of a row rather than whole rows, `foldopen` for
+  horizontal motion, folds that move with edits of a buffer the user
+  writes, and folds in the agent conversation, which still regenerates its
+  buffer to hide a tool call (rdm task `acp-conversation-on-folds`).
 
 ## Views
 
