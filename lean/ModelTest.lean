@@ -667,7 +667,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   halves; and a write from the head's end (`setRichText … start`) whose
   description disagrees on the prefix keeping the buffer's bytes and parts
   there, the parts from there on and the fold crossing it the
-  description's;
+  description's; and a write from 0, then from 9, whose text from there
+  the buffer already holds making no edit and leaving the text's revision
+  as it was, while each still writes its parts;
 - `quitChecks`: the quit rule and its name, the core's (`Editor/Quit.lean`),
   on a driver whose `quit` runs the rule: with nothing unsaved the editor
   leaves, and a refusal is said under the core's name;

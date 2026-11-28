@@ -649,6 +649,19 @@ def richRedo : RichText :=
       #[{ start := 9, stop := 18, first := 7, rest := .points 7 },
         { start := 18, stop := 23, first := 2 }] }
 
+/-- The description `rich-same` writes over `richHead`'s text: its text
+disagrees with the head's only in its first row's bytes (`HEAD`), and each
+of its parts is its own, one on the first row and one on the second. -/
+def richSame : RichText :=
+  { text := "HEAD one\nhead two\n"
+    spans :=
+      #[{ start := 0, stop := 4, face := ⟨"rich.same"⟩ },
+        { start := 9, stop := 13, face := ⟨"rich.same.two"⟩ }]
+    stops := #[{ offset := 10, x := 7 }]
+    links := #[{ start := 9, stop := 13, target := .url "https://example.com/same" }]
+    folds := #[{ start := 9, stop := 18, key := "two", text := "[two]" }]
+    indents := #[{ start := 9, stop := 18, first := 3 }] }
+
 /-- What a rich-text call answered, as words: `ok`, or its refusal. -/
 def richWords : Except BufferRefusal Unit → String
   | .ok () => "ok"
@@ -687,7 +700,12 @@ def richSet (call : Call) (rich : RichText) : EditorM (Option BufferId) := do
   an edit since `revision` as `edited` (`keepEdited`);
 - `rich-redo` writes `rich` from `richRedo` from the end of `richHead`'s
   text, and keeps the smallest start of an edit since the tail as
-  `redone`. -/
+  `redone`;
+- `rich-same` writes `rich` from 0 from `richSame` with `richHead`'s text,
+  keeping the smallest start of an edit since `revision` as `same`, then
+  from 9 from `richSame` with other spans, whose text from 9 is the
+  buffer's, keeping the smallest start of an edit since as `same-tail`;
+  each answer is kept as `same-result` and `same-tail-result`. -/
 def richTextCommands : List (String × Dispatched) :=
   [("rich-set", fun call => do
       discard <| richSet call richHead
@@ -720,6 +738,25 @@ def richTextCommands : List (String × Dispatched) :=
           rich.setValue "result"
             (.str (richWords (← rich.setRichText richRedo richHead.text.utf8ByteSize)))
       keepEdited rich "redone"
+      return none),
+    ("rich-same", fun _ => do
+      let some rich ← findBuffer "rich" | return none
+      discard <|
+          rich.setValue "same-result"
+            (.str (richWords (← rich.setRichText { richSame with text := richHead.text })))
+      keepEdited rich "same"
+      discard <|
+          rich.setValue "same-tail-result"
+            (.str
+              (richWords
+                (←
+                  rich.setRichText
+                      { richSame with
+                        spans :=
+                          #[{ start := 0, stop := 4, face := ⟨"rich.ignored"⟩ },
+                            { start := 9, stop := 13, face := ⟨"rich.again"⟩ }] }
+                      9)))
+      keepEdited rich "same-tail"
       return none)]
 
 /-- A driver whose window shows an empty buffer, with each of
@@ -730,7 +767,7 @@ def richDriver : Option TestDriver :=
     dispatchKeys
       [("C-c s", invoke "rich-set"), ("C-c f", invoke "rich-folded"),
         ("C-c x", invoke "rich-absent"), ("C-c h", invoke "rich-head"),
-        ("C-c t", invoke "rich-tail"), ("C-c r", invoke "rich-redo")]
+        ("C-c t", invoke "rich-tail"), ("C-c r", invoke "rich-redo"), ("C-c m", invoke "rich-same")]
       richTextCommands
   (Loop.Driver.over keys (fun _ => none) (EditorState.initial ⟨640, 480⟩) editorModel).toOption
 
@@ -884,6 +921,30 @@ def richTextAppendChecks : List Check :=
                   #[{ start := 0, stop := 9, key := "head", text := "[head]", folded := true },
                     { start := 0, stop := 23, key := "whole", text := "[redo whole]" },
                     { start := 18, stop := 23, key := "new", text := "[new]" }] &&
-                tail.spans == #[{ start := 18, stop := 22, face := ⟨"rich.new"⟩ }] }]
+                tail.spans == #[{ start := 18, stop := 22, face := ⟨"rich.new"⟩ }] },
+    { name :=
+        "a write from 0 whose text the buffer already holds, and then one from 9 whose text from 9 the buffer holds, make no edit and leave the text's revision as it was, while each writes its parts: the first all of the description's, the second the buffer's before 9 and the description's from 9 on"
+      run :=
+        pure <|
+          match richFed "C-c h", richFed "C-c h C-c m" with
+          | some head, some same =>
+            match richBuffer same with
+            | none => false
+            | some buffer =>
+              richValue same "same-result" == some (.str "ok") &&
+                richValue same "same-tail-result" == some (.str "ok") &&
+                richContents same == some richHead.text &&
+                richValue same "same" == some (.nat 1000000) &&
+                richValue same "same-tail" == some (.nat 1000000) &&
+                (richValue head "revision").isSome &&
+                richValue same "revision" == richValue head "revision" &&
+                buffer.spans ==
+                  #[{ start := 0, stop := 4, face := ⟨"rich.same"⟩ },
+                    { start := 9, stop := 13, face := ⟨"rich.again"⟩ }] &&
+                buffer.stops == richSame.stops &&
+                buffer.links == richSame.links &&
+                buffer.folds == richSame.folds &&
+                buffer.indents == richSame.indents
+          | _, _ => false }]
 
 end ModelTest
