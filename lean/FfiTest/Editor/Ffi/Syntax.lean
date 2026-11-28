@@ -170,9 +170,10 @@ def syntaxChecks (grammars : Editor.Test.Linked.TestGrammars) : List Check :=
     { name :=
         "a registered grammar's shipped query crosses as none shipped, and the refusals as their statuses: a grammar the library lacks and a kind it has no tag for"
       run := do
-        -- A registered grammar ships no query, so the success encoding is
-        -- untested here until phase 4 of the roadmap
-        -- `shipped-grammars-package` removes shipped queries: a named gap.
+        -- A registered grammar ships no query and the library compiles in
+        -- none, so the success encoding is unreachable with the real
+        -- library and untested here: a named gap, which the task
+        -- `syntax-port-drop-shipped-query` closes by removing the request.
         let shipped ← Editor.Ffi.syntaxShippedQuery "json" 0
         let unknown ← Editor.Ffi.syntaxShippedQuery "cobol" 0
         let noKind ← Editor.Ffi.syntaxShippedQuery "json" 9

@@ -1,8 +1,8 @@
-//! What the syntax wiring tests share: the six grammars the adapter
-//! compiles in, registered from the native libraries
+//! What the syntax wiring tests share: the six grammars the `languages`
+//! package ships, registered from the native libraries
 //! `editor-syntax-fixture-grammars` builds, since the process's syntax
-//! service, like every adapter but the editor's, hides its compiled-in
-//! table (`editor_ffi::syntax`, "The compiled-in grammars are hidden").
+//! service compiles in no grammar (`editor_ffi::syntax`, "The adapter
+//! compiles in no grammar").
 //!
 //! [`registered`] registers each on the process's service once per test
 //! binary, through the worker's queue as a grammar job's registration goes,

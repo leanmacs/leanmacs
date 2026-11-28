@@ -1,16 +1,16 @@
-//! The corpora of the six grammars the adapter compiles in, shared by
-//! `tests/contract.rs`, which holds each grammar loaded from its native
-//! library (`editor-syntax-fixture-grammars`) to the syntax port's
-//! contract, and `tests/table.rs`, which holds the compiled-in table to it
-//! until phase 4 removes the table. Each corpus lists what the compiled-in
-//! grammar ships; a loaded grammar ships none, so `tests/contract.rs`
-//! empties `shipped` and draws with the fixture's highlights instead.
+//! The corpora of the six grammars the `languages` package ships and the
+//! core's tests load from the native libraries of
+//! `editor-syntax-fixture-grammars`, which `tests/contract.rs` holds to the
+//! syntax port's contract. A grammar loaded from a library ships no query,
+//! so each corpus ships none, and `tests/contract.rs` draws it with the
+//! highlights staged beside its library. Each corpus's policy is the one
+//! the package declares for its grammar.
 //!
 //! The texts are the fixtures checked in under `tests/syntax/`, read with
 //! `include_str!`, and a few written here.
 
 use editor_syntax::contract::Corpus;
-use editor_syntax::{QueryErrorKind, QueryKind, ReparsePolicy};
+use editor_syntax::{QueryErrorKind, ReparsePolicy};
 
 /// The Rust grammar's corpus.
 pub const RUST: Corpus = Corpus {
@@ -52,12 +52,7 @@ pub const RUST: Corpus = Corpus {
         ("(identifier (identifier)) @x", QueryErrorKind::Structure),
     ],
     unknown_kind_query: "(function_item) @f\n(no_such_kind) @x\n",
-    shipped: &[
-        QueryKind::Highlights,
-        QueryKind::Injections,
-        QueryKind::TextObjects,
-        QueryKind::Indents,
-    ],
+    shipped: &[],
     highlights: None,
     settings_query: "((macro_invocation (token_tree) @injection.content)\n (#set! injection.language \"rust\")\n (#set! injection.include-children))\n(identifier) @name\n((line_comment) @c (#set! priority 2))\n",
     settings: &[
@@ -94,7 +89,7 @@ pub const JSON: Corpus = Corpus {
         ("(pair nope: (string)) @x", QueryErrorKind::Field),
     ],
     unknown_kind_query: "(no_such_kind) @x",
-    shipped: &[QueryKind::Highlights],
+    shipped: &[],
     highlights: None,
     settings_query: "((pair) @p (#set! key value))\n(number) @n\n",
     settings: &[&[("key", Some("value"))], &[]],
@@ -123,7 +118,7 @@ pub const MARKDOWN: Corpus = Corpus {
         ("(atx_heading nope: (inline)) @x", QueryErrorKind::Field),
     ],
     unknown_kind_query: "(paragraph) @p\n(no_such_kind) @x\n",
-    shipped: &[QueryKind::Highlights, QueryKind::Injections],
+    shipped: &[],
     highlights: None,
     settings_query: "((fenced_code_block) @f (#set! injection.language \"rust\"))\n(paragraph) @p\n",
     settings: &[&[("injection.language", Some("rust"))], &[]],
@@ -151,7 +146,7 @@ pub const MARKDOWN_INLINE: Corpus = Corpus {
         ("(inline_link nope: (link_text)) @x", QueryErrorKind::Field),
     ],
     unknown_kind_query: "(emphasis) @e\n(no_such_kind) @x\n",
-    shipped: &[QueryKind::Highlights, QueryKind::Injections],
+    shipped: &[],
     highlights: None,
     settings_query: "((code_span) @c (#set! injection.language \"rust\"))\n(emphasis) @e\n",
     settings: &[&[("injection.language", Some("rust"))], &[]],
@@ -201,7 +196,7 @@ pub const TOML: Corpus = Corpus {
         ("(bare_key (pair)) @x", QueryErrorKind::Structure),
     ],
     unknown_kind_query: "(pair) @p\n(no_such_kind) @x\n",
-    shipped: &[QueryKind::Highlights],
+    shipped: &[],
     highlights: None,
     settings_query: "((string) @s (#set! injection.language \"json\"))\n(pair) @p\n",
     settings: &[&[("injection.language", Some("json"))], &[]],
@@ -254,7 +249,7 @@ pub const LEAN: Corpus = Corpus {
         ("(identifier (def)) @x", QueryErrorKind::Structure),
     ],
     unknown_kind_query: "(def) @d\n(no_such_kind) @x\n",
-    shipped: &[QueryKind::Highlights],
+    shipped: &[],
     highlights: None,
     settings_query: "((str_lit) @s (#set! injection.language \"json\"))\n(def) @d\n",
     settings: &[&[("injection.language", Some("json"))], &[]],

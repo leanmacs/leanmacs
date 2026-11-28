@@ -278,6 +278,7 @@ fn source(library: &str, symbol: &str) -> GrammarSource {
 pub fn corpus() -> RegistrationCorpus {
     RegistrationCorpus {
         new: source(GRAMMARS_LIBRARY, "tree_sitter_brackets"),
+        before: None,
         overriding: source(GRAMMARS_LIBRARY, "tree_sitter_parens"),
         override_text: "{a} (b)".to_owned(),
         not_found: source("/fake/missing.so", "tree_sitter_brackets"),

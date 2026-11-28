@@ -922,7 +922,6 @@ void editor_ffi_syntax_captures(const editor_ffi_snapshot *snapshot,
                                 size_t start, size_t end,
                                 editor_ffi_raw_words *out);
 void editor_ffi_syntax_refresh_after(uint64_t milliseconds);
-void editor_ffi_syntax_use_compiled_grammars(void);
 bool editor_ffi_syntax_settle(const editor_ffi_snapshot *snapshot,
                               uint64_t bound_ms);
 uint64_t editor_ffi_syntax_shipped_query(const uint8_t *grammar, size_t len,
@@ -1212,15 +1211,6 @@ lean_obj_res editor_glue_syntax_settle(b_lean_obj_arg snapshot,
 // `Editor.Ffi.syntaxRefreshAfter : UInt64 → IO Unit`
 lean_obj_res editor_glue_syntax_refresh_after(uint64_t milliseconds) {
   editor_ffi_syntax_refresh_after(milliseconds);
-  return lean_io_result_mk_ok(lean_box(0));
-}
-
-// `Editor.Main.useCompiledGrammars : IO Unit`, private to `Editor.Main`:
-// turns the syntax service's compiled-in grammars on, for the editor's
-// startup alone (`Editor/Main.lean`, "The compiled-in grammars"). Phase 4
-// of the roadmap `shipped-grammars-package` removes it.
-lean_obj_res editor_glue_syntax_use_compiled_grammars(void) {
-  editor_ffi_syntax_use_compiled_grammars();
   return lean_io_result_mk_ok(lean_box(0));
 }
 

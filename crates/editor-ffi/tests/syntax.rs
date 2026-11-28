@@ -7,8 +7,8 @@
 //! (the module docs of `editor_ffi::syntax`), in parallel: each makes
 //! documents of its own, and keys are given out once in the process. A
 //! wait for a delivery blocks on the session with a bound, and nothing
-//! sleeps. The service hides its compiled-in grammars, so every test that
-//! names a grammar first registers the six from the native libraries
+//! sleeps. The service compiles in no grammar, so every test that names a
+//! grammar first registers the six from the native libraries
 //! `editor-syntax-fixture-grammars` builds (`tests/common/grammars.rs`).
 
 use std::mem::MaybeUninit;

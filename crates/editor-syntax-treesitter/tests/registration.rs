@@ -6,14 +6,18 @@
 //! crate docs, "How grammars are loaded").
 //!
 //! The check is `editor-syntax`'s, the one the fake with its table keeps
-//! (`editor_syntax::contract::registration::check`). No file is created:
-//! the sources name the built fixture library, a file of the fixture's
-//! that is no library, and a path beside the library that is never made.
+//! (`editor_syntax::contract::registration::check`). The adapter compiles
+//! in no grammar, so the corpus registers `json` first, from
+//! `editor-syntax-fixture-grammars`, and `OVERRIDES` registers the INI
+//! library's `tree_sitter_json` over it. No file is created: the sources
+//! name the built fixture libraries, a file of the fixture's that is no
+//! library, and a path beside the library that is never made.
 
 use std::path::{Path, PathBuf};
 
 use editor_syntax::contract::registration::{RegistrationCorpus, check};
 use editor_syntax::{GrammarName, GrammarSource, ReparsePolicy, Syntax};
+use editor_syntax_fixture_grammars as grammars;
 use editor_syntax_fixture_ini as fixture;
 use editor_syntax_treesitter::TreeSitter;
 use editor_text::Text;
@@ -41,12 +45,15 @@ fn absent_library() -> PathBuf {
 fn corpus() -> RegistrationCorpus {
     RegistrationCorpus {
         new: source(fixture::LIBRARY, fixture::SYMBOL),
+        // The real `json`, registered first, incremental.
+        before: Some(GrammarSource {
+            policy: Some(ReparsePolicy::Incremental),
+            ..source(grammars::JSON.library, grammars::JSON.symbol)
+        }),
         overriding: source(fixture::LIBRARY, fixture::OVERRIDING_SYMBOL),
-        // The compiled-in `json` parses it with errors, the fixture to a
-        // section with a pair. The compiled-in `json` also ships highlights
-        // and is incremental, and `overriding` declares no policy, so
-        // `OVERRIDES` sees the registered `json` ship none and reparse
-        // whole.
+        // The real `json` parses it with errors, the fixture to a section
+        // with a pair. `overriding` declares no policy, so `OVERRIDES` sees
+        // the newly registered `json` reparse whole.
         override_text: "[a]\nk = v\n".to_owned(),
         not_found: source(absent_library(), fixture::SYMBOL),
         not_loadable: source(fixture::NOT_A_LIBRARY, fixture::SYMBOL),
@@ -55,31 +62,9 @@ fn corpus() -> RegistrationCorpus {
     }
 }
 
-/// An adapter with the compiled-in table turned on, as `OVERRIDES` needs a
-/// compiled-in `json` to register over: this makes the registration
-/// contract a table test (the crate docs, "Tests"), until phase 4 removes
-/// the table and this switch.
-fn with_the_table() -> TreeSitter {
-    let syntax = TreeSitter::default();
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the registration contract's OVERRIDES registers over the compiled-in json, so it is a table test until phase 4 removes the table"
-    )]
-    syntax.use_compiled_grammars();
-    syntax
-}
-
 #[test]
 fn the_adapter_keeps_the_registration_contract_on_the_fixture_library() {
-    assert_eq!(check(with_the_table, &corpus()), [""; 0]);
-}
-
-#[test]
-fn the_fixture_grammar_is_not_compiled_in() {
-    let name = source(fixture::LIBRARY, fixture::SYMBOL).name();
-
-    assert_eq!(name, GrammarName::new(fixture::NAME));
-    assert!(!with_the_table().grammars().contains(&name));
+    assert_eq!(check(TreeSitter::default, &corpus()), [""; 0]);
 }
 
 #[test]

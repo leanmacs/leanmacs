@@ -142,24 +142,6 @@ set's directory is not handed in: an editor finds it at each start
 (`Editor/ModuleLookup.lean`, "The set"), and one that finds none writes no
 lakefile. The window mode generates the files; the headless mode only when
 its command line says `--generate`.
-
-## The compiled-in grammars
-
-The syntax adapter compiles six grammars in and hides them unless turned on
-(`crates/editor-syntax-treesitter`, "How grammars are loaded"), so that no
-test can lean on one: every test registers the grammars it uses from the
-libraries the test-only crate `editor-syntax-fixture-grammars` builds. The
-editor still draws with them until phase 4 of the roadmap
-`shipped-grammars-package` ships them in the `languages` package, so the
-first thing `run` does is turn them on (`useCompiledGrammars`). It is
-`private`, so no other module names it, and `run` is called by the
-generated editor roots alone: every test executable (`ffi-test`,
-`contract-test`, `config-test`, the linked tests, the fixture harness) has
-a `main` of its own and never calls `run`. A test module could still
-declare an extern of the same C symbol for itself, which no linter
-refuses; review holds that (`.agents/rules/gates.md`, "Structure rules
-come from structural tools or review"). No test covers the call: one would
-have to depend on the table. Phase 4 removes it with the table.
 -/
 
 namespace Editor.Main
@@ -191,12 +173,6 @@ def demo : IO UInt32 := do
       IO.println s!"A command run against the Rust library was refused: {repr refusal}"
       pure false
   return if sum == 5 && !leanOnMain && serviceOnMain && appended then 0 else 1
-
-/-- Turns the syntax service's compiled-in grammars on: for `run` alone
-("The compiled-in grammars", in the module docs). Phase 4 of the roadmap
-`shipped-grammars-package` removes it. -/
-@[extern "editor_glue_syntax_use_compiled_grammars"]
-private opaque useCompiledGrammars : IO Unit
 
 /-- The mark of `run`: it runs a real editor loop thread (`Editor/RealHost.lean`). -/
 def run.realHost : RealHost :=
@@ -233,9 +209,6 @@ toolchain pin, from which they generate a config directory's lakefile and
 toolchain file ("The generated files", in the module docs). -/
 def run (packages : Array Package) (schemes : Array SchemePackage) (base : Array Lean.Name)
     (origin : Config.LakePackage.Origin) (args : List String) : IO UInt32 := do
-  -- First, so the editor draws with the compiled-in grammars as before
-  -- ("The compiled-in grammars", in the module docs).
-  useCompiledGrammars
   let mode := Editor.Executable.mode args
   -- Before the mode reads the rest of its command line, so that a usage
   -- error does not hide it.

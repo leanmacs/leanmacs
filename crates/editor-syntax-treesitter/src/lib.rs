@@ -1,7 +1,6 @@
 //! The syntax port's real adapter: [`TreeSitter`], a [`Syntax`] over
-//! tree-sitter, with the Rust, JSON, Markdown, TOML and Lean grammars
-//! compiled in, and Markdown's inline grammar; and the grammars registered
-//! on it at run time, each loaded from a native library.
+//! tree-sitter, with the grammars registered on it at run time, each loaded
+//! from a native library. It compiles in no grammar.
 //!
 //! The port, its fake, its contract, the rule for what a range answers, the
 //! worker that reparses and the decisions about a registration are
@@ -13,48 +12,38 @@
 //!
 //! # How grammars are loaded
 //!
-//! **Compiled in.** Each grammar is a crates.io grammar crate, pinned
-//! exactly, or, for Lean, which has no usable crates.io crate, upstream's
-//! own crate vendored unmodified under the repository's `vendor/`, and
-//! built the same way: its build compiles the generated parser's C with
-//! `cc` when Cargo builds this crate; the objects end up in the static
-//! library Lean links. These grammars are the private table `GRAMMARS`: a
-//! name, the language of the grammar's crate, its reparse policy, and the
-//! queries it ships, each with its kind.
+//! **Native libraries, at run time, and no other way.** Every grammar is
+//! registered ([`Syntax::register`]) from a shared library (`.dylib` on
+//! macOS, `.so` on Linux) exporting `tree_sitter_<name>`: a grammar's
+//! generated C, linked as a library. This is how Emacs, Helix and Neovim
+//! load grammars. The module `native` opens it with `libloading`, whose
+//! types stay there, checks the language's ABI version against the range
+//! the pinned library accepts before any parser is made, and refuses as
+//! values a library that is not there, a file that will not open as one, a
+//! missing symbol and an ABI outside the range. A loaded library is never
+//! unloaded: a language, and every parser and tree of it, points into its
+//! code. The editor never finds, fetches or compiles a grammar: the
+//! library's path is named by the user's config or a package, and handed
+//! in. A registered grammar ships no query; its queries are read in Lean
+//! from beside its library.
 //!
-//! **The table is hidden unless turned on.** A fresh adapter
+//! **Where the editor's grammars come from.** The default package
+//! `languages` ships every grammar the editor's shipped languages use
+//! (`rust`, `json`, `markdown`, `markdown_inline`, `toml`, `lean`) and
+//! `yaml`, each built from pinned source by the set's build
+//! (`packages/languages/README.md`). They were compiled into this crate
+//! until phase 4 of the roadmap `shipped-grammars-package`, which moved
+//! them, their pins and their queries into the package. So a fresh adapter
 //! ([`TreeSitter::default`], and so the process's syntax service in
-//! `editor-ffi`) lists no compiled-in name, opens no parser and compiles
-//! no query for one, declares it no policy and ships it no query: it
-//! answers for registered grammars alone, as it will once phase 4 of the
-//! roadmap `shipped-grammars-package` removes the table.
-//! [`TreeSitter::use_compiled_grammars`] turns the table on, for that
-//! adapter and the clones made after. Two places call it, and the root
-//! `clippy.toml` refuses it everywhere else: the editor's startup
-//! (`editor_ffi_syntax_use_compiled_grammars`, which Lean's
-//! `Editor.Main.run` calls first), so the editor behaves as before; and
-//! this crate's table tests ("Tests", below). Every other test, in Rust or
-//! Lean, registers the grammars it uses from the native libraries the
-//! test-only crate `editor-syntax-fixture-grammars` builds from the same
-//! pinned sources, so a passing gate shows no other test depends on a
-//! compiled-in grammar. It is a switch at run time, not a Cargo feature:
-//! the editor and every Lean test program link one release archive, and
-//! `cargo test --workspace` would unify a feature on.
+//! `editor-ffi`) lists no grammar, opens no parser and compiles no query
+//! until one is registered.
 //!
-//! **Native libraries, at run time.** A grammar the table lacks, or one
-//! that takes a compiled-in grammar's place, is registered
-//! ([`Syntax::register`]) from a shared library (`.dylib` on macOS, `.so`
-//! on Linux) exporting `tree_sitter_<name>`: the same generated C, linked
-//! as a library. This is how Emacs, Helix and Neovim load grammars. The
-//! module `native` opens it with `libloading`, whose types stay there,
-//! checks the language's ABI version against the range the pinned library
-//! accepts before any parser is made, and refuses as values a library that
-//! is not there, a file that will not open as one, a missing symbol and an
-//! ABI outside the range. A loaded library is never unloaded: a language,
-//! and every parser and tree of it, points into its code. The editor never
-//! finds, fetches or compiles a grammar: the library's path is named by the
-//! user's config or a package, and handed in. A registered grammar ships
-//! no query; its queries are read in Lean from beside its library.
+//! **The moment before.** Every editor registers its grammars at startup,
+//! through the core's `register-grammars` job, which starts at the first
+//! install of config. A file opened before the job's command runs is drawn
+//! plain for that moment, then highlighted when the command records the
+//! answers (`docs/design/keymaps-and-modes.md`, "Declared grammars"). This
+//! is accepted.
 //!
 //! Set aside (the decision is in `docs/design/README.md`'s table and
 //! `docs/design/rust-library.md`, "Syntax, as built"):
@@ -74,85 +63,41 @@
 //!
 //! # Where each query comes from
 //!
-//! A grammar crate's own query is used wherever the crate is published with
-//! one, pinned by the same exact version as the grammar it was written for.
-//! Rust's crate ships no `indents.scm` or `textobjects.scm`, so those two
-//! are this repository's, under `queries/rust/`, each opening with a comment
-//! naming the Lean rule that reads it; their capture names follow
-//! nvim-treesitter's, and no third-party query set is used, since each is
-//! written for its own editor's rules (`docs/design/rust-library.md`,
-//! "Injections, indentation and text objects, as built").
-//!
-//! | Grammar | Reparse | Highlights | Injections | Text objects | Indents |
-//! |---|---|---|---|---|---|
-//! | `json` | incremental | the crate's | none | none | none |
-//! | `rust` | incremental | the crate's | the crate's | `queries/rust/textobjects.scm` | `queries/rust/indents.scm` |
-//! | `markdown` | incremental | the crate's, of its block grammar | the crate's, of its block grammar | none | none |
-//! | `markdown_inline` | whole | the crate's, of its inline grammar | the crate's, of its inline grammar | none | none |
-//! | `toml` | incremental | the crate's | none | none | none |
-//! | `lean` | incremental | upstream's, vendored with the grammar | none | none | none |
-//!
-//! **The reparse policy** (`editor_syntax::ReparsePolicy`) is declared in
-//! the table and pinned by each grammar's corpus in `tests/contract.rs`.
-//! A grammar is `incremental` when its incremental reparses of texts
-//! without errors equal a fresh parse (the contract's `GRAMMAR_QUALITY`),
-//! and `whole` otherwise: it still ships, and each round parses it from
-//! scratch.
-//!
-//! Markdown is `tree-sitter-md`'s two grammars. The block grammar,
-//! `markdown`, parses a document; its injections query hands each
-//! `(inline)` node, a paragraph's or a heading's text, to the grammar named
-//! `markdown_inline`, which is the inline grammar. The inline grammar is
-//! `whole`: its incremental reparses of texts without errors were seen to
-//! differ from a fresh parse (the crate's `Cargo.toml`). An injected layer
-//! is parsed whole each round anyway. Its injections name `html` and
-//! `latex`, which this adapter does not have, so they inject nothing.
-//!
-//! TOML is `tree-sitter-toml-ng`'s grammar, `toml`, with its crate's
-//! highlights query and no other. It is `incremental`: its incremental
-//! reparses of texts without errors were seen to equal a fresh parse (the
-//! crate's `Cargo.toml`). Since every grammar here is a language a layer
-//! can be injected in, a Markdown fence whose info string is `toml` is a
-//! TOML layer.
-//!
-//! Lean is upstream's grammar, `lean`, vendored with its highlights query
-//! of the same commit, the one query used. It is `incremental`: its
-//! incremental reparses of texts without errors were seen to equal a fresh
-//! parse (the crate's `Cargo.toml`). A Markdown fence whose info string is
-//! `lean` is a Lean layer.
+//! No query is this crate's. A grammar's queries are read in Lean from the
+//! directory its declaration names, and handed to the port as sources. The
+//! `languages` package keeps its grammars' queries in its
+//! `grammars/queries/<name>/`, with the table of which grammar ships which
+//! in its README; the reparse policy each declares is in
+//! `packages/languages/Languages/Grammars.lean`, and how each was found is
+//! in `packages/languages/rust/Cargo.toml`.
 //!
 //! # What each method forwards to
 //!
 //! A grammar registered under a name is the one that name means from then
-//! on, a compiled-in grammar of the same name included; a parser opened
-//! before keeps the language it was opened with.
+//! on; a parser opened before keeps the language it was opened with.
 //!
-//! While the table is hidden, every answer below that names the table
-//! answers as though it were empty.
-//!
-//! - [`Syntax::grammars`]: the compiled-in names in the table's order, then
-//!   each registered name the table lacks (`editor_syntax::registry`).
-//! - [`Syntax::reparse_policy`]: the registered entry's policy, else the
-//!   grammar's policy in the table; none when the grammar is neither.
+//! - [`Syntax::grammars`]: each registered name, in the order first
+//!   registered (`editor_syntax::registry`).
+//! - [`Syntax::reparse_policy`]: the registered entry's policy; none for a
+//!   grammar not registered.
 //! - [`Syntax::register`]: the source's library loaded by `native`, off the
 //!   registry's lock, then the core's registry, which names it, keeps its
 //!   policy (whole when the source declares none) and replaces any entry of
 //!   the name; a refusal changes nothing.
-//! - [`Syntax::parser`]: a new parser with the grammar's language set, the
-//!   registered entry's or the table's; none when the grammar is neither,
-//!   or the library refuses its language (an ABI it does not speak).
+//! - [`Syntax::parser`]: a new parser with the registered entry's language
+//!   set; none when the grammar is not registered, or the library refuses
+//!   its language (an ABI it does not speak).
 //! - [`Syntax::parse`]: the library's parse with a callback that hands it
 //!   the snapshot's chunks ([`Snapshot::chunk_at`]): the text is never
 //!   copied into one string.
 //! - [`Syntax::edit`]: the library's edit of a tree, with the edit's
 //!   fields and points carried over one for one.
-//! - [`Syntax::compile`]: the library's query over the grammar's language,
-//!   the registered entry's or the table's, its refusal carried over with
-//!   its kind and offset.
-//! - [`Syntax::shipped_query`]: none for a registered name, a compiled-in
-//!   name it replaces included; else the query of that kind in the table,
-//!   the grammar crate's export (`HIGHLIGHTS_QUERY`, `INJECTIONS_QUERY`) or
-//!   one of `queries/`.
+//! - [`Syntax::compile`]: the library's query over the registered entry's
+//!   language, its refusal carried over with its kind and offset.
+//! - [`Syntax::shipped_query`]: none, for every grammar and kind: that is
+//!   the adapter's whole answer, since every grammar it has was registered
+//!   from a library, whose queries Lean reads beside it. The port keeps the
+//!   method for its fake (the task `syntax-port-drop-shipped-query`).
 //! - [`Syntax::captures`]: a query cursor set to the range, whose
 //!   predicates (`#eq?`, `#match?`) read the snapshot's chunks of a node.
 //!   The library answers every match that meets the range, captures
@@ -171,37 +116,30 @@
 //!
 //! `tests/contract.rs` holds the adapter to the port's contract once for
 //! each of the six grammars loaded from the native library
-//! `editor-syntax-fixture-grammars` builds, each drawn with the highlights
-//! staged beside it, and once for the fixture INI grammar
-//! (`editor-syntax-fixture-ini`), over the fixtures checked in under the
-//! repository's `tests/syntax/` and a few texts written there
-//! (`tests/corpora/mod.rs`). `tests/injections.rs` and `tests/refresh.rs`
-//! register the grammars they use from the same crate and draw with its
-//! queries. `native`'s unit tests pin the ABI range with version numbers
-//! and the refusal of a relative path. The unit tests here pin what the
-//! contract does not ask: that a fresh adapter hides the table and a clone
-//! keeps the switch, a Rust function's name captured by a field and a
-//! predicate that reads text across two of the rope's chunks (each over
-//! the fixture's rust), and a query of a grammar the adapter has not.
-//!
-//! **The table tests** are the only tests that turn the table on, each
-//! through one helper `fn` under an `#[expect]`: the unit tests that list
-//! the table's names and its policies; `tests/table.rs`, which holds each
-//! compiled-in grammar, with the queries it ships, to the port's contract
-//! over the same corpora; and `tests/registration.rs`, the registration
-//! contract on the INI fixture library, whose `OVERRIDES` registers over
-//! the compiled-in `json` (after which `json` ships none of the compiled-in
-//! queries and is reparsed by the source's policy), with one source for
-//! each refusal, and which pins that a loaded grammar outlives the syntax
-//! it was registered on. They pin what the editor still uses in phase 3,
-//! and go with the table in phase 4.
+//! `editor-syntax-fixture-grammars` builds from the `languages` package's
+//! pins, each drawn with the package's highlights staged beside it, and
+//! once for the fixture INI grammar (`editor-syntax-fixture-ini`), over the
+//! fixtures checked in under the repository's `tests/syntax/` and a few
+//! texts written there (`tests/corpora/mod.rs`). Each corpus's reparse
+//! policy is the one the package declares, pinned by the contract's
+//! `GRAMMAR_QUALITY`. `tests/injections.rs` and `tests/refresh.rs` register
+//! the grammars they use from the same crate and draw with its queries.
+//! `tests/registration.rs` holds the adapter to the registration contract
+//! on the INI fixture library, its `OVERRIDES` registering over a `json`
+//! registered before from the fixture grammars, with one source for each
+//! refusal, and pins that a loaded grammar outlives the syntax it was
+//! registered on. `native`'s unit tests pin the ABI range with version
+//! numbers and the refusal of a relative path. The unit tests here pin what
+//! the contracts do not ask: that a fresh adapter lists no grammar, a Rust
+//! function's name captured by a field and a predicate that reads text
+//! across two of the rope's chunks (each over the fixture's rust), and a
+//! query of a grammar the adapter has not.
 
 #![deny(unsafe_code)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
 use std::fmt;
 use std::ops::Range;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_syntax::registry::Registry;
@@ -214,27 +152,20 @@ use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree}
 
 mod native;
 
-/// The adapter: tree-sitter, with the grammars compiled in (`json`,
-/// `rust`, `markdown`, `markdown_inline`, `toml` and `lean`), hidden until
-/// [`TreeSitter::use_compiled_grammars`] turns them on, and the grammars
-/// registered on it at run time.
+/// The adapter: tree-sitter, with the grammars registered on it at run
+/// time. It compiles in none.
 #[derive(Default)]
 pub struct TreeSitter {
-    /// The grammars registered, each with its language. An entry wins over
-    /// a compiled-in grammar of the same name.
+    /// The grammars registered, each with its language.
     registry: Mutex<Registry<Language>>,
-    /// Whether the compiled-in table is seen: false in every constructor.
-    compiled_in: AtomicBool,
 }
 
 impl Clone for TreeSitter {
     /// Another adapter with the grammars registered on this one, which
-    /// registrations on either do not reach, and the table seen as it is
-    /// on this one.
+    /// registrations on either do not reach.
     fn clone(&self) -> Self {
         Self {
             registry: Mutex::new(self.registry().clone()),
-            compiled_in: AtomicBool::new(self.compiled_in()),
         }
     }
 }
@@ -255,134 +186,11 @@ impl TreeSitter {
         self.registry.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The language of the grammar `name`: the registered entry's, else
-    /// the compiled-in grammar's while the table is seen; `None` for a
-    /// grammar it has not.
+    /// The language of the grammar `name`, the registered entry's; `None`
+    /// for a grammar not registered.
     fn language(&self, name: &GrammarName) -> Option<Language> {
-        if let Some(entry) = self.registry().get(name) {
-            return Some(entry.grammar.clone());
-        }
-        self.compiled(name).map(|grammar| (grammar.language)())
+        self.registry().get(name).map(|entry| entry.grammar.clone())
     }
-
-    /// Turns the compiled-in grammars on: from then on this adapter, and a
-    /// clone made after, lists them, opens their parsers, compiles their
-    /// queries, declares their policies and ships their queries. Until
-    /// then it answers for registered grammars alone.
-    ///
-    /// Two places call it, and clippy refuses it everywhere else (the root
-    /// `clippy.toml`): the editor's startup, through the process's syntax
-    /// service (`editor-ffi`'s `editor_ffi_syntax_use_compiled_grammars`,
-    /// which `Editor.Main.run` calls first), and this crate's table tests
-    /// (the crate docs, "Tests"). Every other test registers the grammars
-    /// it uses from `editor-syntax-fixture-grammars`. Phase 4 of the
-    /// roadmap `shipped-grammars-package` removes the table, this switch
-    /// and both callers.
-    pub fn use_compiled_grammars(&self) {
-        self.compiled_in.store(true, Ordering::Relaxed);
-    }
-
-    /// Whether the compiled-in table is seen.
-    fn compiled_in(&self) -> bool {
-        self.compiled_in.load(Ordering::Relaxed)
-    }
-
-    /// The grammar `name` in the compiled-in table, while the table is
-    /// seen.
-    fn compiled(&self, name: &GrammarName) -> Option<&'static Grammar> {
-        if self.compiled_in() {
-            grammar(name)
-        } else {
-            None
-        }
-    }
-}
-
-/// How to make a grammar's language.
-type MakeLanguage = fn() -> Language;
-
-/// A grammar compiled in.
-struct Grammar {
-    /// Its name.
-    name: &'static str,
-    /// How to make its language.
-    language: MakeLanguage,
-    /// How its texts are reparsed after an edit.
-    policy: ReparsePolicy,
-    /// The queries it ships, each with its kind: its crate's own, pinned
-    /// with it, where the crate is published with one, and otherwise this
-    /// crate's, under `queries/`. A kind not here it ships none of.
-    queries: &'static [(QueryKind, &'static str)],
-}
-
-/// The grammars compiled in.
-const GRAMMARS: [Grammar; 6] = [
-    Grammar {
-        name: "json",
-        language: || Language::new(tree_sitter_json::LANGUAGE),
-        policy: ReparsePolicy::Incremental,
-        queries: &[(QueryKind::Highlights, tree_sitter_json::HIGHLIGHTS_QUERY)],
-    },
-    Grammar {
-        name: "rust",
-        language: || Language::new(tree_sitter_rust::LANGUAGE),
-        policy: ReparsePolicy::Incremental,
-        queries: &[
-            (QueryKind::Highlights, tree_sitter_rust::HIGHLIGHTS_QUERY),
-            (QueryKind::Injections, tree_sitter_rust::INJECTIONS_QUERY),
-            (
-                QueryKind::TextObjects,
-                include_str!("../queries/rust/textobjects.scm"),
-            ),
-            (
-                QueryKind::Indents,
-                include_str!("../queries/rust/indents.scm"),
-            ),
-        ],
-    },
-    Grammar {
-        name: "markdown",
-        language: || Language::new(tree_sitter_md::LANGUAGE),
-        policy: ReparsePolicy::Incremental,
-        queries: &[
-            (QueryKind::Highlights, tree_sitter_md::HIGHLIGHT_QUERY_BLOCK),
-            (QueryKind::Injections, tree_sitter_md::INJECTION_QUERY_BLOCK),
-        ],
-    },
-    Grammar {
-        name: "markdown_inline",
-        language: || Language::new(tree_sitter_md::INLINE_LANGUAGE),
-        // Its incremental reparses of texts without errors were seen to
-        // differ from a fresh parse (the crate's `Cargo.toml`).
-        policy: ReparsePolicy::Whole,
-        queries: &[
-            (
-                QueryKind::Highlights,
-                tree_sitter_md::HIGHLIGHT_QUERY_INLINE,
-            ),
-            (
-                QueryKind::Injections,
-                tree_sitter_md::INJECTION_QUERY_INLINE,
-            ),
-        ],
-    },
-    Grammar {
-        name: "toml",
-        language: || Language::new(tree_sitter_toml_ng::LANGUAGE),
-        policy: ReparsePolicy::Incremental,
-        queries: &[(QueryKind::Highlights, tree_sitter_toml_ng::HIGHLIGHTS_QUERY)],
-    },
-    Grammar {
-        name: "lean",
-        language: || Language::new(tree_sitter_lean::LANGUAGE),
-        policy: ReparsePolicy::Incremental,
-        queries: &[(QueryKind::Highlights, tree_sitter_lean::HIGHLIGHTS_QUERY)],
-    },
-];
-
-/// The grammar `name`, if it is compiled in.
-fn grammar(name: &GrammarName) -> Option<&'static Grammar> {
-    GRAMMARS.iter().find(|known| known.name == name.as_str())
 }
 
 /// A parser of one grammar.
@@ -436,16 +244,11 @@ impl Syntax for TreeSitter {
     type Query = TreeSitterQuery;
 
     fn grammars(&self) -> Vec<GrammarName> {
-        let table: &[Grammar] = if self.compiled_in() { &GRAMMARS } else { &[] };
-        self.registry()
-            .grammars(table.iter().map(|grammar| GrammarName::new(grammar.name)))
+        self.registry().grammars([])
     }
 
     fn reparse_policy(&self, grammar: &GrammarName) -> Option<ReparsePolicy> {
-        if let Some(entry) = self.registry().get(grammar) {
-            return Some(entry.policy);
-        }
-        self.compiled(grammar).map(|grammar| grammar.policy)
+        self.registry().get(grammar).map(|entry| entry.policy)
     }
 
     fn register(&self, source: &GrammarSource) -> Result<GrammarName, RegistrationRefusal> {
@@ -505,17 +308,10 @@ impl Syntax for TreeSitter {
             })
     }
 
-    fn shipped_query(&self, name: &GrammarName, kind: QueryKind) -> Option<String> {
-        // A registered grammar ships no query, a compiled-in name it
-        // replaces included.
-        if self.registry().get(name).is_some() {
-            return None;
-        }
-        self.compiled(name)?
-            .queries
-            .iter()
-            .find(|(shipped, _)| *shipped == kind)
-            .map(|(_, source)| (*source).to_owned())
+    fn shipped_query(&self, _name: &GrammarName, _kind: QueryKind) -> Option<String> {
+        // Every grammar is registered from a library, whose queries Lean
+        // reads beside it: the adapter ships none (the crate docs).
+        None
     }
 
     fn capture_names(&self, query: &TreeSitterQuery) -> Vec<String> {
@@ -708,18 +504,6 @@ mod tests {
             .collect()
     }
 
-    /// An adapter with the compiled-in table turned on: the table tests'
-    /// one way to it.
-    fn with_the_table() -> TreeSitter {
-        let syntax = TreeSitter::default();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "the adapter's table tests pin the compiled-in table the editor's startup turns on, until phase 4 removes it"
-        )]
-        syntax.use_compiled_grammars();
-        syntax
-    }
-
     /// An adapter with the fixture `grammar` registered from its native
     /// library.
     fn with_registered(grammar: &fixture::Grammar) -> TreeSitter {
@@ -792,8 +576,10 @@ mod tests {
         );
     }
 
-    /// The six compiled-in names, in the table's order.
-    const TABLE: [&str; 6] = [
+    /// The six grammars the adapter compiled in until phase 4 of the
+    /// roadmap `shipped-grammars-package`, which the `languages` package
+    /// now ships.
+    const FORMER_BUILT_INS: [&str; 6] = [
         "json",
         "rust",
         "markdown",
@@ -803,11 +589,12 @@ mod tests {
     ];
 
     #[test]
-    fn a_fresh_adapter_lists_no_grammar_opens_no_parser_and_compiles_no_query_for_a_compiled_in_name_declares_it_no_policy_and_ships_it_no_query()
+    fn a_fresh_adapter_lists_no_grammar_and_for_each_former_built_in_opens_no_parser_compiles_no_query_declares_no_policy_and_ships_no_query()
      {
         let syntax = TreeSitter::default();
         assert_eq!(syntax.grammars(), Vec::<GrammarName>::new());
-        for name in TABLE {
+        assert_eq!(syntax.clone().grammars(), Vec::<GrammarName>::new());
+        for name in FORMER_BUILT_INS {
             let grammar = GrammarName::new(name);
             assert!(syntax.parser(&grammar).is_none(), "{name}");
             assert_eq!(
@@ -832,34 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn a_clone_keeps_the_switch() {
-        let hidden = TreeSitter::default();
-        assert_eq!(hidden.clone().grammars(), Vec::<GrammarName>::new());
-        let shown = with_the_table();
-        assert_eq!(shown.clone().grammars(), TABLE.map(GrammarName::new));
-    }
-
-    #[test]
-    fn turned_on_the_adapter_lists_the_six_compiled_in_names_in_the_tables_order() {
-        assert_eq!(with_the_table().grammars(), TABLE.map(GrammarName::new));
-    }
-
-    #[test]
-    fn each_grammar_declares_the_reparse_policy_of_the_table_and_one_not_compiled_in_none() {
-        let syntax = with_the_table();
-        let policy = |name: &str| syntax.reparse_policy(&GrammarName::new(name));
-
-        assert_eq!(policy("rust"), Some(ReparsePolicy::Incremental));
-        assert_eq!(policy("json"), Some(ReparsePolicy::Incremental));
-        assert_eq!(policy("markdown"), Some(ReparsePolicy::Incremental));
-        assert_eq!(policy("markdown_inline"), Some(ReparsePolicy::Whole));
-        assert_eq!(policy("toml"), Some(ReparsePolicy::Incremental));
-        assert_eq!(policy("lean"), Some(ReparsePolicy::Incremental));
-        assert_eq!(policy("cobol"), None);
-    }
-
-    #[test]
-    fn a_query_of_a_grammar_that_is_not_compiled_in_is_refused_as_the_language() {
+    fn a_query_of_a_grammar_that_is_not_registered_is_refused_as_the_language() {
         assert_eq!(
             TreeSitter::default()
                 .compile(&GrammarName::new("cobol"), "(x) @x")

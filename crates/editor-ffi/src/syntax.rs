@@ -31,11 +31,11 @@
 //! text through the snapshot's [`Source`](crate::snapshot::Source), weakly:
 //! a document gone ends its session.
 //!
-//! **The compiled-in grammars are hidden.** The service's adapter starts
-//! with its compiled-in table hidden (`editor-syntax-treesitter`, "How
-//! grammars are loaded"), and the editor's startup turns it on
-//! (`editor_ffi_syntax_use_compiled_grammars`); no test does. So every test
-//! here registers the grammars it uses from `editor-syntax-fixture-grammars`
+//! **The adapter compiles in no grammar.** The service's adapter lists no
+//! grammar until one is registered (`editor-syntax-treesitter`, "How
+//! grammars are loaded"): the editor's grammars come from packages,
+//! registered by the core's `register-grammars` job. So every test here
+//! registers the grammars it uses from `editor-syntax-fixture-grammars`
 //! first: the unit tests on their own service through its worker's queue,
 //! the wiring tests on the process's service once per test binary
 //! (`tests/common/grammars.rs`).
@@ -51,7 +51,7 @@
 //!
 //! | Function | What |
 //! |---|---|
-//! | [`editor_ffi_syntax_grammars`] | the grammars listed, compiled in (once turned on) and registered, as a list of strings |
+//! | [`editor_ffi_syntax_grammars`] | the grammars listed, each registered, as a list of strings |
 //! | [`editor_ffi_syntax_attach`] | parse the snapshot's document with a grammar from now on, in place of any grammar before; a [`AttachStatus`] |
 //! | [`editor_ffi_syntax_detach`] | stop parsing the snapshot's document |
 //! | [`editor_ffi_syntax_query_new`], [`editor_ffi_syntax_query_free`] | a query handle, or the refusal's kind and offset |
@@ -66,7 +66,6 @@
 //! | [`editor_ffi_syntax_kept_captures`] | the captures of the query kept of a kind in a range of the snapshot, as words, with a [`KeptStatus`] |
 //! | [`editor_ffi_syntax_refresh_after`] | parse a text whole once it has gone that many milliseconds unchanged after an edit, from now on |
 //! | [`editor_ffi_syntax_settle`] | for tests: wait, with a bound, for the snapshot's revision to be delivered |
-//! | `editor_ffi_syntax_use_compiled_grammars` | turn the adapter's compiled-in grammars on, for the editor's startup alone; not `pub` |
 //!
 //! **A query is answered from the tree delivered, never parsed for.**
 //! [`editor_ffi_syntax_captures`] answers only when the last tree the
@@ -198,7 +197,7 @@ type SyntaxSession = Session<TreeSitter>;
 pub enum AttachStatus {
     /// The document is parsed with the grammar from now on.
     Attached = 0,
-    /// No grammar of that name is compiled in.
+    /// No grammar of that name is registered.
     UnknownGrammar = 1,
     /// The snapshot has no document, or its document is gone: a file's
     /// text as it was loaded, say.
@@ -256,7 +255,7 @@ pub enum HighlightStatus {
 pub enum ShippedStatus {
     /// The record holds the query's source.
     Shipped = 0,
-    /// No grammar of that name is compiled in.
+    /// No grammar of that name is registered.
     UnknownGrammar = 1,
     /// The grammar ships no query of that kind, or the kind's tag is none.
     NoShippedQuery = 2,
@@ -352,7 +351,7 @@ pub const fn query_kind_of(tag: u8) -> Option<QueryKind> {
 pub enum QueryStatus {
     /// Made: the record holds the handle.
     Made = 0,
-    /// No grammar of that name is compiled in.
+    /// No grammar of that name is registered.
     UnknownGrammar = 1,
     /// The query was refused: the record holds the kind and the offset.
     Refused = 2,
@@ -534,7 +533,7 @@ impl Syntaxes {
         }
     }
 
-    /// The grammars listed: compiled in, then registered.
+    /// The grammars listed: each registered.
     pub fn grammars(&self) -> Vec<GrammarName> {
         self.syntax.grammars()
     }
@@ -903,7 +902,7 @@ pub struct RawQuery {
     pub query: *mut SyntaxQuery,
 }
 
-/// Fills `out` with the grammars compiled in, by name.
+/// Fills `out` with the grammars registered, by name.
 ///
 /// # Safety
 ///
@@ -1355,33 +1354,6 @@ pub extern "C" fn editor_ffi_syntax_refresh_after(milliseconds: u64) {
     syntaxes().refresh_after(Duration::from_millis(milliseconds));
 }
 
-/// Turns the process's syntax service's compiled-in grammars on
-/// (`TreeSitter::use_compiled_grammars`): from then on it lists them and
-/// parses, compiles and ships queries for them as before. The service
-/// starts with them hidden.
-///
-/// Its one caller is Lean's `Editor.Main.run`, through the glue's
-/// `editor_glue_syntax_use_compiled_grammars`, as the first thing the
-/// editor does, so the editor behaves as it did. Nothing else may turn the
-/// table on, so that a passing gate shows no test depends on a compiled-in
-/// grammar: the adapter's method is banned by clippy everywhere but here
-/// and the adapter's table tests, and this is the one mark for it in this
-/// crate. The function calls the adapter itself, with no wrapper a test of
-/// this crate could call. It is not `pub`, so no crate names it; but its
-/// symbol is exported, and a test could declare it again in an `extern "C"`
-/// block of its own, which no structural tool refuses: that is held by
-/// review (`.agents/rules/gates.md`, "Structure rules come from structural
-/// tools or review"). Phase 4 of the roadmap `shipped-grammars-package`
-/// removes it with the table.
-#[unsafe(no_mangle)]
-extern "C" fn editor_ffi_syntax_use_compiled_grammars() {
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the editor's startup turns the compiled-in grammars on, its one caller Lean's `Editor.Main.run`, until phase 4 removes the table"
-    )]
-    syntaxes().syntax.use_compiled_grammars();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1405,7 +1377,7 @@ mod tests {
     /// Registers each of `grammars` on `service` from the native library
     /// `editor-syntax-fixture-grammars` builds, with its policy, through the
     /// worker's queue as the process's registrations go, and waits on each
-    /// answer: the compiled-in table is hidden from `service`.
+    /// answer: the adapter compiles in no grammar.
     fn register(service: &Syntaxes, grammars: &[fixture::Grammar]) {
         let handle = service.handle().expect("the syntax worker starts");
         for grammar in grammars {

@@ -1,11 +1,11 @@
 //! The tree-sitter adapter held to the syntax port's contract, once for
-//! each of the six grammars it compiles in, loaded instead from the native
-//! library `editor-syntax-fixture-grammars` builds from the same pinned
-//! source: Rust, JSON, Markdown, Markdown's inline grammar, TOML and Lean;
-//! and once for the fixture INI grammar (`editor-syntax-fixture-ini`). A
-//! grammar registered from a library ships no query, so each is drawn with
-//! the highlights query beside its library (`Corpus::highlights`). The
-//! compiled-in table itself is held to the contract by `tests/table.rs`.
+//! each of the six grammars the `languages` package ships, loaded from the
+//! native library `editor-syntax-fixture-grammars` builds from the
+//! package's pinned source: Rust, JSON, Markdown, Markdown's inline
+//! grammar, TOML and Lean; and once for the fixture INI grammar
+//! (`editor-syntax-fixture-ini`). A grammar registered from a library ships
+//! no query, so each is drawn with the package's highlights query staged
+//! beside its library (`Corpus::highlights`).
 //!
 //! The check is `editor-syntax`'s, the same one its fake passes
 //! (`editor_syntax::contract::check`). Its incremental property drives a
@@ -13,8 +13,8 @@
 //! patches, so this is where `Edit::input_edit` is held to tree-sitter;
 //! and over the same edits it holds the highlights query to draw on a
 //! reparsed tree what it draws on a fresh one
-//! (`contract::HIGHLIGHTS_AFTER_EDITS`). The corpora are shared with
-//! `tests/table.rs` (`tests/corpora/mod.rs`).
+//! (`contract::HIGHLIGHTS_AFTER_EDITS`). The corpora are in
+//! `tests/corpora/mod.rs`.
 
 use std::path::PathBuf;
 

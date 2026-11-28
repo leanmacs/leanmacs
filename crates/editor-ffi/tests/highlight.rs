@@ -10,8 +10,8 @@
 //! Every test runs on the process's syntax service, as the edit paths reach
 //! it (the module docs of `editor_ffi::syntax`), in parallel: each makes
 //! documents of its own. A wait for a delivery blocks on the session with a
-//! bound, and nothing sleeps. The service hides its compiled-in grammars,
-//! so every test first registers the six from the native libraries
+//! bound, and nothing sleeps. The service compiles in no grammar, so
+//! every test first registers the six from the native libraries
 //! `editor-syntax-fixture-grammars` builds (`tests/common/grammars.rs`),
 //! and draws with the queries staged beside them, as a package's grammar is
 //! drawn with the queries it brings.
@@ -456,10 +456,11 @@ fn the_service_keeps_the_layout_spans_contract() {
     );
 }
 
-/// A registered grammar ships no query, so with the compiled-in table
-/// hidden the success encoding of `editor_ffi_syntax_shipped_query` is
-/// untested here until phase 4 of the roadmap `shipped-grammars-package`
-/// removes shipped queries: a named gap.
+/// A registered grammar ships no query, and the adapter compiles in no
+/// grammar, so the success encoding of `editor_ffi_syntax_shipped_query` is
+/// unreachable with the real adapter and untested here: a named gap, which
+/// the task `syntax-port-drop-shipped-query` closes by removing the
+/// function.
 #[test]
 fn a_shipped_query_of_a_registered_grammar_crosses_as_none_shipped_and_of_an_unknown_one_as_unknown()
  {

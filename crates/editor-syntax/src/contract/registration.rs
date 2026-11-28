@@ -3,10 +3,10 @@
 //! separate from [`super::check`].
 //!
 //! [`check`] registers the sources of a [`RegistrationCorpus`] (a grammar
-//! not compiled in, one that overrides a compiled-in name, and one source
-//! for each refusal), each property on a fresh syntax so no property sees
-//! another's registrations, and returns the names of the properties that
-//! fail. [`check_unsupported`] is the check of an adapter that loads no
+//! not listed, one whose name is already listed, compiled in or registered
+//! before from the corpus's `before`, and one source for each refusal),
+//! each property on a fresh syntax so no property sees another's
+//! registrations, and returns the names of the properties that fail. [`check_unsupported`] is the check of an adapter that loads no
 //! grammar at run time: every source is refused as
 //! [`RegistrationRefusal::Unsupported`], and nothing it lists changes.
 //!
@@ -14,7 +14,9 @@
 //! ([`crate::fake::Libraries`], over [`crate::fake::libraries::corpus`]), in
 //! this module's tests, and against the real adapter on its fixture grammar
 //! library (`crates/editor-syntax-treesitter/tests/registration.rs`, over
-//! `editor-syntax-fixture-ini`). [`check_unsupported`] is held against
+//! `editor-syntax-fixture-ini`), which compiles in no grammar, so its corpus
+//! registers the name it overrides first, from the `json` of
+//! `editor-syntax-fixture-grammars`. [`check_unsupported`] is held against
 //! [`crate::fake::Parens`], the fake with no table.
 //!
 //! Each property is seen to bite on a broken registering syntax written to
@@ -30,15 +32,22 @@ use crate::port::{
 /// adapter's fixture paths are known only at run time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegistrationCorpus {
-    /// A source of a grammar that is not compiled in, which loads.
+    /// A source of a grammar that is not listed, which loads.
     pub new: GrammarSource,
-    /// A source of a grammar whose name is compiled in, which loads. The
-    /// compiled-in grammar of that name ships a query, and its policy is
-    /// not the one this source gives (its declared policy, else whole), so
-    /// [`OVERRIDES`] tells the registered grammar's queries and policy from
-    /// the compiled-in one's.
+    /// A source of `overriding`'s name, registered on the fresh syntax
+    /// before [`OVERRIDES`] registers `overriding`: `None` where that name
+    /// is compiled in (the fake's `parens`), `Some` for a syntax that
+    /// compiles in no grammar (the real adapter). Its policy, else whole,
+    /// is not `overriding`'s.
+    pub before: Option<GrammarSource>,
+    /// A source of a grammar whose name is listed, compiled in or
+    /// registered from `before`, which loads. Where the name is compiled
+    /// in, the compiled-in grammar ships a query; either way, the listed
+    /// grammar's policy is not the one this source gives (its declared
+    /// policy, else whole), so [`OVERRIDES`] tells the newly registered
+    /// grammar's queries and policy from the listed one's.
     pub overriding: GrammarSource,
-    /// A text the compiled-in grammar of `overriding`'s name and the one
+    /// A text the listed grammar of `overriding`'s name and the one
     /// `overriding` loads parse to different trees.
     pub override_text: String,
     /// A source whose library is not there.
@@ -70,14 +79,15 @@ impl RegistrationCorpus {
 /// once registered, the name is listed beside every grammar listed before,
 /// opens a parser, and ships no query of any kind.
 pub const REGISTERS: &str = "a registration answers its source's name, which is then listed beside every grammar listed before, opens a parser and ships no query";
-/// The overriding source's name is compiled in, ships a query and has a
-/// policy other than the source's; registering it leaves the list as it
-/// was, with the name once; a parser opened afterwards parses the corpus's
-/// text to another tree than the compiled-in grammar, and a parser opened
-/// before still parses it as the compiled-in grammar does; the name then
+/// The overriding source's name is listed, compiled in or registered
+/// before from the corpus's `before`, with a policy other than the
+/// source's, and, compiled in, ships a query; registering it leaves the
+/// list as it was, with the name once; a parser opened afterwards parses
+/// the corpus's text to another tree than the listed grammar, and a parser
+/// opened before still parses it as the listed grammar does; the name then
 /// ships no query of any kind, and its policy is the source's (its
-/// declared policy, else whole), not the compiled-in one.
-pub const OVERRIDES: &str = "registering a compiled-in name lists it once, a parser opened afterwards parses with the registered grammar, one opened before keeps the compiled-in grammar, and the name ships no query and takes the source's policy";
+/// declared policy, else whole), not the listed one.
+pub const OVERRIDES: &str = "registering a name already listed (compiled in, or registered before) lists it once, a parser opened afterwards parses with the newly registered grammar, one opened before keeps the grammar it was opened with, and the name ships no query and takes the source's policy";
 /// A registered grammar whose source declares no policy is reparsed whole,
 /// and the same source declaring incremental is reparsed incrementally.
 pub const DEFAULT_POLICY: &str = "a registered grammar with no declared policy is reparsed whole, and one declared incremental incrementally";
@@ -206,29 +216,35 @@ fn ships_any<S: Syntax>(syntax: &S, name: &GrammarName) -> bool {
         .any(|kind| syntax.shipped_query(name, *kind).is_some())
 }
 
-/// [`OVERRIDES`], of the corpus's overriding source and text.
+/// [`OVERRIDES`], of the corpus's source registered before, if any, and
+/// its overriding source and text.
 fn overrides<S: Syntax>(syntax: &S, corpus: &RegistrationCorpus) -> bool {
     let name = corpus.overriding.name();
     let policy = corpus.overriding.policy.unwrap_or(ReparsePolicy::Whole);
+    if let Some(first) = &corpus.before
+        && (first.name() != name || syntax.register(first) != Ok(name.clone()))
+    {
+        return false;
+    }
     let before = syntax.grammars();
     let Some(mut opened_before) = syntax.parser(&name) else {
         return false;
     };
     if !before.contains(&name)
-        || !ships_any(syntax, &name)
+        || (corpus.before.is_none() && !ships_any(syntax, &name))
         || syntax.reparse_policy(&name) == Some(policy)
     {
         return false;
     }
-    let compiled = nodes_of(syntax, &mut opened_before, &corpus.override_text);
+    let listed = nodes_of(syntax, &mut opened_before, &corpus.override_text);
     if syntax.register(&corpus.overriding) != Ok(name.clone()) || syntax.grammars() != before {
         return false;
     }
     let Some(mut opened_after) = syntax.parser(&name) else {
         return false;
     };
-    nodes_of(syntax, &mut opened_after, &corpus.override_text) != compiled
-        && nodes_of(syntax, &mut opened_before, &corpus.override_text) == compiled
+    nodes_of(syntax, &mut opened_after, &corpus.override_text) != listed
+        && nodes_of(syntax, &mut opened_before, &corpus.override_text) == listed
         && !ships_any(syntax, &name)
         && syntax.reparse_policy(&name) == Some(policy)
 }
@@ -299,9 +315,11 @@ mod tests {
     enum Flaw {
         /// A registered name that is not compiled in is not listed.
         Unlisted,
-        /// A compiled-in name opens its compiled-in grammar, registered or
-        /// not.
-        CompiledWins,
+        /// A listed name opens the grammar it was first listed with, here
+        /// the compiled-in one, registered over or not.
+        ListedWins,
+        /// A name registered a second time keeps its first registration.
+        FirstRegistrationWins,
         /// A parser reads which grammar its name has when it parses, not
         /// when it was opened.
         OpenParsersChange,
@@ -403,7 +421,7 @@ mod tests {
         }
 
         fn parser(&self, grammar: &GrammarName) -> Option<BrokenParser> {
-            let opened = if self.flaw == Flaw::CompiledWins && Parens.grammars().contains(grammar) {
+            let opened = if self.flaw == Flaw::ListedWins && Parens.grammars().contains(grammar) {
                 Libraries::new(libraries::table()).parser(grammar)
             } else {
                 self.libraries.parser(grammar)
@@ -430,6 +448,10 @@ mod tests {
         }
 
         fn register(&self, source: &GrammarSource) -> Result<GrammarName, RegistrationRefusal> {
+            if self.flaw == Flaw::FirstRegistrationWins && self.source_of(&source.name()).is_some()
+            {
+                return Ok(source.name());
+            }
             if self.flaw == Flaw::UnsupportedButLists {
                 self.list_anyway(source.name());
                 return Err(RegistrationRefusal::Unsupported);
@@ -552,7 +574,74 @@ mod tests {
 
     #[test]
     fn a_syntax_whose_compiled_in_grammar_wins_over_a_registered_one_is_reported() {
-        assert_eq!(failed(Flaw::CompiledWins), [OVERRIDES]);
+        assert_eq!(failed(Flaw::ListedWins), [OVERRIDES]);
+    }
+
+    /// The path of a second library of grammars, beside the fake's table,
+    /// exporting another `parens`.
+    const OTHER_LIBRARY: &str = "/fake/other.so";
+
+    /// The fake's table, with [`OTHER_LIBRARY`] exporting a `parens` of
+    /// angle brackets.
+    fn table_with_other() -> std::collections::BTreeMap<std::path::PathBuf, libraries::FakeLibrary>
+    {
+        let mut table = libraries::table();
+        table.insert(
+            OTHER_LIBRARY.into(),
+            libraries::FakeLibrary::Exports(std::collections::BTreeMap::from([(
+                "tree_sitter_parens".to_owned(),
+                libraries::FakeExport::Grammar(crate::fake::Delimiters {
+                    open: '<',
+                    close: '>',
+                }),
+            )])),
+        );
+        table
+    }
+
+    /// The fake's corpus, its overriding name registered before: the
+    /// table's `parens` of braces, incremental, then [`OTHER_LIBRARY`]'s of
+    /// angle brackets, declaring no policy, over a text the two parse to
+    /// different trees.
+    fn corpus_registered_before() -> RegistrationCorpus {
+        RegistrationCorpus {
+            before: Some(GrammarSource {
+                library: libraries::GRAMMARS_LIBRARY.into(),
+                symbol: "tree_sitter_parens".to_owned(),
+                policy: Some(ReparsePolicy::Incremental),
+            }),
+            overriding: GrammarSource {
+                library: OTHER_LIBRARY.into(),
+                symbol: "tree_sitter_parens".to_owned(),
+                policy: None,
+            },
+            override_text: "{a} <b>".to_owned(),
+            ..libraries::corpus()
+        }
+    }
+
+    #[test]
+    fn the_fake_keeps_overrides_over_a_name_registered_before() {
+        assert_eq!(
+            check(
+                || Libraries::new(table_with_other()),
+                &corpus_registered_before()
+            ),
+            [""; 0]
+        );
+    }
+
+    #[test]
+    fn a_syntax_that_keeps_the_first_registration_of_a_name_registered_before_is_reported() {
+        let failed = check(
+            || BrokenRegistering {
+                libraries: Libraries::new(table_with_other()),
+                ..BrokenRegistering::new(Flaw::FirstRegistrationWins)
+            },
+            &corpus_registered_before(),
+        );
+
+        assert_eq!(failed, [OVERRIDES]);
     }
 
     #[test]

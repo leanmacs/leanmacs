@@ -60,10 +60,12 @@
 //! libraries keyed by path ([`fake::libraries::table`]).
 //! [`contract::registration::check`] holds a registering syntax to a
 //! [`contract::registration::RegistrationCorpus`] (success; the override of
-//! a compiled-in name, which then ships no query and takes the source's
-//! policy; the default policy; each refusal): the fake with its
-//! table keeps it here, and the real adapter, which loads native grammar
-//! libraries, on its fixture library in its own tests.
+//! a name already listed, compiled in or registered before, which then
+//! ships no query and takes the source's policy; the default policy; each
+//! refusal): the fake with its table keeps it here, over its compiled-in
+//! `parens`, and the real adapter, which loads native grammar libraries
+//! and compiles in none, on its fixture library in its own tests, over a
+//! `json` registered before.
 //! [`contract::registration::check_unsupported`] holds a syntax that loads
 //! no grammar, as the fake with no table, to refusing every source as
 //! unsupported, changing nothing. A grammar that ships no query, as one
