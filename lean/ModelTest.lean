@@ -1430,7 +1430,10 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   each kind of link in `links.md` over its text with its exact target, the
   bare URL and the `path:line` in prose and in a code span, an image linked
   to its source, a reference link left as its source, and a relative one
-  unlinked with no root;
+  unlinked with no root; `markdownFoldChecks`, the exact foldable ranges of
+  `folds.md`: each heading's to the next of the same or a higher level and
+  each fence's over its rows, their keys and placeholders, every one
+  unfolded;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1797,6 +1800,7 @@ def checks : List Check :=
     markdownHeadingChecks ++
     markdownTableChecks ++
     markdownLinkChecks ++
+    markdownFoldChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++

@@ -261,4 +261,43 @@ def markdownLinkChecks : List Check :=
             markdownLinkOver rootless "the logo" == none &&
             markdownLinkOver rootless "absolute file" == some (.location "/etc/hosts" 2 0) }]
 
+/-- The checks of the foldable ranges a rendered document declares
+(**criterion 6**). -/
+def markdownFoldChecks : List Check :=
+  let folds := described Support.Markdown.folds
+  let text := folds.text
+  let heading (key name : String) (level : Nat) (stop : Nat) : Foldable :=
+    { start := (over text name).1, stop, key, text := name ++ " …"
+      decorations := #[span 0 name.utf8ByteSize s!"text.heading.{level}"] }
+  let code (key rows placeholder : String) : Foldable :=
+    { start := (over text rows).1, stop := (over text rows).2, key, text := placeholder
+      decorations := #[span 0 placeholder.utf8ByteSize "text.code-block"] }
+  [{  name := "folds.md renders its headings and fences in order"
+      run :=
+        pure <|
+          text ==
+            "A\n\nText a.\n\nA.1\n\nText a1.\n\nA.1.1\n\nfn one() {}\n\nA.2\n\n{\"b\": 2}\n\nB\n\nText b." },
+    { name :=
+        "each heading is a range from its text to the next heading of the same or a higher level, or the end, and each fence one over its rows, keyed by ordinal, with its placeholder, in order of start"
+      run :=
+        pure <|
+          folds.folds ==
+            #[heading "heading 1" "A" 1 (over text "B").1,
+              heading "heading 2" "A.1" 2 (over text "A.2").1,
+              heading "heading 3" "A.1.1" 3 (over text "A.2").1,
+              code "code 1" "fn one() {}" "rust, 1 line",
+              heading "heading 4" "A.2" 2 (over text "B").1,
+              code "code 2" "{\"b\": 2}" "json, 1 line",
+              heading "heading 5" "B" 1 text.utf8ByteSize] },
+    { name := "every foldable range is declared unfolded"
+      run := pure <| !folds.folds.isEmpty && folds.folds.all (!·.folded) },
+    { name :=
+        "a fence of several rows says how many, each fence keyed by its ordinal and an indented block declaring none"
+      run :=
+        pure <|
+          let code := described Support.Markdown.code
+          (code.folds.map (·.text)) ==
+              #["rust, 3 lines", "json, 1 line", "nosuch, 1 line", "rust, 1 line"] &&
+            (code.folds.map (·.key)) == #["code 1", "code 2", "code 3", "code 4"] }]
+
 end ModelTest

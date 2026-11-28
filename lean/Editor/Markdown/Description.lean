@@ -19,6 +19,17 @@ core's rich-text description.
 - **The description** (`Description`) is the pieces joined by one empty
   line (`Description.ofPieces`), with its foldable ranges made from the
   headings and fences.
+- **Folds** (`foldsOf`) are made from the whole document on every update,
+  since an append can move where a heading's range ends:
+  - each heading is a range from its text's start to the start of the
+    next heading of the same or a higher level, or to the end. Its key is
+    `heading <n>`, n its ordinal in the document from 1, and its
+    placeholder its text in its heading face and ` …`;
+  - each fenced code block with rows is a range over its rows. Its key is
+    `code <n>`, and its placeholder `<language or code>, <k> lines` (`1
+    line` for one) in `text.code-block`. A fence with no rows has none;
+  - every one is declared unfolded. A buffer's `setFolds` merges by key,
+    so a toggle survives a regeneration (`Fold.merge`).
 - **A table** (`Table`) is rows of cell ranges of the text. It is the one
   part measured when the description is applied: a cell's width is the
   display's, so its align-to stops are made then
@@ -164,10 +175,36 @@ def offsetsOf (pieces : Array Piece) : Array Nat :=
         (offsets.push offset, offset + piece.text.utf8ByteSize + blockSeparator.utf8ByteSize))
       (#[], 0)).1
 
+/-- The foldable ranges of `piece`, a whole document's ("Folds", in the
+module docs): each heading's, then each fence's with rows, in order of
+start, every one unfolded. -/
+def foldsOf (piece : Piece) : Array Foldable :=
+  let size := piece.text.utf8ByteSize
+  let headings :=
+    piece.headings.zipIdx.map fun ((level, start, stop), index) =>
+      let next :=
+        (piece.headings.extract (index + 1) piece.headings.size).find? fun (other, _, _) =>
+          other ≤ level
+      let text := slice piece.text start stop
+      ({  start, stop := (next.map (·.2.1)).getD size, key := s!"heading {index + 1}"
+          text := text ++ " …",
+          decorations := #[span 0 text.utf8ByteSize s!"text.heading.{level}"] } : Foldable)
+  let codes :=
+    (piece.codes.filter fun (start, stop, _) => start < stop).zipIdx.map
+      fun ((start, stop, language), index) =>
+        let rows := (slice piece.text start stop).splitOn "\n" |>.length
+        let text :=
+        s!"{if language.isEmpty then "code" else language}, {rows} {if rows == 1 then "line" else "lines"}"
+        ({
+          start, stop, key := s!"code {index + 1}", text
+          decorations := #[span 0 text.utf8ByteSize "text.code-block"] } : Foldable)
+  (headings ++ codes).insertionSort fun a b => a.start < b.start
+
 /-- The description of a document whose top-level blocks rendered to
 `pieces`: the pieces joined by one empty line, and its foldable ranges. -/
 def Description.ofPieces (pieces : Array Piece) : Description :=
   let joined := Piece.join pieces blockSeparator
-  { text := joined.text, spans := joined.spans, tables := joined.tables, links := joined.links }
+  { text := joined.text, spans := joined.spans, tables := joined.tables, links := joined.links
+    folds := foldsOf joined }
 
 end Editor.Markdown
