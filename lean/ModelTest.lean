@@ -1451,9 +1451,10 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   draws them, the rendered heading's face resolves larger than the body's,
   and each refusal leaves the buffer as it was; `markdownTableViewChecks`, a
   rendered table's stops at its measured columns, on the buffer and its
-  view; `markdownAppendChecks`, `appendMarkdown` rendering only the tail's
+  view, and a table after other blocks at its cells' offsets in the whole
+  text; `markdownAppendChecks`, `appendMarkdown` rendering only the tail's
   blocks, rewriting no byte before the first changed offset, ending with
-  the whole render's text, spans and links (a relative link in a later
+  the whole render's text, spans, links and stops (a relative link in a later
   chunk resolved against the first render's root), and keeping a toggled
   fold of the prefix folded;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits

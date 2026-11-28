@@ -71,6 +71,7 @@ def keepResult (buffer : BufferId) (result : Except Markdown.Refusal Unit) : Edi
   `absent`;
 - `append-plain`: an append to a new buffer `plain` never rendered;
 - `table`: `table.md` into a new buffer `table`;
+- `whole`: `stream.md`, whole, into a new buffer `whole`, with the root;
 - `stream`: `stream-head.md` into a new buffer `stream`, with the root, its
   text's revision then kept as `revision`, and its first heading folded;
 - `append`: the stream's next chunk, the chunk's index the value `chunk`
@@ -98,6 +99,11 @@ def markdownViewCommands : List (String × Dispatched) :=
     ("table", fun call => do
       let some table ← generated call "table" | return none
       keepResult table (← table.renderMarkdown Support.Markdown.table.source)
+      return none),
+    ("whole", fun call => do
+      let some whole ← generated call "whole" | return none
+      keepResult whole
+          (← whole.renderMarkdown Support.Markdown.stream.source { root := some markdownRoot })
       return none),
     ("stream", fun call => do
       let some stream ← generated call "stream" | return none
@@ -132,7 +138,8 @@ def markdownDriver : Option TestDriver :=
       dispatchKeys
         [("C-c r", invoke "render"), ("C-c u", invoke "render-unknown"),
           ("C-c x", invoke "render-absent"), ("C-c p", invoke "append-plain"),
-          ("C-c t", invoke "table"), ("C-c s", invoke "stream"), ("C-c a", invoke "append")]
+          ("C-c t", invoke "table"), ("C-c w", invoke "whole"), ("C-c s", invoke "stream"),
+          ("C-c a", invoke "append")]
         markdownViewCommands with
       registered := { languages := Language.shipped.toList } }
   let model := { editorModel with syntaxTree := { once := Support.Markdown.canned } }
@@ -241,6 +248,19 @@ def markdownViewChecks : List Check :=
           | some driver =>
             markdownValue driver "doc" "absent" == some (.str "buffer noSuchBuffer") }]
 
+/-- `stream.md` rendered whole, its text. -/
+def streamText : String :=
+  (Markdown.render viewOptions Support.Markdown.stream.source
+      Support.Markdown.stream.layers).description.text
+
+/-- The stops of `stream.md`'s table, its fourth block, in the whole text:
+one at each later cell's first byte, at the x a widest first cell of 1 in
+the editor model's cells of 1 and a gap of 16 give. -/
+def streamStops : Array AlignStop :=
+  let table := (over streamText "a b\n1 2\n3 4").1
+  #[{ offset := table + 2, x := 17 }, { offset := table + 6, x := 17 },
+    { offset := table + 10, x := 17 }]
+
 /-- The checks that a rendered table's columns are aligned by align-to stops
 measured through the display (the layout half of **criterion 4**). -/
 def markdownTableViewChecks : List Check :=
@@ -258,7 +278,16 @@ def markdownTableViewChecks : List Check :=
             let widths : Array (Array Nat) := #[#[4, 5], #[1, 1], #[2, 3], #[3]]
             Columns.starts widths 16 == #[0, 20] &&
               (markdownBuffer driver "table").map (·.stops) == some expected &&
-              (markdownView driver).map (·.stops) == some expected }]
+              (markdownView driver).map (·.stops) == some expected },
+    { name :=
+        "a table after other blocks, as in stream.md rendered whole, has its stops at its later cells' offsets in the whole text, past the blocks before it"
+      run :=
+        pure <|
+          match markdownDriver.map (markdownFed · "C-c w") with
+          | none => false
+          | some driver =>
+            (over streamText "a b").1 > 0 &&
+              (markdownBuffer driver "whole").map (·.stops) == some streamStops }]
 
 /-- The checks that an append through the core call re-renders only the
 changed tail and rewrites only the bytes from where the text first changes
@@ -269,7 +298,7 @@ def markdownAppendChecks : List Check :=
     Markdown.render { viewOptions with faces := facesOf shippedTable }
       Support.Markdown.stream.source Support.Markdown.stream.layers
   let once := markdownDriver.map (markdownFed · "C-c s C-c a")
-  let all := markdownDriver.map (markdownFed · "C-c s C-c a C-c a C-c a")
+  let all := markdownDriver.map (markdownFed · "C-c s C-c a C-c a C-c a C-c w")
   [{  name :=
         "after renderMarkdown of stream-head.md and appendMarkdown of the next chunk, the document's renders rose by exactly the two blocks of its tail"
       run :=
@@ -313,6 +342,16 @@ def markdownAppendChecks : List Check :=
           | none => false
           | some buffer =>
             (buffer.folds.find? (·.key == "heading 1")).map (·.folded) == some true &&
-              buffer.folds.any fun fold => fold.key == "code 1" && !fold.folded }]
+              buffer.folds.any fun fold => fold.key == "code 1" && !fold.folded },
+    { name :=
+        "after every chunk is appended the buffer's stops are those a fresh renderMarkdown of stream.md whole puts, at its table's later cells in the whole text"
+      run :=
+        pure <|
+          match all with
+          | none => false
+          | some driver =>
+            (markdownBuffer driver "stream").map (·.stops) == some streamStops &&
+              (markdownBuffer driver "stream").map (·.stops) ==
+                (markdownBuffer driver "whole").map (·.stops) }]
 
 end ModelTest
