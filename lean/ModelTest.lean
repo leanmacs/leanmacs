@@ -102,6 +102,7 @@ import ModelTest.Editor.Links
 import ModelTest.Editor.Loop
 import ModelTest.Editor.Loop.Driver
 import ModelTest.Editor.Markdown.Cases
+import ModelTest.Editor.Markdown.Target
 import ModelTest.Editor.Marks
 import ModelTest.Editor.Marks.Follow
 import ModelTest.Editor.Menu
@@ -1410,6 +1411,11 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   through `encode`, and the syntax tree model with the canned answers
   answers each fixture's text its layers, the same layers
   `ContractTest.markdownCaseChecks` holds the library to;
+- `markdownTargetChecks`: what a Markdown link's destination and a bare
+  reference in rendered text name (`Editor/Markdown/Target.lean`): each web
+  scheme a URL, any other scheme a reference, `path:line[:column]` a
+  location with its row and column from 0, a relative path resolved against
+  the root and unlinked with none, and the token rule's edges;
 - `gutterCarryChecks`: carrying a buffer's gutter marks through its edits
   (`Editor/Gutter.lean`), and the gutter column in a view's padding;
 - `gutterTrackChecks`: the version-control gutter's reconciler, the core's
@@ -1771,6 +1777,7 @@ def checks : List Check :=
     foldToggleChecks ++
     foldRegenerateChecks ++
     markdownCaseChecks ++
+    markdownTargetChecks ++
     viewChecks ++
     floatViewChecks ++
     tabBarChecks ++
