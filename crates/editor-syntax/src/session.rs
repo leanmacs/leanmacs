@@ -702,7 +702,7 @@ impl<S: Syntax> Session<S> {
         {
             let tree = syntax.parse(parser, &latest.snapshot, None);
             if syntax.nodes(&tree) != syntax.nodes(&base.tree) {
-                let layers = layers(syntax, &injections, &tree, &latest.snapshot, parsers);
+                let layers = layers(syntax, &*injections, &tree, &latest.snapshot, parsers);
                 *base = Base {
                     revision,
                     tree: tree.clone(),
@@ -737,7 +737,7 @@ impl<S: Syntax> Session<S> {
             // The text as it was; only the injections are new. Layers alike
             // in their keys are what was delivered: nothing to deliver.
             Some(base) if base.revision == revision => {
-                let layers = layers(syntax, &injections, &base.tree, &latest.snapshot, parsers);
+                let layers = layers(syntax, &*injections, &base.tree, &latest.snapshot, parsers);
                 let whole = base.whole;
                 if keys(&layers) == base.layers {
                     base.generation = generation;
@@ -794,7 +794,7 @@ impl<S: Syntax> Session<S> {
                 )
             }
         };
-        let layers = layers(syntax, &injections, &tree, &latest.snapshot, parsers);
+        let layers = layers(syntax, &*injections, &tree, &latest.snapshot, parsers);
         *base = Some(Base {
             revision,
             tree: tree.clone(),

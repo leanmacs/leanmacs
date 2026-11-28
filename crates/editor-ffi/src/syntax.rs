@@ -55,6 +55,7 @@
 //! | [`editor_ffi_syntax_keep`] | keep a query as the snapshot's document's query of a kind; a [`KeepStatus`] |
 //! | [`editor_ffi_syntax_kept_names`] | the capture names of the query kept of a kind, with a [`KeptStatus`] |
 //! | [`editor_ffi_syntax_kept_captures`] | the captures of the query kept of a kind in a range of the snapshot, as words, with a [`KeptStatus`] |
+//! | [`editor_ffi_syntax_parse_once`] | a text parsed once with a host grammar, and its layers, each with its language's captures and their names; a [`OnceStatus`] |
 //! | [`editor_ffi_syntax_refresh_after`] | parse a text whole once it has gone that many milliseconds unchanged after an edit, from now on |
 //! | [`editor_ffi_syntax_settle`] | for tests: wait, with a bound, for the snapshot's revision to be delivered |
 //!
@@ -110,6 +111,30 @@
 //! queries; another grammar replaces the session and drops them all, as a
 //! detach does.
 //!
+//! # A text parsed once
+//!
+//! [`editor_ffi_syntax_parse_once`] parses a text Lean hands in once,
+//! whole, with a host grammar, and answers its layers
+//! (`editor_syntax::once::parse`): the host and each layer the injection
+//! rule finds, each with its language's captures and their names. It is
+//! what a rendered view of a generated text asks (`lean/Editor/Markdown/`),
+//! whose text is not one a document holds. Each language known is a pair
+//! of a grammar's name and a kind of query: the grammar's shipped query of
+//! that kind is what its layers answer, and its shipped injections are
+//! what they find layers of their own with; the host, asked with
+//! `QueryKind::Rendered`, finds its layers with its rendered injections
+//! instead (`TreeSitter::rendered_injections`). A pair whose grammar the
+//! service lacks, or that ships no such query, is not a language known.
+//! The host's pair missing, or shipping none, is
+//! [`OnceStatus::NoShippedQuery`], and the host grammar missing
+//! [`OnceStatus::UnknownGrammar`].
+//!
+//! The shipped queries it compiles are kept process-wide by their grammar
+//! and their source ([`Syntaxes::parse_once`]): a grammar registered over a
+//! compiled-in name ships none, so it never meets a query of the old one.
+//! It runs on the calling thread, the editor thread, and touches no
+//! session and no worker.
+//!
 //! # Layouts
 //!
 //! - **A list of strings out** ([`RawStrings`]): words, the count of
@@ -137,6 +162,15 @@
 //!   [`RawStrings`], with the status as the function's result. **Kept
 //!   captures out** ([`editor_ffi_syntax_kept_captures`]): a [`RawWords`] of
 //!   the layout of captures, its status a [`KeptStatus`].
+//! - **A text parsed once** ([`editor_ffi_syntax_parse_once`]): in, the
+//!   text and the host's name as strings, the pairs' grammar names as a
+//!   list of strings in the borrowed layout, and their kinds as one byte of
+//!   tag each, in order; out, a [`RawWords`] whose status is a
+//!   [`OnceStatus`], and a [`RawStrings`] ([`once_answer`]):
+//!
+//!   | Words, for each layer after the count of layers | Strings, for each layer |
+//!   |---|---|
+//!   | its depth, the count of its ranges, each range's start and end, the count of its capture names, the count of its captures and four words each, as captures cross | its language, then each of its capture names |
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -149,6 +183,7 @@ use editor_wait::HangGuard;
 use editor_layout::scene::{SpansAt, TextSpans};
 use editor_syntax::clock::Clock;
 use editor_syntax::inject::Language;
+use editor_syntax::once::{self, OnceLanguage, OnceLayer};
 use editor_syntax::{
     Capture, CapturesRefusal, Consumer, GrammarName, Handle, Highlighter, Highlights, KeptRefusal,
     Parsed, QueryErrorKind, QueryKind, Session, Syntax, Worker,
@@ -324,6 +359,22 @@ impl From<KeptRefusal> for KeptStatus {
     }
 }
 
+/// How parsing a text once ended, as it crosses the boundary: the `status`
+/// of the [`RawWords`] [`editor_ffi_syntax_parse_once`] fills.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnceStatus {
+    /// Parsed: the words and the strings are its layers.
+    Parsed = 0,
+    /// No grammar of the host's name is compiled in or registered.
+    UnknownGrammar = 1,
+    /// The pairs do not name the host, or name it with a kind it ships no
+    /// query of.
+    NoShippedQuery = 2,
+    /// The pairs do not spell a list of grammar names with a kind tag
+    /// each.
+    BadPairs = 3,
+}
+
 /// The kind of query `tag` stands for: 0 is [`QueryKind::Highlights`], 1
 /// [`QueryKind::Injections`], 2 [`QueryKind::TextObjects`], 3
 /// [`QueryKind::Indents`] and 4 [`QueryKind::Rendered`].
@@ -392,10 +443,22 @@ pub struct Syntaxes {
     refresh_after_ms: AtomicU64,
     /// The documents attached, by key, each with its session.
     attached: Mutex<HashMap<u64, Arc<SyntaxSession>>>,
+    /// The shipped queries a text parsed once has compiled, by their
+    /// grammar and their source, kept for the next ([`Syntaxes::parse_once`]).
+    /// The key holds the source, so a grammar registered over a compiled-in
+    /// name, which ships none, never meets a query of the old one.
+    once_queries: Mutex<HashMap<(GrammarName, String), Arc<OnceQuery>>>,
     /// Where a delivery of a highlighted document is reported: the editor
     /// queue, in the process.
     notices: &'static Queue,
 }
+
+/// A query of the real syntax, as a text parsed once keeps it.
+type OnceQuery = <TreeSitter as Syntax>::Query;
+
+/// A layer of a text parsed once with the names of its language's query's
+/// captures, which its captures index.
+pub type NamedLayer = (OnceLayer, Vec<String>);
 
 /// Reports each delivery of a session with a highlighter: one
 /// [`EventKind::Parsed`](crate::events::EventKind::Parsed) from the
@@ -502,6 +565,7 @@ impl Syntaxes {
             clock,
             refresh_after_ms: AtomicU64::new(REFRESH_AFTER_MS),
             attached: Mutex::new(HashMap::new()),
+            once_queries: Mutex::new(HashMap::new()),
             notices,
         }
     }
@@ -760,6 +824,86 @@ impl Syntaxes {
             .kept_captures(&self.syntax, kind, snapshot.text(), range)
             .map(|(_, captures)| captures)
             .map_err(KeptStatus::from)
+    }
+
+    /// The query `source` compiled for `grammar`, kept from an earlier text
+    /// parsed once or compiled now and kept; `None` when it does not
+    /// compile.
+    fn once_query(&self, grammar: &GrammarName, source: String) -> Option<Arc<OnceQuery>> {
+        let key = (grammar.clone(), source);
+        if let Some(query) = lock(&self.once_queries).get(&key) {
+            return Some(query.clone());
+        }
+        let query = Arc::new(self.syntax.compile(grammar, &key.1).ok()?);
+        lock(&self.once_queries).insert(key, query.clone());
+        Some(query)
+    }
+
+    /// `source` parsed once with the grammar `host`, and its layers
+    /// (`editor_syntax::once::parse`), each with the names of its
+    /// language's captures: the module docs' "A text parsed once". Each
+    /// pair of `pairs` is a language known, by its grammar's name, answered
+    /// with the grammar's shipped query of the kind, `None` for a tag that
+    /// names no kind; a pair whose grammar the service lacks, or that ships
+    /// no such query, is not one. The host finds its layers with its
+    /// rendered injections when it is asked with [`QueryKind::Rendered`]
+    /// and has them (`TreeSitter::rendered_injections`), and with its
+    /// shipped injections otherwise; every other language with its shipped
+    /// injections. Answered on the calling thread; no session is touched.
+    pub fn parse_once(
+        &self,
+        source: &str,
+        host: &str,
+        pairs: &[(String, Option<QueryKind>)],
+    ) -> Result<Vec<NamedLayer>, OnceStatus> {
+        let grammars = self.grammars();
+        let host_grammar = GrammarName::new(host);
+        if !grammars.contains(&host_grammar) {
+            return Err(OnceStatus::UnknownGrammar);
+        }
+        let mut table: std::collections::BTreeMap<String, OnceLanguage<OnceQuery>> =
+            std::collections::BTreeMap::new();
+        for (name, kind) in pairs {
+            let grammar = GrammarName::new(name.as_str());
+            let Some(kind) = *kind else { continue };
+            if table.contains_key(name) || !grammars.contains(&grammar) {
+                continue;
+            }
+            let Some(query) = self
+                .syntax
+                .shipped_query(&grammar, kind)
+                .and_then(|source| self.once_query(&grammar, source))
+            else {
+                continue;
+            };
+            let rendered = (name == host && kind == QueryKind::Rendered)
+                .then(|| self.syntax.rendered_injections(&grammar))
+                .flatten();
+            let injections = rendered
+                .or_else(|| self.syntax.shipped_query(&grammar, QueryKind::Injections))
+                .and_then(|source| self.once_query(&grammar, source));
+            table.insert(
+                name.clone(),
+                OnceLanguage {
+                    grammar,
+                    query,
+                    injections,
+                },
+            );
+        }
+        if !table.contains_key(host) {
+            return Err(OnceStatus::NoShippedQuery);
+        }
+        let text = editor_text::Text::from(source).snapshot();
+        let layers =
+            once::parse(&*self.syntax, host, &text, &table).ok_or(OnceStatus::UnknownGrammar)?;
+        Ok(layers
+            .into_iter()
+            .map(|layer| {
+                let names = self.syntax.capture_names(&table[&layer.language].query);
+                (layer, names)
+            })
+            .collect())
     }
 
     /// The source of the query of `kind` the grammar named `grammar` is
@@ -1245,6 +1389,109 @@ pub unsafe extern "C" fn editor_ffi_syntax_keep(
     match query_kind_of(kind) {
         Some(kind) => syntaxes().keep(snapshot, kind, query) as u64,
         None => KeepStatus::NoSuchKind as u64,
+    }
+}
+
+/// The words and the strings of a text's layers parsed once, in the layout
+/// the module docs give ("A text parsed once"): the count of layers, then
+/// for each its depth, the count of its ranges and each range's two
+/// offsets, the count of its capture names, and the count of its captures
+/// and four words each; and the strings, for each layer its language and
+/// then its capture names.
+pub fn once_answer(layers: &[NamedLayer]) -> (Vec<u8>, Vec<String>) {
+    let mut writer = words::Writer::with_capacity(1);
+    let mut strings = Vec::new();
+    writer.size(layers.len());
+    for (layer, names) in layers {
+        writer.word(u64::from(layer.depth));
+        writer.size(layer.ranges.len());
+        for range in &layer.ranges {
+            writer.size(range.start);
+            writer.size(range.end);
+        }
+        writer.size(names.len());
+        writer.size(layer.captures.len());
+        for capture in &layer.captures {
+            writer.size(capture.pattern);
+            writer.word(u64::from(capture.capture));
+            writer.size(capture.start);
+            writer.size(capture.end);
+        }
+        strings.push(layer.language.clone());
+        strings.extend(names.iter().cloned());
+    }
+    (writer.finish(), strings)
+}
+
+/// [`Syntaxes::parse_once`] for C: parses the `source_len` bytes at
+/// `source` once with the grammar the `host_len` bytes at `host` name, its
+/// languages the pairs of the grammar names the `words_len` bytes at
+/// `words` and the `strings_len` bytes at `strings` spell (a list of
+/// strings in the borrowed layout) and the kind tags the `kinds_len` bytes
+/// at `kinds` hold, one a name ([`query_kind_of`]). It fills `out` with the
+/// layers' words and the status [`OnceStatus::Parsed`], and `names` with
+/// their strings ([`once_answer`]); or `out` with no words and the
+/// refusal's status, and `names` with no strings.
+///
+/// # Safety
+///
+/// Each pointer points to its length's readable bytes (no bytes at all
+/// may be lent with any pointer), and `out` and `names` point to a
+/// writable [`RawWords`] and [`RawStrings`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_syntax_parse_once(
+    source: *const u8,
+    source_len: usize,
+    host: *const u8,
+    host_len: usize,
+    words: *const u8,
+    words_len: usize,
+    strings: *const u8,
+    strings_len: usize,
+    kinds: *const u8,
+    kinds_len: usize,
+    out: *mut RawWords,
+    names: *mut RawStrings,
+) {
+    // SAFETY: the caller guarantees each pointer and its length for the
+    // call.
+    let (source, host, words, strings, kinds) = unsafe {
+        (
+            text::borrow(source, source_len),
+            text::borrow(host, host_len),
+            words::borrow(words, words_len),
+            words::borrow(strings, strings_len),
+            words::borrow(kinds, kinds_len),
+        )
+    };
+    let grammars = std::str::from_utf8(strings)
+        .ok()
+        .and_then(|strings| candidates(words, strings));
+    let answer = match grammars {
+        Some(grammars) if grammars.len() == kinds.len() => {
+            let pairs: Vec<(String, Option<QueryKind>)> = grammars
+                .iter()
+                .zip(kinds)
+                .map(|(grammar, &tag)| ((*grammar).to_owned(), query_kind_of(tag)))
+                .collect();
+            syntaxes().parse_once(&source, &host, &pairs)
+        }
+        _ => Err(OnceStatus::BadPairs),
+    };
+    let (raw, strings) = match answer {
+        Ok(layers) => {
+            let (words, strings) = once_answer(&layers);
+            (
+                RawWords::with_status(OnceStatus::Parsed as u64, words),
+                strings,
+            )
+        }
+        Err(status) => (RawWords::with_status(status as u64, Vec::new()), Vec::new()),
+    };
+    // SAFETY: the caller guarantees `out` and `names` are writable.
+    unsafe {
+        out.write(raw);
+        names.write(RawStrings::of(&strings));
     }
 }
 
@@ -1746,6 +1993,111 @@ mod tests {
             [2, 1, 2, 3, 4, 0, 0, 0, 9]
         );
         assert_eq!(words_of(&captures_words(&[])), [0]);
+    }
+
+    #[test]
+    fn a_layer_crosses_as_its_depth_ranges_name_count_and_captures_and_its_language_and_names() {
+        let layer = OnceLayer {
+            language: "rust".to_owned(),
+            depth: 1,
+            ranges: vec![2..5, 7..9],
+            captures: vec![Capture {
+                pattern: 3,
+                capture: 1,
+                start: 2,
+                end: 4,
+            }],
+        };
+        let names = vec!["a".to_owned(), "keyword".to_owned()];
+        let (words, strings) = once_answer(&[(layer, names)]);
+
+        assert_eq!(words_of(&words), [1, 1, 2, 2, 5, 7, 9, 2, 1, 3, 1, 2, 4]);
+        assert_eq!(strings, ["rust", "a", "keyword"]);
+        assert_eq!(words_of(&once_answer(&[]).0), [0]);
+    }
+
+    #[test]
+    fn a_markdown_text_parsed_once_answers_its_host_and_its_layers_each_with_its_names() {
+        static NOTICES: Queue = Queue::new();
+        let service = Syntaxes::new(&NOTICES);
+        let pairs = [
+            ("markdown".to_owned(), Some(QueryKind::Rendered)),
+            ("markdown_inline".to_owned(), Some(QueryKind::Rendered)),
+            ("rust".to_owned(), Some(QueryKind::Highlights)),
+        ];
+        let layers = service
+            .parse_once(
+                "Some *em*.\n\n```rust\nfn f() {}\n```\n",
+                "markdown",
+                &pairs,
+            )
+            .unwrap();
+        let shape: Vec<(&str, u32)> = layers
+            .iter()
+            .map(|(layer, _)| (layer.language.as_str(), layer.depth))
+            .collect();
+        assert_eq!(
+            shape,
+            [("markdown", 0), ("markdown_inline", 1), ("rust", 1)]
+        );
+        assert!(layers[0].1.contains(&"block".to_owned()));
+        assert!(layers[1].1.contains(&"emphasis".to_owned()));
+        assert!(layers[2].1.contains(&"keyword".to_owned()));
+        // Asked again, the queries are the ones kept.
+        let kept = lock(&service.once_queries).len();
+        let again = service.parse_once("x", "markdown", &pairs).unwrap();
+        assert_eq!(again.len(), 2);
+        assert_eq!(lock(&service.once_queries).len(), kept);
+    }
+
+    #[test]
+    fn a_text_parsed_once_is_refused_an_unknown_host_and_one_the_pairs_name_with_no_shipped_query()
+    {
+        static NOTICES: Queue = Queue::new();
+        let service = Syntaxes::new(&NOTICES);
+        let json = ("json".to_owned(), Some(QueryKind::Highlights));
+        assert_eq!(
+            service
+                .parse_once("{}", "no-such-grammar", std::slice::from_ref(&json))
+                .err(),
+            Some(OnceStatus::UnknownGrammar)
+        );
+        assert_eq!(
+            service.parse_once("{}", "json", &[]).err(),
+            Some(OnceStatus::NoShippedQuery)
+        );
+        assert_eq!(
+            service
+                .parse_once(
+                    "{}",
+                    "json",
+                    &[("json".to_owned(), Some(QueryKind::Injections))]
+                )
+                .err(),
+            Some(OnceStatus::NoShippedQuery)
+        );
+        // A pair for a grammar the service lacks changes nothing.
+        let alone = service
+            .parse_once("{}", "json", std::slice::from_ref(&json))
+            .unwrap();
+        let beside = service
+            .parse_once(
+                "{}",
+                "json",
+                &[
+                    json,
+                    ("no-such-grammar".to_owned(), Some(QueryKind::Highlights)),
+                ],
+            )
+            .unwrap();
+        assert_eq!(alone, beside);
+        let statuses = [
+            OnceStatus::Parsed,
+            OnceStatus::UnknownGrammar,
+            OnceStatus::NoShippedQuery,
+            OnceStatus::BadPairs,
+        ];
+        assert_eq!(statuses.map(|status| status as u64), [0, 1, 2, 3]);
     }
 
     #[test]

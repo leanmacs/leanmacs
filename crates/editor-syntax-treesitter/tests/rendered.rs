@@ -2,15 +2,19 @@
 //! (`queries/markdown/rendered.scm` and `queries/markdown_inline/rendered.scm`),
 //! and the injections a text parsed once for a rendered view finds its
 //! layers with (`TreeSitter::rendered_injections`), on the real grammars:
-//! which nodes each capture names. What the renderer does with them is
+//! which nodes each capture names, and the layers a Markdown text parsed
+//! once (`editor_syntax::once::parse`) answers. What the renderer does with them is
 //! Lean's (`lean/Editor/Markdown/`).
 
+use std::collections::BTreeMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 use editor_syntax::inject;
+use editor_syntax::once::{self, OnceLanguage, OnceLayer};
 use editor_syntax::query::captures_in;
 use editor_syntax::{GrammarName, QueryKind, Syntax};
-use editor_syntax_treesitter::TreeSitter;
+use editor_syntax_treesitter::{TreeSitter, TreeSitterQuery};
 use editor_text::Text;
 
 /// A document with a paragraph, a heading that opens a section, a fence, a
@@ -197,4 +201,107 @@ fn an_emphasis_is_captured_with_its_two_delimiters_hidden() {
         &(emphasis.start..emphasis.start + 1)
     ));
     assert!(over(&captured, "hide", &(emphasis.end - 1..emphasis.end)));
+}
+
+/// The language `grammar` of a text parsed once, answered with its shipped
+/// query of `kind`, finding layers with `injections`, if given.
+fn once_language(
+    grammar: &str,
+    kind: QueryKind,
+    injections: Option<String>,
+) -> OnceLanguage<TreeSitterQuery> {
+    let syntax = TreeSitter::default();
+    let name = GrammarName::new(grammar);
+    let compile = |source: &str| Arc::new(syntax.compile(&name, source).expect("it compiles"));
+    OnceLanguage {
+        query: compile(&syntax.shipped_query(&name, kind).expect("a shipped query")),
+        injections: injections.as_deref().map(compile),
+        grammar: name.clone(),
+    }
+}
+
+#[test]
+fn once_parse_of_markdown() {
+    let syntax = TreeSitter::default();
+    let text = format!("{DOCUMENT}\n```json\n{{}}\n```\n");
+    let shipped =
+        |grammar: &str| syntax.shipped_query(&GrammarName::new(grammar), QueryKind::Injections);
+    // Markdown with its rendered queries and injections, and Rust with its
+    // highlights; JSON is not in the table.
+    let table = BTreeMap::from([
+        (
+            "markdown".to_owned(),
+            once_language(
+                "markdown",
+                QueryKind::Rendered,
+                syntax.rendered_injections(&GrammarName::new("markdown")),
+            ),
+        ),
+        (
+            "markdown_inline".to_owned(),
+            once_language(
+                "markdown_inline",
+                QueryKind::Rendered,
+                shipped("markdown_inline"),
+            ),
+        ),
+        (
+            "rust".to_owned(),
+            once_language("rust", QueryKind::Highlights, shipped("rust")),
+        ),
+    ]);
+    let snapshot = Text::from(text.as_str()).snapshot();
+    let layers = once::parse(&syntax, "markdown", &snapshot, &table).expect("markdown parses");
+
+    assert_eq!(layers[0].language, "markdown");
+    let whole = 0..text.len();
+    assert_eq!(layers[0].depth, 0);
+    assert_eq!(layers[0].ranges, std::slice::from_ref(&whole));
+    assert_eq!(layers.iter().filter(|layer| layer.depth == 0).count(), 1);
+    // An inline layer for each paragraph's and heading's text and for each
+    // table cell.
+    let inline: Vec<&str> = layers
+        .iter()
+        .filter(|layer| layer.language == "markdown_inline")
+        .map(|layer| text[layer.ranges[0].clone()].trim())
+        .collect();
+    assert_eq!(
+        inline,
+        [
+            "Intro *text*.",
+            "Two",
+            "a",
+            "`x`",
+            "1",
+            "2",
+            "one",
+            "nested",
+            "two"
+        ],
+        "{layers:?}"
+    );
+    // One Rust layer, over the fence's content, holding a keyword for `fn`.
+    let rust: Vec<&OnceLayer> = layers
+        .iter()
+        .filter(|layer| layer.language == "rust")
+        .collect();
+    assert_eq!(rust.len(), 1, "{layers:?}");
+    assert_eq!(rust[0].ranges, [first(&text, "fn f() {}\n")]);
+    let names = syntax.capture_names(&table["rust"].query);
+    let fn_keyword = first(&text, "fn");
+    assert!(
+        rust[0]
+            .captures
+            .iter()
+            .any(|capture| names[capture.capture as usize] == "keyword"
+                && capture.range() == fn_keyword),
+        "{:?}",
+        rust[0].captures
+    );
+    // The JSON fence, a language the table lacks, has no layer.
+    assert!(
+        layers
+            .iter()
+            .all(|layer| !text[layer.ranges[0].clone()].starts_with("{}"))
+    );
 }

@@ -2835,8 +2835,10 @@ the ranges of its `injection.content` captures, each node's named children
 taken out unless the pattern sets `injection.include-children` (so a
 fence's code keeps its punctuation and leaves out a block quote's `> `),
 cut to the parent's ranges and made one where they touch. A match injects
-nothing with no language, no range left, ranges that are the parent's own,
-or a language not known: nothing aliases a name. Each match is a layer of
+nothing with no language, no range left, or a language not known: nothing
+aliases a name. A layer's injection over the layer's own ranges makes no
+progress and is dropped; the host's over the whole text is a layer, as the
+inline text of a Markdown document that is one paragraph is. Each match is a layer of
 its own; `injection.combined` is not built.
 
 **Layers in a round.** A session's round finds the new tree's layers, and

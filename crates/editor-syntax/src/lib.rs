@@ -40,6 +40,10 @@
 //!   another's: the injection rule finds them from an injections query's
 //!   matches, and a session parses each as a layer of its own, on the
 //!   worker, and draws its spans over the host's.
+//! - **A text parsed once** ([`once`]) is a text parsed whole with a host
+//!   grammar and its layers found by the injection rule, each answered with
+//!   its language's captures, in the call, kept nowhere: what a rendered
+//!   view of a generated text asks.
 //!
 //! The crate depends on `editor-text` alone and knows nothing about Lean or
 //! a parsing library. The real implementation of the port is another crate
@@ -80,6 +84,7 @@
 //! | A rule of how captures are drawn, or carried through edits | [`highlight`] | Its unit tests, on the fake and hand-built patches |
 //! | A rule of which injections a query's matches say, or how layers nest | [`inject`] | Its unit tests, on a mock that answers canned matches and on the fake; the adapter's `tests/injections.rs` on the real grammars |
 //! | A rule of which tree a snapshot is drawn from | [`session`] ("Highlights") | Its unit tests, single-threaded, and `tests/highlight.rs` on a real thread with a parse held |
+//! | A rule of what a text parsed once answers: which layers, in what order, with which captures | [`once`] | Its unit tests, on the fake; the adapter's `tests/rendered.rs` on the real Markdown grammars |
 //! | A rule of what runs next, or of when a refresh runs | [`worker`] | Its unit tests, stepped by hand on a [`clock::ManualClock`], and `tests/worker.rs` on a real thread |
 //! | A rule of what a refresh does | [`session`] ("The refresh round") | Its unit tests, single-threaded, and the contract's [`contract::CONVERGES`] |
 //! | A grammar | The real adapter's table, with a corpus its contract test runs | That crate's `tests/contract.rs` |
@@ -93,6 +98,7 @@ pub mod contract;
 pub mod fake;
 pub mod highlight;
 pub mod inject;
+pub mod once;
 mod port;
 pub mod query;
 pub mod registry;

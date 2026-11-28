@@ -20,11 +20,11 @@ use editor_ffi::document::{Document, editor_ffi_document_free, editor_ffi_docume
 use editor_ffi::log::RawWords;
 use editor_ffi::snapshot::{Snapshot, editor_ffi_document_snapshot, editor_ffi_snapshot_free};
 use editor_ffi::syntax::{
-    AttachStatus, CapturesStatus, QueryStatus, RawQuery, RawStrings, SyntaxQuery,
+    AttachStatus, CapturesStatus, OnceStatus, QueryStatus, RawQuery, RawStrings, SyntaxQuery,
     editor_ffi_syntax_attach, editor_ffi_syntax_capture_names, editor_ffi_syntax_captures,
-    editor_ffi_syntax_detach, editor_ffi_syntax_grammars, editor_ffi_syntax_query_free,
-    editor_ffi_syntax_query_new, editor_ffi_syntax_refresh_after, editor_ffi_syntax_settle,
-    kind_tag, syntaxes,
+    editor_ffi_syntax_detach, editor_ffi_syntax_grammars, editor_ffi_syntax_parse_once,
+    editor_ffi_syntax_query_free, editor_ffi_syntax_query_new, editor_ffi_syntax_refresh_after,
+    editor_ffi_syntax_settle, kind_tag, strings_words, syntaxes,
 };
 use editor_ffi::text::editor_ffi_text_free;
 use editor_syntax::{GrammarName, QueryErrorKind, Syntax};
@@ -361,4 +361,115 @@ fn a_refused_query_crosses_with_its_kind_and_offset_and_a_made_one_with_its_name
     assert_eq!(strings(unsafe { raw.assume_init() }), ["key", "value"]);
     // SAFETY: the query is live and freed once.
     unsafe { editor_ffi_syntax_query_free(made.query) };
+}
+
+/// `source` parsed once through C with the host grammar `host` and the
+/// pairs `pairs`, each a grammar's name and a kind's tag: the status, the
+/// words and the strings.
+fn parse_once(source: &str, host: &str, pairs: &[(&str, u8)]) -> (u64, Vec<u64>, Vec<String>) {
+    let names: Vec<String> = pairs.iter().map(|(name, _)| (*name).to_owned()).collect();
+    let words_in = strings_words(&names);
+    let strings_in = names.concat();
+    let kinds: Vec<u8> = pairs.iter().map(|(_, kind)| *kind).collect();
+    let mut out = MaybeUninit::<RawWords>::uninit();
+    let mut answered = MaybeUninit::<RawStrings>::uninit();
+    // SAFETY: each buffer is alive for the call, and both records are
+    // writable.
+    let (raw, answered) = unsafe {
+        editor_ffi_syntax_parse_once(
+            source.as_ptr(),
+            source.len(),
+            host.as_ptr(),
+            host.len(),
+            words_in.as_ptr(),
+            words_in.len(),
+            strings_in.as_ptr(),
+            strings_in.len(),
+            kinds.as_ptr(),
+            kinds.len(),
+            out.as_mut_ptr(),
+            answered.as_mut_ptr(),
+        );
+        (out.assume_init(), answered.assume_init())
+    };
+    (
+        raw.status,
+        words(&take(raw.words, raw.len)),
+        strings(answered),
+    )
+}
+
+/// The tag of a rendered query.
+const RENDERED: u8 = 4;
+/// The tag of a highlights query.
+const HIGHLIGHTS: u8 = 0;
+
+#[test]
+fn a_markdown_text_parsed_once_through_c_answers_its_host_inline_and_rust_layers() {
+    let source = "Some *em*.\n\n```rust\nfn f() {}\n```\n";
+    let (status, words, strings) = parse_once(
+        source,
+        "markdown",
+        &[
+            ("markdown", RENDERED),
+            ("markdown_inline", RENDERED),
+            ("rust", HIGHLIGHTS),
+        ],
+    );
+    assert_eq!(status, OnceStatus::Parsed as u64);
+    // Three layers: the host, the paragraph's inline text and the fence.
+    assert_eq!(words[0], 3);
+    // The host: depth 0, one range over the whole text.
+    assert_eq!(&words[1..5], [0, 1, 0, source.len() as u64]);
+    let languages: Vec<&str> = ["markdown", "markdown_inline", "rust"]
+        .into_iter()
+        .filter(|language| strings.iter().any(|string| string == language))
+        .collect();
+    assert_eq!(languages, ["markdown", "markdown_inline", "rust"]);
+    assert_eq!(strings[0], "markdown");
+    assert!(strings.contains(&"block".to_owned()));
+    assert!(strings.contains(&"keyword".to_owned()));
+}
+
+#[test]
+fn a_text_parsed_once_through_c_is_refused_an_unknown_host_and_ignores_a_pair_it_lacks() {
+    let (status, refused_words, refused_strings) =
+        parse_once("{}", "no-such-grammar", &[("json", HIGHLIGHTS)]);
+    assert_eq!(status, OnceStatus::UnknownGrammar as u64);
+    assert!(refused_words.is_empty() && refused_strings.is_empty());
+    let alone = parse_once("{\"a\": 1}", "json", &[("json", HIGHLIGHTS)]);
+    let beside = parse_once(
+        "{\"a\": 1}",
+        "json",
+        &[("json", HIGHLIGHTS), ("no-such-grammar", HIGHLIGHTS)],
+    );
+    assert_eq!(alone.0, OnceStatus::Parsed as u64);
+    assert_eq!(alone, beside);
+    // Pairs whose kinds are not one a name are refused.
+    let (status, _, _) = {
+        let names = strings_words(&["json".to_owned()]);
+        let mut out = MaybeUninit::<RawWords>::uninit();
+        let mut answered = MaybeUninit::<RawStrings>::uninit();
+        // SAFETY: each buffer is alive for the call, and both records are
+        // writable.
+        let (raw, answered) = unsafe {
+            editor_ffi_syntax_parse_once(
+                "{}".as_ptr(),
+                2,
+                "json".as_ptr(),
+                4,
+                names.as_ptr(),
+                names.len(),
+                "json".as_ptr(),
+                4,
+                [].as_ptr(),
+                0,
+                out.as_mut_ptr(),
+                answered.as_mut_ptr(),
+            );
+            (out.assume_init(), answered.assume_init())
+        };
+        (raw.status, take(raw.words, raw.len), strings(answered))
+    };
+    assert_eq!(status, OnceStatus::BadPairs as u64);
 }
