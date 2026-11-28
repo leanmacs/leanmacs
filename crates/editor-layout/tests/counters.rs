@@ -15,8 +15,8 @@ use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::frame::Frame;
 use editor_layout::query::Around;
 use editor_layout::scene::{
-    AlignStop, Block, Changes, Cursor, Decoration, Fold, Padding, Rect, Scene, StatusField,
-    TextKey, TextRef, View, ViewId,
+    AlignStop, Block, Changes, Continuation, Cursor, Decoration, Fold, Padding, Rect, Scene,
+    StatusField, TextKey, TextRef, View, ViewId, WrapIndent,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -87,6 +87,7 @@ fn scene_rows(text: &TextRef, width: u32, cursor: usize, rows: u32) -> Scene {
             marks: vec![],
             stops: vec![],
             folds: vec![],
+            indents: vec![],
         }],
         ..Scene::default()
     }
@@ -185,6 +186,66 @@ fn a_stop_moved_to_another_offset_shapes_that_row_only() {
     layout.frame(&with_stops(&text, 40, false));
     let moved = counted(&mut layout, |layout| {
         layout.frame(&with_stops(&text, 40, true));
+    });
+    assert_eq!(moved, count(1, 1, 19));
+}
+
+/// [`scene`] of twenty words, rows 0 to 9 under a wrap indent of `first`
+/// points continued at the lead `lead` bytes into each row, but row 4's
+/// `lead` one byte further when `further` is set; and rows 10 to 19 under
+/// one of `first` points continued at 30.
+fn with_indents(text: &TextRef, first: u32, lead: usize, further: bool) -> Scene {
+    let mut scene = scene(text, 400, 0);
+    let start = |row: usize| text.snapshot.row_range(row).unwrap().start;
+    let hanging = |start, stop, lead| WrapIndent {
+        start,
+        stop,
+        first,
+        rest: Continuation::Lead(lead),
+    };
+    let mut indents = vec![hanging(start(0), start(10), lead)];
+    if further {
+        indents.push(hanging(start(4), start(5), lead + 1));
+    }
+    indents.push(WrapIndent {
+        start: start(10),
+        stop: text.snapshot.len(),
+        first,
+        rest: Continuation::Points(30),
+    });
+    scene.views[0].indents = indents;
+    scene
+}
+
+#[test]
+fn a_frame_with_the_same_indents_again_shapes_nothing() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_indents(&text, 20, 2, false));
+    let again = counted(&mut layout, |layout| {
+        layout.frame(&with_indents(&text, 20, 2, false));
+    });
+    assert_eq!(again, count(0, 0, 20));
+}
+
+#[test]
+fn a_pixel_indent_changed_alone_breaks_the_rows_it_covers_and_shapes_none() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_indents(&text, 20, 2, false));
+    let moved = counted(&mut layout, |layout| {
+        layout.frame(&with_indents(&text, 30, 2, false));
+    });
+    assert_eq!(moved, count(0, 20, 0));
+}
+
+#[test]
+fn a_lead_changed_shapes_that_row_only() {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_indents(&text, 20, 2, false));
+    let moved = counted(&mut layout, |layout| {
+        layout.frame(&with_indents(&text, 20, 2, true));
     });
     assert_eq!(moved, count(1, 1, 19));
 }

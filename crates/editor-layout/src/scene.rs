@@ -88,6 +88,25 @@
 //! whose first row an earlier one covers is not shown
 //! ([`folds`](crate::folds)).
 //!
+//! # Wrap indents
+//!
+//! A view's [`WrapIndent`]s say where the visual lines of its text's rows
+//! start: a covered row's first visual line `first` points right of the
+//! start of the text row, and each later one at its [`Continuation`],
+//! either a number of points or, the hanging form, where the row's first
+//! `n` bytes end, measured on the row as it is laid out. An indent covers
+//! the rows its range `[start, stop)` has a byte in, a line break being
+//! the row's it ends, or the row that holds `start` when the range is
+//! empty, as a fold does; an offset past the text's end is the end, and
+//! one inside a character is moved back to its start. Of two indents over
+//! a row the later one listed wins, as of two stops at one offset. Points
+//! are multiplied by the scale as a padding is. Where each line starts
+//! and where it breaks are `align`'s rules ("Wrap indents"); the rows,
+//! spot and move queries lay a row out under the indents of the last
+//! frame that showed the text at its revision, by the rule they read the
+//! stops by ([`cache`](crate::cache)), so no caller of a query names
+//! them.
+//!
 //! # Where an addition goes
 //!
 //! A new field of Lean's scene is a field here, decoded by the binding.
@@ -186,6 +205,39 @@ pub struct AlignStop {
     /// whole points, which layout multiplies by its scale as it does a
     /// padding ([`Layout::padding_pixels`](crate::Layout::padding_pixels)).
     pub x: u32,
+}
+
+/// A wrap indent: where the visual lines of the rows of a range of a
+/// view's text start (module docs, "Wrap indents").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct WrapIndent {
+    /// A byte offset of the view's snapshot where its range starts.
+    pub start: usize,
+    /// Where it stops, not included. A range of no byte covers the row
+    /// that holds `start`.
+    pub stop: usize,
+    /// How far right of the start of the text row a covered row's first
+    /// visual line starts, in whole points.
+    pub first: u32,
+    /// Where each later visual line of a covered row starts.
+    pub rest: Continuation,
+}
+
+/// Where the later visual lines of a row under a [`WrapIndent`] start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Continuation {
+    /// This many whole points right of the start of the text row.
+    Points(u32),
+    /// Where the row's first this many bytes end on its first visual line:
+    /// the hanging form, which a list item's text continues under.
+    Lead(usize),
+}
+
+impl Default for Continuation {
+    /// At the row's start.
+    fn default() -> Self {
+        Self::Points(0)
+    }
 }
 
 /// A block: rows of text of its own, drawn between two rows of a view
@@ -638,6 +690,8 @@ pub struct View {
     /// Its folds, the ranges of its text shown as one placeholder row each
     /// (module docs, "A fold"); none by default.
     pub folds: Vec<Fold>,
+    /// Its wrap indents (module docs, "Wrap indents"); none by default.
+    pub indents: Vec<WrapIndent>,
 }
 
 /// A divider: a strip of the frame between two tiled views, filled in the

@@ -167,6 +167,7 @@ impl<S: Shaper> BlockLayout<'_, S> {
                 base,
                 fonts: &fonts,
                 stops: &|_| Vec::new(),
+                indent: &|_, _| None,
                 outcome: &mut |row, segment, outcome| {
                     seen.entry((row, segment)).or_insert(outcome);
                 },

@@ -286,6 +286,7 @@ use crate::decoration::{
 use crate::face::{
     Color, ECHO_AREA_FACE, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle,
 };
+use crate::indent;
 use crate::line::LineEntry;
 use crate::query::{Shown, Visual, Walker, relative_stops};
 use crate::scene::{CursorShape, Rect, Scene, Side, Size, StatusField, TextKey, View, ViewId};
@@ -1217,6 +1218,11 @@ impl<S: Shaper> Layout<S> {
             .map(|(offset, x)| (*offset, self.padding_pixels(*x)))
             .collect();
         let stops_of = |bytes: Range<usize>| relative_stops(&stop_pixels, &bytes);
+        // The indents, resolved for the snapshot, in points to keep and
+        // in pixels at the scale to lay out under.
+        let indents = indent::resolved(snapshot, &view.indents);
+        let scale = self.scale();
+        let indent_of = |row: usize, segment: usize| indents.of(row, segment, scale);
         // Every source, lowest layer first: the text's own spans, `extra`,
         // the decorations and the selections.
         let mut sources: Vec<&dyn DecorationSource> = Vec::new();
@@ -1238,6 +1244,7 @@ impl<S: Shaper> Layout<S> {
             base,
             fonts: &fonts,
             stops: &stops_of,
+            indent: &indent_of,
             outcome: &mut |row, segment, outcome| {
                 seen.entry((row, segment)).or_insert(outcome);
             },
@@ -1446,6 +1453,7 @@ impl<S: Shaper> Layout<S> {
             selections: selection_source.clone(),
             decorations: face_source.clone(),
             stops,
+            indents,
         });
         self.counters.add(&seen);
         frame
@@ -1745,6 +1753,7 @@ mod tests {
             marks: vec![],
             stops: vec![],
             folds: vec![],
+            indents: vec![],
         }
     }
 

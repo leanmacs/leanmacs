@@ -1045,6 +1045,7 @@ impl WireScene {
                         })
                         .collect(),
                     folds: layout_folds(&view.folds),
+                    indents: Vec::new(),
                 }
             })
             .collect();

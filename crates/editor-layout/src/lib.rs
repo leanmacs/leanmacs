@@ -107,6 +107,16 @@
 //!   (`tests/align.rs`); what a change of a stop shapes and breaks
 //!   (`tests/counters.rs`), and the round trip of a position through a
 //!   row with stops (`tests/layers.rs`);
+//! - wrap indents: which rows a view's indents cover, the later winning,
+//!   in points at the scale, and a later segment's indent ([`indent`]);
+//!   where a covered row's first and later visual lines start and where
+//!   they break, the hanging form's lead, an indent at or past the width
+//!   not applied, and indents with stops (`align`); the visual lines,
+//!   cursors, rows, spot and move queries at the drawn x, the queries
+//!   laying a row out under the last frame's indents
+//!   (`tests/indent.rs`); what a change of an indent shapes and breaks
+//!   (`tests/counters.rs`), and the round trip of a position through an
+//!   indented row (`tests/layers.rs`);
 //! - translated spans: a text made of pieces of other texts draws each
 //!   source's own spans at every piece of it, cut at the pieces' edges,
 //!   each source resolved once, and keeps the contract of
@@ -122,6 +132,7 @@ pub mod decoration;
 pub mod face;
 pub mod folds;
 pub mod frame;
+pub mod indent;
 pub mod layer;
 pub mod line;
 pub mod query;
@@ -593,6 +604,11 @@ impl<S: Shaper> Layout<S> {
             );
         }
         let stops_of = |bytes: Range<usize>| relative_stops(&stops, &bytes);
+        // The last frame's indents, at the scale as it is now.
+        let indents = state.sources.as_ref().map(|last| &last.indents);
+        let indent_of = |row: usize, segment: usize| {
+            indents.and_then(|indents| indents.of(row, segment, scale))
+        };
         let (styles, shaper, base) = (&self.styles, &self.shaper, self.base);
         let snapshot = &text.snapshot;
         let fonts = |bytes| fonts_of(&sources, snapshot, bytes, styles, shaper, base);
@@ -619,6 +635,7 @@ impl<S: Shaper> Layout<S> {
                 base,
                 fonts: &fonts,
                 stops: &stops_of,
+                indent: &indent_of,
                 outcome: &mut |row, segment, outcome| {
                     seen.entry((row, segment)).or_insert(outcome);
                 },

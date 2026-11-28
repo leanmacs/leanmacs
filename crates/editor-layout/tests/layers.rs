@@ -14,10 +14,13 @@
 //! The texts favour what breaks a conversion: tabs at every column, a
 //! carriage return before a line feed and alone, characters of one to four
 //! bytes, empty rows, and one case in eight a row longer than a segment.
+//! The tab and wrap round trip runs with and without align-to stops and
+//! wrap indents.
 
 use std::fmt::Debug;
 
 use editor_layout::folds::FoldLayer;
+use editor_layout::indent::{SegmentIndent, SegmentRest};
 use editor_layout::layer::{Bias, Layer};
 use editor_layout::scene::Fold;
 use editor_layout::shaper::FontId;
@@ -130,6 +133,33 @@ fn a_column_inside_a_tabs_spaces_goes_back_to_the_tab() {
     });
 }
 
+/// A wrap indent for a segment whose text is `segment`, by `kind`: none;
+/// a first-line indent of 20 pixels and a continuation of 40; a first-line
+/// indent past the narrower widths and a continuation of 15; or a hang
+/// after the segment's `kind - 2`th character with a first-line indent of
+/// 10, which past the segment's end hangs at 10.
+fn indent_of(segment: &str, kind: usize) -> Option<SegmentIndent> {
+    let pixels = |first, rest| SegmentIndent {
+        first,
+        rest: SegmentRest::Pixels(rest),
+    };
+    match kind {
+        0 => None,
+        1 => Some(pixels(20.0, 40.0)),
+        2 => Some(pixels(45.0, 15.0)),
+        _ => {
+            let lead = segment
+                .char_indices()
+                .nth(kind - 2)
+                .map_or(segment.len(), |(offset, _)| offset);
+            Some(SegmentIndent {
+                first: 10.0,
+                rest: SegmentRest::Lead(lead),
+            })
+        }
+    }
+}
+
 /// Align-to stops for a segment whose text is `segment`: one at every
 /// `every`th character from the second, each at `step` pixels times its
 /// count, so that some fall past a width and some before the text they
@@ -151,12 +181,14 @@ fn stops_of(segment: &str, every: usize, step: f32) -> Vec<(usize, f32)> {
 fn a_position_converted_through_tabs_and_wrap_and_back_is_the_position() {
     let widths = select(vec![None, Some(1.0), Some(30.0), Some(55.0), Some(400.0)]);
     // No stop, or stops at every few characters: the round trip holds
-    // with a row's cells placed at stops as without.
+    // with a row's cells placed at stops as without, and under a wrap
+    // indent, pixels or hanging, as without.
     let stops = (select(vec![0usize, 1, 3, 5]), select(vec![15.0f32, 40.0]));
+    let indents = select(vec![0usize, 1, 2, 3, 5]);
     check(
-        96,
-        (texts(), 1usize..9, widths, stops),
-        |(text, tab_width, width, (every, step))| {
+        128,
+        (texts(), 1usize..9, widths, stops, indents),
+        |(text, tab_width, width, (every, step), kind)| {
             let shaper = CellShaper::new(10.0, 16.0);
             let snapshot = Text::from(text.as_str()).snapshot();
             let tabs = TabLayer::new(snapshot.clone(), tab_width);
@@ -173,6 +205,7 @@ fn a_position_converted_through_tabs_and_wrap_and_back_is_the_position() {
                     &[],
                     FontId::default(),
                     &stops,
+                    indent_of(&source, kind),
                 )
                 .unwrap();
                 let point = wrap
@@ -248,8 +281,16 @@ fn a_position_converted_through_the_fold_layer_and_back_is_the_position_or_its_f
                 // On a shown row, the tab and wrap layers' round trip holds
                 // as without folds.
                 let tab = tabs.to_layer(offset, Bias::Before).unwrap();
-                wrap.entry(&shaper, tab.row, tab.segment, &[], FontId::default(), &[])
-                    .unwrap();
+                wrap.entry(
+                    &shaper,
+                    tab.row,
+                    tab.segment,
+                    &[],
+                    FontId::default(),
+                    &[],
+                    None,
+                )
+                .unwrap();
                 let back = wrap
                     .to_layer(tab, Bias::Before)
                     .and_then(|point| wrap.to_below(point, Bias::Before))

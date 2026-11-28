@@ -97,6 +97,7 @@ use std::sync::Arc;
 use editor_text::Snapshot;
 
 use crate::folds::{FoldSnapshot, ShownFold};
+use crate::indent::SegmentIndent;
 use crate::line::LineEntry;
 use crate::scene::{Block, Fold};
 use crate::shaper::{FontId, Shaper};
@@ -228,6 +229,9 @@ pub(crate) struct Walker<'a, S: Shaper> {
     /// order ([`relative_stops`]); asked only for the segments the walker
     /// lays out.
     pub stops: &'a dyn Fn(Range<usize>) -> Vec<(usize, f32)>,
+    /// The wrap indent of a row's segment, by row and segment; asked only
+    /// for the segments the walker lays out.
+    pub indent: &'a dyn Fn(usize, usize) -> Option<SegmentIndent>,
     /// Told how each segment was got, by row and segment.
     pub outcome: &'a mut dyn FnMut(usize, usize, Outcome),
 }
@@ -247,9 +251,10 @@ impl<S: Shaper> Walker<'_, S> {
             let spans = (self.fonts)(bytes.clone());
             (relative_spans(&spans, &bytes), (self.stops)(bytes))
         };
+        let indent = (self.indent)(row, segment);
         let (entry, outcome) =
             self.wrap
-                .entry(self.shaper, row, segment, &fonts, self.base, &stops)?;
+                .entry(self.shaper, row, segment, &fonts, self.base, &stops, indent)?;
         (self.outcome)(row, segment, outcome);
         Some(entry)
     }

@@ -1,5 +1,7 @@
-//! The column arithmetic of align-to stops: where the cells of a row cut
-//! at its stops are placed, and where the row breaks.
+//! The column arithmetic of align-to stops and wrap indents: where the
+//! cells of a row cut at its stops are placed, where the row breaks, and
+//! where each of its visual lines starts. Every row is placed here, one
+//! with no stop as a single cell.
 //!
 //! A row with align-to stops ([`AlignStop`]) is
 //! cut at each stop's column into **cells**: cell 0 is the text before the
@@ -9,7 +11,8 @@
 //! ([`line`](mod@crate::line)), and [`place`] puts the pieces on visual
 //! lines by these rules, all in pixels from the start of the text row:
 //!
-//! - Cell 0 is at x 0, broken at the width, as a row with no stop is.
+//! - Cell 0 is at x 0, broken at the width, as a row with no stop is
+//!   (under a wrap indent, at `first`: "Wrap indents" below).
 //! - A later cell whose stop is at or past the width, on a visual line
 //!   that already holds something, starts the next visual line at x 0 and
 //!   is broken at the whole width: the row breaks before the stop's cell
@@ -37,13 +40,48 @@
 //! A composed visual line holds its pieces' bytes, one after another, as
 //! columns of the segment's expanded text; its glyphs' clusters are
 //! columns of it too, and their `x` is from the line's left edge.
+//!
+//! # Wrap indents
+//!
+//! A row under a wrap indent ([`Placement`]) has its first visual line
+//! start at x `first` and each later one at the continuation indent `C`;
+//! the rules above hold with those in place of x 0. All are in pixels
+//! from the start of the text row.
+//!
+//! - The first visual line starts at `first` and is broken at the room
+//!   `width - first`; each later line starts at `C` and is broken at
+//!   `width - C`. Cell 0 is broken at those two widths at once
+//!   ([`ShapedLine::break_lines_in`](crate::shaper::ShapedLine::break_lines_in)).
+//! - With [`Rest::Pixels`], `C` is that x. With [`Rest::Lead`] (the
+//!   hanging form) the row is cut at its lead into cell 0, the leading
+//!   span, and a [`Kind::Lead`] cell, the text after it. The text starts
+//!   where the span ends (the pen) and is broken at the room right of it,
+//!   and its later lines hang under it: that x is `C`. The hang is right
+//!   whatever the font, since it is where the span's glyphs end. A span
+//!   that reaches the width puts the text at `first` on the next line,
+//!   and that is its hang. A lead of no byte, or at or past the row's end,
+//!   makes no cut and hangs at `first`. A lead at a stop's column makes no
+//!   cell of its own: the stop places the cell ([`Kind::Stop`]'s
+//!   `hangs`), and the hang is where that cell starts. Until the hang is
+//!   placed, `C` is `first`.
+//! - An indent at or past the width is not applied: that line starts at
+//!   x 0 and is broken at the whole width, as a stop past the width is
+//!   broken before, so no text goes right of the view.
+//! - With no width nothing breaks, and the line starts at `first`.
+//! - With stops in the row, cell 0 starts at `first`, a cell moved down
+//!   by the overflow rule starts the next line at `C` and is broken at
+//!   `width - C`, and a cell hanging under its stop keeps its stop's x. A
+//!   stop's x is still from the start of the text row.
+//! - A composed line's glyph xs and its width include where it starts, so
+//!   a cell, a position and a click on it are at the drawn x. An empty
+//!   row is one empty line at `first`, as wide as `first`.
 
 use std::ops::Range;
 
 use editor_text::Snapshot;
 
 use crate::scene::AlignStop;
-use crate::shaper::{Glyph, VisualLine};
+use crate::shaper::{Glyph, VisualLine, Widths};
 use crate::tabs::boundary_at_or_before;
 
 /// `stops`, a view's, resolved for `snapshot`: each moved back to a
@@ -67,14 +105,59 @@ pub(crate) fn resolved(snapshot: &Snapshot, stops: &[AlignStop]) -> Vec<(usize, 
     kept
 }
 
-/// One cell of a row cut at its stops.
+/// What a cell of a row is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Kind {
+    /// Cell 0: the text before the first stop or lead, or the whole row.
+    First,
+    /// The text after a hanging indent's leading span: it starts where the
+    /// span ends, and its later lines hang there.
+    Lead,
+    /// The text after an align-to stop.
+    Stop {
+        /// The stop's x, in pixels from the start of the text row.
+        x: f32,
+        /// Whether a hanging indent's lead falls at the stop's column, so
+        /// that the row's later lines hang where this cell starts.
+        hangs: bool,
+    },
+}
+
+/// One cell of a row cut at its stops and its lead.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Cut {
     /// Its columns of the segment's expanded text.
     pub columns: Range<usize>,
-    /// The x of its stop, in pixels from the start of the text row; none
-    /// for cell 0, the text before the first stop.
-    pub stop: Option<f32>,
+    /// What it is.
+    pub kind: Kind,
+}
+
+/// Where a row's visual lines start under its wrap indent, in pixels from
+/// the start of the text row (module docs, "Wrap indents").
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Placement {
+    /// Where its first visual line starts.
+    pub first: f32,
+    /// Where each later visual line starts.
+    pub rest: Rest,
+}
+
+impl Placement {
+    /// No indent: every visual line at x 0.
+    pub const NONE: Self = Self {
+        first: 0.0,
+        rest: Rest::Pixels(0.0),
+    };
+}
+
+/// Where a row's later visual lines start.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Rest {
+    /// At this x.
+    Pixels(f32),
+    /// Where the row's [`Kind::Lead`] cell starts, or its hanging stop's
+    /// cell; at the first-line indent until one is placed.
+    Lead,
 }
 
 /// A visual line being put together from the pieces of cells.
@@ -89,6 +172,12 @@ struct Composing {
     baseline: f32,
     /// The most any piece reaches below its own baseline.
     depth: f32,
+    /// How tall it is: its one piece's height, or the lowest baseline
+    /// plus the deepest depth of several, so that a line of one piece is
+    /// exactly as tall as the shaper made it.
+    height: f32,
+    /// How many pieces it holds.
+    pieces: usize,
 }
 
 impl Composing {
@@ -103,7 +192,7 @@ impl Composing {
             bytes: self.bytes,
             glyphs: self.glyphs,
             width: self.pen,
-            height: self.baseline + self.depth,
+            height: self.height,
             baseline: self.baseline,
         }
     }
@@ -120,6 +209,12 @@ impl Composing {
         self.pen = x + piece.width;
         self.baseline = self.baseline.max(piece.baseline);
         self.depth = self.depth.max(piece.height - piece.baseline);
+        self.pieces += 1;
+        self.height = if self.pieces == 1 {
+            piece.height
+        } else {
+            self.baseline + self.depth
+        };
     }
 
     /// A line that starts at `piece`, a visual line of the cell whose
@@ -132,6 +227,8 @@ impl Composing {
             pen: x,
             baseline: piece.baseline,
             depth: piece.height - piece.baseline,
+            height: piece.height,
+            pieces: 0,
         };
         line.add(piece, base, x);
         line
@@ -139,34 +236,71 @@ impl Composing {
 }
 
 /// The visual lines of a row cut into `cuts`, by the module's rules, at
-/// `width` (`None` breaks nothing). `break_cell` is asked for the visual
-/// lines of cell `index` broken at a width (`None` for none), each with
+/// `width` (`None` breaks nothing), under the wrap indent `placement`.
+/// `break_cell` is asked for the visual lines of cell `index` broken at
+/// widths (a first line's and the rest's, `None` for none), each with
 /// its bytes relative to the cell's first column and its glyphs from its
 /// own left edge; it is asked once for each cell that holds a column, in
-/// order. A cell of no column is passed over.
+/// order. A cell of no column is passed over, unless it is the row's only
+/// cell: an empty row is one empty visual line at the first-line indent.
 pub(crate) fn place(
     cuts: &[Cut],
     width: Option<f32>,
-    mut break_cell: impl FnMut(usize, Option<f32>) -> Vec<VisualLine>,
+    placement: Placement,
+    mut break_cell: impl FnMut(usize, Widths) -> Vec<VisualLine>,
 ) -> Vec<VisualLine> {
+    // An indent at or past the width is not applied.
+    let applied = |x: f32| match width {
+        Some(width) if x >= width => 0.0,
+        _ => x,
+    };
+    let room = |x: f32| width.map(|width| width - x);
+    let first = applied(placement.first);
+    // Where a later visual line starts: the continuation indent, which a
+    // lead learns as it is placed.
+    let mut hang = match placement.rest {
+        Rest::Pixels(x) => applied(x),
+        Rest::Lead => first,
+    };
+    let leads = placement.rest == Rest::Lead;
     let mut lines: Vec<VisualLine> = Vec::new();
     let mut current: Option<Composing> = None;
     for (index, cut) in cuts.iter().enumerate() {
-        if cut.columns.is_empty() {
+        if cut.columns.is_empty() && cuts.len() > 1 {
             continue;
         }
-        let pen = current.as_ref().map_or(0.0, |line| line.pen);
+        // Where a line that starts now starts: the first line at the
+        // first-line indent, a later one at the continuation indent.
+        let fresh = if lines.is_empty() { first } else { hang };
+        let pen = current.as_ref().map_or(fresh, |line| line.pen);
         let holds = current.as_ref().is_some_and(Composing::holds);
-        let (start, room) = match cut.stop {
-            None => (pen, width.map(|width| width - pen)),
-            Some(stop) => {
-                let start = stop.max(pen);
-                let over = width.is_some_and(|width| stop >= width || start >= width);
-                if over {
+        // Where the cell starts, and where its later lines go.
+        let (start, later) = match cut.kind {
+            // Cell 0's later lines are at the continuation indent.
+            Kind::First => (pen, hang),
+            Kind::Lead => {
+                let over = width.is_some_and(|width| pen >= width);
+                let start = if over {
                     if holds && let Some(line) = current.take() {
                         lines.push(line.finish());
                     }
-                    (0.0, width)
+                    first
+                } else {
+                    pen
+                };
+                if leads {
+                    hang = start;
+                }
+                (start, start)
+            }
+            Kind::Stop { x: stop, hangs } => {
+                let start = stop.max(pen);
+                let over = width.is_some_and(|width| stop >= width || start >= width);
+                let start = if over {
+                    if holds && let Some(line) = current.take() {
+                        lines.push(line.finish());
+                    }
+                    if lines.is_empty() { first } else { hang }
                 } else {
                     // The gap goes to the last glyph before the stop.
                     if let Some(line) = current.as_mut()
@@ -177,19 +311,28 @@ pub(crate) fn place(
                         }
                         line.pen = start;
                     }
-                    (start, width.map(|width| width - start))
+                    start
+                };
+                if leads && hangs {
+                    hang = start;
                 }
+                (start, start)
             }
         };
+        let widths = Widths {
+            first: room(start),
+            rest: room(later),
+        };
         let base = cut.columns.start;
-        for (piece_index, piece) in break_cell(index, room).iter().enumerate() {
+        for (piece_index, piece) in break_cell(index, widths).iter().enumerate() {
             match current.as_mut() {
                 Some(line) if piece_index == 0 => line.add(piece, base, start),
                 _ => {
                     if let Some(line) = current.take() {
                         lines.push(line.finish());
                     }
-                    current = Some(Composing::of(piece, base, start));
+                    let x = if piece_index == 0 { start } else { later };
+                    current = Some(Composing::of(piece, base, x));
                 }
             }
         }
@@ -204,9 +347,9 @@ mod tests {
 
     use editor_text::Text;
 
-    use super::{Cut, place, resolved};
+    use super::{Cut, Kind, Placement, Rest, place, resolved};
     use crate::scene::AlignStop;
-    use crate::shaper::{Glyph, ResolvedFontId, VisualLine};
+    use crate::shaper::{Glyph, ResolvedFontId, VisualLine, Widths};
 
     #[test]
     fn a_views_stops_are_moved_to_a_boundary_ordered_and_the_later_of_two_wins() {
@@ -245,9 +388,9 @@ mod tests {
         }
     }
 
-    /// The visual lines of `cell` broken greedily at `room`, every
+    /// The visual lines of `cell` broken greedily at `widths`, every
     /// character 10 pixels across, at least one to a line.
-    fn broken(cell: &Cell, room: Option<f32>) -> Vec<VisualLine> {
+    fn broken(cell: &Cell, widths: Widths) -> Vec<VisualLine> {
         let line = |chars: &[(usize, char)], end: usize| {
             let start = chars.first().map_or(end, |(offset, _)| *offset);
             let glyphs: Vec<Glyph> = chars
@@ -272,11 +415,17 @@ mod tests {
             }
         };
         let chars: Vec<(usize, char)> = cell.text.char_indices().collect();
-        let per_line = room.map_or(usize::MAX, |room| ((room / 10.0).floor() as usize).max(1));
+        let per_line = |room: Option<f32>| {
+            room.map_or(usize::MAX, |room| ((room / 10.0).floor() as usize).max(1))
+        };
         if chars.is_empty() {
             return vec![line(&[], 0)];
         }
-        let pieces: Vec<&[(usize, char)]> = chars.chunks(per_line).collect();
+        let (head, tail) = chars.split_at(per_line(widths.first).min(chars.len()));
+        let pieces: Vec<&[(usize, char)]> = [head]
+            .into_iter()
+            .chain(tail.chunks(per_line(widths.rest)))
+            .collect();
         pieces
             .iter()
             .enumerate()
@@ -290,29 +439,49 @@ mod tests {
     }
 
     /// The visual lines of the row of `cells`, each but the first with the
-    /// stop beside it, at `width`; and the rooms each cell was broken at.
+    /// stop beside it, at `width`; and the first-line width each cell was
+    /// broken at.
     fn placed(
         cells: &[(Cell, Option<f32>)],
         width: Option<f32>,
     ) -> (Vec<VisualLine>, Vec<Option<f32>>) {
+        let kinds: Vec<(&Cell, Kind)> = cells
+            .iter()
+            .map(|(cell, stop)| {
+                let kind = stop.map_or(Kind::First, |x| Kind::Stop { x, hangs: false });
+                (cell, kind)
+            })
+            .collect();
+        let (lines, widths) = placed_under(&kinds, width, Placement::NONE);
+        (lines, widths.iter().map(|widths| widths.first).collect())
+    }
+
+    /// The visual lines of the row of `cells`, each of the kind beside it,
+    /// at `width` under `placement`; and the widths each cell was broken
+    /// at.
+    fn placed_under(
+        cells: &[(&Cell, Kind)],
+        width: Option<f32>,
+        placement: Placement,
+    ) -> (Vec<VisualLine>, Vec<Widths>) {
         let mut at = 0;
         let cuts: Vec<Cut> = cells
             .iter()
-            .map(|(cell, stop)| {
+            .map(|(cell, kind)| {
                 let columns = at..at + cell.text.len();
                 at = columns.end;
                 Cut {
                     columns,
-                    stop: *stop,
+                    kind: *kind,
                 }
             })
             .collect();
-        let mut rooms = Vec::new();
-        let lines = place(&cuts, width, |index, room| {
-            rooms.push(room);
-            broken(&cells[index].0, room)
+        let mut asked = Vec::new();
+        let lines = place(&cuts, width, placement, |index, widths| {
+            asked.push(widths);
+            broken(cells[index].0, widths)
         });
-        (lines, rooms)
+        (lines, asked)
     }
 
     /// The x of the glyph of each line that draws column `column`, with
@@ -495,5 +664,180 @@ mod tests {
         // One piece alone keeps its own.
         let (lines, _) = placed(&[(cell("ab"), None)], None);
         assert_eq!((lines[0].height, lines[0].baseline), (16.0, 12.0));
+    }
+
+    /// A wrap indent of `first` and a continuation at `rest` pixels.
+    fn indent(first: f32, rest: f32) -> Placement {
+        Placement {
+            first,
+            rest: Rest::Pixels(rest),
+        }
+    }
+
+    /// A hanging indent with its first line at `first`.
+    fn hanging(first: f32) -> Placement {
+        Placement {
+            first,
+            rest: Rest::Lead,
+        }
+    }
+
+    /// The x of the first glyph of each line.
+    fn starts(lines: &[VisualLine]) -> Vec<f32> {
+        lines
+            .iter()
+            .map(|line| line.glyphs.first().map_or(line.width, |glyph| glyph.x))
+            .collect()
+    }
+
+    /// A stop at `x` that no lead falls at.
+    fn stop_at(x: f32) -> Kind {
+        Kind::Stop { x, hangs: false }
+    }
+
+    #[test]
+    fn cell_0_starts_at_the_first_line_indent_and_its_later_lines_at_the_continuation() {
+        let row = cell("abcdefghij");
+        let (lines, asked) = placed_under(&[(&row, Kind::First)], Some(60.0), indent(20.0, 10.0));
+        // 40 pixels right of 20 hold four glyphs, and 50 right of 10 five.
+        assert_eq!(bytes(&lines), vec![0..4, 4..9, 9..10]);
+        assert_eq!(starts(&lines), vec![20.0, 10.0, 10.0]);
+        assert_eq!(
+            asked,
+            vec![Widths {
+                first: Some(40.0),
+                rest: Some(50.0)
+            }]
+        );
+        // A line's width counts its indent, as its glyphs' xs do.
+        assert_eq!(lines[0].width, 60.0);
+        assert_eq!(lines[2].width, 20.0);
+    }
+
+    #[test]
+    fn a_lead_cell_starts_where_the_leading_span_ends_and_its_later_lines_hang_there() {
+        let (marker, text) = (cell("- "), cell("abcdefgh"));
+        let (lines, asked) = placed_under(
+            &[(&marker, Kind::First), (&text, Kind::Lead)],
+            Some(60.0),
+            hanging(0.0),
+        );
+        assert_eq!(bytes(&lines), vec![0..6, 6..10]);
+        assert_eq!(glyph_at(&lines, 2), (0, 20.0));
+        assert_eq!(glyph_at(&lines, 6), (1, 20.0));
+        // The text is broken at the room right of the span, and its later
+        // lines at the same room.
+        assert_eq!(asked[1], Widths::all(Some(40.0)));
+    }
+
+    #[test]
+    fn a_leading_span_that_reaches_the_width_puts_the_text_at_the_first_line_indent_below() {
+        let (span, text) = (cell("abcde"), cell("uvwxyz"));
+        let (lines, asked) = placed_under(
+            &[(&span, Kind::First), (&text, Kind::Lead)],
+            Some(60.0),
+            hanging(10.0),
+        );
+        // `abcde` ends at 60, the width.
+        assert_eq!(bytes(&lines), vec![0..5, 5..10, 10..11]);
+        assert_eq!(starts(&lines), vec![10.0, 10.0, 10.0]);
+        assert_eq!(asked[1], Widths::all(Some(50.0)));
+    }
+
+    #[test]
+    fn a_lead_of_no_byte_hangs_at_the_first_line_indent() {
+        let row = cell("abcdefgh");
+        let (lines, asked) = placed_under(&[(&row, Kind::First)], Some(60.0), hanging(20.0));
+        assert_eq!(bytes(&lines), vec![0..4, 4..8]);
+        assert_eq!(starts(&lines), vec![20.0, 20.0]);
+        assert_eq!(asked, vec![Widths::all(Some(40.0))]);
+    }
+
+    #[test]
+    fn a_stop_cell_moved_by_the_overflow_rule_starts_at_the_continuation_indent() {
+        let (first, after) = (cell("ab"), cell("cd"));
+        let (lines, asked) = placed_under(
+            &[(&first, Kind::First), (&after, stop_at(60.0))],
+            Some(50.0),
+            indent(20.0, 10.0),
+        );
+        assert_eq!(bytes(&lines), vec![0..2, 2..4]);
+        assert_eq!(glyph_at(&lines, 0), (0, 20.0));
+        assert_eq!(glyph_at(&lines, 2), (1, 10.0));
+        assert_eq!(asked[1], Widths::all(Some(40.0)));
+    }
+
+    #[test]
+    fn a_cell_hanging_under_its_stop_keeps_the_stops_x_under_an_indent() {
+        let (first, after) = (cell("ab"), cell("cdefgh"));
+        let (lines, _) = placed_under(
+            &[(&first, Kind::First), (&after, stop_at(30.0))],
+            Some(60.0),
+            indent(10.0, 5.0),
+        );
+        assert_eq!(bytes(&lines), vec![0..5, 5..8]);
+        assert_eq!(glyph_at(&lines, 2), (0, 30.0));
+        assert_eq!(glyph_at(&lines, 5), (1, 30.0));
+    }
+
+    #[test]
+    fn a_lead_at_a_stops_column_hangs_where_the_stop_places_its_cell() {
+        let (marker, text, last) = (cell("- "), cell("abcdefgh"), cell("xy"));
+        let cells = [
+            (&marker, Kind::First),
+            (
+                &text,
+                Kind::Stop {
+                    x: 40.0,
+                    hangs: true,
+                },
+            ),
+            (&last, stop_at(90.0)),
+        ];
+        let (lines, _) = placed_under(&cells, Some(80.0), hanging(0.0));
+        assert_eq!(bytes(&lines), vec![0..6, 6..10, 10..12]);
+        assert_eq!(glyph_at(&lines, 2), (0, 40.0));
+        assert_eq!(glyph_at(&lines, 6), (1, 40.0));
+        // The cell the overflow rule moves down starts at the hang.
+        assert_eq!(glyph_at(&lines, 10), (2, 40.0));
+    }
+
+    #[test]
+    fn an_indent_at_or_past_the_width_is_not_applied() {
+        let row = cell("abcdef");
+        let (lines, asked) = placed_under(&[(&row, Kind::First)], Some(50.0), indent(50.0, 60.0));
+        assert_eq!(bytes(&lines), vec![0..5, 5..6]);
+        assert_eq!(starts(&lines), vec![0.0, 0.0]);
+        assert_eq!(asked, vec![Widths::all(Some(50.0))]);
+        // Each indent alone.
+        let (lines, asked) = placed_under(&[(&row, Kind::First)], Some(50.0), indent(20.0, 50.0));
+        assert_eq!(bytes(&lines), vec![0..3, 3..6]);
+        assert_eq!(starts(&lines), vec![20.0, 0.0]);
+        assert_eq!(
+            asked,
+            vec![Widths {
+                first: Some(30.0),
+                rest: Some(50.0)
+            }]
+        );
+    }
+
+    #[test]
+    fn with_no_width_the_first_line_indent_applies_and_nothing_breaks() {
+        let row = cell("abcdef");
+        let (lines, asked) = placed_under(&[(&row, Kind::First)], None, indent(20.0, 40.0));
+        assert_eq!(bytes(&lines), vec![0..6]);
+        assert_eq!(starts(&lines), vec![20.0]);
+        assert_eq!(asked, vec![Widths::all(None)]);
+    }
+
+    #[test]
+    fn an_empty_row_is_one_empty_line_at_its_first_line_indent() {
+        let row = cell("");
+        for width in [Some(100.0), None] {
+            let (lines, _) = placed_under(&[(&row, Kind::First)], width, indent(20.0, 40.0));
+            assert_eq!(bytes(&lines), vec![0..0], "at {width:?}");
+            assert_eq!((lines[0].width, lines[0].height), (20.0, 16.0));
+        }
     }
 }

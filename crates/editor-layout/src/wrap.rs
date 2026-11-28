@@ -7,7 +7,9 @@
 //! breaks the kept shaped line again without shaping it; spans that change
 //! no font change nothing. Align-to stops that cut the segment as it was
 //! cut, at other xs, break and place it again without shaping it; stops
-//! that cut it otherwise shape it again. An edit of the layer below moves the entries
+//! that cut it otherwise shape it again. A wrap indent is the same: its
+//! lead is a cut, so another lead shapes the segment again, and its
+//! pixels are placement, so other pixels break and place it again. An edit of the layer below moves the entries
 //! ([`Layer::sync`]): those of the rows it touched are dropped and those
 //! after it move by the rows it added or removed, untouched.
 //!
@@ -19,6 +21,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+use crate::indent::SegmentIndent;
 use crate::layer::{Bias, Layer, LayerEdit};
 use crate::line::{LineEntry, Source, lay_out};
 use crate::shaper::{FontId, ShapedLine, Shaper};
@@ -112,13 +115,19 @@ impl<L: ShapedLine> WrapLayer<L> {
 
     /// `row`'s `segment` laid out at the layer's width with the spans
     /// `fonts` (bytes relative to the segment's start) over the base font
-    /// `base` and the align-to stops `stops` (as
-    /// [`Source::stops`](crate::line::Source::stops)), and how it was got:
-    /// the kept entry if it was shaped with the same font runs and cut at
-    /// the same columns under `shaper`'s generation, and broken at this
-    /// width with its cells at the same xs; broken again if only the width
-    /// or the xs differ; shaped otherwise. `None` when the text has no
+    /// `base`, the align-to stops `stops` (as
+    /// [`Source::stops`](crate::line::Source::stops)) and the wrap indent
+    /// `indent`, and how it was got: the kept entry if it was shaped with
+    /// the same font runs and cut at the same columns (its stops' and its
+    /// lead's) under `shaper`'s generation, and broken at this width with
+    /// its cells at the same xs and its lines under the same indent;
+    /// broken again if only the width, the xs or the indent's pixels
+    /// differ; shaped otherwise. `None` when the text has no
     /// such segment.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "what a segment is laid out under, each as layout resolved it"
+    )]
     pub fn entry<S: Shaper<Shaped = L>>(
         &mut self,
         shaper: &S,
@@ -127,16 +136,17 @@ impl<L: ShapedLine> WrapLayer<L> {
         fonts: &[(Range<usize>, FontId)],
         base: FontId,
         stops: &[(usize, f32)],
+        indent: Option<SegmentIndent>,
     ) -> Option<(Arc<LineEntry<L>>, Outcome)> {
         let generation = shaper.generation();
         if let Some(kept) = self.entries.get(&(row, segment))
             && kept.generation() == generation
-            && kept.shaped_with(fonts, base, stops)
+            && kept.shaped_with(fonts, base, stops, indent)
         {
-            if kept.width() == self.width && kept.placed_at(stops) {
+            if kept.width() == self.width && kept.placed_at(stops, indent) {
                 return Some((Arc::clone(kept), Outcome::Reused));
             }
-            let entry = Arc::new(kept.rebreak_with(self.width, stops));
+            let entry = Arc::new(kept.rebreak_with(self.width, stops, indent));
             self.entries.insert((row, segment), Arc::clone(&entry));
             return Some((entry, Outcome::Broken));
         }
@@ -153,6 +163,7 @@ impl<L: ShapedLine> WrapLayer<L> {
                 fonts,
                 base,
                 stops,
+                indent,
             },
             self.width,
         ));
@@ -252,6 +263,7 @@ mod tests {
     use editor_text::Text;
 
     use super::{Outcome, WrapLayer, WrapPoint};
+    use crate::indent::{SegmentIndent, SegmentRest};
     use crate::layer::{Bias, Layer, LayerEdit};
     use crate::shaper::fake::{CellLine, CellShaper};
     use crate::shaper::{FontId, FontSpec, Shaper, Weight};
@@ -269,7 +281,10 @@ mod tests {
 
     /// The outcome of asking `layer` for `row`'s first segment.
     fn outcome(layer: &mut WrapLayer<CellLine>, shaper: &CellShaper, row: usize) -> Outcome {
-        layer.entry(shaper, row, 0, &[], FontId(0), &[]).unwrap().1
+        layer
+            .entry(shaper, row, 0, &[], FontId(0), &[], None)
+            .unwrap()
+            .1
     }
 
     #[test]
@@ -279,7 +294,11 @@ mod tests {
         assert_eq!(outcome(&mut layer, &shaper, 0), Outcome::Shaped);
         assert_eq!(outcome(&mut layer, &shaper, 0), Outcome::Reused);
         assert_eq!(outcome(&mut layer, &shaper, 1), Outcome::Shaped);
-        assert!(layer.entry(&shaper, 2, 0, &[], FontId(0), &[]).is_none());
+        assert!(
+            layer
+                .entry(&shaper, 2, 0, &[], FontId(0), &[], None)
+                .is_none()
+        );
     }
 
     #[test]
@@ -305,8 +324,12 @@ mod tests {
                 ..FontSpec::default()
             }),
         )];
-        let mut with_bold =
-            |shaper: &CellShaper| layer.entry(shaper, 0, 0, &bold, FontId(0), &[]).unwrap().1;
+        let mut with_bold = |shaper: &CellShaper| {
+            layer
+                .entry(shaper, 0, 0, &bold, FontId(0), &[], None)
+                .unwrap()
+                .1
+        };
         assert_eq!(with_bold(&shaper), Outcome::Shaped);
         assert_eq!(with_bold(&shaper), Outcome::Reused);
         shaper.change_fonts();
@@ -321,7 +344,7 @@ mod tests {
             ..FontSpec::default()
         });
         let mut layer = layer("abcdef", None);
-        let mut under = |base: FontId| layer.entry(&shaper, 0, 0, &[], base, &[]).unwrap().1;
+        let mut under = |base: FontId| layer.entry(&shaper, 0, 0, &[], base, &[], None).unwrap().1;
         assert_eq!(under(FontId(0)), Outcome::Shaped);
         assert_eq!(under(bold), Outcome::Shaped);
         assert_eq!(under(bold), Outcome::Reused);
@@ -332,7 +355,8 @@ mod tests {
     fn the_same_stops_reuse_another_x_breaks_and_another_offset_shapes() {
         let shaper = shaper();
         let mut layer = layer("abcdef", Some(100.0));
-        let mut at = |stops: &[(usize, f32)]| layer.entry(&shaper, 0, 0, &[], FontId(0), stops);
+        let mut at =
+            |stops: &[(usize, f32)]| layer.entry(&shaper, 0, 0, &[], FontId(0), stops, None);
         let (entry, outcome) = at(&[(2, 50.0)]).unwrap();
         assert_eq!(outcome, Outcome::Shaped);
         // `c` is at its stop.
@@ -352,6 +376,40 @@ mod tests {
     }
 
     #[test]
+    fn the_same_indent_reuses_other_pixels_break_and_another_lead_shapes() {
+        let shaper = shaper();
+        let mut layer = layer("- abcdef", Some(60.0));
+        let mut under =
+            |indent: SegmentIndent| layer.entry(&shaper, 0, 0, &[], FontId(0), &[], Some(indent));
+        let pixels = |first, rest| SegmentIndent {
+            first,
+            rest: SegmentRest::Pixels(rest),
+        };
+        let (entry, outcome) = under(pixels(20.0, 10.0)).unwrap();
+        assert_eq!(outcome, Outcome::Shaped);
+        // `-` is at the first-line indent, and `c`, on the next line, at
+        // the continuation.
+        assert_eq!((entry.x_of(0, 0), entry.x_of(1, 4)), (20.0, 10.0));
+        assert_eq!(under(pixels(20.0, 10.0)).unwrap().1, Outcome::Reused);
+        // Other pixels are placed again, not shaped.
+        let (entry, outcome) = under(pixels(30.0, 0.0)).unwrap();
+        assert_eq!(outcome, Outcome::Broken);
+        assert_eq!(entry.x_of(0, 0), 30.0);
+        assert_eq!(shaper.bytes_shaped(), 8);
+        // A lead cuts it: shaped again, and again for another lead.
+        let lead = |bytes| SegmentIndent {
+            first: 0.0,
+            rest: SegmentRest::Lead(bytes),
+        };
+        let (entry, outcome) = under(lead(2)).unwrap();
+        assert_eq!(outcome, Outcome::Shaped);
+        // `abcd` follows `- `, and `ef` hangs under `a`.
+        assert_eq!(entry.x_of(1, 6), 20.0);
+        assert_eq!(under(lead(2)).unwrap().1, Outcome::Reused);
+        assert_eq!(under(lead(3)).unwrap().1, Outcome::Shaped);
+    }
+
+    #[test]
     fn a_point_on_a_wrapped_line_is_its_visual_line_and_x() {
         let shaper = shaper();
         let mut layer = layer("abcdef", Some(40.0));
@@ -367,7 +425,7 @@ mod tests {
             x,
         };
         assert_eq!(layer.to_layer(tab(4), Bias::Before), None);
-        layer.entry(&shaper, 0, 0, &[], FontId(0), &[]);
+        layer.entry(&shaper, 0, 0, &[], FontId(0), &[], None);
         assert_eq!(layer.to_layer(tab(3), Bias::Before), Some(wrap(0, 30.0)));
         // A position at a wrap is the start of the later line.
         assert_eq!(layer.to_layer(tab(4), Bias::Before), Some(wrap(1, 0.0)));
@@ -384,7 +442,7 @@ mod tests {
         let mut tabs = TabLayer::new(text.snapshot(), 4);
         let mut layer = WrapLayer::new(tabs.snapshot().clone(), None);
         for row in 0..3 {
-            layer.entry(&shaper, row, 0, &[], FontId(0), &[]);
+            layer.entry(&shaper, row, 0, &[], FontId(0), &[], None);
         }
         let before = text.snapshot().revision();
         // A line feed in row 1: rows 1 and 2 of the new text are its.
@@ -416,7 +474,10 @@ mod tests {
         assert!(layer.kept(2, 0).is_none());
         // Old row 2, "ef", is row 3 now, and was not shaped again.
         assert_eq!(
-            layer.entry(&shaper, 3, 0, &[], FontId(0), &[]).unwrap().1,
+            layer
+                .entry(&shaper, 3, 0, &[], FontId(0), &[], None)
+                .unwrap()
+                .1,
             Outcome::Reused
         );
         assert_eq!(layer.len(), 2);
