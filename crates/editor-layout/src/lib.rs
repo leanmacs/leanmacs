@@ -113,10 +113,10 @@
 //!   they break, the hanging form's lead, an indent at or past the width
 //!   not applied, and indents with stops (`align`); the visual lines,
 //!   cursors, rows, spot and move queries at the drawn x, the queries
-//!   laying a row out under the last frame's indents
-//!   (`tests/indent.rs`); what a change of an indent shapes and breaks
-//!   (`tests/counters.rs`), and the round trip of a position through an
-//!   indented row (`tests/layers.rs`);
+//!   laying a row out under the last frame's indents, at the scale as it
+//!   is now (`tests/indent.rs`); what a change of an indent shapes and
+//!   breaks (`tests/counters.rs`), and the round trip of a position
+//!   through an indented row (`tests/layers.rs`);
 //! - translated spans: a text made of pieces of other texts draws each
 //!   source's own spans at every piece of it, cut at the pieces' edges,
 //!   each source resolved once, and keeps the contract of

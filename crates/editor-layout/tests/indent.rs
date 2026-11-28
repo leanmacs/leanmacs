@@ -401,3 +401,31 @@ fn a_row_with_stops_starts_its_first_cell_at_the_indent_and_an_overflowed_cell_a
     );
     assert_eq!(starts(&laid), vec![((0, 3), 10.0), ((3, 5), 20.0)]);
 }
+
+#[test]
+fn a_query_after_a_change_of_scale_lays_a_row_out_under_the_indents_at_the_new_scale() {
+    let text = text_ref(ROWS);
+    let mut layout = layout();
+    frame(&mut layout, &scene(view(&text, 100, twenty_and_forty())));
+    // At scale 2 the view is 200 pixels, a glyph 20 and the indents 40
+    // and 80: the same breaks as at scale 1. At the indents' pixels of
+    // scale 1, 20 and 40, the first line would hold 9 glyphs and the rest
+    // 8.
+    layout.set_scale(2.0);
+    let asked_rows = asked(&mut layout, &text, 200.0);
+    assert_eq!(asked_rows[..3], [(0, 8), (8, 14), (14, 20)]);
+    // `i` starts the second line, at 80, and `j` is at 100.
+    let spot = layout
+        .spot(&text, 200.0, 160.0, Padding::default(), 0, 8)
+        .unwrap()
+        .expect("a spot");
+    assert_eq!(spot.x, 80.0);
+    let up = layout.lines_from(&text, 200.0, 0, 9, -1, None).unwrap();
+    assert_eq!(up.goal, 100.0);
+    // And the next frame is what the queries said.
+    let laid = frame(&mut layout, &scene(view(&text, 200, twenty_and_forty())));
+    let rows: Vec<(usize, usize)> = starts(&laid).iter().map(|(bytes, _)| *bytes).collect();
+    assert_eq!(rows, asked_rows);
+    assert_eq!(drawn(&laid, 0, 8), (1, 80.0));
+    assert_eq!(drawn(&laid, 0, 9), (1, 100.0));
+}
