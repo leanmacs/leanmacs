@@ -22,7 +22,9 @@ outside the core (`packages/languages/`), which the entry module
   with no query: the grammars and their queries come from the package
   `languages-grammars` (`Languages/Grammars.lean`), since the library
   compiles in no grammar, so a shipped language's file is highlighted once
-  that package's grammars have registered.
+  that package's grammars have registered. That package also defines the
+  languages beyond the core's table: `yaml`, `java`, `swift`, `ruby`,
+  `python`, `javascript`, `typescript`, `tsx`, `c`, `cpp` and `clojure`.
 
 The data stays in the core's `lean/Editor/Language.lean`, which names no
 package: the core's file commands, its loop and its tests read it. This

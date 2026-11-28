@@ -171,8 +171,7 @@ def drawnCheck (context : Context) : Check :=
       let width := "runs 0..5:00cc00ff/ffffffff 5..7:000000ff/ffffffff 7..11:0000ccff/ffffffff\n"
       saw
           (refused.isEmpty &&
-            grammars.map (·.name) ==
-              #["rust", "json", "markdown", "markdown_inline", "toml", "lean", "yaml"] &&
+            grammars.map (·.name) == Languages.Grammars.package.grammars.map (·.name) &&
             (frame.splitOn comment).length == 2 &&
             (frame.splitOn named).length == 2 &&
             (frame.splitOn width).length == 2)

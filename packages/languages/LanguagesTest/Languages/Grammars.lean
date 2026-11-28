@@ -1,4 +1,5 @@
 import Editor.Config.Packages
+import Editor.Highlight
 import Editor.Language.Grammar
 import Editor.Package
 import Languages.EditorPackage
@@ -26,13 +27,33 @@ def grammarPackageChecks : List Check :=
   let staged : System.FilePath := "/staged"
   let registered := Languages.Grammars.package.registered (some staged)
   [{  name :=
-        "registered against /staged, the languages-grammars package registers exactly the language yaml, of *.yaml and *.yml, naming the grammar yaml, and exactly the grammars rust, json, markdown, markdown_inline, toml, lean and yaml, in that order, each per platform at /staged/<platform>/libtree-sitter-<name>.<ext> for darwin-aarch64, darwin-x86_64, linux-aarch64 and linux-x86_64, with its queries at /staged/queries/<name>, markdown_inline reparsed whole, yaml with no policy and the rest incrementally"
+        "registered against /staged, the languages-grammars package registers exactly the languages yaml (*.yaml, *.yml), java (*.java), swift (*.swift), ruby (*.rb, *.rake, *.gemspec, Gemfile, Rakefile), python (*.py, *.pyi), javascript (*.js, *.mjs, *.cjs, *.jsx), typescript (*.ts, *.mts, *.cts), tsx (*.tsx), c (*.c, *.h), cpp (*.cc, *.cpp, *.cxx, *.hpp, *.hxx, *.hh) and clojure (*.clj, *.cljs, *.cljc, *.edn), in that order, each naming the grammar of its name but clojure, which names clojure_orchard, and exactly the grammars rust, json, markdown, markdown_inline, toml, lean, yaml, java, swift, ruby, python, javascript, typescript, tsx, c, cpp and clojure_orchard, in that order, each per platform at /staged/<platform>/libtree-sitter-<name>.<ext> for darwin-aarch64, darwin-x86_64, linux-aarch64 and linux-x86_64, with symbol tree_sitter_<name> and its queries at /staged/queries/<name>, markdown_inline reparsed whole, yaml and the popular ten with no policy and the rest incrementally"
       run :=
-        let names := #["rust", "json", "markdown", "markdown_inline", "toml", "lean", "yaml"]
+        let names :=
+          #["rust", "json", "markdown", "markdown_inline", "toml", "lean", "yaml", "java", "swift",
+            "ruby", "python", "javascript", "typescript", "tsx", "c", "cpp", "clojure_orchard"]
+        let languages : Array (String × List Language.Pattern × String) :=
+          #[("yaml", [.extension "yaml", .extension "yml"], "yaml"),
+            ("java", [.extension "java"], "java"), ("swift", [.extension "swift"], "swift"),
+            ("ruby",
+              [.extension "rb", .extension "rake", .extension "gemspec", .name "Gemfile",
+                .name "Rakefile"],
+              "ruby"),
+            ("python", [.extension "py", .extension "pyi"], "python"),
+            ("javascript", [.extension "js", .extension "mjs", .extension "cjs", .extension "jsx"],
+              "javascript"),
+            ("typescript", [.extension "ts", .extension "mts", .extension "cts"], "typescript"),
+            ("tsx", [.extension "tsx"], "tsx"), ("c", [.extension "c", .extension "h"], "c"),
+            ("cpp",
+              [.extension "cc", .extension "cpp", .extension "cxx", .extension "hpp",
+                .extension "hxx", .extension "hh"],
+              "cpp"),
+            ("clojure", [.extension "clj", .extension "cljs", .extension "cljc", .extension "edn"],
+              "clojure_orchard")]
         pure
           (registered.languages.map
                 (fun language => (language.name, language.patterns, language.syntaxTree.grammar)) ==
-              #[("yaml", [.extension "yaml", .extension "yml"], "yaml")] &&
+              languages &&
             registered.grammars.map (·.name) == names &&
             registered.grammars.map (·.library) ==
               names.map
@@ -48,7 +69,8 @@ def grammarPackageChecks : List Check :=
               names.map (fun (name : String) => staged / "queries" / name) &&
             registered.grammars.map (·.policy) ==
               #[some .incremental, some .incremental, some .incremental, some .whole,
-                some .incremental, some .incremental, none] &&
+                  some .incremental, some .incremental, none] ++
+                Array.replicate 10 none &&
             registered.modes.isEmpty &&
             registered.commands.isEmpty) },
     { name :=
@@ -80,6 +102,36 @@ def grammarPackageChecks : List Check :=
           (refused.isEmpty &&
             Language.Grammar.treeOf declared {} 1 Language.rust.syntaxTree == none &&
             Language.Grammar.treeOf declared answers 1 Language.rust.syntaxTree ==
-              some { Language.rust.syntaxTree with highlights := queries.highlights }) }]
+              some { Language.rust.syntaxTree with highlights := queries.highlights }) },
+    { name :=
+        "with the entry module's packages registered against /staged, a path's language is java for Main.java, swift for App.swift, ruby for app.rb and Gemfile, python for hello.py, javascript for a.mjs, typescript for a.ts, tsx for a.tsx, c for a.h, cpp for a.hpp and clojure for core.clj, whose tree names clojure_orchard; and by the core's capture rule over each entry's mapping, variable and variable.parameter draw nothing in java, swift, ruby, python, javascript, typescript, tsx, c and cpp, function.method draws syntax.function, swift's boolean draws syntax.constant, and c's and cpp's delimiter draw syntax.punctuation"
+      run :=
+        let (state, refused) : Config.State Unit Unit × Array String :=
+          Config.State.ofPackages (Package.shipping "languages" Languages.EditorPackage.packages)
+            [("languages", staged)]
+        let table := state.registry.languageTable
+        let chosen (path : System.FilePath) : Option String :=
+          (Language.forPath table path).map (·.name)
+        let captures (name : String) : List (String × Option FaceName) :=
+          ((table.find? (·.name == name)).map (·.syntaxTree.captures)).getD []
+        let faceIn (name capture : String) : Option FaceName :=
+          Highlight.faceOf (captures name) capture
+        let mapping :=
+          ["java", "swift", "ruby", "python", "javascript", "typescript", "tsx", "c", "cpp"]
+        pure
+          (refused.isEmpty &&
+            [("Main.java", "java"), ("App.swift", "swift"), ("app.rb", "ruby"), ("Gemfile", "ruby"),
+                  ("hello.py", "python"), ("a.mjs", "javascript"), ("a.ts", "typescript"),
+                  ("a.tsx", "tsx"), ("a.h", "c"), ("a.hpp", "cpp"), ("core.clj", "clojure")].all
+              (fun (path, name) => chosen path == some name) &&
+            ((Language.forPath table "core.clj").map (·.syntaxTree.grammar)) ==
+              some "clojure_orchard" &&
+            mapping.all
+              (fun name =>
+                faceIn name "variable" == none && faceIn name "variable.parameter" == none &&
+                  faceIn name "function.method" == some ⟨"syntax.function"⟩) &&
+            faceIn "swift" "boolean" == some ⟨"syntax.constant"⟩ &&
+            faceIn "c" "delimiter" == some ⟨"syntax.punctuation"⟩ &&
+            faceIn "cpp" "delimiter" == some ⟨"syntax.punctuation"⟩) }]
 
 end LanguagesTest
