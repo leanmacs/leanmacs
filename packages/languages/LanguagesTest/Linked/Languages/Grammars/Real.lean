@@ -132,9 +132,10 @@ def stagedProblem (staged : System.FilePath) (grammar : Language.Grammar) : IO (
       return some s!"{grammar.name}: {copied} differs from {file.path}"
   return none
 
-/-- The check of AC 1 and 2: the default set's build compiled every grammar
-of the package and staged it, with the package's queries, a highlights
-query among them, in the set's build directory. -/
+/-- The check of AC 1: the default set's build compiled every grammar of
+the package and staged it, with the package's queries, a highlights query
+among them, in the set's build directory (that each registers is
+`registeredCheck`'s). -/
 def stagedCheck : Check :=
   { name :=
       "the default set's build staged languages' grammars directory in the set's build directory, as the record beside its editor names it, holding for every grammar of languages-grammars a library at the path its declaration names for this platform, which the package's own grammars directory does not hold, so the set's build compiled it, and each query file of the package's grammars/queries/<name>/, with a highlights query, with the bytes of the package's own copy"
