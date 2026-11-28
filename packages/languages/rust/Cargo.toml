@@ -6,19 +6,152 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-# Each grammar is a build-dependency: that gets its crate locked in the root
-# lock and fetched with the rest (`cargo fetch --locked`), and lets
-# `editor-grammar-build` find its directory with `cargo metadata`. Its own
-# build compiles its C once more, into an archive nothing links, at the
-# build-override's opt-level 0: a cost accepted for one grammar
-# (docs/design/packages.md, "A package's grammars"). Each grammar added here
-# gets its line in this crate's `deny.toml` and in the licences table of
-# the package's README.md.
+# Each grammar from crates.io is a build-dependency: that gets its crate
+# locked in the root lock and fetched with the rest (`cargo fetch
+# --locked`), and lets `editor-grammar-build` find its directory with
+# `cargo metadata`. Its own build compiles its C once more, into an archive
+# nothing links. In the dev profile that archive is the very unit the test
+# fixture `editor-syntax-fixture-grammars` builds for its own build script,
+# since both take the grammar at the same pin and features; in release it
+# is compiled at the build-override's opt-level 0 and wasted. The crates.io
+# grammars are about 11 MB of C together; the vendored Lean grammar, 49 MB,
+# is no dependency at all but a directory the build script compiles
+# (`build.rs`), so no build compiles its archive (docs/design/packages.md,
+# "A package's grammars", "From source"). Each grammar added here gets its
+# line in this crate's `deny.toml` and in the grammars table of the
+# package's README.md.
+#
+# The six grammars before `yaml` were compiled into the syntax adapter
+# (`crates/editor-syntax-treesitter`) until the shipped-grammars roadmap's
+# phase 4, and their pins, the reparse policies their declarations give
+# (`Languages/Grammars.lean`) and the alternatives set aside moved here with
+# them.
 [build-dependencies]
 # Compiles the package's grammars from the build script: the one crate of
 # the editor's this crate may reach, and that only at build time
 # (`deny.toml`).
 editor-grammar-build = { path = "../../../crates/editor-grammar-build" }
+# The grammar `rust`, for the editor's own language. Each grammar crate
+# depends only on `tree-sitter-language`, so they and the syntax adapter's
+# tree-sitter are pinned independently. MIT, used unmodified; the newest
+# release on 2026-11-16. Its notice is at
+# `grammars/licenses/tree-sitter-rust`.
+tree-sitter-rust = { version = "=0.24.2" }
+# The grammar `json`, the grammar the Lean model reproduces in pure Lean
+# (`lean/Editor/SyntaxTree/Model.lean`), so the Lean contract compares the
+# model and the library answer for answer. MIT, used unmodified; the newest
+# release on 2026-11-16. Its crate ships no `LICENSE`: the notice at
+# `grammars/licenses/tree-sitter-json` is upstream's, at the tag `v0.24.8`.
+tree-sitter-json = { version = "=0.24.8" }
+# The grammars `markdown` and `markdown_inline`, for documents and for the
+# code in their fences, which the block grammar's own injections query
+# hands to the grammar its info string names
+# (`docs/design/rust-library.md`, "Injections, indentation and text
+# objects, as built"). It is the tree-sitter-grammars project's grammar, the
+# one nvim, Helix and Zed use. MIT, used unmodified; 0.5.4, released on
+# 2026-10-24, was the newest release when looked at on crates.io on
+# 2026-11-16. The crate holds both grammars, block and inline, each with
+# its external scanner, each in a subdirectory of its own, and the build
+# script compiles each (`Grammar::package_in`). Its crate ships no
+# `LICENSE`: the notice at `grammars/licenses/tree-sitter-md` is upstream's,
+# at the tag `v0.5.4`.
+#
+# Its one feature, `parser`, is off (the crate has no default features): it
+# only turns on an optional dependency on tree-sitter for a
+# `MarkdownParser` wrapper nothing uses. So its dependencies are
+# `tree-sitter-language` and `cc` at build time, both already in the graph.
+# The test fixture takes it with the same features, so the two share one
+# unit of it in the dev profile.
+#
+# The inline grammar is `markdown_inline`, the name the block grammar's
+# injections query gives each `(inline)` node, so inline Markdown is an
+# injected layer. Its reparse policy is `whole`: its incremental reparses
+# of texts without errors differ from a fresh parse (598 of 4,000 reparses
+# of random edits on 2026-11-16, and 136 of 6,400 in a second sweep that
+# day), so it fails the syntax contract's `GRAMMAR_QUALITY`, and each round
+# parses it from scratch. The block grammar's 6,000 reparses all equalled
+# the fresh parse, and it is `incremental`.
+tree-sitter-md = { version = "=0.5.4", default-features = false }
+# The grammar `toml`, for manifests and settings: `Cargo.toml`,
+# `mise.toml`, `lakefile.toml` and `Cargo.lock`. It is the
+# tree-sitter-grammars project's grammar, the continuation of ikatyang's
+# original and the same project as `tree-sitter-md`; the most used TOML
+# grammar crate. MIT, used unmodified; 0.7.0, released on 2024-12-03, was
+# the newest release when looked at on crates.io on 2026-11-17, and the
+# repository's last commit is its tag (TOML 1.0 is a stable spec). The
+# build script compiles the grammar's `parser.c` and its external scanner
+# `scanner.c`. It has no features; its one normal dependency is
+# `tree-sitter-language`, and `cc` at build time, both already in the graph
+# (its `tree-sitter ^0.24` is a dev-dependency only). It ships a highlights
+# query and no other, so TOML has no injections, indents or text objects.
+# Its crate ships no `LICENSE`: the notice at
+# `grammars/licenses/tree-sitter-toml-ng` is upstream's, at the tag
+# `v0.7.0`.
+#
+# Its reparse policy is `incremental`: on 2026-11-17, 4,221 incremental
+# reparses of texts without errors, of random edits to the fixtures under
+# `tests/syntax/toml/`, all equalled a fresh parse, and the syntax
+# contract passed with the policy `incremental`.
+#
+# Looked at on 2026-11-17 and set aside:
+#
+# - `tree-sitter-toml` 0.20.0 (2022): a normal dependency on
+#   `tree-sitter ^0.20`, and the old `language()` function, so it cannot
+#   hand a `LanguageFn` to the pinned tree-sitter.
+# - `tree-sitter-toml-updated` 0.20.0: a personal fork with a normal
+#   dependency on `tree-sitter >=0.21` and the same old API.
+# - `treease-ts-toml` 0.7.2: a third party's republish of the same
+#   repository, with no grammar change over 0.7.0 (upstream has no commit
+#   after its tag), from a publisher that is not the project.
+# - `konomanoasa-tree-sitter-toml` 0.11.2: a personal fork with few users,
+#   which pins `cc =1.11.0` exactly and so would move the locked `cc`.
+tree-sitter-toml-ng = { version = "=0.7.0" }
+# The grammar `lean`, for the editor's own configuration and most of its
+# code, is no dependency: the build script compiles it from the directory
+# `vendor/tree-sitter-lean/` (`Grammar::directory`), so no build compiles
+# an archive of its 49 MB `parser.c` that nothing links. It is upstream's
+# grammar, `github.com/Julian/tree-sitter-lean`, the original Lean 4
+# grammar, maintained (commits through November 2026). No crates.io crate
+# fits, so upstream's own crate (`tree-sitter-lean` 0.2.0) is vendored at
+# commit `0d28e5d6e8c4755f5df7ef9bde3b6ec6f59fae94` (2026-11-01);
+# `vendor/README.md` holds the version and says how to update it. MIT, used
+# unmodified; its `LICENSE` is in the copy and at
+# `grammars/licenses/tree-sitter-lean`. Its generated `parser.c` is ABI 15,
+# and it has an external scanner `scanner.c`.
+#
+# It ships its highlights query in the same commit as the grammar, so the
+# query cannot drift from the node types; that is the one query used,
+# copied to `grammars/queries/lean/`. Its injections query (doc comments as
+# Markdown) is not used: under it each doc comment is a Markdown layer, and
+# its inline layers, parsed whole every round, and doc comments already
+# draw as comments (`docs/design/rust-library.md`, "Injections, indentation
+# and text objects, as built"). Its indents, folds and locals queries are
+# not used.
+#
+# Its reparse policy is `incremental`: on 2026-11-17, 6,894 incremental
+# reparses of texts without errors, of random edits to the fixtures under
+# `tests/syntax/lean/` and to the 20 files of `lean/Editor/` that parse
+# without errors, all equalled a fresh parse, and the syntax contract
+# passed with the policy `incremental`.
+#
+# Looked at on 2026-11-17 and set aside:
+#
+# - `tree-sitter-lean4` 0.3.0, the only Lean grammar crate on crates.io: a
+#   normal dependency on `tree-sitter ^0.25`, which cannot coexist with the
+#   pinned library (both `links = "tree-sitter"`), an exported
+#   `tree_sitter::Language` of 0.25 rather than a `LanguageFn`, a build that
+#   runs the tree-sitter CLI when `parser.c` is missing, and no queries.
+# - Its source, the fork `wvhulle/tree-sitter-lean`, vendored instead: it
+#   parses this repository's Lean with fewer errors, but has no licence file
+#   to vendor (MIT is only declared), no commits since May 2026, and a Rust
+#   binding for tree-sitter 0.25, so we would keep an `unsafe` one of our
+#   own.
+# - A git dependency on upstream: it would make a fetch from GitHub part of
+#   a `--locked` build.
+# - A path dependency on the vendored copy, as the syntax adapter had while
+#   it compiled the grammar in: its own build would compile the 49 MB parser
+#   into an archive nothing links, the largest compile in the tree.
+#
 # The grammar `yaml`: tree-sitter-grammars' YAML grammar, released
 # 2025-10-07, the newest on crates.io. Its parser is ABI 14, which the
 # pinned tree-sitter (0.27.2) loads; its one normal dependency is

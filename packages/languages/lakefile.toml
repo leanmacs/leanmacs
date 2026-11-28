@@ -9,8 +9,9 @@
 #
 # - `Languages` is the package's library: `Languages/Compiled.lean`, the
 #   `Package` value `languages`; `Languages/Grammars.lean`, the `Package`
-#   value `languages-grammars`, the languages whose grammar the package
-#   ships from source; and its entry module `Languages/EditorPackage.lean`,
+#   value `languages-grammars`, every grammar the package ships from
+#   source, the shipped languages' among them, since the library compiles
+#   in none; and its entry module `Languages/EditorPackage.lean`,
 #   which the package-set build reads. Its `globs` hold every module under
 #   `Languages`, so the library's build reaches each one. The data
 #   `languages` registers, the `code` mode and the shipped languages, is the

@@ -42,6 +42,10 @@ multiple-versions = "allow"
 allow = [
   { crate = "languages-grammar-sources", reason = "the crate itself, the root of the graph" },
   { crate = "editor-grammar-build", reason = "compiles the package's grammars from the build script: the one crate of the editor's this crate reaches, as a build-dependency" },
+  { crate = "tree-sitter-rust", reason = "the grammar `rust`, pinned exactly (=0.24.2), whose C the build script compiles" },
+  { crate = "tree-sitter-json", reason = "the grammar `json`, pinned exactly (=0.24.8), whose C the build script compiles" },
+  { crate = "tree-sitter-md", reason = "the grammars `markdown` and `markdown_inline`, pinned exactly (=0.5.4), whose C the build script compiles" },
+  { crate = "tree-sitter-toml-ng", reason = "the grammar `toml`, pinned exactly (=0.7.0), whose C the build script compiles" },
   { crate = "tree-sitter-yaml", reason = "the grammar `yaml`, pinned exactly (=0.7.2), whose C the build script compiles" },
   { crate = "tree-sitter-language", reason = "the grammar crates' one normal dependency" },
   { crate = "cc", reason = "the C compiler `editor-grammar-build` and the grammar crates' own builds find (=1.11.1)" },

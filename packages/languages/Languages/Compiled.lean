@@ -18,7 +18,11 @@ outside the core (`packages/languages/`), which the entry module
 - **The languages** that ship (`Language.shipped`): `rust`, `json`,
   `markdown`, `toml` and `lean`, in order. Config's `defineLanguage` of a
   shipped name replaces that one whole, and config's entries are matched
-  first (`Config.Registry.languageTable`).
+  first (`Config.Registry.languageTable`). Each names its grammar alone,
+  with no query: the grammars and their queries come from the package
+  `languages-grammars` (`Languages/Grammars.lean`), since the library
+  compiles in no grammar, so a shipped language's file is highlighted once
+  that package's grammars have registered.
 
 The data stays in the core's `lean/Editor/Language.lean`, which names no
 package: the core's file commands, its loop and its tests read it. This
