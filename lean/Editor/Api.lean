@@ -81,6 +81,21 @@ operation, such as `exBinding`, `runCommand` or `giveUp`, not the request.
   view draws, with their rows, and `BufferId.reveal id offset` unfolds
   every folded range whose rows hold the offset's row: the one call a jump,
   an accepted search and a landing through the jump list make.
+- `BufferId.setRichText id rich start` writes a generated buffer from one
+  rich-text description (`RichText`, `Editor/RichText.lean`), inside
+  `writing`, so its owner writes a read-only buffer: the text from `start`
+  on, as one edit and none when nothing would change, then its spans,
+  stops, links, foldable ranges and wrap indents by the prefix rule, each
+  part that lies before `start` kept as the buffer has it. With `start` 0,
+  the default, it sets the whole buffer. A producer that sets one part
+  alone keeps the call for that part (`setSpans` and the rest).
+- `BufferId.appendRichText id tail` extends a generated buffer's
+  description at its end: `tail`'s text inserted at the text's end, and its
+  parts moved past it and listed after the buffer's own, so nothing before
+  the end is edited. Both keep each fold's state by its key, drop a
+  rendered document (`Editor/State.lean`, "Buffers") and refuse
+  `noSuchBuffer` with the buffer unchanged. Pinned by
+  `ModelTest.richTextCallChecks` and `ModelTest.richTextAppendChecks`.
 - `BufferId.text` is the buffer's text. Reading a buffer is the text
   port's reads on it (`TextId.read`, `rowContent`, `slice`, `byteLength`
   and the rest of `Editor/Text.lean`): there is no read request of the
@@ -1553,6 +1568,48 @@ def text (id : BufferId) : EditorM (Except BufferRefusal TextId) := do
     return .ok buffer.text
   | none =>
     return .error (.noSuchBuffer id)
+
+/-- Writes the buffer `id` from the rich-text description `rich` from the
+byte `start` on, inside `writing` (`Editor/RichText.lean`): the text from
+`start`, or from its end or the description's when either is shorter, is
+replaced with the description's, as one edit, with none when nothing would
+change; then each part that lies before `start` is kept and the rest are
+the description's (the prefix rule), each fold whose key survives keeping
+its state, and the rendered document is dropped (`Editor/State.lean`,
+"Buffers"). With `start` 0 it sets the whole buffer. Refused, with the
+buffer unchanged, with `noSuchBuffer` for a buffer there is none of. -/
+def setRichText (id : BufferId) (rich : RichText) (start : Nat := 0) :
+    EditorM (Except BufferRefusal Unit) :=
+  id.writing do
+    match ← id.text with
+    | .error refusal =>
+      return .error refusal
+    | .ok text =>
+      let length ← text.byteLength
+      let size := rich.text.utf8ByteSize
+      let from_ := min start (min length size)
+      let fresh := RichText.bytes rich.text from_ size
+      unless (← text.slice from_ length) == fresh do
+        text.replaceRange from_ length fresh
+      EditorState.ask (.setRichText id rich start)
+
+/-- Extends the buffer `id` with the rich-text description `tail`, inside
+`writing` (`Editor/RichText.lean`): its text is inserted at the end of the
+buffer's, and its parts, moved past the buffer's text, are listed after the
+buffer's own, each fold whose key survives keeping its state; the rendered
+document is dropped (`Editor/State.lean`, "Buffers"). Nothing of the text
+before its end is edited. Refused, with the buffer unchanged, with
+`noSuchBuffer` for a buffer there is none of. -/
+def appendRichText (id : BufferId) (tail : RichText) : EditorM (Except BufferRefusal Unit) :=
+  id.writing do
+    match ← id.text with
+    | .error refusal =>
+      return .error refusal
+    | .ok text =>
+      let length ← text.byteLength
+      unless tail.text.isEmpty do
+        text.insert length tail.text
+      EditorState.ask (.appendRichText id tail length)
 
 /-- Removes the buffer `id`. Refused with `noSuchBuffer` for a buffer there
 is none of, and with `shown` while a window shows it. -/

@@ -654,6 +654,20 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
 - `orGiveUpChecks`: giving up on a layout refusal (`orGiveUp`,
   `Editor/Api.lean`): the command ends with the refusal's sentence, and a
   value is handed on;
+- `richTextCallChecks`: one call writing a generated buffer from a
+  rich-text description (`BufferId.setRichText`, `Editor/Api.lean`), on the
+  stepped loop over the models: a read-only buffer holds the description's
+  text and every part, with no rendered document, the next scene draws
+  them, a fold declared folded shows its placeholder, and a buffer there is
+  none of is refused `noSuchBuffer` with nothing changed;
+  `richTextAppendChecks`, a description extended at its tail
+  (`BufferId.appendRichText`): no edit of the text before the tail, each
+  part's prefix exactly the head's and the rest the tail's moved past it,
+  a fold toggled in the prefix still folded, and the scene drawing both
+  halves; and a write from the head's end (`setRichText … start`) whose
+  description disagrees on the prefix keeping the buffer's bytes and parts
+  there, the parts from there on and the fold crossing it the
+  description's;
 - `quitChecks`: the quit rule and its name, the core's (`Editor/Quit.lean`),
   on a driver whose `quit` runs the rule: with nothing unsaved the editor
   leaves, and a refusal is said under the core's name;
@@ -1803,6 +1817,8 @@ def checks : List Check :=
     callChecks ++
     orGiveUpChecks ++
     apiStateChecks ++
+    richTextCallChecks ++
+    richTextAppendChecks ++
     insertExcerptChecks ++
     journalFormatChecks ++
     restoreDocumentChecks ++
