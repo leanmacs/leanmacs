@@ -1950,11 +1950,12 @@ core call (`lean/Editor/Markdown/`).
 - **Folds.** Each heading is a foldable range from its text to the start of
   the next heading of the same or a higher level, or to the end, keyed
   `heading <n>` by its ordinal, its placeholder its text in its heading face
-  and ` …`. Each fenced code block with rows is a range over them, keyed
+  and ` …`. Each fenced code block is a range over its rows, keyed
   `code <n>`, its placeholder `<language or code>, <k> lines` (`1 line`
-  for one) in `text.code-block`; a fence with no rows has none. All are
-  declared unfolded; `setFolds` merges by key, so
-  a toggle survives an append.
+  for one) in `text.code-block`; a fence with no rows renders as an empty
+  row, and its range is the empty one at that row, which covers it
+  (`0 lines`). All are declared unfolded; `setFolds` merges by key, so a
+  toggle survives an append.
 - **Tables are measured when applied.** A table in the description is rows
   of cell ranges, layout-free. The call measures each cell with the spans
   over it (`Columns.measureCells`, `Display.measure`), lays the columns out

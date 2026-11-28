@@ -25,9 +25,11 @@ core's rich-text description.
     next heading of the same or a higher level, or to the end. Its key is
     `heading <n>`, n its ordinal in the document from 1, and its
     placeholder its text in its heading face and ` …`;
-  - each fenced code block with rows is a range over its rows. Its key is
+  - each fenced code block is a range over its rows. Its key is
     `code <n>`, and its placeholder `<language or code>, <k> lines` (`1
-    line` for one) in `text.code-block`. A fence with no rows has none;
+    line` for one) in `text.code-block`. A fence with no rows renders as
+    an empty row, and its range is the empty one at that row's start,
+    which covers that row (`Fold.coveredRows`), `0 lines`;
   - every one is declared unfolded. A buffer's `setFolds` merges by key,
     so a toggle survives a regeneration (`Fold.merge`).
 - **A table** (`Table`) is rows of cell ranges of the text. It is the one
@@ -176,7 +178,7 @@ def offsetsOf (pieces : Array Piece) : Array Nat :=
       (#[], 0)).1
 
 /-- The foldable ranges of `piece`, a whole document's ("Folds", in the
-module docs): each heading's, then each fence's with rows, in order of
+module docs): each heading's, then each fence's, in order of
 start, every one unfolded. -/
 def foldsOf (piece : Piece) : Array Foldable :=
   let size := piece.text.utf8ByteSize
@@ -190,9 +192,8 @@ def foldsOf (piece : Piece) : Array Foldable :=
           text := text ++ " …",
           decorations := #[span 0 text.utf8ByteSize s!"text.heading.{level}"] } : Foldable)
   let codes :=
-    (piece.codes.filter fun (start, stop, _) => start < stop).zipIdx.map
-      fun ((start, stop, language), index) =>
-        let rows := (slice piece.text start stop).splitOn "\n" |>.length
+    piece.codes.zipIdx.map fun ((start, stop, language), index) =>
+        let rows := if start < stop then (slice piece.text start stop).splitOn "\n" |>.length else 0
         let text :=
         s!"{if language.isEmpty then "code" else language}, {rows} {if rows == 1 then "line" else "lines"}"
         ({

@@ -1434,8 +1434,8 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   to its source, a reference link left as its source, and a relative one
   unlinked with no root; `markdownFoldChecks`, the exact foldable ranges of
   `folds.md`: each heading's to the next of the same or a higher level and
-  each fence's over its rows, their keys and placeholders, every one
-  unfolded; `markdownListChecks`, `lists.md`'s exact text, a nested item
+  each fence's over its rows, an empty fence's over its empty row, their
+  keys and placeholders, every one unfolded; `markdownListChecks`, `lists.md`'s exact text, a nested item
   two spaces in, a bullet as `•`, an ordered item's number kept, a quote's
   `>` and a thematic break's markup gone, `text.list-marker` over each
   marker alone and `text.quote` over the quote and the nested quote;

@@ -272,13 +272,16 @@ def markdownFoldChecks : List Check :=
   let code (key rows placeholder : String) : Foldable :=
     { start := (over text rows).1, stop := (over text rows).2, key, text := placeholder
       decorations := #[span 0 placeholder.utf8ByteSize "text.code-block"] }
-  [{  name := "folds.md renders its headings and fences in order"
+  -- The empty fence renders as the empty row between the json fence and B.
+  let empty := (over text "{\"b\": 2}").2 + 2
+  [{  name := "folds.md renders its headings and fences in order, an empty fence as an empty row"
       run :=
         pure <|
           text ==
-            "A\n\nText a.\n\nA.1\n\nText a1.\n\nA.1.1\n\nfn one() {}\n\nA.2\n\n{\"b\": 2}\n\nB\n\nText b." },
+              "A\n\nText a.\n\nA.1\n\nText a1.\n\nA.1.1\n\nfn one() {}\n\nA.2\n\n{\"b\": 2}\n\n\n\nB\n\nText b." &&
+            slice text (empty - 2) (empty + 2) == "\n\n\n\n" },
     { name :=
-        "each heading is a range from its text to the next heading of the same or a higher level, or the end, and each fence one over its rows, keyed by ordinal, with its placeholder, in order of start"
+        "each heading is a range from its text to the next heading of the same or a higher level, or the end, and each fence one over its rows, an empty one over its empty row, keyed by ordinal, with its placeholder, in order of start"
       run :=
         pure <|
           folds.folds ==
@@ -288,6 +291,8 @@ def markdownFoldChecks : List Check :=
               code "code 1" "fn one() {}" "rust, 1 line",
               heading "heading 4" "A.2" 2 (over text "B").1,
               code "code 2" "{\"b\": 2}" "json, 1 line",
+              { start := empty, stop := empty, key := "code 3", text := "text, 0 lines"
+                decorations := #[span 0 "text, 0 lines".utf8ByteSize "text.code-block"] },
               heading "heading 5" "B" 1 text.utf8ByteSize] },
     { name := "every foldable range is declared unfolded"
       run := pure <| !folds.folds.isEmpty && folds.folds.all (!·.folded) },
