@@ -17,7 +17,10 @@
 //! And of align-to stops: cells of one column, after first cells of
 //! different widths on the proportional fixture, start at one x. The stop
 //! is computed from layout's own measure, and the cells are compared with
-//! each other, not with a number.
+//! each other, not with a number. And of a hanging wrap indent: each
+//! row's later visual lines start under its first character after its
+//! lead, on the proportional fixture, compared with that character's own
+//! x in the frame.
 
 mod common;
 
@@ -25,7 +28,7 @@ use std::ops::Range;
 
 use editor_layout::Layout;
 use editor_layout::face::{Face, FaceDef};
-use editor_layout::scene::{AlignStop, Decoration, Padding, Rect, Scene};
+use editor_layout::scene::{AlignStop, Continuation, Decoration, Padding, Rect, Scene, WrapIndent};
 use editor_layout::shaper::Shaper;
 use editor_layout::tabs::SEGMENT_BYTES;
 use editor_shape_parley::{FontSet, ParleyShaper, ShapeCounters};
@@ -304,4 +307,65 @@ fn stops_line_cells_up_over_the_proportional_fixture() {
         xs.iter().all(|x| *x == xs[0]),
         "every second cell starts at one x: {xs:?}"
     );
+}
+
+#[test]
+fn a_hanging_indent_continues_under_the_text_after_its_lead_over_the_proportional_fixture() {
+    // Two rows of words whose leads, a marker and a space, measure apart
+    // on the proportional fixture. The view is as wide as the wider lead
+    // and a few words, from layout's own measure, so each row wraps.
+    let leads = ["\u{2022} ", "10. "];
+    let words = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
+    let rows = leads.map(|lead| format!("{lead}{words}"));
+    let mut layout = Layout::new(shaper());
+    let widths = leads.map(|lead| layout.measure(lead, &[]));
+    assert!(
+        widths[0] != widths[1],
+        "the leads measure apart: {widths:?}"
+    );
+    let width =
+        widths.iter().max().copied().unwrap_or_default() + layout.measure("alpha beta", &[]);
+    let text = rows.join("\n");
+    let mut scene = Scene::of_text(&text, rect(width));
+    let mut starts = Vec::new();
+    let mut row_start = 0;
+    for (row, lead) in rows.iter().zip(leads) {
+        starts.push((row_start, row_start + row.len(), lead.len()));
+        row_start += row.len() + 1;
+    }
+    scene.views[0].indents = starts
+        .iter()
+        .map(|&(start, _, lead)| WrapIndent {
+            start,
+            stop: start + 1,
+            first: 0,
+            rest: Continuation::Lead(lead),
+        })
+        .collect();
+    let frame = layout.frame(&scene);
+    let rows_of = |start: usize, end: usize| {
+        frame.views[0]
+            .rows
+            .iter()
+            .filter(move |row| row.is_text() && start <= row.bytes.start && row.bytes.start < end)
+    };
+    for &(start, end, lead) in &starts {
+        let first = rows_of(start, end).next().expect("the row's first line");
+        let after = first
+            .line
+            .glyphs
+            .iter()
+            .find(|glyph| glyph.cluster == lead)
+            .map(|glyph| first.x + glyph.x)
+            .expect("the first glyph after the lead");
+        let later: Vec<f32> = rows_of(start, end)
+            .skip(1)
+            .map(|row| row.x + row.line.glyphs.first().map_or(0.0, |glyph| glyph.x))
+            .collect();
+        assert!(!later.is_empty(), "the row at {start} wraps");
+        assert!(
+            later.iter().all(|x| *x == after),
+            "the later lines of the row at {start} start under {after}: {later:?}"
+        );
+    }
 }
