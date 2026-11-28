@@ -24,9 +24,11 @@ module it tests:
 
 - `realChecks` (`LanguagesTest/Linked/Languages/Grammars/Real.lean`): the
   default set's build staged every grammar of the package it compiled from
-  source, with the package's queries, and the YAML fixture, a `.rs` file
-  and a Markdown paragraph's inline markup are drawn highlighted by the
-  package's grammars over the real services and display.
+  source, with the package's queries; every grammar registers and its
+  queries compile; and the YAML fixture, a `.rs` file, a Markdown
+  paragraph's inline markup, a `.py` file and a Markdown fence of Python
+  are drawn highlighted by the package's grammars over the real services
+  and display.
 - `sourceSetChecks` (`LanguagesTest/Linked/Languages/Grammars/Real/SourceSet.lean`):
   a set whose package's grammar source does not compile fails its build,
   naming the package and the grammar, built with the toolchain's `lake`.

@@ -28,11 +28,18 @@ drawn is the package's grammars alone. The root,
   every grammar of `languages-grammars`, a library at exactly the path its
   declaration names for this platform, which the package's own `grammars/`
   does not hold, so the set's build compiled it, and each file of the
-  package's `grammars/queries/<name>/`, byte for byte.
-- **The drawn checks.** The entry module's packages, tagged with the Lake
-  package and resolved against that staged directory with nothing copied
-  and no library handed in (`Config.State.ofPackages`), register the
-  package's seven grammars with no refusal, and a fixture is drawn by the
+  package's `grammars/queries/<name>/`, byte for byte, a `highlights.scm`
+  among them.
+- **The registered check** (`registeredCheck`). The entry module's
+  packages, tagged with the Lake package and resolved against that staged
+  directory with nothing copied and no library handed in
+  (`Config.State.ofPackages`), give every grammar of the package; each
+  registers on this platform through the library's grammar registrations
+  with a highlights query read, and each query it read compiles against it
+  on the real syntax tree (the kit's `declaredRegistered`). The other
+  checks draw a few of them; this one holds all seventeen.
+- **The drawn checks.** The same packages, resolved the same way, register
+  the package's grammars with no refusal, and a fixture is drawn by the
   real display through the kit's `declaredDrawn`, each capture in the
   colour of the face it maps to:
   - `drawnCheck`: the YAML fixture (`tests/syntax/yaml/settings.yaml`),
@@ -52,6 +59,18 @@ drawn is the package's grammars alone. The root,
     backslash escape in the string face's. They are drawn only if the
     block grammar's injection reached `markdown_inline` and the injected
     language took its declared queries.
+  - `pythonDrawnCheck`: the Python fixture (`tests/syntax/python/hello.py`),
+    entered with the package's language `python`: its comment, `def` and
+    `return`, the defined function's name and its number. The name is
+    drawn as a function only because the entry maps `variable` to no face:
+    the query's catch-all `(identifier) @variable` is its first pattern,
+    and the earliest pattern wins (`Languages/Grammars.lean`).
+  - `pythonFenceDrawnCheck`: a Markdown fence of `python`
+    (`tests/syntax/markdown/python.md`), entered with `markdown` and every
+    registered language: the fences' backticks in the punctuation face's
+    colour, from the block grammar, and the number in the fence in the
+    number face's, which only the injected `python` captures, with its
+    declared highlights.
 
 What these rest on is pinned elsewhere: where a staged grammars directory is
 read from, `ModelTest.moduleLookupChecks`; a package's grammars resolved,
@@ -92,8 +111,8 @@ def yamlFixture : System.FilePath :=
 /-- What is wrong with the grammar `grammar` as the set's build staged it in
 `staged`: no library at the path its declaration names for this platform,
 one in the package's own `grammars/` (so the build did not compile it), no
-query file in the package's `grammars/queries/<name>/`, or a query file not
-copied byte for byte; none when nothing is. -/
+`highlights.scm` in the package's `grammars/queries/<name>/`, or a query
+file not copied byte for byte; none when nothing is. -/
 def stagedProblem (staged : System.FilePath) (grammar : Language.Grammar) : IO (Option String) := do
   let some relative := grammar.libraryOn Language.Grammar.currentPlatform
     | return some s!"{grammar.name}: no library for {Language.Grammar.currentPlatform}"
@@ -103,8 +122,8 @@ def stagedProblem (staged : System.FilePath) (grammar : Language.Grammar) : IO (
     return some s!"{grammar.name}: a library in the package's own grammars at {relative}"
   let queries : System.FilePath := "grammars" / "queries" / grammar.name
   let files ← queries.readDir
-  if files.isEmpty then
-    return some s!"{grammar.name}: no query file in {queries}"
+  unless files.any (·.fileName == "highlights.scm") do
+    return some s!"{grammar.name}: no highlights.scm in {queries}"
   for file in files do
     let copied := staged / "queries" / grammar.name / file.fileName
     unless ← copied.pathExists do
@@ -114,11 +133,11 @@ def stagedProblem (staged : System.FilePath) (grammar : Language.Grammar) : IO (
   return none
 
 /-- The check of AC 1 and 2: the default set's build compiled every grammar
-of the package and staged it, with the package's queries, in the set's
-build directory. -/
+of the package and staged it, with the package's queries, a highlights
+query among them, in the set's build directory. -/
 def stagedCheck : Check :=
   { name :=
-      "the default set's build staged languages' grammars directory in the set's build directory, as the record beside its editor names it, holding for every grammar of languages-grammars a library at the path its declaration names for this platform, which the package's own grammars directory does not hold, so the set's build compiled it, and each query file of the package's grammars/queries/<name>/ with the bytes of the package's own copy"
+      "the default set's build staged languages' grammars directory in the set's build directory, as the record beside its editor names it, holding for every grammar of languages-grammars a library at the path its declaration names for this platform, which the package's own grammars directory does not hold, so the set's build compiled it, and each query file of the package's grammars/queries/<name>/, with a highlights query, with the bytes of the package's own copy"
     run := do
       let editor ← defaultSetEditor
       let some staged ←
@@ -271,10 +290,118 @@ def markdownInlineDrawnCheck (context : Context) : Check :=
             (frame.splitOn code).length == 2)
           s!"refused={refused} frame={frame}" }
 
+/-- The check of AC 2: every grammar of the package, resolved against the
+staged directory as the set's build left it, registers on this platform
+through the library's grammar registrations with a highlights query read,
+and each query it read compiles against it on the real syntax tree. -/
+def registeredCheck (context : Context) : Check :=
+  { name :=
+      "every grammar of languages-grammars, resolved against the directory the default set's build staged with nothing copied, registers through the library's grammar registrations on this platform with no refusal and a highlights query read, and each query it read compiles against it on the real syntax tree"
+    run := do
+      let some (grammars, _, refused) ←
+        registeredFromStaged | saw false "no record line for languages"
+      let some report ←
+        declaredRegistered context.services Language.Grammar.currentPlatform
+            grammars | saw false s!"no report; refused={refused}"
+      let problems := report.filterMap fun (name, problem) => problem.map (s!"{name}: {·}")
+      saw
+          (refused.isEmpty &&
+            report.map (·.1) == Languages.Grammars.package.grammars.map (·.name) &&
+            problems.isEmpty)
+          s!"refused={refused} names={report.map (·.1)} problems={problems}" }
+
+/-- The Python syntax fixture, from the package's directory. -/
+def pythonFixture : System.FilePath :=
+  ".." / ".." / "tests" / "syntax" / "python" / "hello.py"
+
+/-- The Markdown fixture with a Python fence, from the package's
+directory. -/
+def pythonFenceFixture : System.FilePath :=
+  ".." / ".." / "tests" / "syntax" / "markdown" / "python.md"
+
+/-- The faces the Python check colours: the comment's, the keyword's, the
+function's and the number's, each its own colour, and none for the
+variable's, so an identifier the query captures as `@variable` alone is
+drawn in the ink. -/
+def pythonTheme : Theme :=
+  #[{ name := ⟨"syntax.comment"⟩, face := { foreground := some (Color.rgb 0xcc 0xcc 0) } },
+    { name := ⟨"syntax.keyword"⟩, face := { foreground := some (Color.rgb 0 0xcc 0) } },
+    { name := ⟨"syntax.function"⟩, face := { foreground := some (Color.rgb 0xcc 0 0xcc) } },
+    { name := ⟨"syntax.number"⟩, face := { foreground := some (Color.rgb 0 0 0xcc) } }]
+
+/-- The faces the Python fence check colours: the punctuation's and the
+number's, each its own colour. -/
+def pythonFenceTheme : Theme :=
+  #[{ name := ⟨"syntax.punctuation"⟩, face := { foreground := some (Color.rgb 0 0xcc 0) } },
+    { name := ⟨"syntax.number"⟩, face := { foreground := some (Color.rgb 0 0 0xcc) } }]
+
+-- inferred-waits W95: stays (a grammar the set's build compiled, over the real binding, its own text settled on its own snapshot, through `declaredDrawn`)
+set_option linter.inferredWait false in
+/-- The check of AC 3: the package's grammar `python`, resolved against the
+staged directory as the set's build left it, highlights the Python fixture
+through the real services and display, with the package's language
+`python`, whose `variable` maps to no face, so the query's `@function` of
+a definition's name draws over its earlier `@variable`. -/
+def pythonDrawnCheck (context : Context) : Check :=
+  { name :=
+      "the package's grammar python, resolved against the directory the default set's build staged with nothing copied, registers with no refusal, and the Python fixture tests/syntax/python/hello.py, entered with the package's language python as registered, is drawn by the real display with its comment in the comment face's colour, def and return in the keyword face's colour, the function's name in the function face's colour, its number in the number face's colour, and the rest in the default ink"
+    run := do
+      let some (grammars, languages, refused) ←
+        registeredFromStaged | saw false "no record line for languages"
+      let source ← IO.FS.readFile pythonFixture
+      let some language := languages.find? (·.name == "python")
+        | saw false s!"no language python; refused={refused}"
+      let some frame ←
+        declaredDrawn context.services Language.Grammar.currentPlatform grammars language source
+            pythonTheme 0 | saw false s!"nothing drawn; refused={refused}"
+      -- `# Hi`: the comment, yellow; `def f(x):`: `def` green, `f` magenta,
+      -- the rest in the ink; `    return 42`: `return` green, `42` blue,
+      -- the rest in the ink.
+      let comment := "runs 0..4:cccc00ff/ffffffff\n"
+      let definition :=
+        "runs 0..3:00cc00ff/ffffffff 3..4:000000ff/ffffffff 4..5:cc00ccff/ffffffff 5..9:000000ff/ffffffff\n"
+      let returned :=
+        "runs 0..4:000000ff/ffffffff 4..10:00cc00ff/ffffffff 10..11:000000ff/ffffffff 11..13:0000ccff/ffffffff\n"
+      saw
+          (refused.isEmpty && (frame.splitOn comment).length == 2 &&
+            (frame.splitOn definition).length == 2 &&
+            (frame.splitOn returned).length == 2)
+          s!"refused={refused} frame={frame}" }
+
+-- inferred-waits W95: stays (a grammar the set's build compiled, over the real binding, its own text settled on its own snapshot, through `declaredDrawn`)
+set_option linter.inferredWait false in
+/-- The check of AC 3 for a Markdown fence of Python: the package's grammar
+`python`, injected into a fence by the `markdown` grammar's injections,
+takes its declared highlights. -/
+def pythonFenceDrawnCheck (context : Context) : Check :=
+  { name :=
+      "the package's grammars markdown and python, resolved against the directory the default set's build staged with nothing copied, register with no refusal, and the Markdown fixture tests/syntax/markdown/python.md, a fence of python entered with the shipped language markdown as registered and every registered language for its injections, is drawn by the real display with each fence's backticks in the punctuation face's colour and the number in the fence in the number face's colour, which only the injected python's declared highlights capture, and the rest in the default ink"
+    run := do
+      let some (grammars, languages, refused) ←
+        registeredFromStaged | saw false "no record line for languages"
+      let source ← IO.FS.readFile pythonFenceFixture
+      let some language := languages.find? (·.name == "markdown")
+        | saw false s!"no language markdown; refused={refused}"
+      let some frame ←
+        declaredDrawn context.services Language.Grammar.currentPlatform grammars language source
+            pythonFenceTheme 0 languages | saw false s!"nothing drawn; refused={refused}"
+      -- ```` ```python ````: the backticks green, `python` in the ink;
+      -- `x = 42`: `x = ` in the ink, `42` blue; ```` ``` ````: green.
+      let opening := "runs 0..3:00cc00ff/ffffffff 3..9:000000ff/ffffffff\n"
+      let assignment := "runs 0..4:000000ff/ffffffff 4..6:0000ccff/ffffffff\n"
+      let closing := "runs 0..3:00cc00ff/ffffffff\n"
+      saw
+          (refused.isEmpty && (frame.splitOn opening).length == 2 &&
+            (frame.splitOn assignment).length == 2 &&
+            (frame.splitOn closing).length == 2)
+          s!"refused={refused} frame={frame}" }
+
 /-- The wiring checks of the grammars the package ships from source, in
-order: what the set's build staged, then the grammars drawn: yaml, rust,
-and markdown with markdown_inline injected. -/
+order: what the set's build staged, that every grammar registers and its
+queries compile, then the grammars drawn: yaml, rust, markdown with
+markdown_inline injected, python, and markdown with python injected. -/
 def realChecks (context : Context) : List Check :=
-  [stagedCheck, drawnCheck context, rustDrawnCheck context, markdownInlineDrawnCheck context]
+  [stagedCheck, registeredCheck context, drawnCheck context, rustDrawnCheck context,
+    markdownInlineDrawnCheck context, pythonDrawnCheck context, pythonFenceDrawnCheck context]
 
 end LanguagesTest.Linked

@@ -52,6 +52,21 @@ file read (`ModuleLookup.grammarDirectories`), so a package's linked test
 reads the record without importing `Editor.ModuleLookup`, which is
 internal. What it reads is pinned by `ModelTest.moduleLookupChecks`.
 
+`declaredRegistered` says, for each of a set of declarations, whether it
+registers and its queries compile, with no text entered and nothing drawn:
+it runs the core's job (`Language.Grammar.register`) through the library's
+grammar and file services, as `declaredDrawn` does, and finishes with a
+command on the real syntax tree that reads the replies as the core's
+command does (`Language.Grammar.answersOf`) and compiles, then releases,
+each query a registered grammar read (`Highlight.withQuery`). A grammar's
+problem is its refusal's sentence (`Language.Grammar.said`), a query file
+it could not read (`Language.Grammar.unread`), no highlights query, or a
+query the library refuses to compile, naming its kind. The command writes
+its report into a text the helper made before spawning the job, which the
+helper reads back, since a job's command returns nothing. A package's
+check of every grammar it ships is written on it. What it reads is pinned
+by `ModelTest.grammarRegisterChecks` and the contract checks.
+
 Published for a package's linked tests, in the namespace
 `Editor.Test.Linked`, as the rest of the linked kit is. It holds no checks
 of its own.
@@ -157,5 +172,105 @@ def declaredDrawn (services : Services) (platform : String) (grammars : Array La
   unless published.isOk do
     return none
   return some (← display.frameText)
+
+/-- What is wrong with the grammar of `reply`, which registered and read
+`queries`: a query file it could not read for another reason than a
+missing file (`Language.Grammar.unread`), no highlights query, or a query
+the real syntax tree refuses to compile, naming its kind; none when
+nothing is. Each query compiled is released. -/
+def registeredProblem (reply : Language.Grammar.Reply) (queries : Language.Grammar.Queries) :
+    EditorM (Option String) := do
+  if let .ok loads := reply.outcome then
+    for (file, load) in loads do
+      match load with
+      | .error .notFound =>
+        pure ()
+      | .error error =>
+        return some (Language.Grammar.unread reply.grammar file error)
+      | .ok _ =>
+        pure ()
+  if queries.highlights.isNone then
+    return some "no highlights query"
+  let sources : List (QueryKind × Option String) :=
+    [(.highlights, queries.highlights), (.injections, queries.injections),
+      (.textObjects, queries.textObjects), (.indents, queries.indents)]
+  for (kind, source) in sources do
+    let some source := source | continue
+    match ← SyntaxTree.lift (Highlight.withQuery reply.grammar.name source fun _ => pure ()) with
+    | .ok () =>
+      pure ()
+    | .error error =>
+      return some s!"its {kind.name} query: {error.describe}"
+  return none
+
+/-- Each declaration of `replies`, in order, with its problem: its
+refusal's sentence (`Language.Grammar.said`) when it was refused, else
+`registeredProblem`'s; none when there is none. The replies are read as
+the core's command reads them (`Language.Grammar.answersOf`). -/
+def registeredProblems (replies : Array Language.Grammar.Reply) :
+    EditorM (Array (String × Option String)) := do
+  let (answers, _) ← Language.Grammar.answersOf {} 1 replies
+  let mut report := #[]
+  for (reply, name, answer) in replies.zip answers.answers do
+    let problem ←
+      match answer with
+      | .refused error kept =>
+        pure (some (Language.Grammar.said name error kept))
+      | .registered queries =>
+        registeredProblem reply queries
+    report := report.push (name, problem)
+  return report
+
+/-- `report` as the text `declaredRegistered`'s command writes: a line for
+each declaration, its name, then a tab and its problem, with any line break
+in it made a space, when it has one. -/
+def registeredReportText (report : Array (String × Option String)) : String :=
+  String.join <|
+    report.toList.map fun (name, problem) =>
+      match problem with
+      | some problem => s!"{name}\t{problem.replace "\n" " "}\n"
+      | none => s!"{name}\n"
+
+/-- The report `registeredReportText` wrote, read back. -/
+def registeredReportOf (text : String) : Array (String × Option String) :=
+  ((text.splitOn "\n").filter (!·.isEmpty)).toArray.map fun line =>
+    match line.splitOn "\t" with
+    | name :: problem :: rest => (name, some ("\t".intercalate (problem :: rest)))
+    | _ => (line, none)
+
+/-- The mark of `declaredRegistered`: it runs real background services
+(`Editor/RealHost.lean`). -/
+def declaredRegistered.realHost : RealHost :=
+  .service
+
+/-- Each of the declarations `grammars`, in order, with its problem
+(`registeredProblems`), once they are registered on `platform` through
+`services`' grammar registrations by the core's job
+(`Language.Grammar.register`) and the job's command has read the replies
+and compiled each query read on the real syntax tree binding. None when
+the job did not finish with its command, or the report could not be
+written or read. -/
+def declaredRegistered (services : Services) (platform : String)
+    (grammars : Array Language.Grammar) : IO (Option (Array (String × Option String))) := do
+  let display ← Ffi.Display.newCells 8 16
+  let shown ← RealDisplay.over display services.published.reader #[]
+  let made : EditorM TextId := createText ""
+  let (.ok report, texts) ← made.runReal (.over services.published) shown.handle | return none
+  let written (replies : Array Language.Grammar.Reply) : EditorM Unit := do
+    let text := registeredReportText (← registeredProblems replies)
+    (report.insert 0 text : TextM Unit)
+  let handle ←
+    Job.spawn services.jobs (Work.of (fun _ => Language.Grammar.register platform grammars) written)
+        (pure ())
+  discard <| hangGuarded "the registration job's end" handle.outcome.result?
+  let some (.finished command) ← handle.outcome? | return none
+  let real ← RealSyntaxTree.new services.published.reader
+  let (finished, texts) ←
+    Job.finishWith services.held handle command texts shown.handle (syntaxTree := real.handle)
+  unless finished.isOk do
+    return none
+  let read : EditorM String := (report.read : TextM String)
+  let (.ok text, _) ← read.runReal texts shown.handle | return none
+  return some (registeredReportOf text)
 
 end Editor.Test.Linked

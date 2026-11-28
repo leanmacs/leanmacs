@@ -154,12 +154,18 @@ library exports, so a Markdown fence of `clojure` injects nothing.
 - **The linked test**, [`LanguagesTest/Linked.lean`](LanguagesTest/Linked.lean),
   which the package steps build and run (`tools/package-set.sh`): the
   default set's build staged every library it compiled, with the package's
-  queries; the YAML fixture (`tests/syntax/yaml/settings.yaml`), a `.rs`
-  file (`tests/syntax/rust/hello.rs`) and a Markdown paragraph's inline
-  markup (`tests/syntax/markdown/inline.md`) are drawn highlighted by the
+  queries, a highlights query for each; every grammar registers on the
+  platform the test runs on and each of its queries compiles against it
+  (`registeredCheck`); the YAML fixture (`tests/syntax/yaml/settings.yaml`),
+  a `.rs` file (`tests/syntax/rust/hello.rs`), a Markdown paragraph's
+  inline markup (`tests/syntax/markdown/inline.md`), a `.py` file
+  (`tests/syntax/python/hello.py`) and a Markdown fence of Python
+  (`tests/syntax/markdown/python.md`) are drawn highlighted by the
   package's grammars over the real services; and a set whose package's
   grammar source does not compile fails its build naming the package and
-  the grammar.
+  the grammar. The tests hold the mechanism, not each language: every
+  grammar registers with queries that compile, and Python is drawn end to
+  end.
 - **The on-demand check**, [`rust/tests/default_install.rs`](rust/tests/default_install.rs)
   (`mise run languages-install-check`, never in the gate): the default set,
   installed, opens `tests/syntax/rust/hello.rs` highlighted by the
