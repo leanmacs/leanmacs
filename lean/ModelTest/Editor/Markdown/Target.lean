@@ -53,6 +53,32 @@ def markdownTargetChecks : List Check :=
         pure <|
           targetOf (some targetRoot) "README.md:4" ==
             some (.location (targetRoot / "README.md") 3 0) },
+    { name :=
+        "a destination in angle brackets is read without them: a path with a blank is a location, and a URL a URL"
+      run :=
+        pure <|
+          targetOf (some targetRoot) "<a b.md>" == some (.location (targetRoot / "a b.md") 0 0) &&
+            targetOf (some targetRoot) "<https://x>" == some (.url "https://x") &&
+            targetOf (some targetRoot) "<src/a.rs:3>" ==
+              some (.location (targetRoot / "src/a.rs") 2 0) },
+    { name :=
+        "a path's fragment or query is left out before its line is read, and a reference's and a URL's are kept"
+      run :=
+        pure <|
+          targetOf (some targetRoot) "x.md#sec" == some (.location (targetRoot / "x.md") 0 0) &&
+            targetOf (some targetRoot) "x.md:3#sec" == some (.location (targetRoot / "x.md") 2 0) &&
+            targetOf (some targetRoot) "docs/a.md?raw=1" ==
+              some (.location (targetRoot / "docs/a.md") 0 0) &&
+            targetOf (some targetRoot) "/a/b.md:2:4#x" == some (.location "/a/b.md" 1 3) &&
+            targetOf none "rdm:src/a.lean@abc#L3" == some (.reference "rdm" "src/a.lean@abc#L3") &&
+            targetOf none "https://x.y/a#b" == some (.url "https://x.y/a#b") &&
+            targetOf (some targetRoot) "?q" == none },
+    { name := "a backslash escape in a destination is its character"
+      run :=
+        pure <|
+          targetOf (some targetRoot) "a\\_b\\(1\\).md" ==
+              some (.location (targetRoot / "a_b(1).md") 0 0) &&
+            targetOf (some targetRoot) "a\\b.md" == some (.location (targetRoot / "a\\b.md") 0 0) },
     { name := "an empty destination and one to a heading of the same document are not linked"
       run :=
         pure <|

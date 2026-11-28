@@ -9,6 +9,9 @@ names to follow (`LinkTarget`, `Editor/Link.lean`), for the rendered view
 
 ## A destination (`targetOf`)
 
+- **As written**: a destination in angle brackets (`<a b.md>`) is read
+  without them, and a backslash before an ASCII punctuation character is
+  that character (`a\_b.md` is `a_b.md`). Percent-encoding is not decoded.
 - **A web scheme** (`http`, `https`, `mailto`, `ftp`, `file`, in any case)
   is a URL, as it is.
 - **A path with a line** is a location: `path:line` or
@@ -20,6 +23,9 @@ names to follow (`LinkTarget`, `Editor/Link.lean`), for the rendered view
   scheme: `rdm:task/x` is `.reference "rdm" "task/x"`, which the scheme's
   resolver follows.
 - **Anything else is a path**, at its first row and column.
+- **A path's fragment and query are left out**: everything from its first
+  `#` or `?` is dropped before its line is read, so `x.md:3#sec` is row 2
+  of `x.md`. A URL and a reference keep theirs, for whatever follows them.
 - **A path is absolute or resolved against the root**: an absolute one is
   used as it is, a relative one is joined to `root`, and with no root it is
   not linked.
@@ -90,24 +96,63 @@ def locationOf? (root : Option System.FilePath) (text : String) : Option LinkTar
   let file ← resolve root path
   return .location file row column
 
+/-- `text` with each backslash before an ASCII punctuation character made
+that character ("A destination", in the module docs); any other backslash
+is kept. -/
+def unescape (text : String) : String :=
+  let punctuation := "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+  let (chars, escaping) :=
+    text.toList.foldl
+      (fun (chars, escaping) c =>
+        if escaping then
+          if punctuation.any (· == c) then (chars.push c, false)
+          else ((chars.push '\\').push c, false)
+        else if c == '\\' then (chars, true) else (chars.push c, false))
+      ((#[] : Array Char), false)
+  String.ofList (if escaping then chars.push '\\' else chars).toList
+
+/-- `destination` as written ("A destination", in the module docs): its
+blanks at either end and one pair of enclosing angle brackets left out, and
+its backslash escapes decoded. -/
+def written (destination : String) : String :=
+  let destination := destination.trimAscii.toString
+  let bare :=
+    if destination.length ≥ 2 && destination.startsWith "<" && destination.endsWith ">" then
+      String.ofList (destination.toList.drop 1).dropLast
+    else destination
+  unescape bare
+
+/-- The path of a path destination: everything from its first `#` or `?`
+left out. -/
+def pathPart (destination : String) : String :=
+  String.ofList (destination.toList.takeWhile fun c => c != '#' && c != '?')
+
+/-- The location the path destination `destination` names, its fragment
+and query left out, resolved against `root`: at its line, if it has one,
+or at its first row. -/
+def pathTarget (root : Option System.FilePath) (destination : String) : Option LinkTarget :=
+  let path := pathPart destination
+  if path.isEmpty then none
+  else
+    match lineOf? path with
+    | some _ => locationOf? root path
+    | none => (resolve root path).map fun file => .location file 0 0
+
 /-- What the destination `destination` of a link names ("A destination",
 in the module docs), resolved against `root`; `none` when it is not
 linked. -/
 def targetOf (root : Option System.FilePath) (destination : String) : Option LinkTarget :=
-  let destination := destination.trimAscii.toString
+  let destination := written destination
   if destination.isEmpty || destination.startsWith "#" then none
   else
     match Link.urlScheme? destination with
     | some scheme =>
       if webSchemes.contains scheme.toLower then some (.url destination)
       else
-        match lineOf? destination with
-        | some _ => locationOf? root destination
+        match lineOf? (pathPart destination) with
+        | some _ => pathTarget root destination
         | none => some (.reference scheme (destination.drop (scheme.length + 1)).toString)
-    | none =>
-      match lineOf? destination with
-      | some _ => locationOf? root destination
-      | none => (resolve root destination).map fun file => .location file 0 0
+    | none => pathTarget root destination
 
 /-- Whether `c` ends a token ("A reference in text", in the module docs). -/
 private def delimits (c : Char) : Bool :=

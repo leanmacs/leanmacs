@@ -1940,10 +1940,13 @@ core call (`lean/Editor/Markdown/`).
   `ftp`, `file`) is a URL; `path:line[:column]`, its path holding a `/` or
   a `.`, is a location at that row and column from 0; any other scheme is a
   reference for its resolver (`rdm:task/x`); anything else is a path at its
-  first row. A relative path is resolved against the root. In prose and in
-  code spans, never in fenced code, a bare `http(s)://` token and a bare
-  `path:line` are links too (`Editor/Markdown/Target.lean`). An email
-  autolink links to `mailto:`.
+  first row. A destination in angle brackets is read without them, and a
+  backslash escape is its character; a path's `#fragment` or `?query` is
+  left out (a URL and a reference keep theirs), so `x.md:3#sec` is row 2 of
+  `x.md`. Percent-encoding is not decoded. A relative path is resolved
+  against the root. In prose and in code spans, never in fenced code, a
+  bare `http(s)://` token and a bare `path:line` are links too
+  (`Editor/Markdown/Target.lean`). An email autolink links to `mailto:`.
 - **Folds.** Each heading is a foldable range from its text to the start of
   the next heading of the same or a higher level, or to the end, keyed
   `heading <n>` by its ordinal, its placeholder its text in its heading face

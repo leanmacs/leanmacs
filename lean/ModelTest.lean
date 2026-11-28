@@ -1417,7 +1417,8 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   reference in rendered text name (`Editor/Markdown/Target.lean`): each web
   scheme a URL, any other scheme a reference, `path:line[:column]` a
   location with its row and column from 0, a relative path resolved against
-  the root and unlinked with none, and the token rule's edges;
+  the root and unlinked with none, a destination's angle brackets,
+  escapes, fragment and query, and the token rule's edges;
 - `markdownProseChecks` and `markdownHeadingChecks`: the Markdown renderer
   (`Editor/Markdown/Doc.lean` and the modules it imports) over the fixtures'
   canned layers: the exact rendered text of `prose.md`, `code.md` and
