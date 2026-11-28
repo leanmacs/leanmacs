@@ -1,11 +1,12 @@
-//! A test fixture: the six grammars the syntax adapter compiles in (`rust`,
-//! `json`, `markdown`, `markdown_inline`, `toml` and `lean`), built as
-//! native grammar libraries from the same pinned sources, each with the
-//! queries the adapter ships for it beside it.
+//! A test fixture: the six former built-in grammars (`rust`, `json`,
+//! `markdown`, `markdown_inline`, `toml` and `lean`), which the `languages`
+//! package ships, built as native grammar libraries from the package's
+//! pinned sources, each with the package's queries beside it
+//! (`packages/languages/grammars/queries/`).
 //!
-//! **Who uses it.** The core's tests, which load their grammars from here
-//! rather than from the adapter's compiled-in table, which they cannot see
-//! (`editor-syntax-treesitter`'s crate docs, "How grammars are loaded"):
+//! **Who uses it.** The core's tests, which load their grammars from here,
+//! since they depend on no package (`editor-syntax-treesitter`'s crate
+//! docs, "How grammars are loaded"):
 //! the adapter's own tests (`tests/contract.rs`, `tests/injections.rs`,
 //! `tests/refresh.rs`, its unit tests and the `round` example) and
 //! `editor-ffi`'s, each by a dev-dependency; and Lean's test programs,
@@ -82,8 +83,9 @@ pub struct Grammar {
     /// Its library, absolute.
     pub library: &'static str,
     /// Whether its incremental reparses of texts without errors equal a
-    /// fresh parse: the adapter's finding, which its corpora pin
-    /// (`editor-syntax-treesitter`'s `tests/contract.rs`). False for
+    /// fresh parse: the finding `packages/languages/rust/Cargo.toml`
+    /// records, which the package's declarations follow and the adapter's
+    /// corpora pin (`editor-syntax-treesitter`'s `tests/contract.rs`). False for
     /// `markdown_inline` alone.
     pub incremental: bool,
     /// Its highlights query, `queries/<name>/highlights.scm`.
@@ -97,8 +99,8 @@ pub struct Grammar {
     pub indents: Option<&'static str>,
 }
 
-/// Rust, with its crate's highlights and injections and the adapter's text
-/// objects and indents.
+/// Rust, with its crate's highlights and injections and the repository's
+/// text objects and indents.
 pub const RUST: Grammar = Grammar {
     name: "rust",
     symbol: "tree_sitter_rust",
@@ -171,7 +173,8 @@ pub const LEAN: Grammar = Grammar {
     indents: None,
 };
 
-/// The six, in the adapter's table's order.
+/// The six, `json` first, in the order the syntax adapter's table listed
+/// them while it compiled them in.
 pub const ALL: [Grammar; 6] = [JSON, RUST, MARKDOWN, MARKDOWN_INLINE, TOML, LEAN];
 
 #[cfg(test)]
@@ -251,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn only_markdown_inline_is_reparsed_whole_and_the_six_are_the_tables_names_in_order() {
+    fn only_markdown_inline_is_reparsed_whole_and_all_lists_the_six_json_first() {
         assert_eq!(
             ALL.map(|grammar| grammar.name),
             [

@@ -1,76 +1,43 @@
 //! Builds the six fixture grammar libraries into `OUT_DIR` with
-//! `editor-grammar-build`, from the pinned grammar crates this crate depends
-//! on, and stages each grammar's queries beside them, in the layout of a
-//! package's staged `grammars/` directory:
+//! `editor-grammar-build`, from the pinned grammar crates this crate takes
+//! as build-dependencies and the vendored `vendor/tree-sitter-lean`, and
+//! stages each grammar's queries beside them, in the layout of a package's
+//! staged `grammars/` directory:
 //!
 //! ```text
 //! OUT_DIR/libtree-sitter-<name>.dylib   (.so elsewhere)
 //! OUT_DIR/queries/<name>/<kind>.scm
 //! ```
 //!
-//! The queries are exactly the set the syntax adapter's table ships for each
-//! grammar: the grammar crate's own, read from the source directory
-//! `editor-grammar-build` reports, and, for rust, the adapter's own
-//! `textobjects.scm` and `indents.scm`. A grammar that fails to build fails
-//! this build: a fixture that cannot build must fail Cargo.
+//! The queries are the `languages` package's, copied from its
+//! `packages/languages/grammars/queries/<name>/`, so the core's tests draw
+//! with exactly what ships. A grammar that fails to build fails this build:
+//! a fixture that cannot build must fail Cargo.
 
 use std::path::{Path, PathBuf};
 
 use editor_grammar_build::{Grammar, Outcome, build};
 
-/// Where each query a grammar ships comes from: a file under its source
-/// directory, or one of the syntax adapter's own.
-enum From {
-    /// A path under the grammar's source directory.
-    Source(&'static str),
-    /// A path under this crate's directory.
-    Here(&'static str),
-}
+/// The `languages` package's query directory, from this crate's directory.
+const PACKAGE_QUERIES: &str = "../../packages/languages/grammars/queries";
 
-/// Each grammar's queries: its name, then each staged file and where it is
-/// copied from.
-const QUERIES: [(&str, &[(&str, From)]); 6] = [
+/// Each grammar's queries: its name, then each file of the package's
+/// `queries/<name>/` staged.
+const QUERIES: [(&str, &[&str]); 6] = [
     (
         "rust",
         &[
-            ("highlights.scm", From::Source("queries/highlights.scm")),
-            ("injections.scm", From::Source("queries/injections.scm")),
-            (
-                "textobjects.scm",
-                From::Here("../editor-syntax-treesitter/queries/rust/textobjects.scm"),
-            ),
-            (
-                "indents.scm",
-                From::Here("../editor-syntax-treesitter/queries/rust/indents.scm"),
-            ),
+            "highlights.scm",
+            "injections.scm",
+            "textobjects.scm",
+            "indents.scm",
         ],
     ),
-    (
-        "json",
-        &[("highlights.scm", From::Source("queries/highlights.scm"))],
-    ),
-    (
-        "markdown",
-        &[
-            ("highlights.scm", From::Source("queries/highlights.scm")),
-            ("injections.scm", From::Source("queries/injections.scm")),
-        ],
-    ),
-    (
-        "markdown_inline",
-        &[
-            ("highlights.scm", From::Source("queries/highlights.scm")),
-            ("injections.scm", From::Source("queries/injections.scm")),
-        ],
-    ),
-    (
-        "toml",
-        &[("highlights.scm", From::Source("queries/highlights.scm"))],
-    ),
-    (
-        "lean",
-        &[("highlights.scm", From::Source("queries/highlights.scm"))],
-    ),
+    ("json", &["highlights.scm"]),
+    ("markdown", &["highlights.scm", "injections.scm"]),
+    ("markdown_inline", &["highlights.scm", "injections.scm"]),
+    ("toml", &["highlights.scm"]),
+    ("lean", &["highlights.scm"]),
 ];
 
 fn main() {
@@ -84,7 +51,7 @@ fn main() {
             "tree-sitter-markdown-inline",
         ),
         Grammar::package("toml", "tree-sitter-toml-ng"),
-        Grammar::package("lean", "tree-sitter-lean"),
+        Grammar::directory("lean", "../../vendor/tree-sitter-lean"),
     ]);
     #[expect(
         clippy::disallowed_methods,
@@ -96,7 +63,7 @@ fn main() {
             Outcome::Failed { name, reason, .. } => {
                 panic!("the fixture grammar `{name}` did not build: {reason}")
             }
-            Outcome::Built { name, source, .. } => stage(&out, name, source),
+            Outcome::Built { name, .. } => stage(&out, name),
         }
     }
     println!(
@@ -105,9 +72,9 @@ fn main() {
     );
 }
 
-/// Copies the queries of the grammar `name`, whose source directory is
-/// `source`, to `out/queries/<name>/`.
-fn stage(out: &Path, name: &str, source: &Path) {
+/// Copies the queries of the grammar `name`, from the package's
+/// `queries/<name>/`, to `out/queries/<name>/`.
+fn stage(out: &Path, name: &str) {
     let (_, files) = QUERIES
         .iter()
         .find(|(grammar, _)| *grammar == name)
@@ -119,11 +86,8 @@ fn stage(out: &Path, name: &str, source: &Path) {
     )]
     std::fs::create_dir_all(&directory)
         .unwrap_or_else(|error| panic!("creating {}: {error}", directory.display()));
-    for (file, from) in *files {
-        let from = match from {
-            From::Source(path) => source.join(path),
-            From::Here(path) => PathBuf::from(path),
-        };
+    for file in *files {
+        let from = Path::new(PACKAGE_QUERIES).join(name).join(file);
         let to = directory.join(file);
         #[expect(
             clippy::disallowed_methods,

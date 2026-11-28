@@ -974,7 +974,6 @@ version = "0.1.0"
 dependencies = [
  "editor-grammar-build",
  "tree-sitter-json",
- "tree-sitter-lean",
  "tree-sitter-md",
  "tree-sitter-rust",
  "tree-sitter-toml-ng",

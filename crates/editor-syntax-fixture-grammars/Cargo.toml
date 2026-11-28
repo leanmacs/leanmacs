@@ -1,31 +1,29 @@
 [package]
 name = "editor-syntax-fixture-grammars"
 version = "0.1.0"
-description = "A test fixture: the six grammars the syntax adapter compiles in (rust, json, markdown, markdown_inline, toml, lean), built as native grammar libraries from the same pinned sources with their queries beside them, for the core's tests to load at run time; never linked into the editor"
+description = "A test fixture: the six former built-in grammars (rust, json, markdown, markdown_inline, toml, lean), built as native grammar libraries from the languages package's pinned sources with the package's queries beside them, for the core's tests to load at run time; never linked into the editor"
 edition.workspace = true
 license.workspace = true
 publish = false
-
-# The grammar crates, at exactly the syntax adapter's pins
-# (`crates/editor-syntax-treesitter/Cargo.toml` says why each grammar, why
-# each version, and their licences). They are normal dependencies, not
-# build-dependencies: so Cargo builds the very units the adapter already
-# builds (same profile, same features), compiling no grammar's archive a
-# second time, and `cargo metadata` finds each one's directory for the
-# build script (`editor-grammar-build`'s `Source::Package`). Nothing here
-# links their archives into a library of this crate's: the build script
-# compiles each grammar's C again, as a shared library.
-[dependencies]
-tree-sitter-rust = { version = "=0.24.2" }
-tree-sitter-json = { version = "=0.24.8" }
-tree-sitter-md = { version = "=0.5.4", default-features = false }
-tree-sitter-toml-ng = { version = "=0.7.0" }
-tree-sitter-lean = { path = "../../vendor/tree-sitter-lean", version = "=0.2.0" }
 
 [build-dependencies]
 # Compiles each grammar's pinned source into a shared library in `OUT_DIR`
 # and says where each source is (the crate's README).
 editor-grammar-build = { path = "../editor-grammar-build" }
+# The crates.io grammar crates, at exactly the `languages` package's pins
+# and features (`packages/languages/rust/Cargo.toml` says why each grammar,
+# why each version, and their licences). They are build-dependencies, as
+# there: so in the dev profile Cargo builds one unit of each for both build
+# scripts, compiling no grammar's archive a second time, and `cargo
+# metadata` finds each one's directory for the build script
+# (`editor-grammar-build`'s `Source::Package`). Nothing links their
+# archives: the build script compiles each grammar's C again, as a shared
+# library. The grammar `lean` is no dependency: the build script compiles
+# the vendored directory `vendor/tree-sitter-lean`, as the package's does.
+tree-sitter-rust = { version = "=0.24.2" }
+tree-sitter-json = { version = "=0.24.8" }
+tree-sitter-md = { version = "=0.5.4", default-features = false }
+tree-sitter-toml-ng = { version = "=0.7.0" }
 
 [lints]
 workspace = true
