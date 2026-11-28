@@ -1504,7 +1504,10 @@ here until phase 8: `BuffersApiTest.buffersApiChecks` and
   of a wrapped nested quote 32 points in;
 - `richTextChecks`: the rich-text description (`Editor/RichText.lean`),
   pure: `shift` moving every offset of every part and no placeholder's own
-  span, `append` placing the second's parts past the first's text, and
+  span, `append` placing the second's parts past the first's text,
+  `textCut` cutting a held text at the start, at its own end when it is
+  shorter or at the description's when that is, and the prefix rule's
+  text half `BufferId.setRichText` edits a buffer by, and
   `replaceFrom`'s prefix rule: the held text and each held part that lies
   before the start kept, a part crossing the start and an empty part at it
   taken from the description, a held fold whose key a taken fold has

@@ -1572,8 +1572,8 @@ def text (id : BufferId) : EditorM (Except BufferRefusal TextId) := do
 /-- Writes the buffer `id` from the rich-text description `rich` from the
 byte `start` on, inside `writing` (`Editor/RichText.lean`): the text from
 `start`, or from its end or the description's when either is shorter, is
-replaced with the description's, as one edit, with none when nothing would
-change; then each part that lies before `start` is kept and the rest are
+replaced with the description's (`RichText.textCut`), as one edit, with
+none when nothing would change; then each part that lies before `start` is kept and the rest are
 the description's (the prefix rule), each fold whose key survives keeping
 its state, and the rendered document is dropped (`Editor/State.lean`,
 "Buffers"). With `start` 0 it sets the whole buffer. Refused, with the
@@ -1586,11 +1586,9 @@ def setRichText (id : BufferId) (rich : RichText) (start : Nat := 0) :
       return .error refusal
     | .ok text =>
       let length ← text.byteLength
-      let size := rich.text.utf8ByteSize
-      let from_ := min start (min length size)
-      let fresh := RichText.bytes rich.text from_ size
-      unless (← text.slice from_ length) == fresh do
-        text.replaceRange from_ length fresh
+      let cut := rich.textCut length start
+      unless (← text.slice cut.offset length) == cut.fresh do
+        text.replaceRange cut.offset length cut.fresh
       EditorState.ask (.setRichText id rich start)
 
 /-- Extends the buffer `id` with the rich-text description `tail`, inside

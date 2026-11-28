@@ -85,6 +85,23 @@ def richTextChecks : List Check :=
             joined.folds == richHeld.folds.push (richFold "tail" 12 15 "[tail]") &&
             joined.indents == richHeld.indents.push (richIndent 12 15 6) },
     { name :=
+        "textCut cuts a held text at start and replaces the rest with the description's bytes from start"
+      run :=
+        pure <|
+          richOther.textCut 12 4 == { offset := 4, fresh := "DEF\nGHI\n" } &&
+            richOther.textCut 12 0 == { offset := 0, fresh := richOther.text } },
+    { name :=
+        "textCut cuts a held text shorter than start at its end, and replaces nothing past it but with the description's bytes from there"
+      run := pure <| richOther.textCut 2 4 == { offset := 2, fresh := "C\nDEF\nGHI\n" } },
+    { name :=
+        "textCut cuts a held text at the end of a shorter description, so the held bytes past it are replaced with none"
+      run :=
+        pure <|
+          ({ text := "ab\n" } : RichText).textCut 12 8 == { offset := 3, fresh := "" } &&
+            ({ text := "" } : RichText).textCut 12 4 == { offset := 0, fresh := "" } },
+    { name := "textCut at the end of both texts replaces nothing with nothing"
+      run := pure <| richOther.textCut 12 12 == { offset := 12, fresh := "" } },
+    { name :=
         "replaceFrom keeps the held text before start, whatever the description's bytes there, and takes the description's from start on"
       run := pure <| (RichText.replaceFrom richHeld 4 richOther).text == "abc\nDEF\nGHI\n" },
     { name :=

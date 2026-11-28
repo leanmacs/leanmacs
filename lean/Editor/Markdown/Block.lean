@@ -165,7 +165,7 @@ def fenceRows (context : Context) (content : Node) : Piece :=
 def fence (context : Context) (node : Node) : Piece :=
   let language :=
     ((Parsed.first? context.nodes node "code.language").map fun found =>
-          slice context.source found.start found.stop).getD
+          RichText.bytes context.source found.start found.stop).getD
       ""
   let rows := ((Parsed.first? context.nodes node "code.content").map (fenceRows context)).getD {}
   let size := rows.text.utf8ByteSize
@@ -175,7 +175,7 @@ def fence (context : Context) (node : Node) : Piece :=
 spaces of its indent left out, its empty rows at the end dropped. -/
 def indented (context : Context) (node : Node) : Piece :=
   let rows :=
-    (slice context.source node.start node.stop).splitOn "\n" |>.map fun row =>
+    (RichText.bytes context.source node.start node.stop).splitOn "\n" |>.map fun row =>
       let spaces := (row.toList.takeWhile (· == ' ')).length
       (row.drop (min 4 spaces)).toString
   let rows := (rows.reverse.dropWhile (·.all Char.isWhitespace)).reverse
@@ -219,7 +219,7 @@ def table (context : Context) (node : Node) : Piece :=
 
 /-- `node`'s source, its blanks at the end left out. -/
 def source (context : Context) (node : Node) : String :=
-  trimEnd (slice context.source node.start node.stop)
+  trimEnd (RichText.bytes context.source node.start node.stop)
 
 mutual
 /-- The node at `index` rendered (the module docs). -/
@@ -256,11 +256,11 @@ partial def listItem (context : Context) (index : Nat) : Piece :=
     (childrenOf context index (·.name == name))[0]?.map (context.nodes[·]!)
   let marker :=
     match own "list.number" with
-    | some number => (slice context.source number.start number.stop).trimAscii.toString
+    | some number => (RichText.bytes context.source number.start number.stop).trimAscii.toString
     | none => "•"
   let task :=
     match own "task" with
-    | some found => slice context.source found.start found.stop ++ " "
+    | some found => RichText.bytes context.source found.start found.stop ++ " "
     | none => ""
   let blocks := (childrenOf context index isBlock).map (node context)
   let body := (Piece.join blocks "\n").indentedBy context.options.indent

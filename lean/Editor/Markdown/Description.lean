@@ -1,5 +1,6 @@
 import Editor.Fold
 import Editor.Link
+import Editor.RichText
 import Editor.Scene
 
 /-!
@@ -55,7 +56,9 @@ as cell ranges, since only the display can measure them.
 
 This module, and every module of the renderer, sits below the editor's
 state (`Editor/State.lean` keeps a buffer's document): it imports only the
-scene's types, links and folds.
+scene's types, links and folds, and the rich-text description
+(`Editor/RichText.lean`), which sits below the state too, for the one byte
+slice they share (`RichText.bytes`).
 
 ## Where an addition goes
 
@@ -129,11 +132,6 @@ structure Description where
   /-- Its wrap indents, in order. -/
   indents : Array WrapIndent := #[]
   deriving DecidableEq, Repr, Inhabited
-
-/-- The bytes of `source` from `start` up to `stop`, as a string; the empty
-string when they do not end between characters. -/
-def slice (source : String) (start stop : Nat) : String :=
-  (String.fromUTF8? (source.toUTF8.extract start stop)).getD ""
 
 /-- A span of `face` from `start` to `stop`. -/
 def span (start stop : Nat) (face : String) : Decoration :=
@@ -229,13 +227,14 @@ def foldsOf (piece : Piece) : Array Foldable :=
       let next :=
         (piece.headings.extract (index + 1) piece.headings.size).find? fun (other, _, _) =>
           other ≤ level
-      let text := slice piece.text start stop
+      let text := RichText.bytes piece.text start stop
       ({  start, stop := (next.map (·.2.1)).getD size, key := s!"heading {index + 1}"
           text := text ++ " …",
           decorations := #[span 0 text.utf8ByteSize s!"text.heading.{level}"] } : Foldable)
   let codes :=
     piece.codes.zipIdx.map fun ((start, stop, language), index) =>
-        let rows := if start < stop then (slice piece.text start stop).splitOn "\n" |>.length else 0
+        let rows :=
+        if start < stop then (RichText.bytes piece.text start stop).splitOn "\n" |>.length else 0
         let text :=
         s!"{if language.isEmpty then "code" else language}, {rows} {if rows == 1 then "line" else "lines"}"
         ({

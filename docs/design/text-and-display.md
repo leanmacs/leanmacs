@@ -1921,8 +1921,10 @@ instead.
   - `setRichText id rich start` writes the buffer from `start` on: its
     text from `start` (or from its end or the description's, when either is
     shorter) is replaced with the description's, as one edit and none when
-    nothing would change, and its parts by the prefix rule. With `start` 0
-    it sets the whole buffer;
+    nothing would change, and its parts by the prefix rule. Where the text
+    is cut and what replaces it is one pure function, `RichText.textCut`,
+    which `replaceFrom` uses too, so the cut the checks pin is the one
+    that runs. With `start` 0 it sets the whole buffer;
   - `appendRichText id tail` extends the buffer's description at its end:
     the tail's text inserted at the end, and its parts moved past it and
     listed after the buffer's own. Nothing before the end is edited, so a

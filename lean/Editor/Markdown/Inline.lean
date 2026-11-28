@@ -119,7 +119,7 @@ def kept (chars : Array (Nat × Char)) (hidden : Array (Nat × Nat)) (hard : Arr
 /-- The characters of `source` from `start` up to `stop`, each with its byte
 offset. -/
 def charsOf (source : String) (start stop : Nat) : Array (Nat × Char) :=
-  ((slice source start stop).toList.foldl
+  ((RichText.bytes source start stop).toList.foldl
       (fun (chars, offset) c => (chars.push (offset, c), offset + c.utf8Size)) (#[], start)).1
 
 /-- The rendered text of `kept`, and the rendered offset of each source
@@ -144,7 +144,7 @@ def linksOf (root : Option System.FilePath) (source : String) (nodes : Array Nod
     let images := (Parsed.all nodes outer "image").filter (· != outer)
     let found ←
       (Parsed.all nodes outer "link.destination").find? fun node => !images.any (node.within ·)
-    targetOf root (slice source found.start found.stop)
+    targetOf root (RichText.bytes source found.start found.stop)
   let inLink (node : Node) : Bool :=
     nodes.any fun outer => outer.name == "link" && node.within outer
   let linked (outer : Node) (shown : String) : Option Link := do
@@ -162,11 +162,11 @@ def linksOf (root : Option System.FilePath) (source : String) (nodes : Array Nod
       | "autolink" =>
         some
           { start := renderedAt node.start, stop := renderedAt node.stop
-            target := .url (slice source (node.start + 1) (node.stop - 1)) }
+            target := .url (RichText.bytes source (node.start + 1) (node.stop - 1)) }
       | "autolink.email" =>
         some
           { start := renderedAt node.start, stop := renderedAt node.stop
-            target := .url ("mailto:" ++ slice source (node.start + 1) (node.stop - 1)) }
+            target := .url ("mailto:" ++ RichText.bytes source (node.start + 1) (node.stop - 1)) }
       | _ => none
   let bare :=
     (references root text).filterMap fun (start, stop, target) =>

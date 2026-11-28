@@ -290,7 +290,7 @@ def markdownFoldChecks : List Check :=
         pure <|
           text ==
               "A\n\nText a.\n\nA.1\n\nText a1.\n\nA.1.1\n\nfn one() {}\n\nA.2\n\n{\"b\": 2}\n\n\n\nB\n\nText b." &&
-            slice text (empty - 2) (empty + 2) == "\n\n\n\n" },
+            RichText.bytes text (empty - 2) (empty + 2) == "\n\n\n\n" },
     { name :=
         "each heading is a range from its text to the next heading of the same or a higher level, or the end, and each fence one over its rows, an empty one over its empty row, keyed by ordinal, with its placeholder, in order of start"
       run :=
@@ -447,7 +447,7 @@ def markdownStreamChecks : List Check :=
             let changed := Doc.firstChanged old new
             let oldText := old.description.text
             let newText := new.description.text
-            changed > 0 && slice oldText 0 changed == slice newText 0 changed &&
+            changed > 0 && RichText.bytes oldText 0 changed == RichText.bytes newText 0 changed &&
               changed ==
                 (offsetsOf new.pieces)[old.blocks.size - 2]! +
                   new.pieces[old.blocks.size - 2]!.text.utf8ByteSize },

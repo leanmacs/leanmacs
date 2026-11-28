@@ -145,7 +145,7 @@ def tailStart (doc : Doc) : Nat :=
 /-- What an append of `more` parses: the document's source from its last
 block's start on, and `more` ("The tail", in the module docs). -/
 def tail (doc : Doc) (more : String) : String :=
-  slice doc.source doc.tailStart doc.source.utf8ByteSize ++ more
+  RichText.bytes doc.source doc.tailStart doc.source.utf8ByteSize ++ more
 
 /-- `doc` with `more` appended ("The tail", in the module docs): every block
 but the last kept as it is, and the blocks of the tail, parsed into

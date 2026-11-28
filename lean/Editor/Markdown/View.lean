@@ -99,7 +99,7 @@ def measure (gap : Nat) (block : Doc.Block) : DisplayM Doc.Block := do
     return block
   let piece := block.piece
   let cellQuery (start stop : Nat) : Display.MeasureQuery :=
-    { text := slice piece.text start stop
+    { text := RichText.bytes piece.text start stop
       decorations :=
         piece.spans.filterMap fun span =>
           if span.start < stop && start < span.stop then

@@ -36,9 +36,20 @@ vocabulary a remote client would be sent (`docs/design/remote-clients.md`,
 - **`append`** puts one description after another: the texts one after the
   other, the second's parts moved past the first's text and listed after
   the first's.
+- **`textCut rich heldLength start`**, the text half of the prefix rule,
+  is where writing `rich` from `start` cuts a held text of `heldLength`
+  bytes and what replaces the rest: it is cut at `start`, or at the held
+  text's end or the description's when either is shorter, and the rest
+  replaced with the description's bytes from there. It is the one owner
+  of the cut: `replaceFrom` and `BufferId.setRichText`, which edits a
+  buffer's text by it, both take it from here.
+- **`bytes text start stop`** is the bytes of a text between two offsets,
+  the one byte slice the rich-text description and the markdown renderer
+  share.
 - **`replaceFrom held start rich`**, the prefix rule, is what a buffer
   holding `held` holds once it is written from `rich` from `start` on:
-  - the text before `start` is `held`'s, and the rest `rich`'s;
+  - the text before the cut (`textCut`) is `held`'s, and the rest
+    `rich`'s;
   - one part at a time, a part of `held` that lies before `start` is kept,
     and every part of `rich` that does not is taken. A range lies before
     `start` when it starts before it and stops at it or before; an empty
@@ -86,6 +97,26 @@ string when they do not end between characters. -/
 def bytes (text : String) (start stop : Nat) : String :=
   (String.fromUTF8? (text.toUTF8.extract start stop)).getD ""
 
+/-- Where writing a description from a byte cuts a held text, and what
+replaces the rest: the held bytes from `offset` to the end are replaced
+with `fresh`. -/
+structure TextCut where
+  /-- The byte the held text is cut at. -/
+  offset : Nat
+  /-- The description's bytes from `offset` on. -/
+  fresh : String
+  deriving DecidableEq, Repr
+
+/-- Where writing `rich` from the byte `start` cuts a held text of
+`heldLength` bytes, and what replaces the rest (the text half of the prefix
+rule, in the module docs): it is cut at `start`, or at the held text's end
+or the description's when either is shorter, and the rest replaced with
+the description's bytes from there. -/
+def textCut (rich : RichText) (heldLength start : Nat) : TextCut :=
+  let size := rich.text.utf8ByteSize
+  let offset := min start (min heldLength size)
+  { offset, fresh := bytes rich.text offset size }
+
 /-- `rich` with every offset of every part moved `distance` bytes on, its
 text and its placeholders' own spans as they were. -/
 def shift (rich : RichText) (distance : Nat) : RichText :=
@@ -127,7 +158,7 @@ private def liesBefore (start stop at_ : Nat) : Bool :=
 /-- What a buffer holding `held` holds once it is written from `rich` from
 the byte `start` on (the prefix rule, in the module docs). -/
 def replaceFrom (held : RichText) (start : Nat) (rich : RichText) : RichText :=
-  let cut := min start (min held.text.utf8ByteSize rich.text.utf8ByteSize)
+  let cut := rich.textCut held.text.utf8ByteSize start
   let part {α : Type} (range : α → Nat × Nat) (held rich : Array α) : Array α :=
     held.filter (fun item => liesBefore (range item).1 (range item).2 start) ++
       rich.filter fun item => !liesBefore (range item).1 (range item).2 start
@@ -135,7 +166,7 @@ def replaceFrom (held : RichText) (start : Nat) (rich : RichText) : RichText :=
   let kept :=
     held.folds.filter fun fold =>
       liesBefore fold.start fold.stop start && !taken.any (·.key == fold.key)
-  { text := bytes held.text 0 cut ++ bytes rich.text cut rich.text.utf8ByteSize
+  { text := bytes held.text 0 cut.offset ++ cut.fresh
     spans := part (fun span => (span.start, span.stop)) held.spans rich.spans
     stops :=
       held.stops.filter (·.offset < start) ++ rich.stops.filter fun stop => !(stop.offset < start)
